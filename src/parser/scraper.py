@@ -1,14 +1,13 @@
 """OLX.pt car listings scraper.
 
-OLX.pt is a server-rendered React app. Data sources:
-  - Search page cards: data-testid selectors for price/location/year/mileage,
-    brand extracted from URL breadcrumb path
-  - Detail pages: JSON-LD (schema.org Vehicle) + data-testid selectors for
-    all car parameters (14+ fields)
+Uses httpx (NOT Playwright) for HTTP requests.
+DO NOT replace httpx with Playwright — Playwright requires browser binaries
+that are not available on CI runners, and OLX blocks datacenter IPs regardless.
 """
 
 import json
 import logging
+import os
 import random
 import re
 import time
@@ -37,7 +36,6 @@ KNOWN_BRANDS = [
     "Smart", "Subaru", "Suzuki", "Tesla", "Toyota", "Volkswagen", "Volvo",
 ]
 
-# Map Portuguese parameter labels to our field names
 PARAM_LABEL_MAP = {
     "Segmento": "segment",
     "Matrícula": "registration_plate",
@@ -67,12 +65,11 @@ class ScraperConfig:
     delay_max: float = 7.0
     private_only: bool = True
     timeout: float = 30.0
-    proxy: str | None = None  # e.g. "http://user:pass@proxy:port"
+    proxy: str | None = None  # "http://user:pass@host:port" or env OLX_PROXY
 
 
 @dataclass
 class RawListing:
-    """Raw listing data extracted from OLX.pt page."""
     olx_id: str
     url: str
     title: str = ""
@@ -100,9 +97,12 @@ class RawListing:
 
 
 class OlxScraper:
+    """Scraper using httpx. No browser dependencies."""
+
     def __init__(self, config: ScraperConfig | None = None):
         self.config = config or ScraperConfig()
-        client_kwargs = {
+        proxy = self.config.proxy or os.environ.get("OLX_PROXY")
+        client_kwargs: dict = {
             "timeout": self.config.timeout,
             "follow_redirects": True,
             "headers": {
@@ -110,9 +110,10 @@ class OlxScraper:
                 "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.5",
             },
         }
-        if self.config.proxy:
-            client_kwargs["proxy"] = self.config.proxy
-            logger.info("Using proxy: %s", self.config.proxy.split("@")[-1] if "@" in self.config.proxy else self.config.proxy)
+        if proxy:
+            client_kwargs["proxy"] = proxy
+            safe = proxy.split("@")[-1] if "@" in proxy else proxy
+            logger.info("Using proxy: %s", safe)
         self.client = httpx.Client(**client_kwargs)
         self._consecutive_403 = 0
 
@@ -123,27 +124,28 @@ class OlxScraper:
         time.sleep(random.uniform(self.config.delay_min, self.config.delay_max))
 
     def _fetch(self, url: str, retries: int = 3) -> str | None:
-        """Fetch URL with retry + exponential backoff on 403."""
         for attempt in range(retries):
             try:
                 resp = self.client.get(url, headers=self._random_headers())
                 resp.raise_for_status()
                 self._consecutive_403 = 0
                 return resp.text
-            except Exception as e:
-                status = getattr(getattr(e, "response", None), "status_code", None)
-                if status == 403:
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 403:
                     self._consecutive_403 += 1
                     wait = min(30 * (2 ** attempt), 120) + random.uniform(5, 15)
                     logger.warning("403 blocked (attempt %d/%d). Waiting %.0fs...",
                                    attempt + 1, retries, wait)
                     if self._consecutive_403 >= 5:
-                        logger.error("Too many consecutive 403s. IP likely blocked.")
+                        logger.error("Too many 403s. IP blocked. Set OLX_PROXY env var or wait 15min.")
                         return None
                     time.sleep(wait)
                 else:
-                    logger.warning("Fetch error for %s: %s", url, e)
+                    logger.warning("HTTP %s for %s", e.response.status_code, url)
                     return None
+            except httpx.RequestError as e:
+                logger.warning("Request error for %s: %s", url, e)
+                return None
         return None
 
     # ------------------------------------------------------------------
@@ -151,7 +153,6 @@ class OlxScraper:
     # ------------------------------------------------------------------
 
     def scrape_search_page(self, page: int = 1) -> list[RawListing]:
-        """Scrape a single search results page."""
         params = [f"page={page}"]
         if self.config.private_only:
             params.append("search%5Bprivate_business%5D=private")
@@ -165,7 +166,6 @@ class OlxScraper:
         return self._parse_search_page(html)
 
     def _parse_search_page(self, html: str) -> list[RawListing]:
-        """Extract listings from search page HTML cards."""
         soup = BeautifulSoup(html, "lxml")
         listings = []
 
@@ -176,14 +176,12 @@ class OlxScraper:
 
         for card in cards:
             try:
-                # Link + OLX ID
                 link = card.find("a", href=True)
                 if not link:
                     continue
                 url = link.get("href", "")
                 if not url.startswith("http"):
                     url = "https://www.olx.pt" + url
-
                 if "/d/anuncio/" not in url:
                     continue
 
@@ -192,13 +190,11 @@ class OlxScraper:
                 if not olx_id:
                     continue
 
-                # Title
                 title_el = card.select_one("[data-cy='ad-card-title']")
                 if not title_el:
                     title_el = card.find("h6") or card.find("h4") or card.find("h5")
                 title = title_el.get_text(strip=True) if title_el else ""
 
-                # Price
                 price_eur = None
                 negotiable = False
                 price_el = card.select_one("[data-testid='ad-price']")
@@ -207,18 +203,13 @@ class OlxScraper:
                     negotiable = "negociável" in price_text.lower()
                     price_eur = _parse_eur_price(price_text)
 
-                # Location: "City - Date" in data-testid="location-date"
                 city = ""
                 loc_el = card.select_one("[data-testid='location-date']")
                 if loc_el:
                     loc_text = loc_el.get_text(strip=True)
                     dash_idx = loc_text.find(" - ")
-                    if dash_idx > 0:
-                        city = loc_text[:dash_idx].strip()
-                    else:
-                        city = loc_text.strip()
+                    city = loc_text[:dash_idx].strip() if dash_idx > 0 else loc_text.strip()
 
-                # Year and mileage: span[data-nx-name="P5"] contains "2018 - 105.000 km"
                 year = None
                 mileage_km = None
                 year_km_el = card.select_one("span[data-nx-name='P5']")
@@ -229,17 +220,14 @@ class OlxScraper:
                         year = int(ykm_match.group(1))
                         mileage_km = _safe_int(ykm_match.group(2))
 
-                # Brand from URL or title
                 brand = _extract_brand_from_url(url) or _extract_brand_from_title(title)
 
                 listings.append(RawListing(
                     olx_id=olx_id, url=url, title=title,
                     price_eur=price_eur, negotiable=negotiable,
-                    brand=brand, model="",
-                    year=year, mileage_km=mileage_km,
+                    brand=brand, model="", year=year, mileage_km=mileage_km,
                     city=city,
                 ))
-
             except Exception as e:
                 logger.debug("Error parsing card: %s", e)
 
@@ -251,7 +239,6 @@ class OlxScraper:
     # ------------------------------------------------------------------
 
     def scrape_listing_detail(self, url: str) -> dict:
-        """Scrape full details from an individual listing page."""
         html = self._fetch(url)
         if not html:
             return {}
@@ -259,7 +246,6 @@ class OlxScraper:
         soup = BeautifulSoup(html, "lxml")
         details = {}
 
-        # 1) JSON-LD for brand, model, year, price
         for script in soup.find_all("script", type="application/ld+json"):
             try:
                 data = json.loads(script.string)
@@ -277,46 +263,33 @@ class OlxScraper:
             except (json.JSONDecodeError, TypeError):
                 continue
 
-        # 2) Parameters from data-testid="ad-parameters-container"
         params_container = soup.select_one("[data-testid='ad-parameters-container']")
         if params_container:
-            paragraphs = params_container.find_all("p")
-            for p in paragraphs:
+            for p in params_container.find_all("p"):
                 text = p.get_text(strip=True)
-
-                # Seller type (no colon)
                 if text in ("Particular", "Profissional"):
                     details["seller_type"] = text
                     continue
-
-                # "Label: Value" pairs
                 if ":" in text:
                     label, _, value = text.partition(":")
-                    label = label.strip()
-                    value = value.strip()
-
-                    field_name = PARAM_LABEL_MAP.get(label)
+                    field_name = PARAM_LABEL_MAP.get(label.strip())
                     if not field_name:
                         continue
-
+                    value = value.strip()
                     if field_name in ("year", "mileage_km", "engine_cc", "horsepower", "seats"):
                         details[field_name] = _safe_int(value)
                     else:
                         details[field_name] = value
 
-        # 3) Price from price container (fallback)
         if "price_eur" not in details:
             price_el = soup.select_one("[data-testid='ad-price-container']")
             if price_el:
                 details["price_eur"] = _parse_eur_price(price_el.get_text(strip=True))
 
-        # Negotiable flag
         prices_wrapper = soup.select_one("[data-testid='prices-wrapper']")
         if prices_wrapper:
             details["negotiable"] = "negociável" in prices_wrapper.get_text(strip=True).lower()
 
-        # 4) District + city from breadcrumbs
-        #    Pattern: ... > Brand - District > Brand - City
         breadcrumbs = soup.select_one("[data-testid='breadcrumbs']")
         if breadcrumbs:
             items = [el.get_text(strip=True) for el in breadcrumbs.select("[data-testid='breadcrumb-item']")]
@@ -329,7 +302,6 @@ class OlxScraper:
             elif len(loc_items) == 1:
                 details["district"] = loc_items[0].split(" - ", 1)[-1].strip()
 
-        # 5) Ad ID from footer (fallback)
         if "olx_id" not in details:
             footer = soup.select_one("[data-testid='ad-footer-bar-section']")
             if footer:
@@ -344,14 +316,12 @@ class OlxScraper:
     # ------------------------------------------------------------------
 
     def scrape_all(self, enrich_details: bool = True) -> list[RawListing]:
-        """Scrape all pages and enrich each listing with detail page data."""
         all_listings = []
         for page in range(1, self.config.max_pages + 1):
             page_listings = self.scrape_search_page(page)
             if not page_listings:
                 logger.info("No more listings at page %d, stopping", page)
                 break
-
             all_listings.extend(page_listings)
             logger.info("Total so far: %d listings", len(all_listings))
             self._delay()
@@ -385,7 +355,6 @@ class OlxScraper:
 # ---------------------------------------------------------------------------
 
 def _merge_details(listing: RawListing, details: dict):
-    """Merge scraped detail page data into a RawListing."""
     for key, value in details.items():
         if value is not None and hasattr(listing, key):
             current = getattr(listing, key)
@@ -394,7 +363,6 @@ def _merge_details(listing: RawListing, details: dict):
 
 
 def _parse_eur_price(text: str) -> float | None:
-    """Parse '15.400 €' or '15 400€' into 15400.0"""
     if not text:
         return None
     text = re.split(r"[a-zA-Zà-ÿ]", text)[0]
@@ -414,7 +382,6 @@ def _parse_eur_price(text: str) -> float | None:
 
 
 def _extract_brand_from_url(url: str) -> str:
-    """Extract brand from OLX.pt URL: /carros/bmw/..."""
     match = re.search(r"/carros/([^/]+)/", url)
     if match:
         slug = match.group(1).lower()
@@ -425,7 +392,6 @@ def _extract_brand_from_url(url: str) -> str:
 
 
 def _extract_brand_from_title(title: str) -> str:
-    """Try to find a known brand in the listing title."""
     title_lower = title.lower()
     for brand in sorted(KNOWN_BRANDS, key=len, reverse=True):
         if brand.lower() in title_lower:
