@@ -8,7 +8,6 @@ import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from xml.etree import ElementTree
 
 import httpx
 import yaml
@@ -193,62 +192,7 @@ def _fetch_dbpedia() -> dict[str, dict[str, list]]:
 
 
 # =========================================================================
-# Provider 2: fueleconomy.gov (US EPA, covers all major brands)
-# =========================================================================
-
-_FUEL_ECON_URL = "https://www.fueleconomy.gov/ws/rest/vehicle/menu"
-_GEN_SUFFIX_RE = re.compile(
-    r"^(.+?)\s+"
-    r"(I{1,3}V?|IV|VI{0,3}|"
-    r"Mk\s*\.?\d+|"
-    r"[A-F]\d?)$"
-)
-
-
-def _fetch_fueleconomy(brands: list[str]) -> dict[str, dict[str, list]]:
-    """Fetch model names by year from fueleconomy.gov and infer generations."""
-    logger.info("Provider: fueleconomy.gov — fetching for %d brands...", len(brands))
-    result: dict[str, dict[str, list]] = {}
-
-    for brand in brands:
-        model_years: dict[str, list[int]] = {}
-        for year in range(1990, 2027):
-            try:
-                url = f"{_FUEL_ECON_URL}/model?year={year}&make={urllib.parse.quote(brand)}"
-                req = urllib.request.Request(url, headers={"User-Agent": "olx-car-parser/1.0"})
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    xml = ElementTree.fromstring(resp.read())
-                for item in xml.findall(".//menuItem/text"):
-                    if item.text:
-                        model_years.setdefault(item.text, []).append(year)
-            except Exception:
-                continue
-
-        if not model_years:
-            continue
-
-        base_groups: dict[str, dict[str, tuple[int, int]]] = {}
-        for model_name, years in model_years.items():
-            m = _GEN_SUFFIX_RE.match(model_name)
-            if m:
-                base = m.group(1).strip()
-                gen = m.group(2).strip()
-                base_groups.setdefault(base, {})[gen] = (min(years), max(years))
-
-        for base, gens in base_groups.items():
-            for gen_name, (yf, yt) in sorted(gens.items(), key=lambda x: x[1][0]):
-                result.setdefault(brand, {}).setdefault(base, []).append({
-                    "name": gen_name, "year_from": yf, "year_to": yt,
-                })
-
-    _fix_year_ranges(result)
-    total = sum(len(g) for m in result.values() for g in m.values())
-    logger.info("fueleconomy.gov: %d brands, %d generations", len(result), total)
-    return result
-
-
-# =========================================================================
-# Provider 3: LLM (OpenRouter)
+# Provider 2: LLM (OpenRouter)
 # =========================================================================
 
 _OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -384,24 +328,13 @@ def _lookup_gens(data: dict, brand: str, model: str) -> list | None:
 # =========================================================================
 
 def fetch_generations() -> dict:
-    """Fetch from DBpedia → fueleconomy.gov → LLM fallback."""
+    """Fetch from DBpedia → LLM fallback."""
     result = {}
 
     try:
         _merge(result, _fetch_dbpedia())
     except Exception as e:
         logger.warning("DBpedia failed: %s", e)
-
-    try:
-        import sqlite3
-        db_path = str(_DATA_DIR / "olx_cars.db")
-        if Path(db_path).exists():
-            conn = sqlite3.connect(db_path)
-            brands = [r[0] for r in conn.execute("SELECT DISTINCT brand FROM listings").fetchall()]
-            conn.close()
-            _merge(result, _fetch_fueleconomy(brands))
-    except Exception as e:
-        logger.warning("fueleconomy.gov failed: %s", e)
 
     try:
         _fill_from_llm(result)
