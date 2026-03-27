@@ -9,10 +9,6 @@ on:
         description: 'Number of pages to scrape'
         default: '50'
         type: string
-      enrich:
-        description: 'Visit each listing for full details (slower)'
-        default: false
-        type: boolean
 
 permissions:
   contents: write
@@ -48,8 +44,7 @@ jobs:
           python -m src.cli scrape \
             --pages ${{ inputs.pages || '50' }} \
             --delay-min 3 \
-            --delay-max 7 \
-            ${{ inputs.enrich == 'true' && '--enrich' || '--no-enrich' }}
+            --delay-max 7
 
       - name: Upload database to release
         env:

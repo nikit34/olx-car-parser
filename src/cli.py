@@ -29,7 +29,6 @@ def scrape(
     pages: int = typer.Option(10, help="Max pages to scrape"),
     delay_min: float = typer.Option(2.0, help="Min delay between requests (sec)"),
     delay_max: float = typer.Option(5.0, help="Max delay between requests (sec)"),
-    enrich: bool = typer.Option(False, help="Visit each listing page for full details (slower)"),
     private_only: bool = typer.Option(True, help="Only private sellers (Particular)"),
 ):
     """Scrape OLX.pt car listings and save to database."""
@@ -46,7 +45,7 @@ def scrape(
     console.print(f"[bold]Starting scrape of OLX.pt: up to {pages} pages...[/bold]")
 
     with OlxScraper(config) as scraper:
-        raw_listings = scraper.scrape_all(enrich_details=enrich)
+        raw_listings = scraper.scrape_all()
 
     if not raw_listings:
         console.print("[red]No listings scraped. OLX may have changed structure or blocked request.[/red]")
