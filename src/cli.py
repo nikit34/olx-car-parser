@@ -26,7 +26,7 @@ logging.basicConfig(
 
 @app.command()
 def scrape(
-    pages: int = typer.Option(10, help="Max pages to scrape"),
+    pages: int = typer.Option(50, help="Max pages to scrape"),
     delay_min: float = typer.Option(2.0, help="Min delay between requests (sec)"),
     delay_max: float = typer.Option(5.0, help="Max delay between requests (sec)"),
     private_only: bool = typer.Option(True, help="Only private sellers (Particular)"),
