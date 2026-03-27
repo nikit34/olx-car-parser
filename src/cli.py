@@ -26,25 +26,37 @@ logging.basicConfig(
 )
 
 
+def _load_scraper_config() -> dict:
+    """Load scraper defaults from settings.yaml."""
+    from pathlib import Path
+    import yaml
+    cfg_path = Path(__file__).resolve().parent.parent / "config" / "settings.yaml"
+    if cfg_path.exists():
+        with open(cfg_path) as f:
+            return (yaml.safe_load(f) or {}).get("scraper", {})
+    return {}
+
+
 @app.command()
 def scrape(
-    pages: int = typer.Option(999, help="Max pages to scrape (stops automatically when no more)"),
-    delay_min: float = typer.Option(2.0, help="Min delay between requests (sec)"),
-    delay_max: float = typer.Option(5.0, help="Max delay between requests (sec)"),
-    private_only: bool = typer.Option(True, help="Only private sellers (Particular)"),
+    pages: int = typer.Option(None, help="Max pages to scrape (default from config)"),
+    delay_min: float = typer.Option(None, help="Min delay between requests (sec)"),
+    delay_max: float = typer.Option(None, help="Max delay between requests (sec)"),
+    private_only: bool = typer.Option(None, help="Only private sellers (Particular)"),
 ):
     """Scrape OLX.pt car listings and save to database."""
     init_db()
     session = get_session()
 
+    cfg = _load_scraper_config()
     config = ScraperConfig(
-        max_pages=pages,
-        delay_min=delay_min,
-        delay_max=delay_max,
-        private_only=private_only,
+        max_pages=pages if pages is not None else cfg.get("max_pages", 25),
+        delay_min=delay_min if delay_min is not None else cfg.get("request_delay_min", 2.0),
+        delay_max=delay_max if delay_max is not None else cfg.get("request_delay_max", 5.0),
+        private_only=private_only if private_only is not None else cfg.get("private_only", True),
     )
 
-    console.print(f"[bold]Starting scrape of OLX.pt: up to {pages} pages...[/bold]")
+    console.print(f"[bold]Starting scrape of OLX.pt: up to {config.max_pages} pages...[/bold]")
 
     with OlxScraper(config) as scraper:
         raw_listings = scraper.scrape_all()
