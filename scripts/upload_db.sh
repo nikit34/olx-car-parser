@@ -21,6 +21,11 @@ if [ ! -f "$DB_FILE" ]; then
   exit 1
 fi
 
+# --- Flush WAL to main DB file so the upload contains all data ---
+echo "Checkpointing WAL..."
+sqlite3 "$DB_FILE" "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null || \
+  python3 -c "import sqlite3; sqlite3.connect('$DB_FILE').execute('PRAGMA wal_checkpoint(TRUNCATE)')"
+
 AUTH="Authorization: Bearer ${GITHUB_TOKEN}"
 ACCEPT="Accept: application/vnd.github+json"
 
