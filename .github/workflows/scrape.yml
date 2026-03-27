@@ -1,0 +1,70 @@
+name: Scrape OLX.pt & Update Dashboard
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours
+  workflow_dispatch:
+    inputs:
+      pages:
+        description: 'Number of pages to scrape'
+        default: '50'
+        type: string
+      enrich:
+        description: 'Visit each listing for full details (slower)'
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install .
+
+      - name: Download previous database
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p data
+          gh release download latest-data \
+            --pattern 'olx_cars.db' \
+            --dir data/ 2>/dev/null \
+          || echo "No previous database found — starting fresh"
+
+      - name: Run scraper
+        run: |
+          python -m src.cli scrape \
+            --pages ${{ inputs.pages || '50' }} \
+            --delay-min 3 \
+            --delay-max 7 \
+            ${{ inputs.enrich == 'true' && '--enrich' || '--no-enrich' }}
+
+      - name: Upload database to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ ! -f data/olx_cars.db ]; then
+            echo "::error::Database file not found after scrape"
+            exit 1
+          fi
+
+          gh release delete latest-data --yes 2>/dev/null || true
+          gh release create latest-data \
+            data/olx_cars.db \
+            --title "Latest Scraped Data" \
+            --notes "Updated: $(date -u +'%Y-%m-%d %H:%M UTC')
+
+          Listings DB from periodic OLX.pt scrape.
+          Triggered by: ${{ github.event_name }}"

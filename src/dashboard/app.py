@@ -230,7 +230,7 @@ with tab_listings:
     ] if c in filtered_listings.columns]
 
     st.dataframe(
-        filtered_listings[display_cols].sort_values("price_eur"),
+        filtered_listings[display_cols].sort_values("price_eur") if "price_eur" in display_cols else filtered_listings[display_cols],
         width="stretch", hide_index=True,
         column_config={
             "price_eur": st.column_config.NumberColumn("Price (EUR)", format="%d EUR"),

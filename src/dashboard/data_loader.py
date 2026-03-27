@@ -1,5 +1,6 @@
-"""Load data from SQLite database, fall back to demo data if DB is empty."""
+"""Load data from SQLite database (local or downloaded from GitHub Releases)."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -8,18 +9,47 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+DB_PATH = PROJECT_ROOT / "data" / "olx_cars.db"
+
+
+def _ensure_db() -> bool:
+    """Download DB from GitHub Releases if it doesn't exist locally.
+
+    Set env var GITHUB_REPOSITORY=owner/repo to enable (automatic in GitHub Actions;
+    set manually in Streamlit Cloud secrets or environment).
+    """
+    if DB_PATH.exists():
+        return True
+
+    repo = os.environ.get("GITHUB_REPOSITORY", "nikit34/olx-car-parser")
+    if not repo:
+        return False
+
+    url = f"https://github.com/{repo}/releases/download/latest-data/olx_cars.db"
+    try:
+        import httpx
+
+        resp = httpx.get(url, follow_redirects=True, timeout=30)
+        if resp.status_code == 200:
+            DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+            DB_PATH.write_bytes(resp.content)
+            print(f"Downloaded database from release ({len(resp.content)} bytes)")
+            return True
+    except Exception as e:
+        print(f"Warning: could not download DB from release: {e}")
+    return False
+
 
 def load_from_db() -> tuple[pd.DataFrame, pd.DataFrame] | None:
     """Try loading real data from SQLite. Returns (listings_df, history_df) or None."""
-    db_path = PROJECT_ROOT / "data" / "olx_cars.db"
-    if not db_path.exists():
+    if not _ensure_db():
         return None
 
     try:
         from src.storage.database import init_db, get_session
         from src.storage.repository import get_listings_df, get_price_history_df
 
-        init_db(str(db_path))
+        init_db(str(DB_PATH))
         session = get_session()
 
         listings = get_listings_df(session)
