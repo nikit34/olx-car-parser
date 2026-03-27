@@ -26,11 +26,20 @@ pip install -r "$PROJECT_DIR/requirements.txt" -q
 pip install -e "$PROJECT_DIR" -q
 echo "Dependencies installed."
 
-# --- Cron: scrape every 6 hours ---
-CRON_LINE="0 */6 * * * export PATH=/opt/homebrew/bin:\$PATH && cd $PROJECT_DIR && PYTHONPATH=$PROJECT_DIR $VENV/bin/python -m src.cli scrape >> $LOG 2>&1"
+# --- Cron: scrape every 6 hours + upload DB to GitHub Releases ---
+CRON_LINE="0 */6 * * * export PATH=/opt/homebrew/bin:\$PATH && source \$HOME/.zshrc 2>/dev/null; cd $PROJECT_DIR && PYTHONPATH=$PROJECT_DIR $VENV/bin/python -m src.cli scrape >> $LOG 2>&1 && bash $PROJECT_DIR/scripts/upload_db.sh >> $LOG 2>&1"
 # Remove old entry, add new one
 ( crontab -l 2>/dev/null | grep -v "olx-car-parser" || true ; echo "$CRON_LINE" ) | crontab -
-echo "Cron job set: scrape every 6 hours."
+echo "Cron job set: scrape every 6 hours + upload DB."
+
+# --- GITHUB_TOKEN for DB upload ---
+if [ -z "${GITHUB_TOKEN:-}" ]; then
+  echo ""
+  echo "WARNING: GITHUB_TOKEN is not set."
+  echo "  To enable DB upload to GitHub Releases, add to ~/.zshrc or ~/.bashrc:"
+  echo "  export GITHUB_TOKEN=\"ghp_your_token_here\""
+  echo "  Then re-run this setup."
+fi
 
 # --- LaunchAgent for Streamlit dashboard ---
 PLIST_DIR="$HOME/Library/LaunchAgents"
@@ -94,7 +103,9 @@ IP=$(ipconfig getifaddr en0 2>/dev/null || echo "this-server")
 echo ""
 echo "====================================="
 echo " Setup complete!"
-echo " Dashboard: http://${IP}:8501"
-echo " Scraping:  every 6h via cron"
-echo " Logs:      $LOG"
+echo " LAN Dashboard:    http://${IP}:8501"
+echo " Public Dashboard: https://share.streamlit.io (connect repo)"
+echo " Scraping:         every 6h via cron"
+echo " DB upload:        after each scrape (needs GITHUB_TOKEN)"
+echo " Logs:             $LOG"
 echo "====================================="

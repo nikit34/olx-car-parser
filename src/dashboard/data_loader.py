@@ -12,14 +12,25 @@ sys.path.insert(0, str(PROJECT_ROOT))
 DB_PATH = PROJECT_ROOT / "data" / "olx_cars.db"
 
 
+_DB_MAX_AGE_SECONDS = 6 * 3600  # re-download every 6 hours on Cloud
+
+
 def _ensure_db() -> bool:
-    """Download DB from GitHub Releases if it doesn't exist locally."""
+    """Download DB from GitHub Releases if missing or stale."""
+    import time
+
+    needs_download = not DB_PATH.exists()
     if DB_PATH.exists():
+        age = time.time() - DB_PATH.stat().st_mtime
+        if age > _DB_MAX_AGE_SECONDS and os.environ.get("STREAMLIT_SHARING_MODE"):
+            needs_download = True  # stale on Cloud — refresh
+
+    if not needs_download:
         return True
 
     repo = os.environ.get("GITHUB_REPOSITORY", "nikit34/olx-car-parser")
     if not repo:
-        return False
+        return DB_PATH.exists()
 
     url = f"https://github.com/{repo}/releases/download/latest-data/olx_cars.db"
     try:
@@ -33,7 +44,7 @@ def _ensure_db() -> bool:
             return True
     except Exception as e:
         print(f"Warning: could not download DB from release: {e}")
-    return False
+    return DB_PATH.exists()
 
 
 def load_from_db() -> tuple[pd.DataFrame, pd.DataFrame] | None:
