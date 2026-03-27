@@ -101,18 +101,42 @@ class RawListing:
 class OlxScraper:
     def __init__(self, config: ScraperConfig | None = None):
         self.config = config or ScraperConfig()
+        self._ua = random.choice(USER_AGENTS)
         self.client = httpx.Client(
             timeout=self.config.timeout,
             follow_redirects=True,
             headers={
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.5",
+                "User-Agent": self._ua,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                "Accept-Language": "pt-PT,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Accept-Encoding": "gzip, deflate",
+                "Cache-Control": "max-age=0",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+                "Upgrade-Insecure-Requests": "1",
+                "Sec-CH-UA": '"Chromium";v="125", "Google Chrome";v="125", "Not=A?Brand";v="24"',
+                "Sec-CH-UA-Mobile": "?0",
+                "Sec-CH-UA-Platform": '"macOS"',
+                "DNT": "1",
             },
         )
         self._consecutive_403 = 0
+        # Warm up session — grab cookies from the homepage
+        self._warmup()
+
+    def _warmup(self):
+        """Visit homepage to obtain session cookies before scraping."""
+        try:
+            logger.info("Warming up session with OLX.pt homepage...")
+            resp = self.client.get("https://www.olx.pt/", follow_redirects=True)
+            logger.info("Warmup response: %s", resp.status_code)
+        except httpx.RequestError as e:
+            logger.warning("Warmup failed: %s", e)
 
     def _random_headers(self) -> dict:
-        return {"User-Agent": random.choice(USER_AGENTS)}
+        return {"Referer": "https://www.olx.pt/"}
 
     def _delay(self):
         time.sleep(random.uniform(self.config.delay_min, self.config.delay_max))
