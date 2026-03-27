@@ -5,7 +5,7 @@ scraper:
   interval_hours: 6
   request_delay_min: 2.0
   request_delay_max: 5.0
-  max_pages: 25
+  max_pages: 999
   private_only: true
 
 database:

@@ -1,12 +1,16 @@
 """CLI for OLX.pt Car Parser."""
 
+import fcntl
 import json
 import logging
 import sys
+from pathlib import Path
 
 import typer
 from rich.console import Console
 from rich.table import Table
+
+_LOCK_PATH = Path(__file__).resolve().parent.parent / "data" / "scrape.lock"
 
 from src.parser.scraper import OlxScraper, ScraperConfig
 from src.storage.database import get_session, init_db
@@ -45,6 +49,15 @@ def scrape(
     private_only: bool = typer.Option(None, help="Only private sellers (Particular)"),
 ):
     """Scrape OLX.pt car listings and save to database."""
+    # Prevent concurrent scrapes
+    _LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = open(_LOCK_PATH, "w")
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        console.print("[red]Another scrape is already running. Exiting.[/red]")
+        raise typer.Exit(1)
+
     init_db()
     session = get_session()
 
