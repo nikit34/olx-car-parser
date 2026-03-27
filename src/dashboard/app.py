@@ -8,6 +8,10 @@ import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent))
+
 from data_loader import load_all, load_portfolio
 
 # ---------------------------------------------------------------------------

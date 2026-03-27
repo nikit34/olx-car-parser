@@ -17,7 +17,7 @@ analytics:
 
 llm:
   openrouter_api_key: ""     # Get free key at openrouter.ai
-  model: "meta-llama/llama-3.1-8b-instruct:free"
+  model: "nvidia/nemotron-3-super-120b-a12b:free"
 
 alerts:
   telegram_bot_token: ""     # Get from @BotFather

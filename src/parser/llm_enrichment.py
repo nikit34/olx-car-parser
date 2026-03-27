@@ -46,7 +46,7 @@ def _get_config() -> dict:
         cfg = data.get("llm", {})
     return {
         "api_key": os.environ.get("OPENROUTER_API_KEY", cfg.get("openrouter_api_key", "")),
-        "model": cfg.get("model", "meta-llama/llama-3.1-8b-instruct:free"),
+        "model": cfg.get("model", "nvidia/nemotron-3-super-120b-a12b:free"),
     }
 
 
@@ -109,15 +109,21 @@ def enrich_listings_batch(listings: list, batch_size: int = 50) -> int:
         return 0
 
     enriched = 0
+    failures = 0
     for listing in listings[:batch_size]:
         if not listing.description:
             continue
 
         result = enrich_from_description(listing.description)
         if result:
-            # Store extracted data as JSON in a special field or merge selectively
             listing._llm_extras = result
             enriched += 1
+            failures = 0  # reset on success
+        else:
+            failures += 1
+            if failures >= 3:
+                logger.warning("3 consecutive LLM failures, stopping enrichment.")
+                break
 
     logger.info("LLM-enriched %d / %d listings", enriched, len(listings))
     return enriched
