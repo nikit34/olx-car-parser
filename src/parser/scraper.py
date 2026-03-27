@@ -92,6 +92,7 @@ class RawListing:
     city: str = ""
     district: str = ""
     seller_type: str = "Particular"
+    description: str = ""
 
 
 class OlxScraper:
@@ -294,6 +295,11 @@ class OlxScraper:
             elif len(loc_items) == 1:
                 details["district"] = loc_items[0].split(" - ", 1)[-1].strip()
 
+        # Description text
+        desc_el = soup.select_one("[data-cy='ad_description'] div") or soup.select_one("[data-testid='ad-description']")
+        if desc_el:
+            details["description"] = desc_el.get_text(separator="\n", strip=True)
+
         if "olx_id" not in details:
             footer = soup.select_one("[data-testid='ad-footer-bar-section']")
             if footer:
@@ -352,6 +358,8 @@ def _merge_details(listing: RawListing, details: dict):
             current = getattr(listing, key)
             if not current or current == "" or current == 0:
                 setattr(listing, key, value)
+    # Fix mileage after all fields are populated
+    listing.mileage_km = _fix_mileage(listing.mileage_km, listing.year)
 
 
 def _parse_eur_price(text: str) -> float | None:
@@ -393,6 +401,39 @@ def _extract_brand_from_title(title: str) -> str:
         if re.search(rf"\b{abbrev}\b", title_lower):
             return brand
     return ""
+
+
+def _fix_mileage(km: int | None, year: int | None) -> int | None:
+    """Detect and fix mileage entered without thousands (e.g. 150 instead of 150000).
+
+    Heuristic: a car driven ~10k-20k km/year. If mileage is suspiciously low
+    for the car's age, it's likely missing *1000.
+    """
+    if km is None or km == 0:
+        return km
+    if year is None:
+        # No year to cross-check — only fix obvious cases
+        if km < 1000:
+            return km * 1000
+        return km
+
+    import datetime
+    age = max(datetime.date.today().year - year, 1)
+    avg_per_year = km / age
+
+    # A car averaging < 200 km/year is almost certainly missing *1000
+    # (real minimum is ~3000 km/year for a parked car)
+    if km < 1000 and avg_per_year < 500:
+        return km * 1000
+
+    # Values like 50-999 with reasonable age → multiply
+    if km < 1000:
+        corrected = km * 1000
+        corrected_avg = corrected / age
+        if 3000 <= corrected_avg <= 40000:
+            return corrected
+
+    return km
 
 
 def _safe_int(val) -> int | None:

@@ -1,5 +1,6 @@
 """CLI for OLX.pt Car Parser."""
 
+import json
 import logging
 import sys
 
@@ -51,7 +52,15 @@ def scrape(
         console.print("[red]No listings scraped. OLX may have changed structure or blocked request.[/red]")
         raise typer.Exit(1)
 
-    console.print(f"Scraped [bold]{len(raw_listings)}[/bold] listings. Saving to database...")
+    console.print(f"Scraped [bold]{len(raw_listings)}[/bold] listings.")
+
+    # LLM enrichment (if API key configured)
+    from src.parser.llm_enrichment import enrich_listings_batch
+    llm_count = enrich_listings_batch(raw_listings)
+    if llm_count:
+        console.print(f"LLM-enriched [bold]{llm_count}[/bold] listings from descriptions.")
+
+    console.print("Saving to database...")
 
     saved = 0
     active_ids = set()
@@ -82,6 +91,8 @@ def scrape(
             "city": raw.city,
             "district": raw.district,
             "seller_type": raw.seller_type,
+            "description": raw.description,
+            "llm_extras": json.dumps(raw._llm_extras) if hasattr(raw, "_llm_extras") and raw._llm_extras else None,
         }
 
         listing = upsert_listing(session, data)

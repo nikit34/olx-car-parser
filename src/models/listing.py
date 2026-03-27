@@ -39,6 +39,8 @@ class Listing(Base):
     city = Column(String, index=True)      # Cidade/freguesia
     district = Column(String, index=True)  # Distrito (Porto, Lisboa, Faro...)
     seller_type = Column(String)           # Particular / Profissional
+    description = Column(Text)              # Listing description text
+    llm_extras = Column(Text)               # JSON: LLM-extracted structured data from description
     first_seen_at = Column(DateTime, default=datetime.utcnow)
     last_seen_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     is_active = Column(Boolean, default=True)
