@@ -1,1 +1,0 @@
-- [GitHub repository](reference_github_repo.md) — nikit34/olx-car-parser on GitHub
