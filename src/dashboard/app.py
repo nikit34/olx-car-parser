@@ -1,5 +1,6 @@
 """OLX.pt Car Parser — Streamlit Dashboard."""
 
+import numpy as np
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
@@ -26,7 +27,7 @@ def load_data():
     return load_all()
 
 
-listings_df, history_df, signals_df, brands_models = load_data()
+listings_df, history_df, signals_df, brands_models, turnover_df = load_data()
 
 # ---------------------------------------------------------------------------
 # Sidebar — filters
@@ -165,8 +166,8 @@ st.divider()
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
-tab_trends, tab_signals, tab_listings, tab_compare, tab_geo = st.tabs(
-    ["Price Trends", "Buy Signals", "Listings", "Compare Models", "Geography"]
+tab_trends, tab_signals, tab_listings, tab_compare, tab_geo, tab_estimator = st.tabs(
+    ["Price Trends", "Buy Signals", "Listings", "Compare Models", "Geography", "Price Estimator"]
 )
 
 # ---- TAB 1: Price Trends -------------------------------------------------
@@ -206,15 +207,33 @@ with tab_signals:
     else:
         top = filtered_signals.head(20).copy()
         top["deal"] = top["discount_pct"].apply(lambda d: "🔥🔥🔥" if d > 25 else ("🔥🔥" if d > 20 else "🔥"))
-        signal_cols = ["deal", "brand", "model", "year", "price_eur", "median_price_eur", "discount_pct", "city", "district", "mileage_km", "fuel_type"]
+        if "sample_size" in top.columns:
+            top["confidence"] = top["sample_size"].apply(
+                lambda n: "High" if n >= 10 else ("Medium" if n >= 5 else "Low")
+            )
+
+        signal_cols = ["deal", "brand", "model", "year", "price_eur", "median_price_eur", "discount_pct"]
+        if "sample_size" in top.columns:
+            signal_cols += ["sample_size", "confidence"]
+        if "days_listed" in top.columns:
+            signal_cols.append("days_listed")
+        if "price_change_pct" in top.columns:
+            signal_cols.append("price_change_pct")
+        if "eur_per_km" in top.columns:
+            signal_cols.append("eur_per_km")
+        signal_cols += ["city", "district", "mileage_km", "fuel_type"]
         if "url" in top.columns:
             signal_cols.append("url")
+
         st.dataframe(
             top[signal_cols]
             .rename(columns={
                 "deal": "Deal", "brand": "Brand", "model": "Model", "year": "Year",
                 "price_eur": "Price (EUR)", "median_price_eur": "Median (EUR)",
-                "discount_pct": "Discount %", "city": "City", "district": "District",
+                "discount_pct": "Discount %", "sample_size": "# Listings",
+                "confidence": "Confidence", "days_listed": "Days Listed",
+                "price_change_pct": "Price Drop %", "eur_per_km": "EUR/km",
+                "city": "City", "district": "District",
                 "mileage_km": "Mileage", "fuel_type": "Fuel", "url": "Link",
             }),
             width="stretch", hide_index=True,
@@ -230,7 +249,9 @@ with tab_signals:
 with tab_listings:
     st.subheader("All Listings")
     display_cols = [c for c in [
-        "brand", "model", "year", "price_eur", "mileage_km", "engine_cc",
+        "brand", "model", "year", "price_eur", "days_listed",
+        "price_change_eur", "price_change_pct", "eur_per_km",
+        "mileage_km", "engine_cc",
         "fuel_type", "horsepower", "transmission", "segment",
         "city", "district", "seller_type", "is_active", "url",
     ] if c in filtered_listings.columns]
@@ -240,6 +261,10 @@ with tab_listings:
         width="stretch", hide_index=True,
         column_config={
             "price_eur": st.column_config.NumberColumn("Price (EUR)", format="%d EUR"),
+            "days_listed": st.column_config.NumberColumn("Days Listed", format="%d"),
+            "price_change_eur": st.column_config.NumberColumn("Price Change (EUR)", format="%+d EUR"),
+            "price_change_pct": st.column_config.NumberColumn("Price Change %", format="%.1f%%"),
+            "eur_per_km": st.column_config.NumberColumn("EUR/km", format="%.3f"),
             "mileage_km": st.column_config.NumberColumn("Mileage", format="%d km"),
             "engine_cc": st.column_config.NumberColumn("Engine (cc)", format="%d"),
             "horsepower": st.column_config.NumberColumn("HP", format="%d"),
@@ -284,18 +309,79 @@ with tab_compare:
                                     title="Price vs Mileage", height=500, opacity=0.7)
                 st.plotly_chart(fig_sc, width="stretch")
 
+        # --- Sell Speed & Turnover (feature 5) ---
+        if not turnover_df.empty:
+            comparison_full = comparison.merge(turnover_df, on=["brand", "model"], how="left")
+        else:
+            comparison_full = comparison.copy()
+            comparison_full["avg_days_to_sell"] = pd.NA
+            comparison_full["weekly_turnover"] = pd.NA
+
+        comp_cols = ["label", "count", "median_price", "min_price", "max_price", "avg_mileage"]
+        if "avg_days_to_sell" in comparison_full.columns:
+            comp_cols += ["avg_days_to_sell", "weekly_turnover"]
+
         st.dataframe(
-            comparison[["label", "count", "median_price", "min_price", "max_price", "avg_mileage"]]
-            .rename(columns={"label": "Model", "count": "Listings", "median_price": "Median (EUR)",
-                             "min_price": "Min (EUR)", "max_price": "Max (EUR)", "avg_mileage": "Avg Mileage"}),
+            comparison_full[comp_cols]
+            .rename(columns={
+                "label": "Model", "count": "Listings", "median_price": "Median (EUR)",
+                "min_price": "Min (EUR)", "max_price": "Max (EUR)", "avg_mileage": "Avg Mileage",
+                "avg_days_to_sell": "Avg Days to Sell", "weekly_turnover": "Weekly Turnover %",
+            }),
             width="stretch", hide_index=True,
             column_config={
                 "Median (EUR)": st.column_config.NumberColumn(format="%d EUR"),
                 "Min (EUR)": st.column_config.NumberColumn(format="%d EUR"),
                 "Max (EUR)": st.column_config.NumberColumn(format="%d EUR"),
                 "Avg Mileage": st.column_config.NumberColumn(format="%,.0f km"),
+                "Avg Days to Sell": st.column_config.NumberColumn(format="%.0f days"),
+                "Weekly Turnover %": st.column_config.NumberColumn(format="%.1f%%"),
             },
         )
+
+        # --- Depreciation Curve (feature 3) ---
+        st.subheader("Depreciation Curve")
+        dep_data = active[active["price_eur"].notna() & active["year"].notna()].copy()
+        if not dep_data.empty:
+            dep_data["label"] = dep_data["brand"] + " " + dep_data["model"]
+            model_sizes = dep_data.groupby("label").size()
+            dep_available = sorted(model_sizes[model_sizes >= 3].index.tolist())
+
+            if dep_available:
+                selected_dep = st.multiselect(
+                    "Select models for depreciation curve",
+                    dep_available,
+                    default=dep_available[:3] if len(dep_available) >= 3 else dep_available,
+                    key="dep_models",
+                )
+                if selected_dep:
+                    from src.analytics.regression import depreciation_curve
+
+                    fig_dep = go.Figure()
+                    for label in selected_dep:
+                        sub = dep_data[dep_data["label"] == label]
+                        fig_dep.add_trace(go.Scatter(
+                            x=sub["year"], y=sub["price_eur"],
+                            mode="markers", name=label, opacity=0.6,
+                        ))
+                        brand_val = sub.iloc[0]["brand"]
+                        model_val = sub.iloc[0]["model"]
+                        result = depreciation_curve(active, brand_val, model_val)
+                        if result:
+                            years = np.linspace(sub["year"].min(), sub["year"].max(), 50)
+                            prices = result["slope"] * years + result["intercept"]
+                            fig_dep.add_trace(go.Scatter(
+                                x=years, y=prices, mode="lines",
+                                name=f"{label} trend (R²={result['r_squared']:.2f})",
+                                line=dict(dash="dash"),
+                            ))
+                    fig_dep.update_layout(
+                        xaxis_title="Year", yaxis_title="Price (EUR)",
+                        height=500, hovermode="closest",
+                    )
+                    st.plotly_chart(fig_dep, width="stretch")
+            else:
+                st.caption("Need at least 3 listings per model to build a depreciation curve.")
 
 # ---- TAB 5: Geography ----------------------------------------------------
 with tab_geo:
@@ -342,6 +428,125 @@ with tab_geo:
                 width="stretch", hide_index=True,
                 column_config={"Median (EUR)": st.column_config.NumberColumn(format="%d EUR")},
             )
+
+        # --- Regional Price Differences / Arbitrage (feature 6) ---
+        st.subheader("Regional Price Differences")
+        geo_active = active[active["price_eur"].notna() & active["district"].notna()].copy()
+        if not geo_active.empty:
+            geo_active["label"] = geo_active["brand"] + " " + geo_active["model"]
+            model_district_counts = geo_active.groupby("label")["district"].nunique()
+            geo_candidates = sorted(model_district_counts[model_district_counts >= 2].index.tolist())
+
+            if geo_candidates:
+                selected_geo = st.multiselect(
+                    "Models to compare across districts",
+                    geo_candidates,
+                    default=geo_candidates[:5] if len(geo_candidates) >= 5 else geo_candidates,
+                    key="geo_models",
+                )
+                if selected_geo:
+                    geo_subset = geo_active[geo_active["label"].isin(selected_geo)]
+                    pivot = geo_subset.pivot_table(
+                        values="price_eur", index="label", columns="district", aggfunc="median",
+                    )
+
+                    if not pivot.empty:
+                        fig_heat = px.imshow(
+                            pivot.values,
+                            x=pivot.columns.tolist(),
+                            y=pivot.index.tolist(),
+                            labels=dict(color="Median Price (EUR)"),
+                            title="Median Price: Model x District",
+                            aspect="auto",
+                            color_continuous_scale="RdYlGn_r",
+                        )
+                        fig_heat.update_layout(height=max(300, len(selected_geo) * 60))
+                        st.plotly_chart(fig_heat, width="stretch")
+
+                        # Arbitrage table
+                        arbitrage = []
+                        for model_label in pivot.index:
+                            row = pivot.loc[model_label].dropna()
+                            if len(row) >= 2:
+                                arbitrage.append({
+                                    "Model": model_label,
+                                    "Cheapest District": row.idxmin(),
+                                    "Cheapest Price": int(row.min()),
+                                    "Most Expensive District": row.idxmax(),
+                                    "Most Expensive Price": int(row.max()),
+                                    "Arbitrage (EUR)": int(row.max() - row.min()),
+                                })
+                        if arbitrage:
+                            st.subheader("Arbitrage Opportunities")
+                            st.dataframe(
+                                pd.DataFrame(arbitrage).sort_values("Arbitrage (EUR)", ascending=False),
+                                hide_index=True,
+                                column_config={
+                                    "Cheapest Price": st.column_config.NumberColumn(format="%d EUR"),
+                                    "Most Expensive Price": st.column_config.NumberColumn(format="%d EUR"),
+                                    "Arbitrage (EUR)": st.column_config.NumberColumn(format="%d EUR"),
+                                },
+                            )
+            else:
+                st.caption("Need listings in at least 2 districts per model for regional comparison.")
+
+# ---- TAB 6: Price Estimator (feature 4) ----------------------------------
+with tab_estimator:
+    st.subheader("Price Estimator")
+    st.caption("Get a recommended price based on regression on existing listings")
+
+    if listings_df.empty:
+        st.info("No data yet. Run scraper first.")
+    else:
+        col_e1, col_e2 = st.columns(2)
+        with col_e1:
+            est_brand = st.selectbox("Brand", sorted(brands_models.keys()), key="est_brand")
+            est_models_list = sorted(brands_models.get(est_brand, []))
+            est_model = st.selectbox("Model", est_models_list, key="est_model")
+            est_year = st.number_input("Year", min_value=1990, max_value=2026, value=2018, key="est_year")
+        with col_e2:
+            est_mileage = st.number_input("Mileage (km)", min_value=0, max_value=500000,
+                                           value=100000, step=5000, key="est_mileage")
+            fuel_opts = sorted(listings_df["fuel_type"].dropna().unique().tolist()) if "fuel_type" in listings_df.columns else []
+            fuel_options = ["Any"] + fuel_opts
+            est_fuel = st.selectbox("Fuel type", fuel_options, key="est_fuel")
+
+        if st.button("Estimate Price", type="primary"):
+            from src.analytics.regression import estimate_price
+
+            fuel = est_fuel if est_fuel != "Any" else None
+            result = estimate_price(active, est_brand, est_model, est_year, est_mileage, fuel)
+
+            if result:
+                st.divider()
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Quick Sale (P25)", f"{int(result['p25']):,} EUR")
+                c2.metric("Fair Price (Median)", f"{int(result['median']):,} EUR")
+                c3.metric("Max Price (P75)", f"{int(result['p75']):,} EUR")
+                st.caption(f"Based on {result['sample_size']} similar listings")
+
+                # Show comparable listings
+                comps = active[
+                    (active["brand"] == est_brand) & (active["model"] == est_model)
+                    & active["price_eur"].notna()
+                ].copy()
+                if fuel and len(comps[comps["fuel_type"] == fuel]) >= 3:
+                    comps = comps[comps["fuel_type"] == fuel]
+
+                comp_cols = [c for c in ["year", "price_eur", "mileage_km", "fuel_type", "city", "district", "url"]
+                             if c in comps.columns]
+                st.subheader("Comparable Listings")
+                st.dataframe(
+                    comps[comp_cols].sort_values("price_eur"),
+                    hide_index=True,
+                    column_config={
+                        "price_eur": st.column_config.NumberColumn("Price (EUR)", format="%d EUR"),
+                        "mileage_km": st.column_config.NumberColumn("Mileage", format="%d km"),
+                        "url": st.column_config.LinkColumn("Link", display_text="Open"),
+                    },
+                )
+            else:
+                st.warning("Not enough data for this combination (need at least 5 listings).")
 
 # ---------------------------------------------------------------------------
 # Footer

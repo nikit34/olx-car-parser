@@ -13,11 +13,7 @@ DB_PATH = PROJECT_ROOT / "data" / "olx_cars.db"
 
 
 def _ensure_db() -> bool:
-    """Download DB from GitHub Releases if it doesn't exist locally.
-
-    Set env var GITHUB_REPOSITORY=owner/repo to enable (automatic in GitHub Actions;
-    set manually in Streamlit Cloud secrets or environment).
-    """
+    """Download DB from GitHub Releases if it doesn't exist locally."""
     if DB_PATH.exists():
         return True
 
@@ -73,6 +69,13 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
     latest_stats = history_df.sort_values("date").groupby(["brand", "model"]).last().reset_index()
     active = listings_df[listings_df["is_active"]] if "is_active" in listings_df.columns else listings_df
 
+    model_counts = (
+        active[active["price_eur"].notna()]
+        .groupby(["brand", "model"])
+        .size()
+        .reset_index(name="sample_size")
+    )
+
     for _, listing in active.iterrows():
         if pd.isna(listing.get("price_eur")):
             continue
@@ -85,7 +88,12 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         median = stat.iloc[0]["median_price_eur"]
         if median and listing["price_eur"] < median * 0.85:
             discount = round((1 - listing["price_eur"] / median) * 100, 1)
-            signals.append({
+            count_row = model_counts[
+                (model_counts["brand"] == listing["brand"])
+                & (model_counts["model"] == listing["model"])
+            ]
+            sample = int(count_row.iloc[0]["sample_size"]) if not count_row.empty else 1
+            sig = {
                 "olx_id": listing.get("olx_id", ""),
                 "url": listing.get("url", ""),
                 "brand": listing["brand"],
@@ -94,11 +102,17 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
                 "price_eur": listing["price_eur"],
                 "median_price_eur": round(median),
                 "discount_pct": discount,
+                "sample_size": sample,
                 "city": listing.get("city", ""),
                 "district": listing.get("district", ""),
                 "mileage_km": listing.get("mileage_km"),
                 "fuel_type": listing.get("fuel_type", ""),
-            })
+            }
+            # Carry over computed columns if available
+            for col in ("days_listed", "price_change_eur", "price_change_pct", "eur_per_km"):
+                if col in listing.index:
+                    sig[col] = listing[col]
+            signals.append(sig)
 
     df = pd.DataFrame(signals)
     if not df.empty:
@@ -107,16 +121,22 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
 
 
 def load_all():
-    """Load listings, history, and signals from the database."""
+    """Load listings, history, signals, brand map, and turnover stats."""
+    from src.analytics.computed_columns import enrich_listings
+    from src.analytics.turnover import compute_turnover_stats
+
     db_data = load_from_db()
 
     if db_data is not None:
         listings, history = db_data
+        listings = enrich_listings(listings)
         signals = compute_signals(listings, history)
+        turnover = compute_turnover_stats(listings)
     else:
         listings = pd.DataFrame()
         history = pd.DataFrame()
         signals = pd.DataFrame()
+        turnover = pd.DataFrame()
 
     brands_models = {}
     if not listings.empty:
@@ -127,4 +147,4 @@ def load_all():
             if row["model"] not in brands_models[brand]:
                 brands_models[brand].append(row["model"])
 
-    return listings, history, signals, brands_models
+    return listings, history, signals, brands_models, turnover

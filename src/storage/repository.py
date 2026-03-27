@@ -119,20 +119,27 @@ def get_listings_df(session: Session) -> pd.DataFrame:
     q = session.query(Listing).all()
     if not q:
         return pd.DataFrame()
-    return pd.DataFrame([{
-        "olx_id": l.olx_id, "url": l.url, "title": l.title,
-        "brand": l.brand, "model": l.model, "year": l.year,
-        "price_eur": (l.price_snapshots.order_by(PriceSnapshot.scraped_at.desc())
-                      .first().price_eur
-                      if l.price_snapshots.count() else None),
-        "mileage_km": l.mileage_km, "engine_cc": l.engine_cc,
-        "fuel_type": l.fuel_type, "horsepower": l.horsepower,
-        "transmission": l.transmission, "segment": l.segment,
-        "doors": l.doors, "seats": l.seats, "color": l.color,
-        "condition": l.condition, "origin": l.origin,
-        "city": l.city, "district": l.district,
-        "seller_type": l.seller_type, "is_active": l.is_active,
-    } for l in q])
+    rows = []
+    for l in q:
+        snaps = l.price_snapshots.order_by(PriceSnapshot.scraped_at.desc()).all()
+        latest_price = snaps[0].price_eur if snaps else None
+        first_price = snaps[-1].price_eur if snaps else None
+        rows.append({
+            "olx_id": l.olx_id, "url": l.url, "title": l.title,
+            "brand": l.brand, "model": l.model, "year": l.year,
+            "price_eur": latest_price,
+            "first_price_eur": first_price,
+            "mileage_km": l.mileage_km, "engine_cc": l.engine_cc,
+            "fuel_type": l.fuel_type, "horsepower": l.horsepower,
+            "transmission": l.transmission, "segment": l.segment,
+            "doors": l.doors, "seats": l.seats, "color": l.color,
+            "condition": l.condition, "origin": l.origin,
+            "city": l.city, "district": l.district,
+            "seller_type": l.seller_type, "is_active": l.is_active,
+            "first_seen_at": l.first_seen_at,
+            "last_seen_at": l.last_seen_at,
+        })
+    return pd.DataFrame(rows)
 
 
 def get_price_history_df(session: Session) -> pd.DataFrame:
