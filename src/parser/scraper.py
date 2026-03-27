@@ -14,6 +14,7 @@ import re
 import time
 from dataclasses import dataclass
 
+import httpx
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ USER_AGENTS = [
 BASE_URL = "https://www.olx.pt/carros-motos-e-barcos/carros/"
 
 KNOWN_BRANDS = [
-    "Alfa Romeo", "Audi", "BMW", "Chevrolet", "Citroen", "Dacia", "DS",
+    "Alfa Romeo", "Audi", "BMW", "Chevrolet", "Citroen", "Citroën", "Dacia", "DS",
     "Fiat", "Ford", "Honda", "Hyundai", "Jaguar", "Jeep", "Kia",
     "Land Rover", "Lexus", "Mazda", "Mercedes-Benz", "Mini", "Mitsubishi",
     "Nissan", "Opel", "Peugeot", "Porsche", "Renault", "Seat", "Skoda",
@@ -62,8 +63,8 @@ PARAM_LABEL_MAP = {
 class ScraperConfig:
     base_url: str = BASE_URL
     max_pages: int = 50
-    delay_min: float = 2.0
-    delay_max: float = 5.0
+    delay_min: float = 3.0
+    delay_max: float = 7.0
     private_only: bool = True
     timeout: float = 30.0
 
@@ -100,54 +101,48 @@ class RawListing:
 class OlxScraper:
     def __init__(self, config: ScraperConfig | None = None):
         self.config = config or ScraperConfig()
-        self._playwright = None
-        self._browser = None
-        self._page = None
-        self._init_browser()
+        self.client = httpx.Client(
+            timeout=self.config.timeout,
+            follow_redirects=True,
+            headers={
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.5",
+            },
+        )
+        self._consecutive_403 = 0
 
-    def _init_browser(self):
-        """Launch a headless Chromium browser via Playwright."""
-        try:
-            from playwright.sync_api import sync_playwright
-            self._playwright = sync_playwright().start()
-            self._browser = self._playwright.chromium.launch(
-                headless=True,
-                args=["--disable-blink-features=AutomationControlled"],
-            )
-            self._page = self._browser.new_page(
-                locale="pt-PT",
-                user_agent=random.choice(USER_AGENTS),
-                extra_http_headers={
-                    "Accept-Language": "pt-PT,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-                },
-            )
-            # Warmup: visit homepage to get cookies and pass any JS challenges
-            logger.info("Warming up browser session...")
-            self._page.goto("https://www.olx.pt/", wait_until="domcontentloaded",
-                            timeout=int(self.config.timeout * 1000))
-            self._page.wait_for_timeout(2000)
-            logger.info("Browser session ready")
-        except Exception as e:
-            logger.error("Failed to init Playwright browser: %s", e)
-            raise
+    def _random_headers(self) -> dict:
+        return {"User-Agent": random.choice(USER_AGENTS)}
 
     def _delay(self):
         time.sleep(random.uniform(self.config.delay_min, self.config.delay_max))
 
-    def _fetch(self, url: str) -> str | None:
-        """Fetch URL using real browser via Playwright."""
-        try:
-            resp = self._page.goto(url, wait_until="domcontentloaded",
-                                   timeout=int(self.config.timeout * 1000))
-            if resp and resp.status == 403:
-                logger.warning("HTTP 403 for %s", url)
+    def _fetch(self, url: str, retries: int = 3) -> str | None:
+        """Fetch URL with retry + exponential backoff on 403."""
+        for attempt in range(retries):
+            try:
+                resp = self.client.get(url, headers=self._random_headers())
+                resp.raise_for_status()
+                self._consecutive_403 = 0
+                return resp.text
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 403:
+                    self._consecutive_403 += 1
+                    wait = min(30 * (2 ** attempt), 120) + random.uniform(5, 15)
+                    logger.warning("403 blocked (attempt %d/%d). Waiting %.0fs...",
+                                   attempt + 1, retries, wait)
+                    if self._consecutive_403 >= 5:
+                        logger.error("Too many consecutive 403s. IP likely blocked. "
+                                     "Wait 10-15 minutes and try again.")
+                        return None
+                    time.sleep(wait)
+                else:
+                    logger.warning("HTTP %s for %s", e.response.status_code, url)
+                    return None
+            except httpx.RequestError as e:
+                logger.warning("Request error for %s: %s", url, e)
                 return None
-            # Wait for listing cards or content to render
-            self._page.wait_for_timeout(1500)
-            return self._page.content()
-        except Exception as e:
-            logger.warning("Browser fetch error for %s: %s", url, e)
-            return None
+        return None
 
     # ------------------------------------------------------------------
     # Search results page
@@ -215,7 +210,6 @@ class OlxScraper:
                 loc_el = card.select_one("[data-testid='location-date']")
                 if loc_el:
                     loc_text = loc_el.get_text(strip=True)
-                    # Format: "City - Date" or "City - Para o topo ..."
                     dash_idx = loc_text.find(" - ")
                     if dash_idx > 0:
                         city = loc_text[:dash_idx].strip()
@@ -233,12 +227,8 @@ class OlxScraper:
                         year = int(ykm_match.group(1))
                         mileage_km = _safe_int(ykm_match.group(2))
 
-                # Brand from URL: /carros/bmw/ or /carros/mercedes-benz/
-                brand = _extract_brand_from_url(url)
-
-                # Try to extract brand from title if not in URL
-                if not brand:
-                    brand = _extract_brand_from_title(title)
+                # Brand from URL or title
+                brand = _extract_brand_from_url(url) or _extract_brand_from_title(title)
 
                 listings.append(RawListing(
                     olx_id=olx_id, url=url, title=title,
@@ -328,7 +318,6 @@ class OlxScraper:
         breadcrumbs = soup.select_one("[data-testid='breadcrumbs']")
         if breadcrumbs:
             items = [el.get_text(strip=True) for el in breadcrumbs.select("[data-testid='breadcrumb-item']")]
-            # Last 2 items with " - " are "Brand - District" and "Brand - City"
             loc_items = [it for it in items if " - " in it]
             if len(loc_items) >= 2:
                 details["district"] = loc_items[-2].split(" - ", 1)[-1].strip()
@@ -352,8 +341,8 @@ class OlxScraper:
     # Full scrape
     # ------------------------------------------------------------------
 
-    def scrape_all(self) -> list[RawListing]:
-        """Scrape all pages and enrich each listing with full details."""
+    def scrape_all(self, enrich_details: bool = True) -> list[RawListing]:
+        """Scrape all pages and enrich each listing with detail page data."""
         all_listings = []
         for page in range(1, self.config.max_pages + 1):
             page_listings = self.scrape_search_page(page)
@@ -365,26 +354,22 @@ class OlxScraper:
             logger.info("Total so far: %d listings", len(all_listings))
             self._delay()
 
-        logger.info("Enriching %d listings with detail pages...", len(all_listings))
-        for i, listing in enumerate(all_listings):
-            if not listing.url:
-                continue
-            details = self.scrape_listing_detail(listing.url)
-            _merge_details(listing, details)
-            if (i + 1) % 10 == 0:
-                logger.info("Enriched %d / %d", i + 1, len(all_listings))
-            self._delay()
+        if enrich_details:
+            logger.info("Enriching %d listings with detail pages...", len(all_listings))
+            for i, listing in enumerate(all_listings):
+                if not listing.url:
+                    continue
+                details = self.scrape_listing_detail(listing.url)
+                _merge_details(listing, details)
+                if (i + 1) % 10 == 0:
+                    logger.info("Enriched %d / %d", i + 1, len(all_listings))
+                self._delay()
 
         logger.info("Scraping complete: %d total listings", len(all_listings))
         return all_listings
 
     def close(self):
-        if self._page:
-            self._page.close()
-        if self._browser:
-            self._browser.close()
-        if self._playwright:
-            self._playwright.stop()
+        self.client.close()
 
     def __enter__(self):
         return self
@@ -410,15 +395,13 @@ def _parse_eur_price(text: str) -> float | None:
     """Parse '15.400 €' or '15 400€' into 15400.0"""
     if not text:
         return None
-    # Remove "Negociável" and other non-price text
     text = re.split(r"[a-zA-Zà-ÿ]", text)[0]
     cleaned = re.sub(r"[^\d,.]", "", text.replace(" ", ""))
     if not cleaned:
         return None
-    # Portuguese: dot = thousands separator (15.400), comma = decimal (rare for cars)
     if "." in cleaned and "," not in cleaned:
         parts = cleaned.split(".")
-        if len(parts[-1]) == 3:  # 15.400 = thousands
+        if len(parts[-1]) == 3:
             cleaned = cleaned.replace(".", "")
     elif "," in cleaned:
         cleaned = cleaned.replace(".", "").replace(",", ".")
@@ -429,14 +412,11 @@ def _parse_eur_price(text: str) -> float | None:
 
 
 def _extract_brand_from_url(url: str) -> str:
-    """Extract brand from OLX.pt URL: /carros/bmw/... or breadcrumb category."""
-    # URL pattern: /carros-motos-e-barcos/carros/bmw/
+    """Extract brand from OLX.pt URL: /carros/bmw/..."""
     match = re.search(r"/carros/([^/]+)/", url)
     if match:
         slug = match.group(1).lower()
         for brand in KNOWN_BRANDS:
-            if brand.lower().replace(" ", "-").replace("-", "-") == slug:
-                return brand
             if brand.lower().replace(" ", "-") == slug:
                 return brand
     return ""
@@ -445,12 +425,9 @@ def _extract_brand_from_url(url: str) -> str:
 def _extract_brand_from_title(title: str) -> str:
     """Try to find a known brand in the listing title."""
     title_lower = title.lower()
-    # Sort by length descending so "Mercedes-Benz" matches before "Mercedes"
     for brand in sorted(KNOWN_BRANDS, key=len, reverse=True):
-        # Match brand name or common abbreviation
         if brand.lower() in title_lower:
             return brand
-    # Common abbreviations
     abbrevs = {"vw": "Volkswagen", "merc": "Mercedes-Benz", "mb": "Mercedes-Benz"}
     for abbrev, brand in abbrevs.items():
         if re.search(rf"\b{abbrev}\b", title_lower):
