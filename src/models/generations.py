@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 _DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 _CACHE_PATH = _DATA_DIR / "generations.json"
-_SEED_PATH = _DATA_DIR / "generations_seed.json"
 _generations: dict | None = None
 _CACHE_MAX_AGE = 30 * 24 * 3600  # refresh from Wikidata every 30 days
 
@@ -177,19 +176,6 @@ def fetch_generations() -> dict:
     wikidata_count = sum(len(g) for m in result.values() for g in m.values())
     logger.info("Wikidata returned %d brands, %d generations", len(result), wikidata_count)
 
-    # Merge seed data — seed fills gaps, Wikidata takes priority
-    if _SEED_PATH.exists():
-        with open(_SEED_PATH, encoding="utf-8") as f:
-            seed = json.load(f)
-        seed_added = 0
-        for brand, models in seed.items():
-            for model, gens in models.items():
-                if model not in result.get(brand, {}):
-                    result.setdefault(brand, {})[model] = gens
-                    seed_added += len(gens)
-        if seed_added:
-            logger.info("Merged %d generations from seed file", seed_added)
-
     _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(_CACHE_PATH, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
@@ -225,9 +211,6 @@ def load_generations() -> dict:
 
     if _CACHE_PATH.exists():
         with open(_CACHE_PATH, encoding="utf-8") as f:
-            _generations = json.load(f)
-    elif _SEED_PATH.exists():
-        with open(_SEED_PATH, encoding="utf-8") as f:
             _generations = json.load(f)
     else:
         _generations = {}
