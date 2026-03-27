@@ -116,13 +116,14 @@ class OlxScraper:
     def _delay(self):
         time.sleep(random.uniform(self.config.delay_min, self.config.delay_max))
 
-    def _fetch(self, url: str, retries: int = 3) -> str | None:
+    def _fetch(self, url: str, retries: int = 3) -> tuple[str, str] | None:
+        """Fetch *url* and return ``(final_url, html)`` or *None*."""
         for attempt in range(retries):
             try:
                 resp = self.client.get(url, headers=self._random_headers())
                 resp.raise_for_status()
                 self._consecutive_403 = 0
-                return resp.text
+                return str(resp.url), resp.text
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 403:
                     self._consecutive_403 += 1
@@ -145,16 +146,24 @@ class OlxScraper:
     # Search results page
     # ------------------------------------------------------------------
 
-    def scrape_search_page(self, page: int = 1) -> list[RawListing]:
+    def scrape_search_page(self, page: int = 1) -> list[RawListing] | None:
+        """Return listings for *page*, or ``None`` if redirected (no more pages)."""
         params = [f"page={page}"]
         if self.config.private_only:
             params.append("search%5Bprivate_business%5D=private")
         url = self.config.base_url + "?" + "&".join(params)
 
         logger.info("Scraping search page %d: %s", page, url)
-        html = self._fetch(url)
-        if not html:
+        result = self._fetch(url)
+        if not result:
             return []
+
+        final_url, html = result
+
+        # OLX redirects out-of-range pages back to the last valid page.
+        if page > 1 and f"page={page}" not in final_url:
+            logger.info("Page %d redirected to %s — no more pages", page, final_url)
+            return None
 
         return self._parse_search_page(html)
 
@@ -232,10 +241,11 @@ class OlxScraper:
     # ------------------------------------------------------------------
 
     def scrape_listing_detail(self, url: str) -> dict:
-        html = self._fetch(url)
-        if not html:
+        result = self._fetch(url)
+        if not result:
             return {}
 
+        _final_url, html = result
         soup = BeautifulSoup(html, "lxml")
         details = {}
 
@@ -317,6 +327,9 @@ class OlxScraper:
         all_listings = []
         for page in range(1, self.config.max_pages + 1):
             page_listings = self.scrape_search_page(page)
+            if page_listings is None:
+                # Redirect detected — we've passed the last real page.
+                break
             if not page_listings:
                 logger.info("No more listings at page %d, stopping", page)
                 break
