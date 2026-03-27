@@ -14,7 +14,6 @@ import re
 import time
 from dataclasses import dataclass
 
-import httpx
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
@@ -101,72 +100,54 @@ class RawListing:
 class OlxScraper:
     def __init__(self, config: ScraperConfig | None = None):
         self.config = config or ScraperConfig()
-        self._ua = random.choice(USER_AGENTS)
-        self.client = httpx.Client(
-            timeout=self.config.timeout,
-            follow_redirects=True,
-            headers={
-                "User-Agent": self._ua,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-                "Accept-Language": "pt-PT,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-                "Accept-Encoding": "gzip, deflate",
-                "Cache-Control": "max-age=0",
-                "Sec-Fetch-Dest": "document",
-                "Sec-Fetch-Mode": "navigate",
-                "Sec-Fetch-Site": "none",
-                "Sec-Fetch-User": "?1",
-                "Upgrade-Insecure-Requests": "1",
-                "Sec-CH-UA": '"Chromium";v="125", "Google Chrome";v="125", "Not=A?Brand";v="24"',
-                "Sec-CH-UA-Mobile": "?0",
-                "Sec-CH-UA-Platform": '"macOS"',
-                "DNT": "1",
-            },
-        )
-        self._consecutive_403 = 0
-        # Warm up session — grab cookies from the homepage
-        self._warmup()
+        self._playwright = None
+        self._browser = None
+        self._page = None
+        self._init_browser()
 
-    def _warmup(self):
-        """Visit homepage to obtain session cookies before scraping."""
+    def _init_browser(self):
+        """Launch a headless Chromium browser via Playwright."""
         try:
-            logger.info("Warming up session with OLX.pt homepage...")
-            resp = self.client.get("https://www.olx.pt/", follow_redirects=True)
-            logger.info("Warmup response: %s", resp.status_code)
-        except httpx.RequestError as e:
-            logger.warning("Warmup failed: %s", e)
-
-    def _random_headers(self) -> dict:
-        return {"Referer": "https://www.olx.pt/"}
+            from playwright.sync_api import sync_playwright
+            self._playwright = sync_playwright().start()
+            self._browser = self._playwright.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            self._page = self._browser.new_page(
+                locale="pt-PT",
+                user_agent=random.choice(USER_AGENTS),
+                extra_http_headers={
+                    "Accept-Language": "pt-PT,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+                },
+            )
+            # Warmup: visit homepage to get cookies and pass any JS challenges
+            logger.info("Warming up browser session...")
+            self._page.goto("https://www.olx.pt/", wait_until="domcontentloaded",
+                            timeout=int(self.config.timeout * 1000))
+            self._page.wait_for_timeout(2000)
+            logger.info("Browser session ready")
+        except Exception as e:
+            logger.error("Failed to init Playwright browser: %s", e)
+            raise
 
     def _delay(self):
         time.sleep(random.uniform(self.config.delay_min, self.config.delay_max))
 
-    def _fetch(self, url: str, retries: int = 3) -> str | None:
-        """Fetch URL with retry + exponential backoff on 403."""
-        for attempt in range(retries):
-            try:
-                resp = self.client.get(url, headers=self._random_headers())
-                resp.raise_for_status()
-                self._consecutive_403 = 0
-                return resp.text
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 403:
-                    self._consecutive_403 += 1
-                    wait = min(30 * (2 ** attempt), 120) + random.uniform(5, 15)
-                    logger.warning("403 blocked (attempt %d/%d). Waiting %.0fs...",
-                                   attempt + 1, retries, wait)
-                    if self._consecutive_403 >= 5:
-                        logger.error("Too many consecutive 403s. IP likely blocked. "
-                                     "Wait 10-15 minutes and try again.")
-                        return None
-                    time.sleep(wait)
-                else:
-                    logger.warning("HTTP %s for %s", e.response.status_code, url)
-                    return None
-            except httpx.RequestError as e:
-                logger.warning("Request error for %s: %s", url, e)
+    def _fetch(self, url: str) -> str | None:
+        """Fetch URL using real browser via Playwright."""
+        try:
+            resp = self._page.goto(url, wait_until="domcontentloaded",
+                                   timeout=int(self.config.timeout * 1000))
+            if resp and resp.status == 403:
+                logger.warning("HTTP 403 for %s", url)
                 return None
-        return None
+            # Wait for listing cards or content to render
+            self._page.wait_for_timeout(1500)
+            return self._page.content()
+        except Exception as e:
+            logger.warning("Browser fetch error for %s: %s", url, e)
+            return None
 
     # ------------------------------------------------------------------
     # Search results page
@@ -398,7 +379,12 @@ class OlxScraper:
         return all_listings
 
     def close(self):
-        self.client.close()
+        if self._page:
+            self._page.close()
+        if self._browser:
+            self._browser.close()
+        if self._playwright:
+            self._playwright.stop()
 
     def __enter__(self):
         return self
