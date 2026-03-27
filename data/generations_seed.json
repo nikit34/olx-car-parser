@@ -1,0 +1,350 @@
+{
+  "Volkswagen": {
+    "Golf": [
+      {"name": "Golf III", "year_from": 1991, "year_to": 1997},
+      {"name": "Golf IV", "year_from": 1998, "year_to": 2003},
+      {"name": "Golf V", "year_from": 2004, "year_to": 2008},
+      {"name": "Golf VI", "year_from": 2009, "year_to": 2012},
+      {"name": "Golf VII", "year_from": 2013, "year_to": 2019},
+      {"name": "Golf VIII", "year_from": 2020, "year_to": 2025}
+    ],
+    "Polo": [
+      {"name": "Polo III", "year_from": 1994, "year_to": 2001},
+      {"name": "Polo IV", "year_from": 2002, "year_to": 2009},
+      {"name": "Polo V", "year_from": 2010, "year_to": 2017},
+      {"name": "Polo VI", "year_from": 2018, "year_to": 2025}
+    ]
+  },
+  "BMW": {
+    "116": [
+      {"name": "E87", "year_from": 2004, "year_to": 2011},
+      {"name": "F20", "year_from": 2012, "year_to": 2019},
+      {"name": "F40", "year_from": 2020, "year_to": 2025}
+    ],
+    "118": [
+      {"name": "E87", "year_from": 2004, "year_to": 2011},
+      {"name": "F20", "year_from": 2012, "year_to": 2019},
+      {"name": "F40", "year_from": 2020, "year_to": 2025}
+    ],
+    "120": [
+      {"name": "E87", "year_from": 2004, "year_to": 2011},
+      {"name": "F20", "year_from": 2012, "year_to": 2019},
+      {"name": "F40", "year_from": 2020, "year_to": 2025}
+    ],
+    "220": [
+      {"name": "F22", "year_from": 2014, "year_to": 2021},
+      {"name": "G42", "year_from": 2022, "year_to": 2025}
+    ],
+    "318": [
+      {"name": "E36", "year_from": 1990, "year_to": 1999},
+      {"name": "E46", "year_from": 2000, "year_to": 2005},
+      {"name": "E90", "year_from": 2006, "year_to": 2011},
+      {"name": "F30", "year_from": 2012, "year_to": 2019},
+      {"name": "G20", "year_from": 2020, "year_to": 2025}
+    ],
+    "320": [
+      {"name": "E36", "year_from": 1990, "year_to": 1999},
+      {"name": "E46", "year_from": 2000, "year_to": 2005},
+      {"name": "E90", "year_from": 2006, "year_to": 2011},
+      {"name": "F30", "year_from": 2012, "year_to": 2019},
+      {"name": "G20", "year_from": 2020, "year_to": 2025}
+    ],
+    "325": [
+      {"name": "E36", "year_from": 1990, "year_to": 1999},
+      {"name": "E46", "year_from": 2000, "year_to": 2005},
+      {"name": "E90", "year_from": 2006, "year_to": 2011},
+      {"name": "F30", "year_from": 2012, "year_to": 2019},
+      {"name": "G20", "year_from": 2020, "year_to": 2025}
+    ],
+    "328": [
+      {"name": "E36", "year_from": 1990, "year_to": 1999},
+      {"name": "E46", "year_from": 2000, "year_to": 2005},
+      {"name": "E90", "year_from": 2006, "year_to": 2011},
+      {"name": "F30", "year_from": 2012, "year_to": 2019},
+      {"name": "G20", "year_from": 2020, "year_to": 2025}
+    ],
+    "330": [
+      {"name": "E36", "year_from": 1990, "year_to": 1999},
+      {"name": "E46", "year_from": 2000, "year_to": 2005},
+      {"name": "E90", "year_from": 2006, "year_to": 2011},
+      {"name": "F30", "year_from": 2012, "year_to": 2019},
+      {"name": "G20", "year_from": 2020, "year_to": 2025}
+    ],
+    "418 Gran Coup\u00e9": [
+      {"name": "F36", "year_from": 2014, "year_to": 2020},
+      {"name": "G26", "year_from": 2021, "year_to": 2025}
+    ],
+    "420 Gran Coup\u00e9": [
+      {"name": "F36", "year_from": 2014, "year_to": 2020},
+      {"name": "G26", "year_from": 2021, "year_to": 2025}
+    ],
+    "430": [
+      {"name": "F32", "year_from": 2014, "year_to": 2020},
+      {"name": "G22", "year_from": 2021, "year_to": 2025}
+    ],
+    "435": [
+      {"name": "F32", "year_from": 2014, "year_to": 2020},
+      {"name": "G22", "year_from": 2021, "year_to": 2025}
+    ],
+    "520": [
+      {"name": "E60", "year_from": 2003, "year_to": 2010},
+      {"name": "F10", "year_from": 2011, "year_to": 2017},
+      {"name": "G30", "year_from": 2017, "year_to": 2025}
+    ],
+    "530": [
+      {"name": "E60", "year_from": 2003, "year_to": 2010},
+      {"name": "F10", "year_from": 2011, "year_to": 2017},
+      {"name": "G30", "year_from": 2017, "year_to": 2025}
+    ],
+    "630 Gran Turismo": [
+      {"name": "G32", "year_from": 2017, "year_to": 2025}
+    ],
+    "i3": [
+      {"name": "I01", "year_from": 2013, "year_to": 2022}
+    ],
+    "M3": [
+      {"name": "E90", "year_from": 2007, "year_to": 2013},
+      {"name": "F80", "year_from": 2014, "year_to": 2018},
+      {"name": "G80", "year_from": 2021, "year_to": 2025}
+    ],
+    "X4": [
+      {"name": "F26", "year_from": 2014, "year_to": 2018},
+      {"name": "G02", "year_from": 2019, "year_to": 2025}
+    ]
+  },
+  "Renault": {
+    "Clio": [
+      {"name": "Clio I", "year_from": 1990, "year_to": 1998},
+      {"name": "Clio II", "year_from": 1999, "year_to": 2005},
+      {"name": "Clio III", "year_from": 2006, "year_to": 2012},
+      {"name": "Clio IV", "year_from": 2013, "year_to": 2019},
+      {"name": "Clio V", "year_from": 2020, "year_to": 2025}
+    ],
+    "Captur": [
+      {"name": "Captur I", "year_from": 2013, "year_to": 2019},
+      {"name": "Captur II", "year_from": 2020, "year_to": 2025}
+    ],
+    "M\u00e9gane": [
+      {"name": "M\u00e9gane I", "year_from": 1995, "year_to": 2002},
+      {"name": "M\u00e9gane II", "year_from": 2003, "year_to": 2008},
+      {"name": "M\u00e9gane III", "year_from": 2009, "year_to": 2015},
+      {"name": "M\u00e9gane IV", "year_from": 2016, "year_to": 2025}
+    ],
+    "Zoe": [
+      {"name": "Zoe I", "year_from": 2012, "year_to": 2019},
+      {"name": "Zoe II", "year_from": 2020, "year_to": 2025}
+    ],
+    "Grand Modus": [
+      {"name": "Grand Modus", "year_from": 2004, "year_to": 2012}
+    ],
+    "Twingo": [
+      {"name": "Twingo I", "year_from": 1992, "year_to": 2007},
+      {"name": "Twingo II", "year_from": 2008, "year_to": 2014},
+      {"name": "Twingo III", "year_from": 2015, "year_to": 2025}
+    ]
+  },
+  "Mercedes-Benz": {
+    "C 220": [
+      {"name": "W202", "year_from": 1993, "year_to": 2000},
+      {"name": "W203", "year_from": 2001, "year_to": 2007},
+      {"name": "W204", "year_from": 2008, "year_to": 2014},
+      {"name": "W205", "year_from": 2015, "year_to": 2021},
+      {"name": "W206", "year_from": 2022, "year_to": 2025}
+    ],
+    "CLA 180": [
+      {"name": "C117", "year_from": 2013, "year_to": 2019},
+      {"name": "C118", "year_from": 2020, "year_to": 2025}
+    ],
+    "E 220": [
+      {"name": "W210", "year_from": 1995, "year_to": 2003},
+      {"name": "W211", "year_from": 2003, "year_to": 2009},
+      {"name": "W212", "year_from": 2010, "year_to": 2016},
+      {"name": "W213", "year_from": 2017, "year_to": 2025}
+    ]
+  },
+  "Peugeot": {
+    "208": [
+      {"name": "208 I", "year_from": 2012, "year_to": 2019},
+      {"name": "208 II", "year_from": 2020, "year_to": 2025}
+    ],
+    "3008": [
+      {"name": "3008 I", "year_from": 2009, "year_to": 2016},
+      {"name": "3008 II", "year_from": 2017, "year_to": 2025}
+    ],
+    "5008": [
+      {"name": "5008 I", "year_from": 2009, "year_to": 2016},
+      {"name": "5008 II", "year_from": 2017, "year_to": 2025}
+    ]
+  },
+  "Opel": {
+    "Corsa": [
+      {"name": "Corsa C", "year_from": 2000, "year_to": 2006},
+      {"name": "Corsa D", "year_from": 2007, "year_to": 2014},
+      {"name": "Corsa E", "year_from": 2015, "year_to": 2019},
+      {"name": "Corsa F", "year_from": 2020, "year_to": 2025}
+    ],
+    "Astra": [
+      {"name": "Astra G", "year_from": 1998, "year_to": 2004},
+      {"name": "Astra H", "year_from": 2005, "year_to": 2009},
+      {"name": "Astra J", "year_from": 2010, "year_to": 2015},
+      {"name": "Astra K", "year_from": 2016, "year_to": 2021},
+      {"name": "Astra L", "year_from": 2022, "year_to": 2025}
+    ]
+  },
+  "Audi": {
+    "A1 Sportback": [
+      {"name": "8X", "year_from": 2010, "year_to": 2018},
+      {"name": "GB", "year_from": 2019, "year_to": 2025}
+    ],
+    "A3 Sportback": [
+      {"name": "8P", "year_from": 2004, "year_to": 2012},
+      {"name": "8V", "year_from": 2013, "year_to": 2020},
+      {"name": "8Y", "year_from": 2021, "year_to": 2025}
+    ],
+    "A4": [
+      {"name": "B5", "year_from": 1994, "year_to": 2001},
+      {"name": "B6", "year_from": 2002, "year_to": 2004},
+      {"name": "B7", "year_from": 2005, "year_to": 2008},
+      {"name": "B8", "year_from": 2009, "year_to": 2015},
+      {"name": "B9", "year_from": 2016, "year_to": 2025}
+    ],
+    "A4 Avant": [
+      {"name": "B5", "year_from": 1994, "year_to": 2001},
+      {"name": "B6", "year_from": 2002, "year_to": 2004},
+      {"name": "B7", "year_from": 2005, "year_to": 2008},
+      {"name": "B8", "year_from": 2009, "year_to": 2015},
+      {"name": "B9", "year_from": 2016, "year_to": 2025}
+    ],
+    "A5": [
+      {"name": "8T", "year_from": 2007, "year_to": 2016},
+      {"name": "F5", "year_from": 2017, "year_to": 2025}
+    ],
+    "A5 Cabrio": [
+      {"name": "8T", "year_from": 2009, "year_to": 2016},
+      {"name": "F5", "year_from": 2017, "year_to": 2025}
+    ],
+    "A6": [
+      {"name": "C5", "year_from": 1997, "year_to": 2004},
+      {"name": "C6", "year_from": 2005, "year_to": 2011},
+      {"name": "C7", "year_from": 2012, "year_to": 2018},
+      {"name": "C8", "year_from": 2019, "year_to": 2025}
+    ],
+    "S3 Limousine": [
+      {"name": "8V", "year_from": 2013, "year_to": 2020},
+      {"name": "8Y", "year_from": 2021, "year_to": 2025}
+    ],
+    "Q4 Sportback e-tron": [
+      {"name": "Q4 e-tron", "year_from": 2021, "year_to": 2025}
+    ]
+  },
+  "Honda": {
+    "Jazz": [
+      {"name": "Jazz II", "year_from": 2002, "year_to": 2008},
+      {"name": "Jazz III", "year_from": 2009, "year_to": 2013},
+      {"name": "Jazz IV", "year_from": 2014, "year_to": 2020},
+      {"name": "Jazz V", "year_from": 2021, "year_to": 2025}
+    ]
+  },
+  "Ford": {
+    "Fiesta": [
+      {"name": "Fiesta V", "year_from": 2002, "year_to": 2008},
+      {"name": "Fiesta VI", "year_from": 2009, "year_to": 2016},
+      {"name": "Fiesta VII", "year_from": 2017, "year_to": 2023}
+    ],
+    "Focus": [
+      {"name": "Focus I", "year_from": 1998, "year_to": 2004},
+      {"name": "Focus II", "year_from": 2005, "year_to": 2010},
+      {"name": "Focus III", "year_from": 2011, "year_to": 2018},
+      {"name": "Focus IV", "year_from": 2019, "year_to": 2025}
+    ],
+    "KA": [
+      {"name": "KA I", "year_from": 1996, "year_to": 2008},
+      {"name": "KA II", "year_from": 2009, "year_to": 2016},
+      {"name": "Ka+", "year_from": 2017, "year_to": 2019}
+    ],
+    "Mondeo SW": [
+      {"name": "Mondeo III", "year_from": 2000, "year_to": 2007},
+      {"name": "Mondeo IV", "year_from": 2008, "year_to": 2014},
+      {"name": "Mondeo V", "year_from": 2015, "year_to": 2022}
+    ]
+  },
+  "Toyota": {
+    "Aygo": [
+      {"name": "Aygo I", "year_from": 2005, "year_to": 2014},
+      {"name": "Aygo II", "year_from": 2015, "year_to": 2022}
+    ],
+    "Yaris": [
+      {"name": "Yaris I", "year_from": 1999, "year_to": 2005},
+      {"name": "Yaris II", "year_from": 2006, "year_to": 2011},
+      {"name": "Yaris III", "year_from": 2012, "year_to": 2020},
+      {"name": "Yaris IV", "year_from": 2021, "year_to": 2025}
+    ]
+  },
+  "Volvo": {
+    "V60": [
+      {"name": "V60 I", "year_from": 2010, "year_to": 2018},
+      {"name": "V60 II", "year_from": 2019, "year_to": 2025}
+    ]
+  },
+  "Mini": {
+    "Cooper": [
+      {"name": "R50/R53", "year_from": 2001, "year_to": 2006},
+      {"name": "R56", "year_from": 2007, "year_to": 2013},
+      {"name": "F56", "year_from": 2014, "year_to": 2021},
+      {"name": "F56 LCI2", "year_from": 2022, "year_to": 2025}
+    ]
+  },
+  "Nissan": {
+    "Qashqai": [
+      {"name": "J10", "year_from": 2006, "year_to": 2013},
+      {"name": "J11", "year_from": 2014, "year_to": 2021},
+      {"name": "J12", "year_from": 2022, "year_to": 2025}
+    ]
+  },
+  "Tesla": {
+    "Model 3": [
+      {"name": "Model 3", "year_from": 2017, "year_to": 2023},
+      {"name": "Model 3 Highland", "year_from": 2024, "year_to": 2025}
+    ]
+  },
+  "Land Rover": {
+    "Defender": [
+      {"name": "Defender Classic", "year_from": 1983, "year_to": 2016},
+      {"name": "L663", "year_from": 2020, "year_to": 2025}
+    ]
+  },
+  "Porsche": {
+    "718 Boxster": [
+      {"name": "986", "year_from": 1996, "year_to": 2004},
+      {"name": "987", "year_from": 2005, "year_to": 2012},
+      {"name": "981", "year_from": 2013, "year_to": 2016},
+      {"name": "982", "year_from": 2017, "year_to": 2025}
+    ]
+  },
+  "Citroen": {
+    "C3": [
+      {"name": "C3 I", "year_from": 2002, "year_to": 2009},
+      {"name": "C3 II", "year_from": 2010, "year_to": 2016},
+      {"name": "C3 III", "year_from": 2017, "year_to": 2025}
+    ],
+    "C5 Break": [
+      {"name": "C5 I", "year_from": 2001, "year_to": 2008},
+      {"name": "C5 II", "year_from": 2009, "year_to": 2017}
+    ],
+    "DS4": [
+      {"name": "DS4", "year_from": 2011, "year_to": 2018}
+    ]
+  },
+  "Citro\u00ebn": {
+    "C3": [
+      {"name": "C3 I", "year_from": 2002, "year_to": 2009},
+      {"name": "C3 II", "year_from": 2010, "year_to": 2016},
+      {"name": "C3 III", "year_from": 2017, "year_to": 2025}
+    ]
+  },
+  "Fiat": {
+    "Freemont": [
+      {"name": "Freemont", "year_from": 2011, "year_to": 2016}
+    ]
+  }
+}

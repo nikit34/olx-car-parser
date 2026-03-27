@@ -45,6 +45,8 @@ class Listing(Base):
     last_seen_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     is_active = Column(Boolean, default=True)
 
+    generation = Column(String)               # Car generation (e.g. "Golf VII", "E90")
+
     price_snapshots = relationship("PriceSnapshot", back_populates="listing", lazy="dynamic")
 
 
@@ -78,3 +80,27 @@ class MarketStats(Base):
     __table_args__ = (
         UniqueConstraint("brand", "model", "year_from", "year_to", "date"),
     )
+
+
+class UnmatchedListing(Base):
+    """Listings where car generation could not be determined."""
+    __tablename__ = "unmatched_listings"
+
+    id = Column(Integer, primary_key=True)
+    olx_id = Column(String, unique=True, nullable=False, index=True)
+    url = Column(Text, nullable=False)
+    title = Column(Text)
+    brand = Column(String, nullable=False)
+    model = Column(String, nullable=False)
+    year = Column(Integer)
+    price_eur = Column(Float)
+    mileage_km = Column(Integer)
+    fuel_type = Column(String)
+    city = Column(String)
+    district = Column(String)
+    seller_type = Column(String)
+    description = Column(Text)
+    reason = Column(String)              # "no_year", "no_generation_match"
+    first_seen_at = Column(DateTime, default=datetime.utcnow)
+    last_seen_at = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=True)

@@ -10,9 +10,10 @@ from rich.table import Table
 
 from src.parser.scraper import OlxScraper, ScraperConfig
 from src.storage.database import get_session, init_db
+from src.models.generations import get_generation
 from src.storage.repository import (
     add_price_snapshot, compute_market_stats, get_listings_df,
-    mark_inactive, upsert_listing,
+    mark_inactive, upsert_listing, upsert_unmatched,
 )
 
 app = typer.Typer(help="OLX.pt Car Parser — scrape, store, analyze")
@@ -63,6 +64,7 @@ def scrape(
     console.print("Saving to database...")
 
     saved = 0
+    unmatched_count = 0
     active_ids = set()
     for raw in raw_listings:
         if not raw.brand and not raw.title:
@@ -95,18 +97,27 @@ def scrape(
             "llm_extras": json.dumps(raw._llm_extras) if hasattr(raw, "_llm_extras") and raw._llm_extras else None,
         }
 
-        listing = upsert_listing(session, data)
-
-        if raw.price_eur is not None:
-            add_price_snapshot(session, listing.id, raw.price_eur, raw.negotiable)
-
-        active_ids.add(raw.olx_id)
-        saved += 1
+        # Determine generation — route to main or unmatched table
+        generation = get_generation(raw.brand, raw.model or "", raw.year)
+        if generation:
+            data["generation"] = generation
+            listing = upsert_listing(session, data)
+            if raw.price_eur is not None:
+                add_price_snapshot(session, listing.id, raw.price_eur, raw.negotiable)
+            active_ids.add(raw.olx_id)
+            saved += 1
+        else:
+            reason = "no_year" if not raw.year else "no_generation_match"
+            data["price_eur"] = raw.price_eur
+            upsert_unmatched(session, data, reason)
+            unmatched_count += 1
 
     mark_inactive(session, active_ids)
     session.commit()
 
     console.print(f"[green]Saved {saved} listings to database.[/green]")
+    if unmatched_count:
+        console.print(f"[yellow]{unmatched_count} listings unmatched (no generation) — see dashboard.[/yellow]")
 
     console.print("Computing market stats...")
     compute_market_stats(session)

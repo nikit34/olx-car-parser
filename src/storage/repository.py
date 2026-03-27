@@ -6,7 +6,7 @@ import pandas as pd
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.models.listing import Listing, PriceSnapshot, MarketStats
+from src.models.listing import Listing, PriceSnapshot, MarketStats, UnmatchedListing
 from src.models.portfolio import PortfolioDeal
 
 
@@ -38,6 +38,39 @@ def add_price_snapshot(session: Session, listing_id: int, price_eur: float,
         scraped_at=datetime.utcnow(),
     )
     session.add(snap)
+
+
+def upsert_unmatched(session: Session, data: dict, reason: str) -> UnmatchedListing:
+    """Insert or update an unmatched listing."""
+    row = session.query(UnmatchedListing).filter_by(olx_id=data["olx_id"]).first()
+    now = datetime.utcnow()
+    fields = {
+        "url": data.get("url", ""),
+        "title": data.get("title"),
+        "brand": data.get("brand", ""),
+        "model": data.get("model", ""),
+        "year": data.get("year"),
+        "price_eur": data.get("price_eur"),
+        "mileage_km": data.get("mileage_km"),
+        "fuel_type": data.get("fuel_type"),
+        "city": data.get("city"),
+        "district": data.get("district"),
+        "seller_type": data.get("seller_type"),
+        "description": data.get("description"),
+        "reason": reason,
+    }
+    if row:
+        for k, v in fields.items():
+            if v is not None:
+                setattr(row, k, v)
+        row.last_seen_at = now
+        row.is_active = True
+    else:
+        row = UnmatchedListing(olx_id=data["olx_id"], **fields,
+                               first_seen_at=now, last_seen_at=now, is_active=True)
+        session.add(row)
+    session.flush()
+    return row
 
 
 def mark_inactive(session: Session, active_olx_ids: set[str]):
@@ -154,6 +187,20 @@ def get_price_history_df(session: Session) -> pd.DataFrame:
         "min_price_eur": s.min_price_eur, "max_price_eur": s.max_price_eur,
         "listing_count": s.listing_count,
     } for s in q])
+
+
+def get_unmatched_df(session: Session) -> pd.DataFrame:
+    """Unmatched listings as DataFrame."""
+    q = session.query(UnmatchedListing).filter(UnmatchedListing.is_active == True).all()
+    if not q:
+        return pd.DataFrame()
+    return pd.DataFrame([{
+        "olx_id": u.olx_id, "url": u.url, "title": u.title,
+        "brand": u.brand, "model": u.model, "year": u.year,
+        "price_eur": u.price_eur, "mileage_km": u.mileage_km,
+        "fuel_type": u.fuel_type, "city": u.city, "district": u.district,
+        "reason": u.reason, "first_seen_at": u.first_seen_at,
+    } for u in q])
 
 
 # ---------------------------------------------------------------------------

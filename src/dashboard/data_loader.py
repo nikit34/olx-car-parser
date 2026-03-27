@@ -143,6 +143,21 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
     return df
 
 
+def load_unmatched() -> pd.DataFrame:
+    """Load unmatched listings from database."""
+    if not _ensure_db():
+        return pd.DataFrame()
+    try:
+        from src.storage.database import init_db, get_session
+        from src.storage.repository import get_unmatched_df
+        init_db(str(DB_PATH))
+        session = get_session()
+        return get_unmatched_df(session)
+    except Exception as e:
+        print(f"Warning: could not load unmatched: {e}")
+        return pd.DataFrame()
+
+
 def load_portfolio() -> pd.DataFrame:
     """Load portfolio deals from database."""
     if not _ensure_db():
@@ -187,4 +202,6 @@ def load_all():
             if row["model"] not in brands_models[brand]:
                 brands_models[brand].append(row["model"])
 
-    return listings, history, signals, brands_models, turnover, portfolio
+    unmatched = load_unmatched()
+
+    return listings, history, signals, brands_models, turnover, portfolio, unmatched

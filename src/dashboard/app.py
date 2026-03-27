@@ -33,7 +33,7 @@ def load_data():
     return load_all()
 
 
-listings_df, history_df, signals_df, brands_models, turnover_df, _portfolio_init = load_data()
+listings_df, history_df, signals_df, brands_models, turnover_df, _portfolio_init, unmatched_df = load_data()
 
 # Portfolio loaded separately (not cached — it's mutable)
 def get_portfolio():
@@ -168,9 +168,9 @@ st.divider()
 # Tabs
 # ---------------------------------------------------------------------------
 (tab_trends, tab_signals, tab_listings, tab_compare, tab_geo,
- tab_estimator, tab_profit, tab_premiums, tab_portfolio) = st.tabs([
+ tab_estimator, tab_profit, tab_premiums, tab_portfolio, tab_unmatched) = st.tabs([
     "Price Trends", "Buy Signals", "Listings", "Compare Models", "Geography",
-    "Price Estimator", "Profit Calculator", "Feature Premiums", "Portfolio",
+    "Price Estimator", "Profit Calculator", "Feature Premiums", "Portfolio", "Unmatched",
 ])
 
 # ---- TAB 1: Price Trends + Seasonality -----------------------------------
@@ -789,6 +789,47 @@ with tab_portfolio:
                     })
                     st.success("Sale recorded!")
                     st.rerun()
+
+# ---- TAB 10: Unmatched Listings -------------------------------------------
+with tab_unmatched:
+    st.subheader("Unmatched Listings")
+    st.caption("Listings where car generation could not be determined — review and add to generations seed")
+
+    if unmatched_df.empty:
+        st.info("No unmatched listings. All scraped cars have a known generation.")
+    else:
+        st.metric("Unmatched", len(unmatched_df))
+
+        # Summary: missing brand+model combos
+        summary = (
+            unmatched_df.groupby(["brand", "model", "reason"])
+            .agg(count=("olx_id", "size"), years=("year", lambda y: sorted(set(int(v) for v in y.dropna()))))
+            .reset_index()
+            .sort_values("count", ascending=False)
+        )
+        st.subheader("Missing Generations")
+        st.dataframe(summary.rename(columns={
+            "brand": "Brand", "model": "Model", "reason": "Reason",
+            "count": "Count", "years": "Years",
+        }), hide_index=True)
+
+        # Full table
+        st.subheader("All Unmatched")
+        um_cols = ["brand", "model", "year", "price_eur", "mileage_km",
+                   "fuel_type", "city", "district", "reason"]
+        if "url" in unmatched_df.columns:
+            um_cols.append("url")
+        avail = [c for c in um_cols if c in unmatched_df.columns]
+        st.dataframe(
+            unmatched_df[avail].rename(columns={
+                "brand": "Brand", "model": "Model", "year": "Year",
+                "price_eur": "Price (EUR)", "mileage_km": "Mileage",
+                "fuel_type": "Fuel", "city": "City", "district": "District",
+                "reason": "Reason", "url": "Link",
+            }),
+            hide_index=True,
+            column_config={"Link": st.column_config.LinkColumn("Link", display_text="Open")} if "url" in avail else {},
+        )
 
 # ---------------------------------------------------------------------------
 # Footer

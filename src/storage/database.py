@@ -6,6 +6,8 @@ from pathlib import Path
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
+from sqlalchemy import text
+
 from src.models.listing import Base
 import src.models.portfolio  # noqa: F401 — register PortfolioDeal with Base
 
@@ -43,4 +45,12 @@ def get_session():
 def init_db(db_path: str | None = None):
     engine = get_engine(db_path)
     Base.metadata.create_all(engine)
+    # Migrate: add generation column to existing listings tables
+    with engine.connect() as conn:
+        for col, table in [("generation", "listings"), ("generation", "listings")]:
+            try:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} TEXT"))
+                conn.commit()
+            except Exception:
+                conn.rollback()
     return engine
