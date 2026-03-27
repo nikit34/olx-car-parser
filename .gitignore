@@ -12,3 +12,8 @@ dist/
 build/
 .ruff_cache/
 .pytest_cache/
+
+# Local IDE/agent state
+.claude/
+.cursor/
+.DS_Store

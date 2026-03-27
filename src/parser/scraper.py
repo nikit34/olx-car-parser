@@ -302,17 +302,20 @@ class OlxScraper:
         if prices_wrapper:
             details["negotiable"] = "negociável" in prices_wrapper.get_text(strip=True).lower()
 
-        # 4) Location from map section
-        map_section = soup.select_one("[data-testid='map-aside-section']")
-        if map_section:
-            loc_paragraphs = map_section.find_all("p")
-            loc_texts = [p.get_text(strip=True) for p in loc_paragraphs
-                         if p.get_text(strip=True) and p.get_text(strip=True) != "Localização"]
-            if len(loc_texts) >= 2:
-                details["city"] = loc_texts[0]
-                details["district"] = loc_texts[1]
-            elif len(loc_texts) == 1:
-                details["city"] = loc_texts[0]
+        # 4) District + city from breadcrumbs
+        #    Pattern: ... > Brand - District > Brand - City
+        breadcrumbs = soup.select_one("[data-testid='breadcrumbs']")
+        if breadcrumbs:
+            items = [el.get_text(strip=True) for el in breadcrumbs.select("[data-testid='breadcrumb-item']")]
+            # Last 2 items with " - " are "Brand - District" and "Brand - City"
+            loc_items = [it for it in items if " - " in it]
+            if len(loc_items) >= 2:
+                details["district"] = loc_items[-2].split(" - ", 1)[-1].strip()
+                city_from_bc = loc_items[-1].split(" - ", 1)[-1].strip()
+                if city_from_bc:
+                    details["city"] = city_from_bc
+            elif len(loc_items) == 1:
+                details["district"] = loc_items[0].split(" - ", 1)[-1].strip()
 
         # 5) Ad ID from footer (fallback)
         if "olx_id" not in details:
