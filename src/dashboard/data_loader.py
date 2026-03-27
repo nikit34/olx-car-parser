@@ -72,44 +72,56 @@ def load_from_db() -> tuple[pd.DataFrame, pd.DataFrame] | None:
 
 
 def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.DataFrame:
-    """Find listings priced significantly below market median."""
+    """Find listings priced significantly below market median (generation-aware)."""
     if history_df.empty or listings_df.empty:
         return pd.DataFrame()
 
-    signals = []
-    latest_stats = history_df.sort_values("date").groupby(["brand", "model"]).last().reset_index()
-    active = listings_df[listings_df["is_active"]] if "is_active" in listings_df.columns else listings_df
+    from src.models.generations import get_generation
 
-    model_counts = (
-        active[active["price_eur"].notna()]
-        .groupby(["brand", "model"])
-        .size()
-        .reset_index(name="sample_size")
+    signals = []
+    active = listings_df[listings_df["is_active"]].copy() if "is_active" in listings_df.columns else listings_df.copy()
+
+    # Assign generation to each listing
+    active["generation"] = active.apply(
+        lambda r: get_generation(r["brand"], r["model"], r.get("year")), axis=1
+    )
+
+    # Precompute generation-level medians from active listings
+    priced = active[active["price_eur"].notna() & active["generation"].notna()]
+    gen_stats = (
+        priced
+        .groupby(["brand", "model", "generation"])["price_eur"]
+        .agg(gen_median="median", gen_count="count")
+        .reset_index()
     )
 
     for _, listing in active.iterrows():
         if pd.isna(listing.get("price_eur")):
             continue
-        stat = latest_stats[
-            (latest_stats["brand"] == listing["brand"])
-            & (latest_stats["model"] == listing["model"])
-        ]
-        if stat.empty:
+
+        generation = listing.get("generation")
+        if not generation:
             continue
-        median = stat.iloc[0]["median_price_eur"]
+
+        gs = gen_stats[
+            (gen_stats["brand"] == listing["brand"])
+            & (gen_stats["model"] == listing["model"])
+            & (gen_stats["generation"] == generation)
+        ]
+        if gs.empty:
+            continue
+        median = gs.iloc[0]["gen_median"]
+        sample = int(gs.iloc[0]["gen_count"])
+
         if median and listing["price_eur"] < median * 0.85:
             discount = round((1 - listing["price_eur"] / median) * 100, 1)
-            count_row = model_counts[
-                (model_counts["brand"] == listing["brand"])
-                & (model_counts["model"] == listing["model"])
-            ]
-            sample = int(count_row.iloc[0]["sample_size"]) if not count_row.empty else 1
             sig = {
                 "olx_id": listing.get("olx_id", ""),
                 "url": listing.get("url", ""),
                 "brand": listing["brand"],
                 "model": listing["model"],
                 "year": listing.get("year"),
+                "generation": generation or "",
                 "price_eur": listing["price_eur"],
                 "median_price_eur": round(median),
                 "discount_pct": discount,

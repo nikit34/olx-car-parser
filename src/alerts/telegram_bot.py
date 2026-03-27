@@ -46,6 +46,7 @@ def _format_deal(deal: dict) -> str:
     brand = deal.get("brand", "?")
     model = deal.get("model", "?")
     year = deal.get("year", "?")
+    generation = deal.get("generation", "")
     city = deal.get("city", "")
     district = deal.get("district", "")
     mileage = deal.get("mileage_km")
@@ -53,9 +54,10 @@ def _format_deal(deal: dict) -> str:
 
     fire = "🔥🔥🔥" if discount > 25 else ("🔥🔥" if discount > 20 else "🔥")
     location = f"{city}, {district}" if city else district
+    gen_tag = f" ({generation})" if generation else ""
 
     lines = [
-        f"{fire} <b>{brand} {model} {year}</b>",
+        f"{fire} <b>{brand} {model} {year}</b>{gen_tag}",
         f"💰 <b>{price:,} EUR</b> (median {median:,} EUR)",
         f"📉 <b>-{discount}%</b> below market",
     ]

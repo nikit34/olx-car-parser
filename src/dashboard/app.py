@@ -251,7 +251,7 @@ with tab_signals:
                 lambda n: "High" if n >= 10 else ("Medium" if n >= 5 else "Low")
             )
 
-        signal_cols = ["deal", "brand", "model", "year", "price_eur", "median_price_eur", "discount_pct"]
+        signal_cols = ["deal", "brand", "model", "generation", "year", "price_eur", "median_price_eur", "discount_pct"]
         if "sample_size" in top.columns:
             signal_cols += ["sample_size", "confidence"]
         if "days_listed" in top.columns:
@@ -266,7 +266,8 @@ with tab_signals:
 
         st.dataframe(
             top[signal_cols].rename(columns={
-                "deal": "Deal", "brand": "Brand", "model": "Model", "year": "Year",
+                "deal": "Deal", "brand": "Brand", "model": "Model",
+                "generation": "Generation", "year": "Year",
                 "price_eur": "Price (EUR)", "median_price_eur": "Median (EUR)",
                 "discount_pct": "Discount %", "sample_size": "# Listings",
                 "confidence": "Confidence", "days_listed": "Days Listed",
