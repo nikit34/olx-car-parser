@@ -14,6 +14,7 @@ import re
 import time
 from dataclasses import dataclass
 
+import httpx
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,7 @@ class ScraperConfig:
     delay_max: float = 7.0
     private_only: bool = True
     timeout: float = 30.0
+    proxy: str | None = None  # e.g. "http://user:pass@proxy:port"
 
 
 @dataclass
@@ -100,49 +102,49 @@ class RawListing:
 class OlxScraper:
     def __init__(self, config: ScraperConfig | None = None):
         self.config = config or ScraperConfig()
-        self._playwright = None
-        self._browser = None
-        self._page = None
-        self._init_browser()
-
-    def _init_browser(self):
-        """Launch a headless Chromium browser via Playwright."""
-        from playwright.sync_api import sync_playwright
-        self._playwright = sync_playwright().start()
-        self._browser = self._playwright.chromium.launch(
-            headless=True,
-            args=["--disable-blink-features=AutomationControlled"],
-        )
-        self._page = self._browser.new_page(
-            locale="pt-PT",
-            user_agent=random.choice(USER_AGENTS),
-            extra_http_headers={
-                "Accept-Language": "pt-PT,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+        client_kwargs = {
+            "timeout": self.config.timeout,
+            "follow_redirects": True,
+            "headers": {
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.5",
             },
-        )
-        # Warmup: visit homepage to get cookies and pass any JS challenges
-        logger.info("Warming up browser session...")
-        self._page.goto("https://www.olx.pt/", wait_until="domcontentloaded",
-                        timeout=int(self.config.timeout * 1000))
-        self._page.wait_for_timeout(2000)
-        logger.info("Browser session ready")
+        }
+        if self.config.proxy:
+            client_kwargs["proxy"] = self.config.proxy
+            logger.info("Using proxy: %s", self.config.proxy.split("@")[-1] if "@" in self.config.proxy else self.config.proxy)
+        self.client = httpx.Client(**client_kwargs)
+        self._consecutive_403 = 0
+
+    def _random_headers(self) -> dict:
+        return {"User-Agent": random.choice(USER_AGENTS)}
 
     def _delay(self):
         time.sleep(random.uniform(self.config.delay_min, self.config.delay_max))
 
-    def _fetch(self, url: str) -> str | None:
-        """Fetch URL using real browser via Playwright."""
-        try:
-            resp = self._page.goto(url, wait_until="domcontentloaded",
-                                   timeout=int(self.config.timeout * 1000))
-            if resp and resp.status == 403:
-                logger.warning("HTTP 403 for %s", url)
-                return None
-            self._page.wait_for_timeout(1500)
-            return self._page.content()
-        except Exception as e:
-            logger.warning("Browser fetch error for %s: %s", url, e)
-            return None
+    def _fetch(self, url: str, retries: int = 3) -> str | None:
+        """Fetch URL with retry + exponential backoff on 403."""
+        for attempt in range(retries):
+            try:
+                resp = self.client.get(url, headers=self._random_headers())
+                resp.raise_for_status()
+                self._consecutive_403 = 0
+                return resp.text
+            except Exception as e:
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                if status == 403:
+                    self._consecutive_403 += 1
+                    wait = min(30 * (2 ** attempt), 120) + random.uniform(5, 15)
+                    logger.warning("403 blocked (attempt %d/%d). Waiting %.0fs...",
+                                   attempt + 1, retries, wait)
+                    if self._consecutive_403 >= 5:
+                        logger.error("Too many consecutive 403s. IP likely blocked.")
+                        return None
+                    time.sleep(wait)
+                else:
+                    logger.warning("Fetch error for %s: %s", url, e)
+                    return None
+        return None
 
     # ------------------------------------------------------------------
     # Search results page
@@ -369,12 +371,7 @@ class OlxScraper:
         return all_listings
 
     def close(self):
-        if self._page:
-            self._page.close()
-        if self._browser:
-            self._browser.close()
-        if self._playwright:
-            self._playwright.stop()
+        self.client.close()
 
     def __enter__(self):
         return self
