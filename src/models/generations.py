@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 from pathlib import Path
 import re
 import urllib.parse
@@ -13,6 +14,7 @@ _DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 _CACHE_PATH = _DATA_DIR / "generations.json"
 _SEED_PATH = _DATA_DIR / "generations_seed.json"
 _generations: dict | None = None
+_CACHE_MAX_AGE = 30 * 24 * 3600  # refresh from Wikidata every 30 days
 
 WIKIDATA_ENDPOINT = "https://query.wikidata.org/sparql"
 
@@ -200,11 +202,26 @@ def fetch_generations() -> dict:
     return result
 
 
+def _cache_is_stale() -> bool:
+    """Check if cache file is missing or older than _CACHE_MAX_AGE."""
+    if not _CACHE_PATH.exists():
+        return True
+    age = time.time() - _CACHE_PATH.stat().st_mtime
+    return age > _CACHE_MAX_AGE
+
+
 def load_generations() -> dict:
-    """Load from cache; fetch from Wikidata if cache is missing."""
+    """Load generations, auto-fetching from Wikidata if cache is stale."""
     global _generations
     if _generations is not None:
         return _generations
+
+    if _cache_is_stale():
+        try:
+            _generations = fetch_generations()
+            return _generations
+        except Exception as e:
+            logger.warning("Wikidata fetch failed, using local data: %s", e)
 
     if _CACHE_PATH.exists():
         with open(_CACHE_PATH, encoding="utf-8") as f:
@@ -213,11 +230,7 @@ def load_generations() -> dict:
         with open(_SEED_PATH, encoding="utf-8") as f:
             _generations = json.load(f)
     else:
-        try:
-            _generations = fetch_generations()
-        except Exception as e:
-            logger.warning("Could not fetch generations: %s", e)
-            _generations = {}
+        _generations = {}
 
     return _generations
 
