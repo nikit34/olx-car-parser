@@ -1,24 +1,18 @@
-# OLX Car Parser Settings
+# OLX.pt Car Parser Settings
 
 scraper:
-  base_url: "https://www.olx.ua/transport/legkovye-avtomobili/"
-  # Scrape interval in hours
+  base_url: "https://www.olx.pt/carros-motos-e-barcos/carros/"
   interval_hours: 6
-  # Delay between requests (seconds) to avoid blocking
   request_delay_min: 2.0
   request_delay_max: 5.0
-  # Max pages to scrape per run
   max_pages: 50
-  # Only private sellers
   private_only: true
 
 database:
   path: "data/olx_cars.db"
 
 analytics:
-  # Rolling window for trend calculation (days)
   trend_window_days: 30
-  # Price drop threshold to trigger buy signal (%)
   buy_signal_threshold: 10
 
 logging:

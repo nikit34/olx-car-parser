@@ -1,33 +1,44 @@
-# Car models to track
-# Add models you're interested in buying/selling
+# Car models to track on OLX.pt (Portugal)
 
 watchlist:
-  - brand: Toyota
-    model: Camry
+  - brand: BMW
+    model: "320"
     year_from: 2015
     year_to: 2022
-    max_budget_usd: 18000
+    max_budget_eur: 22000
+
+  - brand: Mercedes-Benz
+    model: C 220
+    year_from: 2016
+    year_to: 2022
+    max_budget_eur: 25000
+
+  - brand: Volkswagen
+    model: Golf
+    year_from: 2015
+    year_to: 2023
+    max_budget_eur: 16000
+
+  - brand: Audi
+    model: A3
+    year_from: 2016
+    year_to: 2023
+    max_budget_eur: 20000
+
+  - brand: Peugeot
+    model: "3008"
+    year_from: 2017
+    year_to: 2023
+    max_budget_eur: 22000
 
   - brand: Toyota
     model: RAV4
     year_from: 2016
     year_to: 2023
-    max_budget_usd: 25000
+    max_budget_eur: 28000
 
-  - brand: Volkswagen
-    model: Passat
-    year_from: 2014
-    year_to: 2021
-    max_budget_usd: 16000
-
-  - brand: Skoda
-    model: Octavia
-    year_from: 2015
-    year_to: 2022
-    max_budget_usd: 14000
-
-  - brand: Hyundai
-    model: Tucson
-    year_from: 2016
+  - brand: Renault
+    model: Captur
+    year_from: 2017
     year_to: 2023
-    max_budget_usd: 22000
+    max_budget_eur: 16000
