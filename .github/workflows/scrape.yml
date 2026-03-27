@@ -1,0 +1,35 @@
+name: Scrape OLX
+
+on:
+  schedule:
+    - cron: "0 6 * * *"        # daily at 06:00 UTC
+  workflow_dispatch:             # manual trigger
+
+jobs:
+  scrape:
+    runs-on: [self-hosted, olx-scraper]
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Link persistent data directory
+        run: |
+          rm -rf data
+          ln -s /Users/anastasia/olx-car-parser/data data
+
+      - name: Set up Python venv
+        run: |
+          /opt/homebrew/bin/python3.11 -m venv .venv 2>/dev/null || true
+          .venv/bin/pip install -q -r requirements.txt
+
+      - name: Run scraper
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: .venv/bin/python -m src.cli scrape
+
+      - name: Upload DB to GitHub Releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/upload_db.sh
