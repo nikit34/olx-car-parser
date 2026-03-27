@@ -101,58 +101,48 @@ class RawListing:
 class OlxScraper:
     def __init__(self, config: ScraperConfig | None = None):
         self.config = config or ScraperConfig()
-        self._ua = random.choice(USER_AGENTS)
         self.client = httpx.Client(
             timeout=self.config.timeout,
             follow_redirects=True,
             headers={
-                "User-Agent": self._ua,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-                "Accept-Language": "pt-PT,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-                "Accept-Encoding": "gzip, deflate",
-                "Cache-Control": "max-age=0",
-                "Sec-Fetch-Dest": "document",
-                "Sec-Fetch-Mode": "navigate",
-                "Sec-Fetch-Site": "none",
-                "Sec-Fetch-User": "?1",
-                "Upgrade-Insecure-Requests": "1",
-                "Sec-CH-UA": '"Chromium";v="125", "Google Chrome";v="125", "Not=A?Brand";v="24"',
-                "Sec-CH-UA-Mobile": "?0",
-                "Sec-CH-UA-Platform": '"macOS"',
-                "DNT": "1",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.5",
             },
         )
-        # Warm up session — grab cookies from the homepage
-        self._warmup()
-
-    def _warmup(self):
-        """Visit homepage to obtain session cookies before scraping."""
-        try:
-            logger.info("Warming up session with OLX.pt homepage...")
-            resp = self.client.get("https://www.olx.pt/", follow_redirects=True)
-            logger.info("Warmup response: %s", resp.status_code)
-        except httpx.RequestError as e:
-            logger.warning("Warmup failed: %s", e)
+        self._consecutive_403 = 0
 
     def _random_headers(self) -> dict:
-        return {
-            "Referer": "https://www.olx.pt/",
-        }
+        return {"User-Agent": random.choice(USER_AGENTS)}
 
     def _delay(self):
         time.sleep(random.uniform(self.config.delay_min, self.config.delay_max))
 
-    def _fetch(self, url: str) -> str | None:
-        try:
-            resp = self.client.get(url, headers=self._random_headers())
-            resp.raise_for_status()
-            return resp.text
-        except httpx.HTTPStatusError as e:
-            logger.warning("HTTP %s for %s", e.response.status_code, url)
-            return None
-        except httpx.RequestError as e:
-            logger.warning("Request error for %s: %s", url, e)
-            return None
+    def _fetch(self, url: str, retries: int = 3) -> str | None:
+        """Fetch URL with retry + exponential backoff on 403."""
+        for attempt in range(retries):
+            try:
+                resp = self.client.get(url, headers=self._random_headers())
+                resp.raise_for_status()
+                self._consecutive_403 = 0
+                return resp.text
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 403:
+                    self._consecutive_403 += 1
+                    wait = min(30 * (2 ** attempt), 120) + random.uniform(5, 15)
+                    logger.warning("403 blocked (attempt %d/%d). Waiting %.0fs...",
+                                   attempt + 1, retries, wait)
+                    if self._consecutive_403 >= 5:
+                        logger.error("Too many consecutive 403s. IP likely blocked. "
+                                     "Wait 10-15 minutes and try again.")
+                        return None
+                    time.sleep(wait)
+                else:
+                    logger.warning("HTTP %s for %s", e.response.status_code, url)
+                    return None
+            except httpx.RequestError as e:
+                logger.warning("Request error for %s: %s", url, e)
+                return None
+        return None
 
     # ------------------------------------------------------------------
     # Search results page
