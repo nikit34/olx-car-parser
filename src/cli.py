@@ -47,6 +47,7 @@ def scrape(
     delay_min: float = typer.Option(None, help="Min delay between requests (sec)"),
     delay_max: float = typer.Option(None, help="Max delay between requests (sec)"),
     private_only: bool = typer.Option(None, help="Only private sellers (Particular)"),
+    concurrency: int = typer.Option(None, help="Parallel detail page workers (default 5)"),
 ):
     """Scrape OLX.pt car listings and save to database."""
     # Prevent concurrent scrapes
@@ -67,6 +68,7 @@ def scrape(
         delay_min=delay_min if delay_min is not None else cfg.get("request_delay_min", 2.0),
         delay_max=delay_max if delay_max is not None else cfg.get("request_delay_max", 5.0),
         private_only=private_only if private_only is not None else cfg.get("private_only", True),
+        concurrency=concurrency if concurrency is not None else cfg.get("concurrency", 5),
     )
 
     console.print(f"[bold]Starting scrape of OLX.pt: up to {config.max_pages} pages...[/bold]")

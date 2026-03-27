@@ -7,6 +7,7 @@ scraper:
   request_delay_max: 5.0
   max_pages: 999
   private_only: true
+  concurrency: 5
 
 database:
   path: "data/olx_cars.db"

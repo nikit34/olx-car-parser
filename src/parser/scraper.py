@@ -9,7 +9,9 @@ import json
 import logging
 import random
 import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
 import httpx
@@ -64,6 +66,7 @@ class ScraperConfig:
     delay_max: float = 7.0
     private_only: bool = True
     timeout: float = 30.0
+    concurrency: int = 5
 
 
 @dataclass
@@ -109,6 +112,8 @@ class OlxScraper:
             },
         )
         self._consecutive_403 = 0
+        self._lock_403 = threading.Lock()
+        self._stop_event = threading.Event()
 
     def _random_headers(self) -> dict:
         return {"User-Agent": random.choice(USER_AGENTS)}
@@ -119,20 +124,25 @@ class OlxScraper:
     def _fetch(self, url: str, retries: int = 3) -> tuple[str, str] | None:
         """Fetch *url* and return ``(final_url, html)`` or *None*."""
         for attempt in range(retries):
+            if self._stop_event.is_set():
+                return None
             try:
                 resp = self.client.get(url, headers=self._random_headers())
                 resp.raise_for_status()
-                self._consecutive_403 = 0
+                with self._lock_403:
+                    self._consecutive_403 = 0
                 return str(resp.url), resp.text
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 403:
-                    self._consecutive_403 += 1
+                    with self._lock_403:
+                        self._consecutive_403 += 1
+                        if self._consecutive_403 >= 5:
+                            logger.error("Too many 403s. IP blocked. Set OLX_PROXY env var or wait 15min.")
+                            self._stop_event.set()
+                            return None
                     wait = min(30 * (2 ** attempt), 120) + random.uniform(5, 15)
                     logger.warning("403 blocked (attempt %d/%d). Waiting %.0fs...",
                                    attempt + 1, retries, wait)
-                    if self._consecutive_403 >= 5:
-                        logger.error("Too many 403s. IP blocked. Set OLX_PROXY env var or wait 15min.")
-                        return None
                     time.sleep(wait)
                 else:
                     logger.warning("HTTP %s for %s", e.response.status_code, url)
@@ -323,6 +333,15 @@ class OlxScraper:
     # Full scrape
     # ------------------------------------------------------------------
 
+    def _enrich_one(self, listing: "RawListing") -> bool:
+        """Enrich a single listing with detail page data. Returns True on success."""
+        if self._stop_event.is_set() or not listing.url:
+            return False
+        self._delay()
+        details = self.scrape_listing_detail(listing.url)
+        _merge_details(listing, details)
+        return True
+
     def scrape_all(self, enrich_details: bool = True) -> list[RawListing]:
         all_listings = []
         for page in range(1, self.config.max_pages + 1):
@@ -338,15 +357,39 @@ class OlxScraper:
             self._delay()
 
         if enrich_details:
-            logger.info("Enriching %d listings with detail pages...", len(all_listings))
-            for i, listing in enumerate(all_listings):
-                if not listing.url:
-                    continue
-                details = self.scrape_listing_detail(listing.url)
-                _merge_details(listing, details)
-                if (i + 1) % 10 == 0:
-                    logger.info("Enriched %d / %d", i + 1, len(all_listings))
-                self._delay()
+            total = len(all_listings)
+            workers = self.config.concurrency
+            logger.info("Enriching %d listings with detail pages (concurrency=%d)...",
+                        total, workers)
+            enriched = 0
+            failed = 0
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                future_to_idx = {
+                    executor.submit(self._enrich_one, listing): i
+                    for i, listing in enumerate(all_listings)
+                }
+                for future in as_completed(future_to_idx):
+                    try:
+                        if future.result():
+                            enriched += 1
+                        else:
+                            failed += 1
+                    except Exception:
+                        idx = future_to_idx[future]
+                        logger.debug("Error enriching listing %d: %s",
+                                     idx, all_listings[idx].url, exc_info=True)
+                        failed += 1
+                    done = enriched + failed
+                    if done % 50 == 0 or done == total:
+                        logger.info("Enrichment progress: %d / %d (ok=%d, fail=%d)",
+                                    done, total, enriched, failed)
+                    if self._stop_event.is_set():
+                        logger.warning("Stopping enrichment early — IP appears blocked. "
+                                       "Enriched %d / %d before stop.", enriched, total)
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        break
+            logger.info("Enrichment complete: %d succeeded, %d failed out of %d",
+                        enriched, failed, total)
 
         logger.info("Scraping complete: %d total listings", len(all_listings))
         return all_listings
