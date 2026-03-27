@@ -7,7 +7,6 @@ that are not available on CI runners, and OLX blocks datacenter IPs regardless.
 
 import json
 import logging
-import os
 import random
 import re
 import time
@@ -65,7 +64,6 @@ class ScraperConfig:
     delay_max: float = 7.0
     private_only: bool = True
     timeout: float = 30.0
-    proxy: str | None = None  # "http://user:pass@host:port" or env OLX_PROXY
 
 
 @dataclass
@@ -101,20 +99,14 @@ class OlxScraper:
 
     def __init__(self, config: ScraperConfig | None = None):
         self.config = config or ScraperConfig()
-        proxy = self.config.proxy or os.environ.get("OLX_PROXY")
-        client_kwargs: dict = {
-            "timeout": self.config.timeout,
-            "follow_redirects": True,
-            "headers": {
+        self.client = httpx.Client(
+            timeout=self.config.timeout,
+            follow_redirects=True,
+            headers={
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.5",
             },
-        }
-        if proxy:
-            client_kwargs["proxy"] = proxy
-            safe = proxy.split("@")[-1] if "@" in proxy else proxy
-            logger.info("Using proxy: %s", safe)
-        self.client = httpx.Client(**client_kwargs)
+        )
         self._consecutive_403 = 0
 
     def _random_headers(self) -> dict:
