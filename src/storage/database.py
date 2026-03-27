@@ -7,6 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from src.models.listing import Base
+import src.models.portfolio  # noqa: F401 — register PortfolioDeal with Base
 
 _engine = None
 _Session = None

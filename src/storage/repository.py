@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from src.models.listing import Listing, PriceSnapshot, MarketStats
+from src.models.portfolio import PortfolioDeal
 
 
 def upsert_listing(session: Session, data: dict) -> Listing:
@@ -153,3 +154,57 @@ def get_price_history_df(session: Session) -> pd.DataFrame:
         "min_price_eur": s.min_price_eur, "max_price_eur": s.max_price_eur,
         "listing_count": s.listing_count,
     } for s in q])
+
+
+# ---------------------------------------------------------------------------
+# Portfolio CRUD
+# ---------------------------------------------------------------------------
+
+def add_portfolio_deal(session: Session, data: dict) -> PortfolioDeal:
+    deal = PortfolioDeal(**data)
+    session.add(deal)
+    session.commit()
+    return deal
+
+
+def update_portfolio_deal(session: Session, deal_id: int, data: dict):
+    deal = session.query(PortfolioDeal).get(deal_id)
+    if deal:
+        for k, v in data.items():
+            setattr(deal, k, v)
+        session.commit()
+
+
+def delete_portfolio_deal(session: Session, deal_id: int):
+    deal = session.query(PortfolioDeal).get(deal_id)
+    if deal:
+        session.delete(deal)
+        session.commit()
+
+
+def get_portfolio_df(session: Session) -> pd.DataFrame:
+    q = session.query(PortfolioDeal).order_by(PortfolioDeal.buy_date.desc()).all()
+    if not q:
+        return pd.DataFrame()
+    rows = []
+    for d in q:
+        total_cost = (d.buy_price_eur or 0) + (d.repair_cost_eur or 0) + (d.registration_cost_eur or 0)
+        gross_profit = (d.sell_price_eur - total_cost) if d.sell_price_eur else None
+        roi = (gross_profit / total_cost * 100) if gross_profit is not None and total_cost > 0 else None
+        days_inv = (d.sell_date - d.buy_date).days if d.sell_date and d.buy_date else None
+        rows.append({
+            "id": d.id,
+            "brand": d.brand, "model": d.model, "year": d.year,
+            "mileage_km": d.mileage_km, "fuel_type": d.fuel_type,
+            "transmission": d.transmission, "color": d.color, "district": d.district,
+            "buy_date": d.buy_date, "buy_price_eur": d.buy_price_eur,
+            "repair_cost_eur": d.repair_cost_eur or 0,
+            "registration_cost_eur": d.registration_cost_eur or 0,
+            "total_cost_eur": total_cost,
+            "sell_date": d.sell_date, "sell_price_eur": d.sell_price_eur,
+            "gross_profit_eur": gross_profit,
+            "roi_pct": round(roi, 1) if roi is not None else None,
+            "days_in_inventory": days_inv,
+            "notes": d.notes, "olx_listing_id": d.olx_listing_id,
+        })
+    return pd.DataFrame(rows)

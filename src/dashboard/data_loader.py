@@ -120,8 +120,23 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
     return df
 
 
+def load_portfolio() -> pd.DataFrame:
+    """Load portfolio deals from database."""
+    if not _ensure_db():
+        return pd.DataFrame()
+    try:
+        from src.storage.database import init_db, get_session
+        from src.storage.repository import get_portfolio_df
+        init_db(str(DB_PATH))
+        session = get_session()
+        return get_portfolio_df(session)
+    except Exception as e:
+        print(f"Warning: could not load portfolio: {e}")
+        return pd.DataFrame()
+
+
 def load_all():
-    """Load listings, history, signals, brand map, and turnover stats."""
+    """Load listings, history, signals, brand map, turnover, and portfolio."""
     from src.analytics.computed_columns import enrich_listings
     from src.analytics.turnover import compute_turnover_stats
 
@@ -138,6 +153,8 @@ def load_all():
         signals = pd.DataFrame()
         turnover = pd.DataFrame()
 
+    portfolio = load_portfolio()
+
     brands_models = {}
     if not listings.empty:
         for _, row in listings[["brand", "model"]].drop_duplicates().iterrows():
@@ -147,4 +164,4 @@ def load_all():
             if row["model"] not in brands_models[brand]:
                 brands_models[brand].append(row["model"])
 
-    return listings, history, signals, brands_models, turnover
+    return listings, history, signals, brands_models, turnover, portfolio

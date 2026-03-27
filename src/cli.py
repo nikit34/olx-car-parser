@@ -26,7 +26,7 @@ logging.basicConfig(
 
 @app.command()
 def scrape(
-    pages: int = typer.Option(50, help="Max pages to scrape"),
+    pages: int = typer.Option(999, help="Max pages to scrape (stops automatically when no more)"),
     delay_min: float = typer.Option(2.0, help="Min delay between requests (sec)"),
     delay_max: float = typer.Option(5.0, help="Max delay between requests (sec)"),
     private_only: bool = typer.Option(True, help="Only private sellers (Particular)"),
@@ -161,6 +161,18 @@ def dashboard():
     app_path = Path(__file__).parent / "dashboard" / "app.py"
     console.print("[bold]Launching dashboard...[/bold]")
     subprocess.run(["streamlit", "run", str(app_path)])
+
+
+@app.command()
+def alerts():
+    """Check for deal alerts and send to Telegram."""
+    init_db()
+    from src.alerts.telegram_bot import check_and_send_alerts
+    count = check_and_send_alerts()
+    if count:
+        console.print(f"[green]Sent {count} deal alerts to Telegram.[/green]")
+    else:
+        console.print("[yellow]No new alerts to send.[/yellow]")
 
 
 @app.command()

@@ -97,6 +97,11 @@ REMOTE_SCRIPT
     $SSH "cd ~/${REMOTE} && PYTHONPATH=~/${REMOTE} ${VENV}/bin/python -m src.cli scrape 2>&1 | tee -a ${LOG}"
     ;;
 
+  alerts)
+    echo -e "${CYAN}Sending deal alerts...${NC}"
+    $SSH "cd ~/${REMOTE} && PYTHONPATH=~/${REMOTE} ${VENV}/bin/python -m src.cli alerts 2>&1 | tee -a ${LOG}"
+    ;;
+
   dashboard)
     URL="http://${HOST}:8501"
     echo -e "${GREEN}Opening ${URL}${NC}"

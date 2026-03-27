@@ -5,7 +5,7 @@ scraper:
   interval_hours: 6
   request_delay_min: 2.0
   request_delay_max: 5.0
-  max_pages: 50
+  max_pages: 999
   private_only: true
 
 database:
@@ -14,6 +14,12 @@ database:
 analytics:
   trend_window_days: 30
   buy_signal_threshold: 10
+
+alerts:
+  telegram_bot_token: ""     # Get from @BotFather
+  telegram_chat_id: ""       # Your chat/group ID
+  min_discount_pct: 15
+  state_file: "data/alerts_state.json"
 
 logging:
   level: "INFO"
