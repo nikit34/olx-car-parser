@@ -59,7 +59,7 @@ def _format_deal(deal: dict) -> str:
         f"💰 <b>{price:,} EUR</b> (median {median:,} EUR)",
         f"📉 <b>-{discount}%</b> below market",
     ]
-    if mileage:
+    if mileage and not (isinstance(mileage, float) and mileage != mileage):
         lines.append(f"🛣 {int(mileage):,} km")
     if location:
         lines.append(f"📍 {location}")
