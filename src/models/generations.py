@@ -1,4 +1,4 @@
-"""Car generation lookup via Wikidata SPARQL API with local seed fallback."""
+"""Car generation lookup via DBpedia SPARQL API with local cache."""
 
 import json
 import logging
@@ -13,46 +13,50 @@ logger = logging.getLogger(__name__)
 _DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 _CACHE_PATH = _DATA_DIR / "generations.json"
 _generations: dict | None = None
-_CACHE_MAX_AGE = 30 * 24 * 3600  # refresh from Wikidata every 30 days
+_CACHE_MAX_AGE = 30 * 24 * 3600  # refresh every 30 days
 
-WIKIDATA_ENDPOINT = "https://query.wikidata.org/sparql"
+DBPEDIA_ENDPOINT = "https://dbpedia.org/sparql"
 
 _SPARQL_QUERY = """\
-SELECT ?brandLabel ?seriesLabel ?genLabel
-       (YEAR(?start) AS ?yearFrom) (YEAR(?end) AS ?yearTo)
+PREFIX dbo: <http://dbpedia.org/ontology/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT DISTINCT ?genLabel ?mfgLabel ?sy ?ey
 WHERE {
-  ?gen wdt:P31 wd:Q3231690 .
-  ?gen wdt:P179 ?series .
-  ?gen wdt:P580 ?start .
-  OPTIONAL { ?gen wdt:P582 ?end . }
-  { ?gen wdt:P176 ?brand . } UNION { ?gen wdt:P8720 ?brand . }
-  SERVICE wikibase:label { bd:serviceParam wikibase:language "en,mul". }
+  ?gen a dbo:Automobile .
+  ?gen dbo:manufacturer ?mfg .
+  ?gen dbo:productionStartYear ?sy .
+  OPTIONAL { ?gen dbo:productionEndYear ?ey . }
+  ?gen rdfs:label ?genLabel . FILTER(LANG(?genLabel) = "en")
+  ?mfg rdfs:label ?mfgLabel . FILTER(LANG(?mfgLabel) = "en")
 }
-ORDER BY ?brandLabel ?seriesLabel ?yearFrom
+ORDER BY ?mfgLabel ?genLabel
 """
 
-# Wikidata brand labels → OLX brand names
+# DBpedia manufacturer labels → OLX brand names
 _BRAND_NORMALIZE: dict[str, str] = {
     "Volkswagen Group": "Volkswagen",
+    "FAW-Volkswagen": "Volkswagen",
     "Mercedes-Benz Group": "Mercedes-Benz",
+    "Daimler-Benz": "Mercedes-Benz",
     "Audi AG": "Audi",
     "Ford Motor Company": "Ford",
     "Ford of Europe": "Ford",
-    "BMW Group": "BMW",
     "Hyundai Motor Company": "Hyundai",
     "Jaguar Cars": "Jaguar",
+    "Jaguar Land Rover": "Jaguar",
     "Lotus Cars": "Lotus",
-    "General Motors do Brasil": "Chevrolet",
-    "Chrysler Fevre Argentina S.A.": "Chrysler",
-    "GM CAMI Assembly": "GM",
-    "British Motor Corporation": "BMC",
-    "Morris Motors": "Morris",
-    "Chery Automobile": "Chery",
-    "BYD Auto": "BYD",
     "Mitsubishi Motors": "Mitsubishi",
+    "Renault Sport": "Renault",
+    "Peugeot Sport": "Peugeot",
+    "Dongfeng Peugeot-Citroën": "Citroën",
+    "Nissan Motor Company": "Nissan",
+    "Honda Motor Company": "Honda",
+    "Toyota Motor Corporation": "Toyota",
+    "Stellantis": "Stellantis",
 }
 
-# OLX model name → Wikidata-extracted series name
+# OLX model name → DBpedia-extracted series name
 _MODEL_ALIASES: dict[str, dict[str, str]] = {
     "BMW": {
         "116": "1 Series", "118": "1 Series", "120": "1 Series",
@@ -96,29 +100,59 @@ _MODEL_ALIASES: dict[str, dict[str, str]] = {
     },
 }
 
-_Q_CODE_RE = re.compile(r"^Q\d+$")
+# Regex patterns to split "Series (Generation)" from label
+_PAREN_RE = re.compile(r"^(.+?)\s*\(([^)]+)\)\s*$")          # "3 Series (E90)"
+_MK_RE = re.compile(r"^(.+?)\s+(Mk\s*\.?\s*\d+)\s*$", re.I)  # "Golf Mk7"
+_ORDINAL_RE = re.compile(                                      # "Fiesta (fifth generation)"
+    r"^(.+?)\s*\((first|second|third|fourth|fifth|sixth|seventh|"
+    r"eighth|ninth|tenth|eleventh|twelfth)\s+generation.*\)\s*$", re.I
+)
+_ORDINAL_MAP = {
+    "first": "I", "second": "II", "third": "III", "fourth": "IV",
+    "fifth": "V", "sixth": "VI", "seventh": "VII", "eighth": "VIII",
+    "ninth": "IX", "tenth": "X", "eleventh": "XI", "twelfth": "XII",
+}
+
+
+def _parse_label(label: str, brand: str) -> tuple[str, str] | None:
+    """Parse generation label → (series, gen_name). None if not a generation item."""
+    name = label
+    # Strip brand prefix (try various forms)
+    for prefix in (brand, brand.split()[0]):
+        if name.startswith(prefix + " "):
+            name = name[len(prefix) + 1:]
+            break
+
+    # "Fiesta (fifth generation)" → ("Fiesta", "V")
+    m = _ORDINAL_RE.match(name)
+    if m:
+        return m.group(1).strip(), _ORDINAL_MAP[m.group(2).lower()]
+
+    # "3 Series (E90)" / "C-Class (W205)" / "Yaris (XP150)"
+    m = _PAREN_RE.match(name)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+
+    # "Golf Mk7" / "Polo Mk4"
+    m = _MK_RE.match(name)
+    if m:
+        series = m.group(1).strip()
+        gen = m.group(2).replace(" ", "").replace(".", "")
+        return series, gen
+
+    return None
 
 
 def _normalize_brand(label: str) -> str:
-    """Normalize Wikidata brand label to OLX brand name."""
-    if _Q_CODE_RE.match(label):
-        return label  # unresolved — will be skipped
     return _BRAND_NORMALIZE.get(label, label)
 
 
-def _strip_prefix(text: str, prefix: str) -> str:
-    """Strip brand prefix from series/gen labels."""
-    if text.startswith(prefix + " "):
-        return text[len(prefix) + 1:]
-    return text
-
-
 def fetch_generations() -> dict:
-    """Fetch car generation data from Wikidata SPARQL and merge with seed."""
-    logger.info("Fetching car generations from Wikidata SPARQL...")
+    """Fetch car generation data from DBpedia SPARQL and save to cache."""
+    logger.info("Fetching car generations from DBpedia...")
     body = urllib.parse.urlencode({"query": _SPARQL_QUERY}).encode()
     req = urllib.request.Request(
-        WIKIDATA_ENDPOINT,
+        DBPEDIA_ENDPOINT,
         data=body,
         headers={
             "Accept": "application/sparql-results+json",
@@ -126,62 +160,70 @@ def fetch_generations() -> dict:
             "Content-Type": "application/x-www-form-urlencoded",
         },
     )
-    with urllib.request.urlopen(req, timeout=90) as resp:
+    with urllib.request.urlopen(req, timeout=120) as resp:
         raw = json.loads(resp.read())
 
     seen: set[tuple] = set()
     result: dict[str, dict[str, list]] = {}
 
     for row in raw["results"]["bindings"]:
-        raw_brand = row["brandLabel"]["value"]
+        raw_brand = row["mfgLabel"]["value"]
         brand = _normalize_brand(raw_brand)
-        if _Q_CODE_RE.match(brand):
-            continue  # skip unresolved brands
 
-        series_label = row["seriesLabel"]["value"]
         gen_label = row["genLabel"]["value"]
 
-        year_from_raw = row.get("yearFrom", {}).get("value")
-        year_to_raw = row.get("yearTo", {}).get("value")
-        if not year_from_raw:
+        try:
+            year_from = int(row["sy"]["value"])
+        except (ValueError, KeyError):
             continue
-        year_from = int(year_from_raw)
-        year_to = int(year_to_raw) if year_to_raw else 2025
+        year_to_raw = row.get("ey", {}).get("value")
+        try:
+            year_to = int(year_to_raw) if year_to_raw else 2026
+        except ValueError:
+            year_to = 2026
 
-        # Extract model / gen name by stripping brand prefix
-        # Try both raw and normalized brand as prefix
-        model = series_label
-        for prefix in (raw_brand, brand):
-            model = _strip_prefix(model, prefix)
-        gen_name = gen_label
-        for prefix in (raw_brand, brand):
-            gen_name = _strip_prefix(gen_name, prefix)
+        # Validate years
+        if year_from < 1950 or year_from > 2030:
+            continue
 
-        key = (brand, model, gen_name, year_from)
+        # Parse label into (series, generation)
+        parsed = _parse_label(gen_label, brand)
+        if not parsed:
+            # Also try with raw brand name
+            parsed = _parse_label(gen_label, raw_brand)
+        if not parsed:
+            continue
+
+        series, gen_name = parsed
+
+        key = (brand, series, gen_name)
         if key in seen:
             continue
         seen.add(key)
 
-        result.setdefault(brand, {}).setdefault(model, []).append({
+        result.setdefault(brand, {}).setdefault(series, []).append({
             "name": gen_name,
             "year_from": year_from,
             "year_to": year_to,
         })
 
-    # Sort generations by year_from
+    # Sort and fix year ranges: if year_to <= year_from, infer from next gen
     for brand_data in result.values():
         for model_gens in brand_data.values():
             model_gens.sort(key=lambda g: g["year_from"])
-
-    wikidata_count = sum(len(g) for m in result.values() for g in m.values())
-    logger.info("Wikidata returned %d brands, %d generations", len(result), wikidata_count)
+            for i, gen in enumerate(model_gens):
+                if gen["year_to"] <= gen["year_from"]:
+                    if i + 1 < len(model_gens):
+                        gen["year_to"] = model_gens[i + 1]["year_from"] - 1
+                    else:
+                        gen["year_to"] = 2026
 
     _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(_CACHE_PATH, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
 
     total = sum(len(g) for m in result.values() for g in m.values())
-    logger.info("Total: %d brands, %d generations saved to %s", len(result), total, _CACHE_PATH)
+    logger.info("Saved %d brands, %d generations to %s", len(result), total, _CACHE_PATH)
 
     global _generations
     _generations = result
@@ -189,15 +231,13 @@ def fetch_generations() -> dict:
 
 
 def _cache_is_stale() -> bool:
-    """Check if cache file is missing or older than _CACHE_MAX_AGE."""
     if not _CACHE_PATH.exists():
         return True
-    age = time.time() - _CACHE_PATH.stat().st_mtime
-    return age > _CACHE_MAX_AGE
+    return (time.time() - _CACHE_PATH.stat().st_mtime) > _CACHE_MAX_AGE
 
 
 def load_generations() -> dict:
-    """Load generations, auto-fetching from Wikidata if cache is stale."""
+    """Load generations, auto-fetching from DBpedia if cache is stale."""
     global _generations
     if _generations is not None:
         return _generations
@@ -207,7 +247,7 @@ def load_generations() -> dict:
             _generations = fetch_generations()
             return _generations
         except Exception as e:
-            logger.warning("Wikidata fetch failed, using local data: %s", e)
+            logger.warning("DBpedia fetch failed, using local cache: %s", e)
 
     if _CACHE_PATH.exists():
         with open(_CACHE_PATH, encoding="utf-8") as f:
@@ -247,3 +287,8 @@ if __name__ == "__main__":
     data = fetch_generations()
     total = sum(len(g) for m in data.values() for g in m.values())
     print(f"Total: {len(data)} brands, {total} generations")
+    # Show sample
+    for brand in sorted(data)[:30]:
+        for model in sorted(data[brand]):
+            gens = [g["name"] for g in data[brand][model]]
+            print(f"  {brand:20s} {model:25s} → {gens}")
