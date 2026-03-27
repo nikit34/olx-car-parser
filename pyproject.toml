@@ -28,6 +28,9 @@ dev = [
 [project.scripts]
 olx-parser = "src.cli:app"
 
+[tool.pytest.ini_options]
+markers = ["smoke: live API health checks"]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100

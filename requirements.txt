@@ -9,3 +9,4 @@ pyyaml>=6.0
 rich>=13.0
 streamlit>=1.38
 plotly>=5.22
+pytest>=8.0
