@@ -16,4 +16,5 @@ build/
 # Local IDE/agent state
 .claude/
 .cursor/
+.playwright-mcp/
 .DS_Store
