@@ -206,15 +206,21 @@ with tab_signals:
     else:
         top = filtered_signals.head(20).copy()
         top["deal"] = top["discount_pct"].apply(lambda d: "🔥🔥🔥" if d > 25 else ("🔥🔥" if d > 20 else "🔥"))
+        signal_cols = ["deal", "brand", "model", "year", "price_eur", "median_price_eur", "discount_pct", "city", "district", "mileage_km", "fuel_type"]
+        if "url" in top.columns:
+            signal_cols.append("url")
         st.dataframe(
-            top[["deal", "brand", "model", "year", "price_eur", "median_price_eur", "discount_pct", "city", "district", "mileage_km", "fuel_type"]]
+            top[signal_cols]
             .rename(columns={
                 "deal": "Deal", "brand": "Brand", "model": "Model", "year": "Year",
                 "price_eur": "Price (EUR)", "median_price_eur": "Median (EUR)",
                 "discount_pct": "Discount %", "city": "City", "district": "District",
-                "mileage_km": "Mileage", "fuel_type": "Fuel",
+                "mileage_km": "Mileage", "fuel_type": "Fuel", "url": "Link",
             }),
             width="stretch", hide_index=True,
+            column_config={
+                "Link": st.column_config.LinkColumn("Link", display_text="Open"),
+            },
         )
         fig_disc = px.histogram(filtered_signals, x="discount_pct", nbins=20,
                                 labels={"discount_pct": "Discount below median (%)"}, title="Discount Distribution", height=350)
@@ -226,7 +232,7 @@ with tab_listings:
     display_cols = [c for c in [
         "brand", "model", "year", "price_eur", "mileage_km", "engine_cc",
         "fuel_type", "horsepower", "transmission", "segment",
-        "city", "district", "seller_type", "is_active",
+        "city", "district", "seller_type", "is_active", "url",
     ] if c in filtered_listings.columns]
 
     st.dataframe(
@@ -238,6 +244,7 @@ with tab_listings:
             "engine_cc": st.column_config.NumberColumn("Engine (cc)", format="%d"),
             "horsepower": st.column_config.NumberColumn("HP", format="%d"),
             "is_active": st.column_config.CheckboxColumn("Active"),
+            "url": st.column_config.LinkColumn("Link", display_text="Open"),
         },
     )
     st.caption(f"Showing {len(filtered_listings)} listings")

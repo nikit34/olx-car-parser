@@ -87,6 +87,7 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
             discount = round((1 - listing["price_eur"] / median) * 100, 1)
             signals.append({
                 "olx_id": listing.get("olx_id", ""),
+                "url": listing.get("url", ""),
                 "brand": listing["brand"],
                 "model": listing["model"],
                 "year": listing.get("year"),
