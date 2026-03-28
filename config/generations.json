@@ -163,18 +163,6 @@
         "year_to": 2026
       }
     ],
-    "A1 Sportback": [
-      {
-        "name": "Mk1",
-        "year_from": 2010,
-        "year_to": 2018
-      },
-      {
-        "name": "Mk2",
-        "year_from": 2018,
-        "year_to": 2023
-      }
-    ],
     "A3": [
       {
         "name": "8L",
@@ -236,28 +224,6 @@
         "year_to": 2026
       }
     ],
-    "A5 Cabrio": [
-      {
-        "name": "Mk1 (B2)",
-        "year_from": 1992,
-        "year_to": 1999
-      },
-      {
-        "name": "Mk2 (B6/B7)",
-        "year_from": 2002,
-        "year_to": 2009
-      },
-      {
-        "name": "Mk3 (B8)",
-        "year_from": 2009,
-        "year_to": 2015
-      },
-      {
-        "name": "Mk4 (B9)",
-        "year_from": 2016,
-        "year_to": 2023
-      }
-    ],
     "A6": [
       {
         "name": "C4",
@@ -297,11 +263,11 @@
         "year_to": 2026
       }
     ],
-    "Q4 Sportback e-tron": [
+    "Q4 e-tron": [
       {
-        "name": "Mk1",
+        "name": "Gen1",
         "year_from": 2021,
-        "year_to": 2024
+        "year_to": 2026
       }
     ],
     "Q5": [
@@ -328,26 +294,26 @@
         "year_to": 2024
       }
     ],
-    "S3 Limousine": [
+    "S3": [
       {
-        "name": "Mk1 (8L)",
+        "name": "8L",
         "year_from": 1999,
         "year_to": 2003
       },
       {
-        "name": "Mk2 (8P)",
+        "name": "8P",
         "year_from": 2006,
         "year_to": 2012
       },
       {
-        "name": "Mk3 (8V)",
+        "name": "8V",
         "year_from": 2013,
         "year_to": 2020
       },
       {
-        "name": "Mk4 (8Y)",
+        "name": "8Y",
         "year_from": 2020,
-        "year_to": 2024
+        "year_to": 2026
       }
     ]
   },
@@ -430,28 +396,16 @@
         "year_to": 2026
       }
     ],
-    "418 Gran Coupé": [
+    "4 Series Gran Coupé": [
       {
-        "name": "F34",
+        "name": "F36",
         "year_from": 2014,
         "year_to": 2020
       },
       {
-        "name": "G22",
-        "year_from": 2020,
-        "year_to": 2024
-      }
-    ],
-    "420 Gran Coupé": [
-      {
-        "name": "F34",
-        "year_from": 2014,
-        "year_to": 2020
-      },
-      {
-        "name": "G22",
-        "year_from": 2020,
-        "year_to": 2024
+        "name": "G26",
+        "year_from": 2021,
+        "year_to": 2026
       }
     ],
     "5 Series": [
@@ -503,11 +457,11 @@
         "year_to": 2023
       }
     ],
-    "630 Gran Turismo": [
+    "6 Series Gran Turismo": [
       {
-        "name": "F32/F34",
-        "year_from": 2013,
-        "year_to": 2020
+        "name": "G32",
+        "year_from": 2017,
+        "year_to": 2024
       }
     ],
     "7 Series": [
@@ -579,13 +533,6 @@
         "name": "G80",
         "year_from": 2021,
         "year_to": 2026
-      }
-    ],
-    "Mini Clubman": [
-      {
-        "name": "2007",
-        "year_from": 2007,
-        "year_to": 2024
       }
     ],
     "X1": [
