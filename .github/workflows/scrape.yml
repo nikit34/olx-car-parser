@@ -5,6 +5,9 @@ on:
     - cron: "0 6 * * *"        # daily at 06:00 UTC
   workflow_dispatch:             # manual trigger
 
+permissions:
+  contents: write
+
 jobs:
   scrape:
     runs-on: [self-hosted, olx-scraper]
@@ -29,7 +32,18 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: .venv/bin/python -m src.cli scrape
 
+      - name: Checkpoint WAL
+        run: |
+          sqlite3 data/olx_cars.db "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null || \
+            .venv/bin/python -c "import sqlite3; sqlite3.connect('data/olx_cars.db').execute('PRAGMA wal_checkpoint(TRUNCATE)')"
+
       - name: Upload DB to GitHub Releases
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash scripts/upload_db.sh
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view latest-data 2>/dev/null || \
+            gh release create latest-data \
+              --title "Latest Data" \
+              --notes "Auto-updated database from scraper" \
+              --latest=false
+          gh release upload latest-data data/olx_cars.db --clobber
