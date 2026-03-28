@@ -778,6 +778,34 @@ with tab_trends:
         else:
             st.info("Need at least 3 months of scraped data. Keep the scraper running!")
 
+    # --- Fuel Type Premium Trend ---
+    st.subheader("Fuel Type Premium Trend")
+    st.caption("How median prices change by fuel type over time — spot diesel decline or hybrid growth")
+    if not history_df.empty and "fuel_type" in active.columns:
+        fuel_ts_data = listings_df[
+            listings_df["price_eur"].notna() & listings_df["fuel_type"].notna()
+            & listings_df["first_seen_at"].notna()
+        ].copy() if "first_seen_at" in listings_df.columns else pd.DataFrame()
+
+        if not fuel_ts_data.empty:
+            fuel_ts_data["month"] = pd.to_datetime(fuel_ts_data["first_seen_at"]).dt.to_period("M").dt.to_timestamp()
+            fuel_monthly = (
+                fuel_ts_data.groupby(["month", "fuel_type"])["price_eur"]
+                .median().reset_index()
+            )
+            if len(fuel_monthly["month"].unique()) >= 2:
+                fig_fuel = px.line(
+                    fuel_monthly, x="month", y="price_eur", color="fuel_type",
+                    labels={"month": "Month", "price_eur": "Median Price (EUR)", "fuel_type": "Fuel"},
+                    height=400,
+                )
+                fig_fuel.update_layout(hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=-0.3))
+                st.plotly_chart(fig_fuel, width="stretch")
+            else:
+                st.info("Need at least 2 months of data for fuel type trends.")
+    else:
+        st.info("No fuel type data available yet.")
+
 # ---- TAB 3: Listings Table -------------------------------------------------
 with tab_listings:
     st.subheader("All Listings")
@@ -909,6 +937,163 @@ with tab_compare:
                                                           line=dict(dash="dash")))
                     fig_dep.update_layout(xaxis_title="Year", yaxis_title="Price (EUR)", height=500, hovermode="closest")
                     st.plotly_chart(fig_dep, width="stretch")
+
+        # --- Seller Type Spread (Particular vs Profissional) ---
+        st.subheader("Seller Type Spread")
+        st.caption("Difference between private and dealer prices — this is the flipper's margin")
+        if "seller_type" in active.columns:
+            spread_data = active[active["price_eur"].notna() & active["seller_type"].notna()].copy()
+            spread_data["label"] = spread_data["brand"] + " " + spread_data["model"]
+            spread_agg = spread_data.pivot_table(
+                values="price_eur", index="label", columns="seller_type",
+                aggfunc="median",
+            )
+            if "Particular" in spread_agg.columns and "Profissional" in spread_agg.columns:
+                spread_agg = spread_agg.dropna(subset=["Particular", "Profissional"])
+                spread_agg["spread_eur"] = (spread_agg["Profissional"] - spread_agg["Particular"]).round(0)
+                spread_agg["spread_pct"] = ((spread_agg["spread_eur"] / spread_agg["Particular"]) * 100).round(1)
+                spread_agg = spread_agg.sort_values("spread_eur", ascending=False).reset_index()
+
+                if not spread_agg.empty:
+                    col_sp1, col_sp2 = st.columns(2)
+                    with col_sp1:
+                        top_spread = spread_agg.head(15)
+                        colors = ["#2ecc71" if v >= 0 else "#e74c3c" for v in top_spread["spread_eur"]]
+                        fig_spread = go.Figure(go.Bar(
+                            x=top_spread["spread_eur"], y=top_spread["label"],
+                            orientation="h", marker_color=colors,
+                            text=[f"{v:+,.0f} EUR ({p:+.1f}%)" for v, p in zip(top_spread["spread_eur"], top_spread["spread_pct"])],
+                            textposition="auto",
+                        ))
+                        fig_spread.update_layout(
+                            title="Dealer vs Private Price Gap",
+                            xaxis_title="Spread (EUR)", yaxis_title="",
+                            height=max(300, len(top_spread) * 35 + 80),
+                            yaxis=dict(autorange="reversed"),
+                        )
+                        st.plotly_chart(fig_spread, width="stretch")
+                    with col_sp2:
+                        st.dataframe(
+                            spread_agg[["label", "Particular", "Profissional", "spread_eur", "spread_pct"]].rename(columns={
+                                "label": "Model", "Particular": "Private (EUR)", "Profissional": "Dealer (EUR)",
+                                "spread_eur": "Spread (EUR)", "spread_pct": "Spread %",
+                            }),
+                            hide_index=True,
+                            column_config={
+                                "Private (EUR)": st.column_config.NumberColumn(format="%d EUR"),
+                                "Dealer (EUR)": st.column_config.NumberColumn(format="%d EUR"),
+                                "Spread (EUR)": st.column_config.NumberColumn(format="%+d EUR"),
+                                "Spread %": st.column_config.NumberColumn(format="%+.1f%%"),
+                            },
+                        )
+
+        # --- Mileage Sensitivity ---
+        st.subheader("Mileage Sensitivity")
+        st.caption("Price drop per 10,000 km — models with low sensitivity are better for high-mileage flips")
+        mil_sens_data = active[
+            active["price_eur"].notna() & active["mileage_km"].notna()
+            & (active["mileage_km"] > 0)
+        ].copy()
+        mil_sens_data["label"] = mil_sens_data["brand"] + " " + mil_sens_data["model"]
+
+        sensitivities = []
+        for label, group in mil_sens_data.groupby("label"):
+            if len(group) < 5:
+                continue
+            x = group["mileage_km"].values.astype(float)
+            y = group["price_eur"].values.astype(float)
+            X = np.column_stack([x, np.ones(len(x))])
+            try:
+                coeffs, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
+                eur_per_10k = coeffs[0] * 10000
+                sensitivities.append({"Model": label, "EUR per 10k km": round(eur_per_10k), "Listings": len(group)})
+            except Exception:
+                pass
+
+        if sensitivities:
+            sens_df = pd.DataFrame(sensitivities).sort_values("EUR per 10k km")
+            col_ms1, col_ms2 = st.columns(2)
+            with col_ms1:
+                top_sens = sens_df.head(20)
+                colors = ["#2ecc71" if v >= 0 else "#e74c3c" for v in top_sens["EUR per 10k km"]]
+                fig_sens = go.Figure(go.Bar(
+                    x=top_sens["EUR per 10k km"], y=top_sens["Model"],
+                    orientation="h", marker_color=colors,
+                    text=[f"{v:+,} EUR" for v in top_sens["EUR per 10k km"]],
+                    textposition="auto",
+                ))
+                fig_sens.update_layout(
+                    title="Price Change per 10,000 km",
+                    xaxis_title="EUR per 10k km", yaxis_title="",
+                    height=max(300, len(top_sens) * 30 + 80),
+                    yaxis=dict(autorange="reversed"),
+                )
+                st.plotly_chart(fig_sens, width="stretch")
+            with col_ms2:
+                st.dataframe(
+                    sens_df.rename(columns={"EUR per 10k km": "EUR/10k km"}),
+                    hide_index=True,
+                    column_config={
+                        "EUR/10k km": st.column_config.NumberColumn(format="%+d EUR"),
+                    },
+                )
+
+        # --- Year Sweet Spot ---
+        st.subheader("Year Sweet Spot")
+        st.caption("For each model — which years have the best flip margin (below-market deals available)")
+        sweet_data = active[
+            active["price_eur"].notna() & active["year"].notna()
+        ].copy()
+        sweet_data["label"] = sweet_data["brand"] + " " + sweet_data["model"]
+
+        sweet_spots = []
+        for label, group in sweet_data.groupby("label"):
+            if len(group) < 5:
+                continue
+            model_median = group["price_eur"].median()
+            for yr, yr_group in group.groupby("year"):
+                if len(yr_group) < 2:
+                    continue
+                yr_median = yr_group["price_eur"].median()
+                yr_min = yr_group["price_eur"].min()
+                gap_pct = round((model_median - yr_min) / model_median * 100, 1)
+                sweet_spots.append({
+                    "Model": label, "Year": int(yr), "Listings": len(yr_group),
+                    "Year Median": round(yr_median), "Model Median": round(model_median),
+                    "Best Price": round(yr_min), "Gap %": gap_pct,
+                })
+
+        if sweet_spots:
+            sweet_df = pd.DataFrame(sweet_spots)
+            sweet_df = sweet_df[sweet_df["Listings"] >= 2].sort_values("Gap %", ascending=False)
+            if not sweet_df.empty:
+                pivot_sweet = sweet_df.pivot_table(values="Gap %", index="Model", columns="Year", aggfunc="first")
+                if not pivot_sweet.empty and len(pivot_sweet) >= 2:
+                    fig_sweet = px.imshow(
+                        pivot_sweet.values,
+                        x=[str(int(c)) for c in pivot_sweet.columns],
+                        y=pivot_sweet.index.tolist(),
+                        labels=dict(color="Gap % (higher = better deal)"),
+                        aspect="auto", color_continuous_scale="YlGn",
+                        height=max(300, len(pivot_sweet) * 40 + 80),
+                    )
+                    fig_sweet.update_traces(
+                        text=[[f"{v:.0f}%" if pd.notna(v) else "" for v in row] for row in pivot_sweet.values],
+                        texttemplate="%{text}",
+                    )
+                    fig_sweet.update_layout(title="Deal Gap by Model x Year (higher = bigger discount available)")
+                    st.plotly_chart(fig_sweet, width="stretch")
+
+                st.dataframe(
+                    sweet_df.head(30),
+                    hide_index=True,
+                    column_config={
+                        "Year Median": st.column_config.NumberColumn(format="%d EUR"),
+                        "Model Median": st.column_config.NumberColumn(format="%d EUR"),
+                        "Best Price": st.column_config.NumberColumn(format="%d EUR"),
+                        "Gap %": st.column_config.NumberColumn(format="%.1f%%"),
+                    },
+                )
 
 # ---- TAB 5: Geography + Competition Density ---------------------------------
 with tab_geo:
