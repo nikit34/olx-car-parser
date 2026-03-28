@@ -32,6 +32,11 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: .venv/bin/python -m src.cli scrape
 
+      - name: Send Telegram alerts
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: .venv/bin/python -m src.cli alerts
+
       - name: Checkpoint WAL
         run: |
           sqlite3 data/olx_cars.db "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null || \
