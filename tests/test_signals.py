@@ -11,11 +11,16 @@ class TestComputeSignals:
     def test_empty_inputs(self):
         assert compute_signals(pd.DataFrame(), pd.DataFrame()).empty
 
-    def test_excludes_no_generation(self, sample_listings_df, sample_history_df, generations_data):
+    def test_no_generation_uses_model_fallback(self, sample_listings_df, sample_history_df, generations_data):
         with patch("src.models.generations.load_generations", return_value=generations_data):
             signals = compute_signals(sample_listings_df, sample_history_df)
-            # Listing a4 has no year → no generation → excluded
-            assert "a4" not in signals["olx_id"].values if not signals.empty else True
+            # a4 has no year → no generation, but model-level median is used as fallback
+            # a4 price=5000, model median of [5000,8000,14000,15000]=11000
+            # 5000 < 11000*0.85=9350 → should be a signal via model fallback
+            if not signals.empty and "a4" in signals["olx_id"].values:
+                row = signals[signals["olx_id"] == "a4"].iloc[0]
+                assert row["generation"] == ""
+                assert row["flip_score"] > 0
 
     def test_finds_discount(self, sample_listings_df, sample_history_df, generations_data):
         with patch("src.models.generations.load_generations", return_value=generations_data):
@@ -35,6 +40,6 @@ class TestComputeSignals:
             if not signals.empty:
                 required = {"olx_id", "brand", "model", "generation", "year",
                             "price_eur", "predicted_price", "median_price_eur",
-                            "discount_pct", "undervaluation_pct", "flip_score",
-                            "sample_size"}
+                            "discount_pct", "undervaluation_pct", "year_mult",
+                            "flip_score", "sample_size"}
                 assert required.issubset(set(signals.columns))

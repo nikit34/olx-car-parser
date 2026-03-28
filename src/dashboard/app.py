@@ -252,7 +252,8 @@ with tab_signals:
             )
 
         signal_cols = ["deal", "brand", "model", "generation", "year",
-                       "price_eur", "predicted_price", "undervaluation_pct", "flip_score"]
+                       "price_eur", "predicted_price", "undervaluation_pct",
+                       "year_mult", "flip_score"]
         if "avg_days_to_sell" in top.columns:
             signal_cols.append("avg_days_to_sell")
         if "price_trend_pct" in top.columns:
@@ -268,7 +269,8 @@ with tab_signals:
                 "deal": "Deal", "brand": "Brand", "model": "Model",
                 "generation": "Generation", "year": "Year",
                 "price_eur": "Price (EUR)", "predicted_price": "Fair Price (EUR)",
-                "undervaluation_pct": "Undervalued %", "flip_score": "Flip Score",
+                "undervaluation_pct": "Undervalued %", "year_mult": "Year ×",
+                "flip_score": "Flip Score",
                 "avg_days_to_sell": "Avg Days to Sell", "price_trend_pct": "Trend %",
                 "sample_size": "# Listings", "confidence": "Confidence",
                 "mileage_km": "Mileage", "city": "City", "district": "District",

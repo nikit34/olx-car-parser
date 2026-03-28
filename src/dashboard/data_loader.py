@@ -93,18 +93,29 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         lambda r: get_generation(r["brand"], r["model"], r.get("year")), axis=1
     )
 
-    # --- Generation-level price stats ---
-    priced = active[active["price_eur"].notna() & active["generation"].notna()]
+    # --- Generation-level stats ---
+    priced_gen = active[active["price_eur"].notna() & active["generation"].notna()]
     gen_stats = (
-        priced
+        priced_gen
         .groupby(["brand", "model", "generation"])
-        .agg(gen_median=("price_eur", "median"), gen_count=("price_eur", "count"))
+        .agg(gen_median=("price_eur", "median"), gen_count=("price_eur", "count"),
+             gen_year_median=("year", "median"))
+        .reset_index()
+    )
+
+    # --- Model-level fallback stats (includes cars without generation) ---
+    priced_all = active[active["price_eur"].notna()]
+    model_stats = (
+        priced_all
+        .groupby(["brand", "model"])
+        .agg(model_median=("price_eur", "median"), model_count=("price_eur", "count"),
+             model_year_median=("year", "median"))
         .reset_index()
     )
 
     # --- Regression per generation: price ~ year + mileage ---
     gen_regressions = {}
-    for (brand, model, gen), group in priced.groupby(["brand", "model", "generation"]):
+    for (brand, model, gen), group in priced_gen.groupby(["brand", "model", "generation"]):
         subset = group[group["mileage_km"].notna() & group["year"].notna()]
         if len(subset) < 5:
             continue
@@ -117,6 +128,24 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         try:
             coeffs, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
             gen_regressions[(brand, model, gen)] = coeffs
+        except Exception:
+            pass
+
+    # --- Regression per model (fallback for cars without generation) ---
+    model_regressions = {}
+    for (brand, model), group in priced_all.groupby(["brand", "model"]):
+        subset = group[group["mileage_km"].notna() & group["year"].notna()]
+        if len(subset) < 5:
+            continue
+        X = np.column_stack([
+            subset["year"].values.astype(float),
+            subset["mileage_km"].values.astype(float),
+            np.ones(len(subset)),
+        ])
+        y = subset["price_eur"].values.astype(float)
+        try:
+            coeffs, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
+            model_regressions[(brand, model)] = coeffs
         except Exception:
             pass
 
@@ -149,57 +178,75 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
     for _, listing in active.iterrows():
         if pd.isna(listing.get("price_eur")):
             continue
-        generation = listing.get("generation")
-        if not generation:
-            continue
-
-        gs = gen_stats[
-            (gen_stats["brand"] == listing["brand"])
-            & (gen_stats["model"] == listing["model"])
-            & (gen_stats["generation"] == generation)
-        ]
-        if gs.empty:
-            continue
-        median = gs.iloc[0]["gen_median"]
-        sample = int(gs.iloc[0]["gen_count"])
-
-        if not median or listing["price_eur"] >= median * 0.85:
-            continue
 
         price = listing["price_eur"]
         year = listing.get("year")
         mileage = listing.get("mileage_km")
         brand = listing["brand"]
         model = listing["model"]
+        generation = listing.get("generation")
 
-        # 1. Undervaluation (regression if ≥5 samples, else median)
-        reg_key = (brand, model, generation)
-        if reg_key in gen_regressions and pd.notna(year) and pd.notna(mileage):
-            coeffs = gen_regressions[reg_key]
+        # Resolve comparison group: generation-level if available, else model-level
+        median = None
+        sample = 0
+        group_year_median = None
+        if generation:
+            gs = gen_stats[
+                (gen_stats["brand"] == brand)
+                & (gen_stats["model"] == model)
+                & (gen_stats["generation"] == generation)
+            ]
+            if not gs.empty:
+                median = gs.iloc[0]["gen_median"]
+                sample = int(gs.iloc[0]["gen_count"])
+                group_year_median = gs.iloc[0]["gen_year_median"]
+
+        if median is None:
+            ms = model_stats[
+                (model_stats["brand"] == brand) & (model_stats["model"] == model)
+            ]
+            if ms.empty:
+                continue
+            median = ms.iloc[0]["model_median"]
+            sample = int(ms.iloc[0]["model_count"])
+            group_year_median = ms.iloc[0]["model_year_median"]
+
+        if not median or price >= median * 0.85:
+            continue
+
+        # 1. Undervaluation (regression: generation → model fallback → median)
+        predicted = None
+        if generation and (brand, model, generation) in gen_regressions and pd.notna(year) and pd.notna(mileage):
+            coeffs = gen_regressions[(brand, model, generation)]
             predicted = max(coeffs[0] * float(year) + coeffs[1] * float(mileage) + coeffs[2], 0)
-            if predicted > 0:
-                undervaluation_pct = round((1 - price / predicted) * 100, 1)
-            else:
-                predicted = median
-                undervaluation_pct = round((1 - price / median) * 100, 1)
-        else:
+        if (predicted is None or predicted <= 0) and (brand, model) in model_regressions and pd.notna(year) and pd.notna(mileage):
+            coeffs = model_regressions[(brand, model)]
+            predicted = max(coeffs[0] * float(year) + coeffs[1] * float(mileage) + coeffs[2], 0)
+        if predicted is None or predicted <= 0:
             predicted = median
-            undervaluation_pct = round((1 - price / median) * 100, 1)
 
+        undervaluation_pct = round((1 - price / predicted) * 100, 1)
         discount_pct = round((1 - price / median) * 100, 1)
 
-        # 2. Liquidity multiplier (30 days = 1.0 baseline)
+        # 2. Year multiplier — newer cars hold value better (15% per year above group median)
+        if pd.notna(year) and pd.notna(group_year_median) and group_year_median > 0:
+            year_diff = float(year) - float(group_year_median)
+            year_mult = min(max(1 + year_diff * 0.15, 0.5), 2.0)
+        else:
+            year_mult = 1.0
+
+        # 3. Liquidity multiplier (30 days = 1.0 baseline)
         days_to_sell = liquidity_map.get((brand, model))
         if days_to_sell and days_to_sell > 0:
             liquidity_mult = min(max(30 / days_to_sell, 0.5), 2.0)
         else:
             liquidity_mult = 1.0
 
-        # 3. Trend multiplier (rising market = bonus)
+        # 4. Trend multiplier (rising market = bonus)
         trend_pct = trend_map.get((brand, model), 0.0)
         trend_mult = min(max(1 + trend_pct / 100, 0.8), 1.2)
 
-        flip_score = round(undervaluation_pct * liquidity_mult * trend_mult, 1)
+        flip_score = round(undervaluation_pct * year_mult * liquidity_mult * trend_mult, 1)
 
         sig = {
             "olx_id": listing.get("olx_id", ""),
@@ -213,6 +260,7 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
             "median_price_eur": round(median),
             "discount_pct": discount_pct,
             "undervaluation_pct": undervaluation_pct,
+            "year_mult": round(year_mult, 2),
             "avg_days_to_sell": days_to_sell,
             "price_trend_pct": trend_pct,
             "flip_score": flip_score,
