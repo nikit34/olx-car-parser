@@ -19,7 +19,7 @@ from src.parser.scraper import OlxScraper, ScraperConfig
 from src.storage.database import get_session, init_db
 from src.models.generations import get_generation
 from src.storage.repository import (
-    add_price_snapshot, compute_market_stats, get_listings_df,
+    add_price_snapshot, compute_market_stats, get_enriched_olx_ids, get_listings_df,
     mark_inactive, upsert_listing, upsert_unmatched,
 )
 
@@ -78,7 +78,12 @@ def scrape(
 
     # Pipeline: scraper feeds listings into a queue, LLM worker processes them
     # in parallel as they arrive (instead of waiting for all scraping to finish).
+    # Only NEW listings (without llm_extras) are queued.
     from src.parser.llm_enrichment import enrich_from_description, apply_corrections
+
+    already_enriched = get_enriched_olx_ids(session)
+    if already_enriched:
+        console.print(f"Skipping LLM for [bold]{len(already_enriched)}[/bold] already-enriched listings.")
 
     llm_queue: queue.Queue = queue.Queue()
     llm_done = threading.Event()
@@ -87,6 +92,7 @@ def scrape(
     def _llm_worker():
         """Process listings from queue as they arrive from the scraper."""
         nonlocal llm_count
+        log = logging.getLogger(__name__)
         failures = 0
         while True:
             try:
@@ -105,6 +111,9 @@ def scrape(
                 listing._llm_extras = result
                 llm_count += 1
                 failures = 0
+                if llm_count % 25 == 0:
+                    log.info("LLM progress: %d enriched, ~%d in queue",
+                             llm_count, llm_queue.qsize())
             else:
                 failures += 1
                 if failures >= 5:
@@ -125,8 +134,9 @@ def scrape(
     llm_thread.start()
 
     def _on_detail_ready(listing):
-        """Callback from scraper — listing has description, queue it for LLM."""
-        llm_queue.put(listing)
+        """Callback from scraper — queue only NEW listings for LLM."""
+        if listing.olx_id not in already_enriched:
+            llm_queue.put(listing)
 
     with OlxScraper(config) as scraper:
         raw_listings = scraper.scrape_all(on_detail_ready=_on_detail_ready)
@@ -134,7 +144,10 @@ def scrape(
     # Signal LLM worker that scraping is done, wait for it to finish
     llm_done.set()
     llm_queue.put(None)  # poison pill
-    llm_thread.join(timeout=300)
+    remaining = llm_queue.qsize()
+    if remaining > 0:
+        console.print(f"Scraping done. Waiting for LLM to finish ~{remaining} remaining listings...")
+    llm_thread.join(timeout=remaining * 30 + 60)  # ~30 sec per listing + buffer
 
     if not raw_listings:
         console.print("[red]No listings scraped. OLX may have changed structure or blocked request.[/red]")
