@@ -1,4 +1,4 @@
-"""OLX.pt Car Parser — Streamlit Dashboard."""
+"""OLX.pt Car Parser — Streamlit Dashboard (Deal Finder)."""
 
 from datetime import date
 
@@ -18,7 +18,7 @@ from data_loader import load_all, load_portfolio
 # Page config
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="OLX.pt Car Analytics",
+    page_title="OLX Car Deals",
     page_icon="🚗",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -124,6 +124,8 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
 filtered_listings = apply_filters(listings_df)
 filtered_signals = apply_filters(signals_df)
 
+active = filtered_listings[filtered_listings["is_active"]] if "is_active" in filtered_listings.columns else filtered_listings
+
 
 def filter_history(df: pd.DataFrame) -> pd.DataFrame:
     f = df.copy()
@@ -137,43 +139,581 @@ def filter_history(df: pd.DataFrame) -> pd.DataFrame:
 filtered_history = filter_history(history_df)
 
 # ---------------------------------------------------------------------------
-# Header + KPIs
+# Header + KPIs (deal-focused)
 # ---------------------------------------------------------------------------
-st.title("OLX.pt Car Market Analytics")
-st.caption("Portugal — track prices, spot trends, buy smart")
-
-active = filtered_listings[filtered_listings["is_active"]] if "is_active" in filtered_listings.columns else filtered_listings
+st.title("OLX Car Deals")
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Active Listings", f"{len(active):,}")
-col2.metric("Median Price", f"{int(active['price_eur'].median()):,} EUR" if len(active) and active["price_eur"].notna().any() else "—")
-col3.metric("Buy Signals", f"{len(filtered_signals)}")
+col2.metric("Deals Found", f"{len(filtered_signals)}")
 
-if not filtered_history.empty:
-    recent = filtered_history[filtered_history["date"] == filtered_history["date"].max()]
-    prev = filtered_history[
-        filtered_history["date"] == (pd.to_datetime(filtered_history["date"]).max() - pd.Timedelta(days=30)).date()
-    ]
-    if not recent.empty and not prev.empty:
-        change = (recent["median_price_eur"].mean() - prev["median_price_eur"].mean()) / prev["median_price_eur"].mean() * 100
-        col4.metric("30d Trend", f"{change:+.1f}%", delta=f"{change:+.1f}%")
-    else:
-        col4.metric("30d Trend", "—")
+if not filtered_signals.empty:
+    avg_discount = filtered_signals["undervaluation_pct"].mean()
+    col3.metric("Avg Discount", f"{avg_discount:.0f}%")
+    best = filtered_signals.iloc[0]
+    best_profit = int(best["predicted_price"] - best["price_eur"])
+    col4.metric("Best Deal Profit", f"{best_profit:+,} EUR")
 else:
-    col4.metric("30d Trend", "—")
+    col3.metric("Avg Discount", "—")
+    col4.metric("Best Deal Profit", "—")
 
 st.divider()
 
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
-(tab_trends, tab_signals, tab_listings, tab_compare, tab_geo,
- tab_estimator, tab_profit, tab_premiums, tab_portfolio, tab_unmatched) = st.tabs([
-    "Price Trends", "Buy Signals", "Listings", "Compare Models", "Geography",
-    "Price Estimator", "Profit Calculator", "Feature Premiums", "Portfolio", "Unmatched",
+tab_deals, tab_analytics, tab_trends, tab_listings, tab_compare, tab_geo, tab_portfolio, tab_unmatched = st.tabs([
+    "Deals", "Analytics", "Price Trends", "Listings", "Compare Models", "Geography", "Portfolio", "Unmatched",
 ])
 
-# ---- TAB 1: Price Trends + Seasonality -----------------------------------
+# ---- TAB 1: Deals (Buy Signals) --------------------------------------------
+with tab_deals:
+    st.subheader("Underpriced Cars")
+    st.caption("Sorted by flip score = undervaluation % x liquidity x trend. Profit = fair price - asking price.")
+
+    if filtered_signals.empty:
+        st.info("No deals found with current filters. Try broadening your search.")
+    else:
+        deals = filtered_signals.copy()
+
+        # Add estimated profit and ROI columns
+        deals["est_profit_eur"] = (deals["predicted_price"] - deals["price_eur"]).round(0).astype(int)
+        deals["est_roi_pct"] = ((deals["predicted_price"] - deals["price_eur"]) / deals["price_eur"] * 100).round(1)
+
+        # Profit per day — capital efficiency metric
+        if "avg_days_to_sell" in deals.columns:
+            deals["profit_per_day"] = (
+                deals["est_profit_eur"] / deals["avg_days_to_sell"].replace(0, np.nan)
+            ).round(1)
+        else:
+            deals["profit_per_day"] = np.nan
+
+        # Price drop velocity — how fast the seller is dropping price (EUR/day)
+        if "price_change_eur" in deals.columns and "days_listed" in deals.columns:
+            deals["price_drop_per_day"] = (
+                deals["price_change_eur"] / deals["days_listed"].replace(0, np.nan)
+            ).round(1)
+        else:
+            deals["price_drop_per_day"] = np.nan
+
+        # Deal rating
+        deals["deal"] = deals["flip_score"].apply(
+            lambda s: "🔥🔥🔥" if s > 30 else ("🔥🔥" if s > 20 else "🔥")
+        )
+        if "sample_size" in deals.columns:
+            deals["confidence"] = deals["sample_size"].apply(
+                lambda n: "High" if n >= 10 else ("Medium" if n >= 5 else "Low")
+            )
+
+        # --- Top deals cards ---
+        top3 = deals.head(3)
+        cols = st.columns(3)
+        for i, (_, deal) in enumerate(top3.iterrows()):
+            with cols[i]:
+                profit = int(deal["est_profit_eur"])
+                st.markdown(f"### {deal['brand']} {deal['model']} {int(deal['year']) if pd.notna(deal['year']) else '?'}")
+                st.markdown(f"**{int(deal['price_eur']):,} EUR** → fair price **{int(deal['predicted_price']):,} EUR**")
+                profit_day = deal.get("profit_per_day")
+                profit_day_str = f" · **{profit_day:.0f} EUR/day**" if pd.notna(profit_day) else ""
+                st.markdown(f"Profit: **{profit:+,} EUR** ({deal['est_roi_pct']:+.0f}% ROI){profit_day_str}")
+                details = []
+                if pd.notna(deal.get("mileage_km")):
+                    details.append(f"{int(deal['mileage_km']):,} km")
+                if deal.get("fuel_type"):
+                    details.append(deal["fuel_type"])
+                if deal.get("district"):
+                    details.append(deal["district"])
+                drop_day = deal.get("price_drop_per_day")
+                if pd.notna(drop_day) and drop_day < 0:
+                    details.append(f"seller dropping {drop_day:.0f} EUR/day")
+                if details:
+                    st.caption(" · ".join(details))
+                if deal.get("url"):
+                    st.markdown(f"[Open on OLX]({deal['url']})")
+
+        st.divider()
+
+        # --- Full deals table ---
+        signal_cols = ["deal", "brand", "model", "generation", "year",
+                       "price_eur", "predicted_price", "est_profit_eur", "est_roi_pct",
+                       "profit_per_day", "undervaluation_pct", "flip_score"]
+        if "avg_days_to_sell" in deals.columns:
+            signal_cols.append("avg_days_to_sell")
+        if "sample_size" in deals.columns:
+            signal_cols += ["sample_size", "confidence"]
+        signal_cols += ["mileage_km", "fuel_type", "district", "city"]
+        if "days_listed" in deals.columns:
+            signal_cols.append("days_listed")
+        if "price_change_eur" in deals.columns:
+            signal_cols.append("price_change_eur")
+        signal_cols.append("price_drop_per_day")
+        if "url" in deals.columns:
+            signal_cols.append("url")
+
+        avail_cols = [c for c in signal_cols if c in deals.columns]
+
+        st.dataframe(
+            deals[avail_cols].rename(columns={
+                "deal": "Deal", "brand": "Brand", "model": "Model",
+                "generation": "Gen", "year": "Year",
+                "price_eur": "Price", "predicted_price": "Fair Price",
+                "est_profit_eur": "Profit", "est_roi_pct": "ROI %",
+                "profit_per_day": "EUR/day",
+                "undervaluation_pct": "Below Market %", "flip_score": "Score",
+                "avg_days_to_sell": "Days to Sell", "sample_size": "Sample",
+                "confidence": "Conf", "mileage_km": "Mileage",
+                "fuel_type": "Fuel", "district": "District", "city": "City",
+                "days_listed": "Listed", "price_change_eur": "Price Drop",
+                "price_drop_per_day": "Drop/day",
+                "url": "Link",
+            }),
+            width="stretch", hide_index=True,
+            column_config={
+                "Price": st.column_config.NumberColumn(format="%d EUR"),
+                "Fair Price": st.column_config.NumberColumn(format="%d EUR"),
+                "Profit": st.column_config.NumberColumn(format="%+d EUR"),
+                "ROI %": st.column_config.NumberColumn(format="%+.1f%%"),
+                "EUR/day": st.column_config.NumberColumn(format="%.0f"),
+                "Below Market %": st.column_config.NumberColumn(format="%.0f%%"),
+                "Score": st.column_config.NumberColumn(format="%.0f"),
+                "Days to Sell": st.column_config.NumberColumn(format="%.0f"),
+                "Mileage": st.column_config.NumberColumn(format="%,d km"),
+                "Listed": st.column_config.NumberColumn(format="%d d"),
+                "Price Drop": st.column_config.NumberColumn(format="%+d EUR"),
+                "Drop/day": st.column_config.NumberColumn(format="%+.0f EUR"),
+                "Link": st.column_config.LinkColumn("Link", display_text="Open"),
+            },
+        )
+        st.caption(f"{len(deals)} deals found")
+
+        # --- Profit distribution chart ---
+        col_chart1, col_chart2 = st.columns(2)
+        with col_chart1:
+            fig_profit = px.histogram(
+                deals, x="est_profit_eur", nbins=20,
+                labels={"est_profit_eur": "Estimated Profit (EUR)"},
+                title="Profit Distribution", height=350,
+            )
+            fig_profit.update_layout(showlegend=False)
+            st.plotly_chart(fig_profit, width="stretch")
+
+        with col_chart2:
+            # Deals by brand — where are the opportunities?
+            brand_deals = deals.groupby("brand").agg(
+                count=("brand", "size"),
+                avg_profit=("est_profit_eur", "mean"),
+            ).reset_index().sort_values("count", ascending=False).head(10)
+
+            fig_brands = px.bar(
+                brand_deals, x="count", y="brand", orientation="h",
+                color="avg_profit", color_continuous_scale="Greens",
+                labels={"count": "Deals", "brand": "Brand", "avg_profit": "Avg Profit"},
+                title="Deals by Brand", height=350,
+            )
+            fig_brands.update_layout(yaxis=dict(autorange="reversed"))
+            st.plotly_chart(fig_brands, width="stretch")
+
+        # --- Price vs Fair Price scatter ---
+        fig_scatter = px.scatter(
+            deals, x="predicted_price", y="price_eur",
+            color="est_profit_eur", size="flip_score",
+            color_continuous_scale="RdYlGn_r",
+            hover_data=["brand", "model", "year", "mileage_km"],
+            labels={
+                "predicted_price": "Fair Price (EUR)",
+                "price_eur": "Asking Price (EUR)",
+                "est_profit_eur": "Profit (EUR)",
+                "flip_score": "Score",
+            },
+            title="Asking Price vs Fair Price (below diagonal = deal)",
+            height=500,
+        )
+        # Add diagonal line (price = fair price)
+        max_price = max(deals["predicted_price"].max(), deals["price_eur"].max())
+        fig_scatter.add_trace(go.Scatter(
+            x=[0, max_price], y=[0, max_price],
+            mode="lines", line=dict(dash="dash", color="gray", width=1),
+            name="Break Even", showlegend=False,
+        ))
+        st.plotly_chart(fig_scatter, width="stretch")
+
+        # --- Motivated sellers: biggest price drops ---
+        if "price_drop_per_day" in deals.columns and deals["price_drop_per_day"].notna().any():
+            st.subheader("Motivated Sellers")
+            st.caption("Sellers actively dropping prices — more negotiation room")
+            motivated = deals[deals["price_drop_per_day"].notna() & (deals["price_drop_per_day"] < 0)].copy()
+            motivated = motivated.sort_values("price_drop_per_day")
+            if not motivated.empty:
+                mot_cols = ["brand", "model", "year", "price_eur", "predicted_price",
+                            "est_profit_eur", "days_listed", "price_change_eur", "price_drop_per_day"]
+                if "url" in motivated.columns:
+                    mot_cols.append("url")
+                avail_mot = [c for c in mot_cols if c in motivated.columns]
+                st.dataframe(
+                    motivated.head(15)[avail_mot].rename(columns={
+                        "brand": "Brand", "model": "Model", "year": "Year",
+                        "price_eur": "Price", "predicted_price": "Fair Price",
+                        "est_profit_eur": "Profit", "days_listed": "Listed",
+                        "price_change_eur": "Total Drop", "price_drop_per_day": "Drop/day",
+                        "url": "Link",
+                    }),
+                    hide_index=True,
+                    column_config={
+                        "Price": st.column_config.NumberColumn(format="%d EUR"),
+                        "Fair Price": st.column_config.NumberColumn(format="%d EUR"),
+                        "Profit": st.column_config.NumberColumn(format="%+d EUR"),
+                        "Listed": st.column_config.NumberColumn(format="%d d"),
+                        "Total Drop": st.column_config.NumberColumn(format="%+d EUR"),
+                        "Drop/day": st.column_config.NumberColumn(format="%+.0f EUR"),
+                        "Link": st.column_config.LinkColumn("Link", display_text="Open"),
+                    },
+                )
+
+        # --- Days listed vs price drop curve ---
+        drop_data = deals[
+            deals["days_listed"].notna() & deals["price_change_pct"].notna()
+            & (deals["days_listed"] > 0)
+        ].copy() if "price_change_pct" in deals.columns else pd.DataFrame()
+        if not drop_data.empty and len(drop_data) >= 5:
+            st.subheader("When Do Sellers Drop Prices?")
+            st.caption("Avg price change % by days on market — shows when to expect discounts")
+            drop_data["days_bucket"] = pd.cut(
+                drop_data["days_listed"],
+                bins=[0, 7, 14, 21, 30, 45, 60, 90, 999],
+                labels=["0-7d", "8-14d", "15-21d", "22-30d", "31-45d", "46-60d", "61-90d", "90d+"],
+            )
+            bucket_stats = (
+                drop_data.groupby("days_bucket", observed=True)
+                .agg(avg_drop=("price_change_pct", "mean"), count=("price_change_pct", "size"))
+                .reset_index()
+            )
+            bucket_stats = bucket_stats[bucket_stats["count"] >= 2]
+            if not bucket_stats.empty:
+                colors = ["#2ecc71" if v >= 0 else "#e74c3c" for v in bucket_stats["avg_drop"]]
+                fig_drop = go.Figure(go.Bar(
+                    x=bucket_stats["days_bucket"].astype(str),
+                    y=bucket_stats["avg_drop"],
+                    marker_color=colors,
+                    text=[f"{v:+.1f}%" for v in bucket_stats["avg_drop"]],
+                    textposition="auto",
+                ))
+                fig_drop.update_layout(
+                    xaxis_title="Days on Market", yaxis_title="Avg Price Change %",
+                    height=350, title="Price Change by Time on Market",
+                )
+                st.plotly_chart(fig_drop, width="stretch")
+
+
+# ---- TAB: Analytics — find optimal cars by value combination -----------------
+with tab_analytics:
+    st.subheader("Price Factor Analytics")
+    st.caption("Find cars with the best combination of value factors at the lowest price")
+
+    ana = active[active["price_eur"].notna()].copy()
+
+    if ana.empty:
+        st.info("No active listings with prices.")
+    else:
+        # Prepare columns
+        if "year" in ana.columns:
+            ana["age"] = date.today().year - ana["year"]
+        if "mileage_km" in ana.columns and "price_eur" in ana.columns:
+            ana["eur_per_1k_km"] = (ana["price_eur"] / (ana["mileage_km"] / 1000)).replace([np.inf, -np.inf], np.nan)
+        ana["label"] = ana["brand"] + " " + ana["model"]
+        if "year" in ana.columns:
+            ana["label_year"] = ana["label"] + " " + ana["year"].astype(int).astype(str)
+
+        # ---- 1. Year vs Price colored by Transmission ----
+        st.subheader("Year vs Price by Transmission")
+        st.caption("Automatic costs 2.4x more — find young manual bargains below the trend")
+        yr_data = ana[ana["year"].notna()].copy()
+        if not yr_data.empty:
+            fig_yr = px.scatter(
+                yr_data, x="year", y="price_eur",
+                color="transmission",
+                symbol="transmission",
+                hover_data=["brand", "model", "mileage_km", "fuel_type", "district"],
+                labels={"year": "Year", "price_eur": "Price (EUR)", "transmission": "Transmission"},
+                height=500, opacity=0.75,
+                color_discrete_map={"Automática": "#e63946", "Manual": "#457b9d"},
+            )
+            # trend lines per transmission
+            for trans in yr_data["transmission"].dropna().unique():
+                sub = yr_data[yr_data["transmission"] == trans].dropna(subset=["year", "price_eur"])
+                if len(sub) >= 5:
+                    z = np.polyfit(sub["year"], sub["price_eur"], 1)
+                    xs = np.linspace(sub["year"].min(), sub["year"].max(), 50)
+                    fig_yr.add_trace(go.Scatter(
+                        x=xs, y=np.polyval(z, xs), mode="lines",
+                        line=dict(dash="dash", width=2),
+                        name=f"{trans} trend", showlegend=True,
+                    ))
+            fig_yr.update_layout(hovermode="closest")
+            st.plotly_chart(fig_yr, use_container_width=True)
+
+        # ---- 2. Mileage vs Price colored by Fuel ----
+        col_a, col_b = st.columns(2)
+
+        with col_a:
+            st.subheader("Mileage vs Price by Fuel")
+            st.caption("Diesel holds value longer at high mileage — look for low-km gasoline deals")
+            mil_data = ana[ana["mileage_km"].notna()].copy()
+            if not mil_data.empty:
+                fig_mil = px.scatter(
+                    mil_data, x="mileage_km", y="price_eur",
+                    color="fuel_type",
+                    hover_data=["brand", "model", "year", "transmission"],
+                    labels={"mileage_km": "Mileage (km)", "price_eur": "Price (EUR)", "fuel_type": "Fuel"},
+                    height=450, opacity=0.7,
+                )
+                fig_mil.update_layout(hovermode="closest")
+                st.plotly_chart(fig_mil, use_container_width=True)
+
+        with col_b:
+            st.subheader("Import vs National by Brand")
+            st.caption("Imports cost more — national cars of premium brands = hidden value")
+            origin_data = ana[ana["origin"].notna() & ana["brand"].notna()].copy()
+            if not origin_data.empty:
+                brand_origin = (
+                    origin_data.groupby(["brand", "origin"])["price_eur"]
+                    .median().reset_index()
+                )
+                # Only brands with both origins
+                both = brand_origin.groupby("brand").filter(lambda g: len(g) >= 2)
+                if not both.empty:
+                    fig_orig = px.bar(
+                        both.sort_values(["brand", "origin"]),
+                        x="brand", y="price_eur", color="origin", barmode="group",
+                        labels={"brand": "Brand", "price_eur": "Median Price (EUR)", "origin": "Origin"},
+                        color_discrete_map={"Importado": "#e63946", "Nacional": "#2a9d8f"},
+                        height=450,
+                    )
+                    st.plotly_chart(fig_orig, use_container_width=True)
+
+        # ---- 3. Value Score: composite metric ----
+        st.subheader("Value Score — Best Cars for the Money")
+        st.caption("Score = newer year + lower mileage + lower price relative to segment. Higher = better deal.")
+
+        score_data = ana[
+            ana["year"].notna() & ana["mileage_km"].notna() & (ana["mileage_km"] > 0)
+        ].copy()
+
+        if len(score_data) >= 5:
+            # Normalize each factor 0-1 (higher = better)
+            score_data["year_norm"] = (score_data["year"] - score_data["year"].min()) / max(score_data["year"].max() - score_data["year"].min(), 1)
+            score_data["mileage_norm"] = 1 - (score_data["mileage_km"] - score_data["mileage_km"].min()) / max(score_data["mileage_km"].max() - score_data["mileage_km"].min(), 1)
+            score_data["price_norm"] = 1 - (score_data["price_eur"] - score_data["price_eur"].min()) / max(score_data["price_eur"].max() - score_data["price_eur"].min(), 1)
+            hp_ok = score_data["horsepower"].notna() & (score_data["horsepower"] > 0)
+            if hp_ok.sum() > 5:
+                hp_min = score_data.loc[hp_ok, "horsepower"].min()
+                hp_max = score_data.loc[hp_ok, "horsepower"].max()
+                score_data["hp_norm"] = np.where(
+                    hp_ok,
+                    (score_data["horsepower"] - hp_min) / max(hp_max - hp_min, 1),
+                    0.5,
+                )
+            else:
+                score_data["hp_norm"] = 0.5
+
+            score_data["value_score"] = (
+                score_data["year_norm"] * 30
+                + score_data["mileage_norm"] * 25
+                + score_data["price_norm"] * 30
+                + score_data["hp_norm"] * 15
+            )
+
+            fig_val = px.scatter(
+                score_data, x="price_eur", y="value_score",
+                color="brand", size="age",
+                hover_data=["model", "year", "mileage_km", "transmission", "fuel_type", "horsepower", "district", "url"],
+                labels={"price_eur": "Price (EUR)", "value_score": "Value Score", "brand": "Brand", "age": "Age (years)"},
+                title="Value Score vs Price — top right = optimal zone",
+                height=550, opacity=0.8,
+            )
+            # Highlight optimal zone (top-left quadrant)
+            med_price = score_data["price_eur"].median()
+            med_score = score_data["value_score"].median()
+            fig_val.add_shape(
+                type="rect", x0=0, x1=med_price, y0=med_score, y1=100,
+                line=dict(color="green", width=2, dash="dot"),
+                fillcolor="rgba(42,157,143,0.08)",
+            )
+            fig_val.add_annotation(
+                x=med_price * 0.3, y=med_score + (100 - med_score) * 0.85,
+                text="OPTIMAL ZONE", showarrow=False,
+                font=dict(color="green", size=14, family="Arial Black"),
+            )
+            fig_val.update_layout(hovermode="closest")
+            st.plotly_chart(fig_val, use_container_width=True)
+
+            # Top 15 best value table
+            top_val = score_data.nlargest(15, "value_score")
+            val_cols = ["label", "year", "price_eur", "mileage_km", "transmission",
+                        "fuel_type", "horsepower", "origin", "district", "value_score"]
+            if "url" in top_val.columns:
+                val_cols.append("url")
+            avail_val = [c for c in val_cols if c in top_val.columns]
+            st.dataframe(
+                top_val[avail_val].rename(columns={
+                    "label": "Car", "year": "Year", "price_eur": "Price (EUR)",
+                    "mileage_km": "Mileage", "transmission": "Trans",
+                    "fuel_type": "Fuel", "horsepower": "HP",
+                    "origin": "Origin", "district": "District",
+                    "value_score": "Score", "url": "Link",
+                }),
+                hide_index=True,
+                column_config={
+                    "Price (EUR)": st.column_config.NumberColumn(format="%d EUR"),
+                    "Mileage": st.column_config.NumberColumn(format="%,d km"),
+                    "Score": st.column_config.NumberColumn(format="%.1f"),
+                    "Link": st.column_config.LinkColumn("Link", display_text="Open"),
+                },
+            )
+
+        # ---- 4. Depreciation Heatmap: Brand x Age ----
+        st.subheader("Depreciation Heatmap: Brand x Age")
+        st.caption("Median price by brand and age bucket — find brands that hold value")
+        dep_heat = ana[ana["year"].notna()].copy()
+        if not dep_heat.empty:
+            dep_heat["age_bucket"] = pd.cut(
+                dep_heat["age"], bins=[0, 5, 8, 11, 14, 17, 20, 50],
+                labels=["0-5y", "6-8y", "9-11y", "12-14y", "15-17y", "18-20y", "20y+"],
+                right=True,
+            )
+            pivot_dep = dep_heat.pivot_table(
+                values="price_eur", index="brand", columns="age_bucket",
+                aggfunc="median",
+            )
+            # Keep brands with >= 3 listings
+            brand_counts = dep_heat["brand"].value_counts()
+            keep_brands = brand_counts[brand_counts >= 3].index
+            pivot_dep = pivot_dep.loc[pivot_dep.index.isin(keep_brands)]
+            if not pivot_dep.empty:
+                fig_dep_h = px.imshow(
+                    pivot_dep.values,
+                    x=[str(c) for c in pivot_dep.columns],
+                    y=pivot_dep.index.tolist(),
+                    labels=dict(color="Median Price (EUR)"),
+                    aspect="auto",
+                    color_continuous_scale="YlOrRd",
+                    height=max(300, len(pivot_dep) * 50),
+                )
+                fig_dep_h.update_traces(
+                    text=[[f"{v:,.0f}" if pd.notna(v) else "" for v in row] for row in pivot_dep.values],
+                    texttemplate="%{text}",
+                )
+                st.plotly_chart(fig_dep_h, use_container_width=True)
+
+        # ---- 5. Transmission + Fuel Price Matrix ----
+        col_c, col_d = st.columns(2)
+
+        with col_c:
+            st.subheader("Transmission + Fuel: Median Price")
+            tf_data = ana[ana["transmission"].notna() & ana["fuel_type"].notna()].copy()
+            if not tf_data.empty:
+                pivot_tf = tf_data.pivot_table(
+                    values="price_eur", index="fuel_type", columns="transmission",
+                    aggfunc="median",
+                )
+                if not pivot_tf.empty:
+                    fig_tf = px.imshow(
+                        pivot_tf.values,
+                        x=pivot_tf.columns.tolist(),
+                        y=pivot_tf.index.tolist(),
+                        labels=dict(color="Median Price (EUR)"),
+                        color_continuous_scale="Viridis",
+                        aspect="auto", height=350,
+                    )
+                    fig_tf.update_traces(
+                        text=[[f"{v:,.0f}" if pd.notna(v) else "" for v in row] for row in pivot_tf.values],
+                        texttemplate="%{text}",
+                    )
+                    st.plotly_chart(fig_tf, use_container_width=True)
+
+        with col_d:
+            st.subheader("EUR per 1000 km by Brand")
+            st.caption("Cost efficiency — lower = more km for your money")
+            eur_km = ana[ana["eur_per_1k_km"].notna() & (ana["eur_per_1k_km"] < 1000)].copy()
+            if not eur_km.empty:
+                brand_eur_km = (
+                    eur_km.groupby("brand")
+                    .agg(median_eur_km=("eur_per_1k_km", "median"), count=("eur_per_1k_km", "size"))
+                    .reset_index()
+                )
+                brand_eur_km = brand_eur_km[brand_eur_km["count"] >= 3].sort_values("median_eur_km")
+                if not brand_eur_km.empty:
+                    fig_ekm = px.bar(
+                        brand_eur_km, x="median_eur_km", y="brand", orientation="h",
+                        color="median_eur_km", color_continuous_scale="RdYlGn_r",
+                        labels={"median_eur_km": "EUR / 1000 km", "brand": "Brand"},
+                        height=350,
+                    )
+                    fig_ekm.update_layout(yaxis=dict(autorange="reversed"), showlegend=False)
+                    st.plotly_chart(fig_ekm, use_container_width=True)
+
+        # ---- 6. Sweet Spot Finder: interactive filters ----
+        st.subheader("Sweet Spot Finder")
+        st.caption("Set your constraints — see what fits best")
+
+        ss1, ss2, ss3, ss4 = st.columns(4)
+        with ss1:
+            max_budget = st.number_input("Max Budget (EUR)", min_value=0, value=15000, step=1000, key="ss_budget")
+        with ss2:
+            max_age_ss = st.number_input("Max Age (years)", min_value=1, value=15, step=1, key="ss_age")
+        with ss3:
+            max_mileage_ss = st.number_input("Max Mileage (km)", min_value=10000, value=250000, step=10000, key="ss_mileage")
+        with ss4:
+            prefer_trans = st.selectbox("Transmission", ["Any", "Automática", "Manual"], key="ss_trans")
+
+        sweet = ana[
+            (ana["price_eur"] <= max_budget)
+            & (ana["year"].notna())
+            & (ana["age"] <= max_age_ss)
+            & (ana["mileage_km"].notna())
+            & (ana["mileage_km"] <= max_mileage_ss)
+        ].copy()
+        if prefer_trans != "Any":
+            sweet = sweet[sweet["transmission"] == prefer_trans]
+
+        if sweet.empty:
+            st.warning("No cars match these criteria. Try relaxing the constraints.")
+        else:
+            sweet = sweet.sort_values("price_eur")
+            st.success(f"{len(sweet)} cars found")
+
+            fig_sweet = px.scatter(
+                sweet, x="mileage_km", y="price_eur",
+                color="brand", size="age",
+                hover_data=["model", "year", "transmission", "fuel_type", "horsepower", "district", "url"],
+                labels={"mileage_km": "Mileage (km)", "price_eur": "Price (EUR)", "brand": "Brand", "age": "Age"},
+                title=f"Cars under {max_budget:,} EUR, max {max_age_ss}y, max {max_mileage_ss//1000}k km",
+                height=500, opacity=0.8,
+            )
+            fig_sweet.update_layout(hovermode="closest")
+            st.plotly_chart(fig_sweet, use_container_width=True)
+
+            sweet_cols = ["label", "year", "price_eur", "mileage_km", "transmission",
+                          "fuel_type", "horsepower", "origin", "district"]
+            if "url" in sweet.columns:
+                sweet_cols.append("url")
+            avail_sw = [c for c in sweet_cols if c in sweet.columns]
+            st.dataframe(
+                sweet[avail_sw].rename(columns={
+                    "label": "Car", "year": "Year", "price_eur": "Price (EUR)",
+                    "mileage_km": "Mileage", "transmission": "Trans",
+                    "fuel_type": "Fuel", "horsepower": "HP",
+                    "origin": "Origin", "district": "District", "url": "Link",
+                }),
+                hide_index=True,
+                column_config={
+                    "Price (EUR)": st.column_config.NumberColumn(format="%d EUR"),
+                    "Mileage": st.column_config.NumberColumn(format="%,d km"),
+                    "Link": st.column_config.LinkColumn("Link", display_text="Open"),
+                },
+            )
+
+
+# ---- TAB 2: Price Trends + Seasonality --------------------------------------
 with tab_trends:
     st.subheader("Price Trends Over Time")
     if filtered_history.empty:
@@ -237,53 +777,7 @@ with tab_trends:
         else:
             st.info("Need at least 3 months of scraped data. Keep the scraper running!")
 
-# ---- TAB 2: Buy Signals --------------------------------------------------
-with tab_signals:
-    st.subheader("Buy Opportunities")
-    st.caption("Flip score = undervaluation × liquidity × trend")
-    if filtered_signals.empty:
-        st.info("No buy signals with current filters.")
-    else:
-        top = filtered_signals.head(20).copy()
-        top["deal"] = top["flip_score"].apply(lambda s: "🔥🔥🔥" if s > 30 else ("🔥🔥" if s > 20 else "🔥"))
-        if "sample_size" in top.columns:
-            top["confidence"] = top["sample_size"].apply(
-                lambda n: "High" if n >= 10 else ("Medium" if n >= 5 else "Low")
-            )
-
-        signal_cols = ["deal", "brand", "model", "generation", "year",
-                       "price_eur", "predicted_price", "undervaluation_pct",
-                       "year_mult", "flip_score"]
-        if "avg_days_to_sell" in top.columns:
-            signal_cols.append("avg_days_to_sell")
-        if "price_trend_pct" in top.columns:
-            signal_cols.append("price_trend_pct")
-        if "sample_size" in top.columns:
-            signal_cols += ["sample_size", "confidence"]
-        signal_cols += ["mileage_km", "city", "district", "fuel_type"]
-        if "url" in top.columns:
-            signal_cols.append("url")
-
-        st.dataframe(
-            top[signal_cols].rename(columns={
-                "deal": "Deal", "brand": "Brand", "model": "Model",
-                "generation": "Generation", "year": "Year",
-                "price_eur": "Price (EUR)", "predicted_price": "Fair Price (EUR)",
-                "undervaluation_pct": "Undervalued %", "year_mult": "Year ×",
-                "flip_score": "Flip Score",
-                "avg_days_to_sell": "Avg Days to Sell", "price_trend_pct": "Trend %",
-                "sample_size": "# Listings", "confidence": "Confidence",
-                "mileage_km": "Mileage", "city": "City", "district": "District",
-                "fuel_type": "Fuel", "url": "Link",
-            }),
-            width="stretch", hide_index=True,
-            column_config={"Link": st.column_config.LinkColumn("Link", display_text="Open")},
-        )
-        fig_score = px.histogram(filtered_signals, x="flip_score", nbins=20,
-                                 labels={"flip_score": "Flip Score"}, title="Flip Score Distribution", height=350)
-        st.plotly_chart(fig_score, width="stretch")
-
-# ---- TAB 3: Listings Table -----------------------------------------------
+# ---- TAB 3: Listings Table -------------------------------------------------
 with tab_listings:
     st.subheader("All Listings")
     display_cols = [c for c in [
@@ -312,7 +806,8 @@ with tab_listings:
     )
     st.caption(f"Showing {len(filtered_listings)} listings")
 
-# ---- TAB 4: Compare Models -----------------------------------------------
+
+# ---- TAB 4: Compare Models ---------------------------------------------------
 with tab_compare:
     st.subheader("Model Comparison")
     if filtered_listings.empty or not active["price_eur"].notna().any():
@@ -406,7 +901,7 @@ with tab_compare:
                     fig_dep.update_layout(xaxis_title="Year", yaxis_title="Price (EUR)", height=500, hovermode="closest")
                     st.plotly_chart(fig_dep, width="stretch")
 
-# ---- TAB 5: Geography + Competition Density ------------------------------
+# ---- TAB 5: Geography + Competition Density ---------------------------------
 with tab_geo:
     st.subheader("Listings by Location")
     if active.empty or "district" not in active.columns:
@@ -527,170 +1022,7 @@ with tab_geo:
         else:
             st.info("Not enough data for competition analysis.")
 
-# ---- TAB 6: Price Estimator ----------------------------------------------
-with tab_estimator:
-    st.subheader("Price Estimator")
-    st.caption("Get a recommended price based on regression on existing listings")
-
-    if listings_df.empty:
-        st.info("No data yet. Run scraper first.")
-    else:
-        col_e1, col_e2 = st.columns(2)
-        with col_e1:
-            est_brand = st.selectbox("Brand", sorted(brands_models.keys()), key="est_brand")
-            est_models_list = sorted(brands_models.get(est_brand, []))
-            est_model = st.selectbox("Model", est_models_list, key="est_model")
-            est_year = st.number_input("Year", min_value=1990, max_value=2026, value=2018, key="est_year")
-        with col_e2:
-            est_mileage = st.number_input("Mileage (km)", min_value=0, max_value=500000,
-                                           value=100000, step=5000, key="est_mileage")
-            fuel_opts = sorted(listings_df["fuel_type"].dropna().unique().tolist()) if "fuel_type" in listings_df.columns else []
-            est_fuel = st.selectbox("Fuel type", ["Any"] + fuel_opts, key="est_fuel")
-
-        if st.button("Estimate Price", type="primary"):
-            from src.analytics.regression import estimate_price
-            fuel = est_fuel if est_fuel != "Any" else None
-            result = estimate_price(active, est_brand, est_model, est_year, est_mileage, fuel)
-            if result:
-                st.divider()
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Quick Sale (P25)", f"{int(result['p25']):,} EUR")
-                c2.metric("Fair Price (Median)", f"{int(result['median']):,} EUR")
-                c3.metric("Max Price (P75)", f"{int(result['p75']):,} EUR")
-                st.caption(f"Based on {result['sample_size']} similar listings")
-
-                comps = active[(active["brand"] == est_brand) & (active["model"] == est_model) & active["price_eur"].notna()].copy()
-                if fuel and len(comps[comps["fuel_type"] == fuel]) >= 3:
-                    comps = comps[comps["fuel_type"] == fuel]
-                comp_cols = [c for c in ["year", "price_eur", "mileage_km", "fuel_type", "city", "district", "url"] if c in comps.columns]
-                st.subheader("Comparable Listings")
-                st.dataframe(comps[comp_cols].sort_values("price_eur"), hide_index=True,
-                             column_config={"price_eur": st.column_config.NumberColumn("Price (EUR)", format="%d EUR"),
-                                            "mileage_km": st.column_config.NumberColumn("Mileage", format="%d km"),
-                                            "url": st.column_config.LinkColumn("Link", display_text="Open")})
-            else:
-                st.warning("Not enough data for this combination (need at least 5 listings).")
-
-# ---- TAB 7: Profit Calculator --------------------------------------------
-with tab_profit:
-    st.subheader("Profit Calculator")
-    st.caption("Estimate profit from buying, fixing, and reselling a car")
-
-    if listings_df.empty:
-        st.info("No data yet.")
-    else:
-        col_p1, col_p2 = st.columns(2)
-        with col_p1:
-            pc_brand = st.selectbox("Brand", sorted(brands_models.keys()), key="pc_brand")
-            pc_model = st.selectbox("Model", sorted(brands_models.get(pc_brand, [])), key="pc_model")
-            pc_year = st.number_input("Year", min_value=1990, max_value=2026, value=2018, key="pc_year")
-            pc_mileage = st.number_input("Mileage (km)", min_value=0, max_value=500000, value=100000, step=5000, key="pc_mileage")
-        with col_p2:
-            pc_buy_price = st.number_input("Buy Price (EUR)", min_value=0, max_value=200000, value=10000, step=500, key="pc_buy")
-            pc_repair = st.number_input("Repair Cost (EUR)", min_value=0, max_value=50000, value=500, step=100, key="pc_repair")
-            pc_reg = st.number_input("IUC + Registration (EUR)", min_value=0, max_value=5000, value=200, step=50, key="pc_reg")
-            pc_fuel_opts = sorted(listings_df["fuel_type"].dropna().unique().tolist()) if "fuel_type" in listings_df.columns else []
-            pc_fuel = st.selectbox("Fuel type", ["Any"] + pc_fuel_opts, key="pc_fuel")
-
-        if st.button("Calculate Profit", type="primary"):
-            from src.analytics.regression import estimate_price
-            fuel = pc_fuel if pc_fuel != "Any" else None
-            result = estimate_price(active, pc_brand, pc_model, pc_year, pc_mileage, fuel)
-
-            if result:
-                total_cost = pc_buy_price + pc_repair + pc_reg
-                sell_median = int(result["median"])
-                sell_p25 = int(result["p25"])
-                sell_p75 = int(result["p75"])
-                profit_median = sell_median - total_cost
-                profit_p25 = sell_p25 - total_cost
-                profit_p75 = sell_p75 - total_cost
-                roi_median = (profit_median / total_cost * 100) if total_cost > 0 else 0
-
-                st.divider()
-                st.subheader("Estimated Results")
-
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Total Investment", f"{total_cost:,} EUR")
-                c2.metric("Sell Price (median)", f"{sell_median:,} EUR")
-                c3.metric("Gross Profit", f"{profit_median:+,} EUR",
-                          delta=f"{profit_median:+,} EUR",
-                          delta_color="normal" if profit_median >= 0 else "inverse")
-                c4.metric("ROI", f"{roi_median:+.1f}%",
-                          delta=f"{roi_median:+.1f}%",
-                          delta_color="normal" if roi_median >= 0 else "inverse")
-
-                st.divider()
-                scenarios = pd.DataFrame([
-                    {"Scenario": "Quick Sale (P25)", "Sell Price": sell_p25, "Profit": profit_p25,
-                     "ROI %": round(profit_p25 / total_cost * 100, 1) if total_cost > 0 else 0},
-                    {"Scenario": "Fair Price (Median)", "Sell Price": sell_median, "Profit": profit_median,
-                     "ROI %": round(roi_median, 1)},
-                    {"Scenario": "Best Case (P75)", "Sell Price": sell_p75, "Profit": profit_p75,
-                     "ROI %": round(profit_p75 / total_cost * 100, 1) if total_cost > 0 else 0},
-                    {"Scenario": "Break Even", "Sell Price": total_cost, "Profit": 0, "ROI %": 0.0},
-                ])
-                st.dataframe(scenarios, hide_index=True,
-                             column_config={
-                                 "Sell Price": st.column_config.NumberColumn(format="%d EUR"),
-                                 "Profit": st.column_config.NumberColumn(format="%+d EUR"),
-                                 "ROI %": st.column_config.NumberColumn(format="%+.1f%%"),
-                             })
-                st.caption(f"Based on {result['sample_size']} similar listings. Buy price vs market median: "
-                           f"{'below' if pc_buy_price < sell_median else 'above'} by "
-                           f"{abs(pc_buy_price - sell_median):,} EUR")
-            else:
-                st.warning("Not enough data for this combination (need at least 5 listings).")
-
-# ---- TAB 8: Feature Premiums ---------------------------------------------
-with tab_premiums:
-    st.subheader("Feature Price Premiums")
-    st.caption("How much each feature adds or subtracts from the price")
-
-    if listings_df.empty:
-        st.info("No data yet.")
-    else:
-        col_fp1, col_fp2 = st.columns(2)
-        with col_fp1:
-            fp_brand = st.selectbox("Brand", sorted(brands_models.keys()), key="fp_brand")
-        with col_fp2:
-            fp_model = st.selectbox("Model", sorted(brands_models.get(fp_brand, [])), key="fp_model")
-
-        from src.analytics.premiums import compute_premiums
-        premiums = compute_premiums(active, fp_brand, fp_model)
-
-        if premiums is None:
-            st.warning(f"Not enough data for {fp_brand} {fp_model} (need at least 10 listings).")
-        else:
-            st.metric("Baseline Median Price", f"{int(premiums['baseline_price']):,} EUR")
-            st.caption(f"Based on {premiums['sample_size']} listings")
-
-            dimensions = [
-                ("transmission", "Transmission"),
-                ("fuel_type", "Fuel Type"),
-                ("mileage_bracket", "Mileage Range"),
-                ("year", "Year"),
-                ("color", "Color"),
-            ]
-            for key, title in dimensions:
-                df_dim = premiums.get(key, pd.DataFrame())
-                if df_dim is not None and not df_dim.empty:
-                    st.subheader(title)
-                    colors = ["#2ecc71" if v >= 0 else "#e74c3c" for v in df_dim["premium_eur"]]
-                    fig_prem = go.Figure(go.Bar(
-                        x=df_dim["premium_eur"], y=df_dim["category"].astype(str),
-                        orientation="h", marker_color=colors,
-                        text=[f"{v:+,.0f} EUR ({p:+.1f}%)" for v, p in zip(df_dim["premium_eur"], df_dim["premium_pct"])],
-                        textposition="auto",
-                    ))
-                    fig_prem.update_layout(
-                        xaxis_title="Premium (EUR)", yaxis_title="",
-                        height=max(200, len(df_dim) * 40 + 80),
-                        yaxis=dict(autorange="reversed"),
-                    )
-                    st.plotly_chart(fig_prem, width="stretch")
-
-# ---- TAB 9: Portfolio / Deal Tracker --------------------------------------
+# ---- TAB 6: Portfolio / Deal Tracker ----------------------------------------
 with tab_portfolio:
     st.subheader("Deal Portfolio")
     st.caption("Track your car purchases, repairs, and sales")
@@ -791,7 +1123,7 @@ with tab_portfolio:
                     st.success("Sale recorded!")
                     st.rerun()
 
-# ---- TAB 10: Unmatched Listings -------------------------------------------
+# ---- TAB 8: Unmatched Listings -----------------------------------------------
 with tab_unmatched:
     st.subheader("Unmatched Listings")
     st.caption("Listings where car generation could not be determined — review and add to generations seed")
@@ -836,4 +1168,4 @@ with tab_unmatched:
 # Footer
 # ---------------------------------------------------------------------------
 st.divider()
-st.caption(f"OLX.pt Car Parser v0.2 — {len(listings_df)} listings")
+st.caption(f"OLX Car Deals v0.3 — {len(listings_df)} listings")
