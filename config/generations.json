@@ -371,7 +371,7 @@
       {
         "name": "E87",
         "year_from": 2004,
-        "year_to": 2013
+        "year_to": 2011
       },
       {
         "name": "F20",
@@ -381,11 +381,6 @@
       {
         "name": "F40",
         "year_from": 2019,
-        "year_to": 2024
-      },
-      {
-        "name": "F70",
-        "year_from": 2024,
         "year_to": 2026
       }
     ],
@@ -405,22 +400,22 @@
       {
         "name": "E30",
         "year_from": 1982,
-        "year_to": 1994
+        "year_to": 1990
       },
       {
         "name": "E36",
         "year_from": 1990,
-        "year_to": 2000
+        "year_to": 1998
       },
       {
         "name": "E46",
-        "year_from": 1997,
-        "year_to": 2006
+        "year_from": 1998,
+        "year_to": 2005
       },
       {
         "name": "E90",
-        "year_from": 2004,
-        "year_to": 2026
+        "year_from": 2005,
+        "year_to": 2011
       },
       {
         "name": "F30",
@@ -431,11 +426,6 @@
         "name": "G20",
         "year_from": 2018,
         "year_to": 2026
-      },
-      {
-        "name": "G50",
-        "year_from": 2026,
-        "year_to": 2026
       }
     ],
     "4 Series": [
@@ -443,6 +433,11 @@
         "name": "F32",
         "year_from": 2013,
         "year_to": 2020
+      },
+      {
+        "name": "G22",
+        "year_from": 2020,
+        "year_to": 2026
       }
     ],
     "418 Gran Coupé": [
@@ -471,13 +466,28 @@
     ],
     "5 Series": [
       {
+        "name": "E34",
+        "year_from": 1988,
+        "year_to": 1996
+      },
+      {
+        "name": "E39",
+        "year_from": 1995,
+        "year_to": 2003
+      },
+      {
+        "name": "E60",
+        "year_from": 2003,
+        "year_to": 2010
+      },
+      {
         "name": "F10",
         "year_from": 2010,
         "year_to": 2017
       },
       {
         "name": "G30",
-        "year_from": 2016,
+        "year_from": 2017,
         "year_to": 2023
       },
       {
@@ -512,9 +522,9 @@
     ],
     "7 Series": [
       {
-        "name": "E32",
-        "year_from": 1986,
-        "year_to": 1994
+        "name": "E38",
+        "year_from": 1994,
+        "year_to": 2001
       },
       {
         "name": "E65",
@@ -607,6 +617,21 @@
     ],
     "X3": [
       {
+        "name": "E83",
+        "year_from": 2003,
+        "year_to": 2010
+      },
+      {
+        "name": "F25",
+        "year_from": 2010,
+        "year_to": 2017
+      },
+      {
+        "name": "G01",
+        "year_from": 2017,
+        "year_to": 2024
+      },
+      {
         "name": "G45",
         "year_from": 2024,
         "year_to": 2026
@@ -641,11 +666,6 @@
         "year_to": 2018
       },
       {
-        "name": "F85",
-        "year_from": 2014,
-        "year_to": 2018
-      },
-      {
         "name": "G05",
         "year_from": 2018,
         "year_to": 2026
@@ -665,9 +685,9 @@
     ],
     "i3": [
       {
-        "name": "NA0",
-        "year_from": 2026,
-        "year_to": 2026
+        "name": "I01",
+        "year_from": 2013,
+        "year_to": 2022
       }
     ],
     "iX3": [
@@ -903,6 +923,18 @@
         "year_to": 2023
       }
     ],
+    "C4 Spacetourer": [
+      {
+        "name": "Mk1",
+        "year_from": 2006,
+        "year_to": 2013
+      },
+      {
+        "name": "Mk2",
+        "year_from": 2013,
+        "year_to": 2022
+      }
+    ],
     "C5": [
       {
         "name": "Mk1",
@@ -920,6 +952,13 @@
         "name": "Gen1",
         "year_from": 2011,
         "year_to": 2018
+      }
+    ],
+    "e-Mehari": [
+      {
+        "name": "Gen1",
+        "year_from": 2016,
+        "year_to": 2019
       }
     ]
   },
@@ -940,6 +979,18 @@
     ]
   },
   "DS": {
+    "DS3": [
+      {
+        "name": "Gen1",
+        "year_from": 2010,
+        "year_to": 2019
+      },
+      {
+        "name": "Gen2",
+        "year_from": 2019,
+        "year_to": 2024
+      }
+    ],
     "DS7": [
       {
         "name": "Gen1",
@@ -2037,6 +2088,16 @@
         "name": "L322",
         "year_from": 2001,
         "year_to": 2012
+      },
+      {
+        "name": "L405",
+        "year_from": 2012,
+        "year_to": 2021
+      },
+      {
+        "name": "L460",
+        "year_from": 2022,
+        "year_to": 2026
       }
     ],
     "Range Rover Evoque": [
@@ -2048,6 +2109,15 @@
       {
         "name": "L551",
         "year_from": 2019,
+        "year_to": 2026
+      }
+    ]
+  },
+  "Ligier": {
+    "JS 50": [
+      {
+        "name": "Gen1",
+        "year_from": 2012,
         "year_to": 2026
       }
     ]
@@ -2516,9 +2586,19 @@
     ],
     "Qashqai": [
       {
-        "name": "I",
+        "name": "J10",
         "year_from": 2006,
-        "year_to": 2015
+        "year_to": 2013
+      },
+      {
+        "name": "J11",
+        "year_from": 2013,
+        "year_to": 2021
+      },
+      {
+        "name": "J12",
+        "year_from": 2021,
+        "year_to": 2026
       }
     ],
     "Z": [
@@ -2728,14 +2808,21 @@
       }
     ]
   },
-  "Porsche": {
-    "718 Boxster and Cayman": [
+  "Pontiac": {
+    "Trans-Sport": [
       {
-        "name": "982",
-        "year_from": 2016,
-        "year_to": 2026
+        "name": "Gen1",
+        "year_from": 1989,
+        "year_to": 1996
+      },
+      {
+        "name": "Gen2",
+        "year_from": 1996,
+        "year_to": 1999
       }
-    ],
+    ]
+  },
+  "Porsche": {
     "911": [
       {
         "name": "classic",
@@ -2778,6 +2865,28 @@
         "name": "Gen1",
         "year_from": 1976,
         "year_to": 1988
+      }
+    ],
+    "Boxster": [
+      {
+        "name": "986",
+        "year_from": 1996,
+        "year_to": 2004
+      },
+      {
+        "name": "987",
+        "year_from": 2004,
+        "year_to": 2012
+      },
+      {
+        "name": "981",
+        "year_from": 2012,
+        "year_to": 2016
+      },
+      {
+        "name": "982",
+        "year_from": 2016,
+        "year_to": 2026
       }
     ],
     "Cayenne": [
@@ -2922,6 +3031,11 @@
         "name": "Mk4",
         "year_from": 2016,
         "year_to": 2023
+      },
+      {
+        "name": "Mk5",
+        "year_from": 2022,
+        "year_to": 2026
       }
     ],
     "Scénic": [
@@ -3126,9 +3240,14 @@
     ],
     "Grand Vitara": [
       {
-        "name": "2022",
-        "year_from": 2022,
-        "year_to": 2026
+        "name": "FT/GT",
+        "year_from": 1998,
+        "year_to": 2005
+      },
+      {
+        "name": "JT",
+        "year_from": 2005,
+        "year_to": 2017
       }
     ]
   },
@@ -3374,9 +3493,19 @@
     ],
     "Yaris": [
       {
-        "name": "XP150",
-        "year_from": 2013,
-        "year_to": 2026
+        "name": "XP10",
+        "year_from": 1999,
+        "year_to": 2005
+      },
+      {
+        "name": "XP90",
+        "year_from": 2005,
+        "year_to": 2011
+      },
+      {
+        "name": "XP130",
+        "year_from": 2011,
+        "year_to": 2020
       },
       {
         "name": "XP210",

@@ -73,10 +73,10 @@ _MODEL_ALIASES: dict[str, dict[str, str]] = {
     "VW": {"Golf": "Golf"},
     "Seat": {"Ibiza ST": "Ibiza"},
     "Citroen": {
-        "C4 Spacetourer": "C4", "C5 Break": "C5", "DS4": "DS4",
+        "C5 Break": "C5", "DS4": "DS4",
         "e-Mehari": "e-Mehari",
     },
-    "Porsche": {"Panamera Sport Turismo": "Panamera", "718 Boxster": "718 Boxster and Cayman"},
+    "Porsche": {"Panamera Sport Turismo": "Panamera", "718 Boxster": "Boxster"},
     "Volvo": {"XC 90": "XC90"},
     "Land Rover": {"Evoque": "Range Rover Evoque"},
     "Smart": {"ForTwo Coupé": "ForTwo"},
