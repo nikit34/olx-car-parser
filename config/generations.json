@@ -205,13 +205,13 @@
       },
       {
         "name": "B6",
-        "year_from": 2001,
-        "year_to": 2004
+        "year_from": 2000,
+        "year_to": 2006
       },
       {
         "name": "B7",
         "year_from": 2004,
-        "year_to": 2008
+        "year_to": 2009
       },
       {
         "name": "B8",
@@ -260,44 +260,29 @@
     ],
     "A6": [
       {
-        "name": "C1 (Mk1)",
-        "year_from": 1974,
-        "year_to": 1982
-      },
-      {
-        "name": "C2 (Mk2)",
-        "year_from": 1982,
-        "year_to": 1988
-      },
-      {
-        "name": "C3 (Mk3)",
+        "name": "C4",
         "year_from": 1994,
         "year_to": 1997
       },
       {
-        "name": "C4 (Mk4)",
+        "name": "C5",
         "year_from": 1997,
-        "year_to": 2004
+        "year_to": 2005
       },
       {
-        "name": "C5 (Mk5)",
+        "name": "C6",
         "year_from": 2004,
-        "year_to": 2008
-      },
-      {
-        "name": "C6 (Mk6)",
-        "year_from": 2008,
         "year_to": 2011
       },
       {
-        "name": "C7 (Mk7)",
+        "name": "C7",
         "year_from": 2011,
         "year_to": 2018
       },
       {
-        "name": "C8 (Mk8)",
+        "name": "C8",
         "year_from": 2018,
-        "year_to": 2024
+        "year_to": 2026
       }
     ],
     "Q3": [
@@ -371,7 +356,7 @@
       {
         "name": "E87",
         "year_from": 2004,
-        "year_to": 2011
+        "year_to": 2013
       },
       {
         "name": "F20",
@@ -381,6 +366,11 @@
       {
         "name": "F40",
         "year_from": 2019,
+        "year_to": 2024
+      },
+      {
+        "name": "F70",
+        "year_from": 2024,
         "year_to": 2026
       }
     ],
@@ -400,27 +390,27 @@
       {
         "name": "E30",
         "year_from": 1982,
-        "year_to": 1990
+        "year_to": 1994
       },
       {
         "name": "E36",
         "year_from": 1990,
-        "year_to": 1998
+        "year_to": 2000
       },
       {
         "name": "E46",
-        "year_from": 1998,
-        "year_to": 2005
+        "year_from": 1997,
+        "year_to": 2006
       },
       {
         "name": "E90",
-        "year_from": 2005,
-        "year_to": 2011
+        "year_from": 2004,
+        "year_to": 2013
       },
       {
         "name": "F30",
         "year_from": 2011,
-        "year_to": 2018
+        "year_to": 2019
       },
       {
         "name": "G20",
@@ -1253,32 +1243,37 @@
     ],
     "Fiesta": [
       {
-        "name": "I",
+        "name": "Mk1",
         "year_from": 1976,
         "year_to": 1983
       },
       {
-        "name": "II",
+        "name": "Mk2",
         "year_from": 1983,
         "year_to": 1989
       },
       {
-        "name": "III",
+        "name": "Mk3",
         "year_from": 1989,
         "year_to": 1997
       },
       {
-        "name": "V",
+        "name": "Mk4",
+        "year_from": 1995,
+        "year_to": 2002
+      },
+      {
+        "name": "Mk5",
         "year_from": 2002,
         "year_to": 2008
       },
       {
-        "name": "VI",
+        "name": "Mk6",
         "year_from": 2008,
-        "year_to": 2016
+        "year_to": 2017
       },
       {
-        "name": "VII",
+        "name": "Mk7",
         "year_from": 2017,
         "year_to": 2023
       }
@@ -1355,29 +1350,29 @@
     ],
     "Mondeo": [
       {
-        "name": "I",
+        "name": "Mk1",
         "year_from": 1992,
-        "year_to": 1999
+        "year_to": 1996
       },
       {
-        "name": "II",
+        "name": "Mk2",
+        "year_from": 1996,
+        "year_to": 2000
+      },
+      {
+        "name": "Mk3",
         "year_from": 2000,
         "year_to": 2007
       },
       {
-        "name": "III",
+        "name": "Mk4",
         "year_from": 2007,
-        "year_to": 2012
+        "year_to": 2014
       },
       {
-        "name": "IV",
-        "year_from": 2013,
-        "year_to": 2021
-      },
-      {
-        "name": "V",
-        "year_from": 2022,
-        "year_to": 2026
+        "name": "Mk5",
+        "year_from": 2014,
+        "year_to": 2022
       }
     ],
     "Mondeo SW": [
@@ -1783,7 +1778,7 @@
       {
         "name": "Mk3",
         "year_from": 2015,
-        "year_to": 2020
+        "year_to": 2021
       },
       {
         "name": "Mk4",
@@ -2243,18 +2238,18 @@
     "C-Class": [
       {
         "name": "W202",
-        "year_from": 1992,
-        "year_to": 1998
+        "year_from": 1993,
+        "year_to": 2001
       },
       {
         "name": "W203",
-        "year_from": 1999,
-        "year_to": 2010
+        "year_from": 2000,
+        "year_to": 2007
       },
       {
         "name": "W204",
-        "year_from": 2011,
-        "year_to": 2015
+        "year_from": 2007,
+        "year_to": 2014
       },
       {
         "name": "W205",
@@ -2321,14 +2316,14 @@
     ],
     "E-Class": [
       {
-        "name": "W211",
-        "year_from": 2001,
-        "year_to": 2007
+        "name": "W210",
+        "year_from": 1995,
+        "year_to": 2003
       },
       {
-        "name": "C207",
-        "year_from": 2008,
-        "year_to": 2008
+        "name": "W211",
+        "year_from": 2002,
+        "year_to": 2009
       },
       {
         "name": "W212",
@@ -2393,13 +2388,18 @@
     ],
     "S-Class": [
       {
+        "name": "W140",
+        "year_from": 1991,
+        "year_to": 1998
+      },
+      {
         "name": "W220",
         "year_from": 1998,
-        "year_to": 2026
+        "year_to": 2005
       },
       {
         "name": "W221",
-        "year_from": 2004,
+        "year_from": 2005,
         "year_to": 2013
       },
       {
@@ -2408,9 +2408,9 @@
         "year_to": 2020
       },
       {
-        "name": "C217",
-        "year_from": 2014,
-        "year_to": 2020
+        "name": "W223",
+        "year_from": 2020,
+        "year_to": 2026
       }
     ],
     "SL": [
@@ -2619,12 +2619,12 @@
       {
         "name": "G",
         "year_from": 1998,
-        "year_to": 2004
+        "year_to": 2009
       },
       {
         "name": "H",
         "year_from": 2004,
-        "year_to": 2009
+        "year_to": 2014
       },
       {
         "name": "J",
@@ -2825,29 +2825,19 @@
   "Porsche": {
     "911": [
       {
-        "name": "classic",
-        "year_from": 1964,
-        "year_to": 1989
-      },
-      {
-        "name": "930",
-        "year_from": 1975,
-        "year_to": 1988
-      },
-      {
-        "name": "964",
-        "year_from": 1989,
-        "year_to": 1993
-      },
-      {
         "name": "993",
-        "year_from": 1994,
+        "year_from": 1993,
         "year_to": 1998
+      },
+      {
+        "name": "996",
+        "year_from": 1998,
+        "year_to": 2005
       },
       {
         "name": "997",
         "year_from": 2004,
-        "year_to": 2013
+        "year_to": 2012
       },
       {
         "name": "991",
@@ -2856,7 +2846,7 @@
       },
       {
         "name": "992",
-        "year_from": 2018,
+        "year_from": 2019,
         "year_to": 2026
       }
     ],
@@ -2979,7 +2969,7 @@
       {
         "name": "Mk2",
         "year_from": 1998,
-        "year_to": 2005
+        "year_to": 2012
       },
       {
         "name": "Mk3",
@@ -3029,8 +3019,8 @@
       },
       {
         "name": "Mk4",
-        "year_from": 2016,
-        "year_to": 2023
+        "year_from": 2015,
+        "year_to": 2024
       },
       {
         "name": "Mk5",
@@ -3364,29 +3354,14 @@
     ],
     "Corolla": [
       {
-        "name": "E30",
-        "year_from": 1974,
-        "year_to": 1981
-      },
-      {
-        "name": "E70",
-        "year_from": 1979,
-        "year_to": 1983
-      },
-      {
-        "name": "E80",
-        "year_from": 1983,
-        "year_to": 1987
-      },
-      {
         "name": "E90",
-        "year_from": 1988,
-        "year_to": 2006
+        "year_from": 1987,
+        "year_to": 1992
       },
       {
         "name": "E100",
         "year_from": 1991,
-        "year_to": 1996
+        "year_to": 1998
       },
       {
         "name": "E110",
@@ -3395,8 +3370,8 @@
       },
       {
         "name": "E120",
-        "year_from": 2003,
-        "year_to": 2008
+        "year_from": 2001,
+        "year_to": 2007
       },
       {
         "name": "E140",
@@ -3405,17 +3380,12 @@
       },
       {
         "name": "E170",
-        "year_from": 2014,
-        "year_to": 2022
-      },
-      {
-        "name": "E160",
-        "year_from": 2019,
-        "year_to": 2025
+        "year_from": 2012,
+        "year_to": 2019
       },
       {
         "name": "E210",
-        "year_from": 2019,
+        "year_from": 2018,
         "year_to": 2026
       }
     ],
@@ -3590,7 +3560,7 @@
       {
         "name": "Mk4",
         "year_from": 1997,
-        "year_to": 2002
+        "year_to": 2006
       },
       {
         "name": "Mk5",
@@ -3632,29 +3602,34 @@
     ],
     "Passat": [
       {
+        "name": "B3",
+        "year_from": 1988,
+        "year_to": 1993
+      },
+      {
         "name": "B4",
         "year_from": 1993,
-        "year_to": 1995
+        "year_to": 1997
       },
       {
         "name": "B5",
         "year_from": 1996,
-        "year_to": 2004
+        "year_to": 2005
       },
       {
         "name": "B6",
         "year_from": 2005,
-        "year_to": 2011
+        "year_to": 2010
       },
       {
-        "name": "North America and China",
-        "year_from": 2011,
-        "year_to": 2026
+        "name": "B7",
+        "year_from": 2010,
+        "year_to": 2015
       },
       {
         "name": "B8",
-        "year_from": 2022,
-        "year_to": 2022
+        "year_from": 2014,
+        "year_to": 2023
       },
       {
         "name": "B9",
