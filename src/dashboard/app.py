@@ -314,9 +314,10 @@ with tab_deals:
             st.plotly_chart(fig_brands, width="stretch")
 
         # --- Price vs Fair Price scatter ---
+        deals["_scatter_size"] = deals["flip_score"].clip(lower=1)
         fig_scatter = px.scatter(
             deals, x="predicted_price", y="price_eur",
-            color="est_profit_eur", size="flip_score",
+            color="est_profit_eur", size="_scatter_size",
             color_continuous_scale="RdYlGn_r",
             hover_data=["brand", "model", "year", "mileage_km"],
             labels={
@@ -849,15 +850,22 @@ with tab_compare:
             comparison_full["avg_days_to_sell"] = pd.NA
             comparison_full["weekly_turnover"] = pd.NA
 
+        # Capital turnover rate
+        if "avg_days_to_sell" in comparison_full.columns:
+            comparison_full["capital_turns"] = (365 / comparison_full["avg_days_to_sell"].replace(0, np.nan)).round(1)
+        else:
+            comparison_full["capital_turns"] = pd.NA
+
         comp_cols = ["label", "count", "median_price", "min_price", "max_price", "avg_mileage"]
         if "avg_days_to_sell" in comparison_full.columns:
-            comp_cols += ["avg_days_to_sell", "weekly_turnover"]
+            comp_cols += ["avg_days_to_sell", "weekly_turnover", "capital_turns"]
 
         st.dataframe(
             comparison_full[comp_cols].rename(columns={
                 "label": "Model", "count": "Listings", "median_price": "Median (EUR)",
                 "min_price": "Min (EUR)", "max_price": "Max (EUR)", "avg_mileage": "Avg Mileage",
                 "avg_days_to_sell": "Avg Days to Sell", "weekly_turnover": "Weekly Turnover %",
+                "capital_turns": "Turns/Year",
             }),
             width="stretch", hide_index=True,
             column_config={
@@ -867,6 +875,7 @@ with tab_compare:
                 "Avg Mileage": st.column_config.NumberColumn(format="%,.0f km"),
                 "Avg Days to Sell": st.column_config.NumberColumn(format="%.0f days"),
                 "Weekly Turnover %": st.column_config.NumberColumn(format="%.1f%%"),
+                "Turns/Year": st.column_config.NumberColumn(format="%.1f"),
             },
         )
 
