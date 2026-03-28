@@ -47,6 +47,14 @@ class Listing(Base):
 
     generation = Column(String)               # Car generation (e.g. "Golf VII", "E90")
 
+    # Enrichment columns (populated from LLM analysis of description)
+    needs_repair = Column(Boolean)              # Car needs repair/has known issues
+    had_accident = Column(Boolean)              # Car was in an accident/collision
+    real_mileage_km = Column(Integer)           # Mileage from description (may differ from attribute)
+    mileage_suspect = Column(Boolean)           # Attribute mileage doesn't match description
+    customs_cleared = Column(Boolean)           # Import: customs/legalization done
+    estimated_repair_cost_eur = Column(Integer) # Rough repair cost estimate from description
+
     price_snapshots = relationship("PriceSnapshot", back_populates="listing", lazy="dynamic")
 
 

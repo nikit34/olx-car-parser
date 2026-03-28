@@ -6,6 +6,7 @@ import logging
 import sys
 from pathlib import Path
 
+import pandas as pd
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -83,10 +84,15 @@ def scrape(
     console.print(f"Scraped [bold]{len(raw_listings)}[/bold] listings.")
 
     # LLM enrichment (if API key configured)
-    from src.parser.llm_enrichment import enrich_listings_batch
+    from src.parser.llm_enrichment import enrich_listings_batch, apply_corrections
     llm_count = enrich_listings_batch(raw_listings)
     if llm_count:
         console.print(f"LLM-enriched [bold]{llm_count}[/bold] listings from descriptions.")
+
+    # Cross-check and correct data using LLM-extracted info
+    corrected_count = apply_corrections(raw_listings)
+    if corrected_count:
+        console.print(f"Corrected data for [bold]{corrected_count}[/bold] listings (mileage, repair, accidents).")
 
     console.print("Saving to database...")
 
@@ -96,6 +102,9 @@ def scrape(
     for raw in raw_listings:
         if not raw.brand and not raw.title:
             continue
+
+        # Build corrections from LLM cross-check
+        corrections = getattr(raw, "_corrections", {})
 
         data = {
             "olx_id": raw.olx_id,
@@ -122,6 +131,13 @@ def scrape(
             "seller_type": raw.seller_type,
             "description": raw.description,
             "llm_extras": json.dumps(raw._llm_extras) if hasattr(raw, "_llm_extras") and raw._llm_extras else None,
+            # Enrichment columns from LLM cross-check
+            "needs_repair": corrections.get("needs_repair"),
+            "had_accident": corrections.get("had_accident"),
+            "real_mileage_km": corrections.get("real_mileage_km"),
+            "mileage_suspect": corrections.get("mileage_suspect"),
+            "customs_cleared": corrections.get("customs_cleared"),
+            "estimated_repair_cost_eur": corrections.get("estimated_repair_cost_eur"),
         }
 
         # Determine generation — route to main or unmatched table
@@ -229,6 +245,65 @@ def init():
     """Initialize database (create tables)."""
     init_db()
     console.print("[green]Database initialized.[/green]")
+
+
+@app.command()
+def export_training_data(
+    output: str = typer.Option("data/training_data.jsonl", help="Output JSONL path"),
+    min_desc_len: int = typer.Option(50, help="Min description length to include"),
+):
+    """Export enriched listings as JSONL training data for fine-tuning.
+
+    Each line: {"prompt": description, "completion": extracted_json}
+    Only includes listings that have both description and llm_extras.
+    """
+    init_db()
+    session = get_session()
+    df = get_listings_df(session)
+
+    if df.empty:
+        console.print("[yellow]No data. Run 'scrape' first.[/yellow]")
+        raise typer.Exit()
+
+    from src.parser.llm_enrichment import EXTRACTION_PROMPT
+
+    out_path = Path(output)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    count = 0
+    with open(out_path, "w") as f:
+        for _, row in df.iterrows():
+            desc = row.get("description") or ""
+            extras_raw = row.get("llm_extras")
+            if len(desc.strip()) < min_desc_len or not extras_raw:
+                continue
+
+            # Parse stored JSON string
+            try:
+                extras = json.loads(extras_raw) if isinstance(extras_raw, str) else extras_raw
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            # Merge DB-level corrections into the completion so the model
+            # learns the full enriched output including cross-checked fields
+            for col in ("needs_repair", "had_accident", "mileage_suspect",
+                        "customs_cleared", "real_mileage_km", "estimated_repair_cost_eur"):
+                val = row.get(col)
+                if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                    extras[col] = val
+
+            entry = {
+                "messages": [
+                    {"role": "user", "content": EXTRACTION_PROMPT + desc[:3000]},
+                    {"role": "assistant", "content": json.dumps(extras, ensure_ascii=False)},
+                ],
+            }
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            count += 1
+
+    console.print(f"[green]Exported {count} training examples to {out_path}[/green]")
+    if count < 200:
+        console.print(f"[yellow]Tip: need ~500+ examples for good fine-tuning. Keep scraping![/yellow]")
 
 
 if __name__ == "__main__":

@@ -36,6 +36,15 @@ jobs:
           .venv/bin/pip install -q -r requirements.txt
           .venv/bin/pip install -q -e .
 
+      - name: Ensure Ollama is installed
+        run: |
+          if curl -sf http://localhost:11434/api/tags 2>/dev/null | grep -q "qwen2.5:3b"; then
+            echo "Ollama OK with qwen2.5:3b"
+          else
+            echo "Setting up Ollama..."
+            bash /Users/anastasia/olx-car-parser/scripts/setup-ollama.sh qwen2.5:3b
+          fi
+
       - name: Restart dashboard
         run: |
           PLIST="$HOME/Library/LaunchAgents/com.olx-car-parser.dashboard.plist"

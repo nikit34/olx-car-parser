@@ -45,11 +45,21 @@ def get_session():
 def init_db(db_path: str | None = None):
     engine = get_engine(db_path)
     Base.metadata.create_all(engine)
-    # Migrate: add generation column to existing listings table
+    # Migrate: add columns to existing listings table
+    _migrate_columns = [
+        ("generation", "TEXT"),
+        ("needs_repair", "BOOLEAN"),
+        ("had_accident", "BOOLEAN"),
+        ("real_mileage_km", "INTEGER"),
+        ("mileage_suspect", "BOOLEAN"),
+        ("customs_cleared", "BOOLEAN"),
+        ("estimated_repair_cost_eur", "INTEGER"),
+    ]
     with engine.connect() as conn:
-        try:
-            conn.execute(text("ALTER TABLE listings ADD COLUMN generation TEXT"))
-            conn.commit()
-        except Exception:
-            conn.rollback()
+        for col_name, col_type in _migrate_columns:
+            try:
+                conn.execute(text(f"ALTER TABLE listings ADD COLUMN {col_name} {col_type}"))
+                conn.commit()
+            except Exception:
+                conn.rollback()
     return engine

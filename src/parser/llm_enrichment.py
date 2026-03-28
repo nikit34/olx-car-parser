@@ -1,8 +1,11 @@
-"""Enrich listing data using a free LLM via OpenRouter.
+"""Enrich listing data using a local Ollama model or free OpenRouter API.
 
 Extracts additional structured info from description text:
 - Accident history, service history, extras/features
 - Number of owners, warranty, recent maintenance
+- Repair needs, real mileage, customs status, red flags
+
+Priority: Ollama (local, free, no limits) → OpenRouter (free tier, rate-limited).
 """
 
 import json
@@ -18,21 +21,49 @@ logger = logging.getLogger(__name__)
 CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "settings.yaml"
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OLLAMA_URL = "http://localhost:11434"
 
 EXTRACTION_PROMPT = """\
-You are a data extraction assistant. Given a car listing description in Portuguese, \
-extract structured information. Return ONLY valid JSON with these fields (use null if not found):
+You are a data extraction assistant for Portuguese car listings. Given a description \
+in Portuguese, extract ALL available structured information. Return ONLY valid JSON \
+with these fields (use null if not mentioned or unclear):
 
 {
   "num_owners": <int or null>,
   "accident_free": <bool or null>,
+  "had_accident": <bool or null>,
+  "accident_details": <string or null>,
   "service_history": <bool or null>,
   "warranty_months": <int or null>,
   "recent_maintenance": <string or null>,
+  "needs_repair": <bool or null>,
+  "repair_details": <string or null>,
+  "estimated_repair_cost_eur": <int or null>,
+  "mileage_in_description_km": <int or null>,
+  "customs_cleared": <bool or null>,
+  "imported": <bool or null>,
+  "legal_issues": [<list of documentation/legal problems>],
+  "mechanical_condition": <string: "excellent"/"good"/"fair"/"poor" or null>,
+  "paint_condition": <string: "excellent"/"good"/"fair"/"poor" or null>,
+  "suspicious_signs": [<list of red flags: mileage tampering, hidden damage, etc.>],
   "extras": [<list of notable extras/features as short strings>],
   "issues": [<list of mentioned problems/defects>],
   "reason_for_sale": <string or null>
 }
+
+IMPORTANT rules:
+- "mileage_in_description_km": extract ANY mileage number the seller mentions in the text \
+(e.g. "150 mil km", "150.000km", "apenas 80000"). Convert to integer km. This may differ from \
+the listing attributes — the description often has the real value.
+- "needs_repair": true if the seller mentions ANY repair needed, bodywork damage, mechanical \
+issues, parts to replace, "para peças", "necessita de reparação", paint damage, etc.
+- "had_accident": true if ANY accident, collision, or damage event is mentioned.
+- "customs_cleared": for imported cars, whether customs/legalization is done. Look for \
+"desalfandegado", "legalizado", "documentação em ordem", "sem documentos", "por legalizar".
+- "suspicious_signs": list things like impossibly low mileage for age, contradictions in \
+description, "livro de revisões perdido", vague damage descriptions, etc.
+- "estimated_repair_cost_eur": rough estimate ONLY if the seller mentions specific repair \
+costs or you can estimate from described issues (e.g. "precisa de embraiagem" → ~800).
 
 Description:
 """
@@ -47,18 +78,69 @@ def _get_config() -> dict:
     return {
         "api_key": os.environ.get("OPENROUTER_API_KEY", cfg.get("openrouter_api_key", "")),
         "model": cfg.get("model", "nvidia/nemotron-3-super-120b-a12b:free"),
+        "ollama_model": cfg.get("ollama_model", "qwen2.5:3b"),
+        "ollama_url": cfg.get("ollama_url", OLLAMA_URL),
+        "prefer_local": cfg.get("prefer_local", True),
     }
 
 
-def enrich_from_description(description: str) -> dict | None:
-    """Call OpenRouter free model to extract structured data from description.
+_ollama_status: bool | None = None
 
-    Returns dict with extracted fields, or None on failure.
-    """
-    if not description or len(description.strip()) < 20:
+
+def _ollama_available(base_url: str) -> bool:
+    """Check if Ollama is running locally. Result is cached for the process lifetime."""
+    global _ollama_status
+    if _ollama_status is not None:
+        return _ollama_status
+    try:
+        resp = httpx.get(f"{base_url}/api/tags", timeout=3)
+        _ollama_status = resp.status_code == 200
+    except httpx.HTTPError:
+        _ollama_status = False
+    return _ollama_status
+
+
+def _parse_llm_json(content: str) -> dict | None:
+    """Extract JSON from LLM response, handling markdown code blocks."""
+    if "```" in content:
+        content = content.split("```")[1]
+        if content.startswith("json"):
+            content = content[4:]
+    return json.loads(content.strip())
+
+
+def _call_ollama(description: str, cfg: dict) -> dict | None:
+    """Call local Ollama model for extraction."""
+    try:
+        resp = httpx.post(
+            f"{cfg['ollama_url']}/api/chat",
+            json={
+                "model": cfg["ollama_model"],
+                "messages": [
+                    {"role": "user", "content": EXTRACTION_PROMPT + description[:3000]},
+                ],
+                "stream": False,
+                "options": {
+                    "temperature": 0.1,
+                    "num_predict": 800,
+                },
+            },
+            timeout=120,  # local models are slower
+        )
+        if resp.status_code != 200:
+            logger.warning("Ollama API error: %s", resp.status_code)
+            return None
+
+        content = resp.json()["message"]["content"]
+        return _parse_llm_json(content)
+
+    except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as e:
+        logger.debug("Ollama enrichment failed: %s", e)
         return None
 
-    cfg = _get_config()
+
+def _call_openrouter(description: str, cfg: dict) -> dict | None:
+    """Call OpenRouter free model for extraction."""
     if not cfg["api_key"]:
         return None
 
@@ -72,9 +154,9 @@ def enrich_from_description(description: str) -> dict | None:
             json={
                 "model": cfg["model"],
                 "messages": [
-                    {"role": "user", "content": EXTRACTION_PROMPT + description[:2000]},
+                    {"role": "user", "content": EXTRACTION_PROMPT + description[:3000]},
                 ],
-                "max_tokens": 500,
+                "max_tokens": 800,
                 "temperature": 0.1,
             },
             timeout=30,
@@ -84,18 +166,32 @@ def enrich_from_description(description: str) -> dict | None:
             return None
 
         content = resp.json()["choices"][0]["message"]["content"]
-
-        # Extract JSON from response (handle markdown code blocks)
-        if "```" in content:
-            content = content.split("```")[1]
-            if content.startswith("json"):
-                content = content[4:]
-
-        return json.loads(content.strip())
+        return _parse_llm_json(content)
 
     except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as e:
-        logger.debug("LLM enrichment failed: %s", e)
+        logger.debug("OpenRouter enrichment failed: %s", e)
         return None
+
+
+def enrich_from_description(description: str) -> dict | None:
+    """Extract structured data from description using Ollama (local) or OpenRouter (cloud).
+
+    Returns dict with extracted fields, or None on failure.
+    """
+    if not description or len(description.strip()) < 20:
+        return None
+
+    cfg = _get_config()
+
+    # Try local Ollama first (free, no limits)
+    if cfg["prefer_local"] and _ollama_available(cfg["ollama_url"]):
+        result = _call_ollama(description, cfg)
+        if result:
+            return result
+        logger.debug("Ollama failed, falling back to OpenRouter")
+
+    # Fallback to OpenRouter
+    return _call_openrouter(description, cfg)
 
 
 def enrich_listings_batch(listings: list, batch_size: int = 50) -> int:
@@ -104,9 +200,14 @@ def enrich_listings_batch(listings: list, batch_size: int = 50) -> int:
     Modifies listings in place. Returns count of enriched listings.
     """
     cfg = _get_config()
-    if not cfg["api_key"]:
-        logger.info("No OpenRouter API key configured. Skipping LLM enrichment.")
+    use_ollama = cfg["prefer_local"] and _ollama_available(cfg["ollama_url"])
+
+    if not use_ollama and not cfg["api_key"]:
+        logger.info("No LLM backend available (Ollama not running, no OpenRouter key). Skipping.")
         return 0
+
+    backend = f"Ollama ({cfg['ollama_model']})" if use_ollama else f"OpenRouter ({cfg['model']})"
+    logger.info("LLM enrichment using %s for up to %d listings", backend, min(batch_size, len(listings)))
 
     enriched = 0
     failures = 0
@@ -121,9 +222,117 @@ def enrich_listings_batch(listings: list, batch_size: int = 50) -> int:
             failures = 0  # reset on success
         else:
             failures += 1
-            if failures >= 3:
-                logger.warning("3 consecutive LLM failures, stopping enrichment.")
+            if failures >= 5:
+                logger.warning("5 consecutive LLM failures, stopping enrichment.")
                 break
 
     logger.info("LLM-enriched %d / %d listings", enriched, len(listings))
     return enriched
+
+
+# ---------------------------------------------------------------------------
+# Data correction — cross-check and fix attributes using LLM-extracted data
+# ---------------------------------------------------------------------------
+
+def correct_listing_data(listing) -> dict:
+    """Cross-check listing attributes against LLM-extracted data and return corrections.
+
+    Returns a dict with corrected/enriched fields to apply to the listing.
+    The dict includes both top-level column values (needs_repair, had_accident, etc.)
+    and an updated llm_extras JSON.
+    """
+    extras = getattr(listing, "_llm_extras", None)
+    if not extras:
+        return {}
+
+    corrections = {}
+
+    # --- Mileage cross-check ---
+    desc_km = extras.get("mileage_in_description_km")
+    attr_km = listing.mileage_km
+
+    if desc_km and isinstance(desc_km, (int, float)) and desc_km > 0:
+        desc_km = int(desc_km)
+        if attr_km and attr_km > 0:
+            # Description mentions significantly higher mileage → attribute is suspect
+            if desc_km > attr_km * 1.3 and (desc_km - attr_km) > 5000:
+                corrections["real_mileage_km"] = desc_km
+                corrections["mileage_suspect"] = True
+                logger.info(
+                    "Mileage mismatch for %s: attribute=%d, description=%d → using description",
+                    listing.url, attr_km, desc_km,
+                )
+            # Description mentions significantly lower → could be seller's round number
+            # but if attribute is suspiciously high (typo?), description might be correct
+            elif attr_km > desc_km * 2 and (attr_km - desc_km) > 50000:
+                corrections["real_mileage_km"] = desc_km
+                corrections["mileage_suspect"] = True
+                logger.info(
+                    "Possible mileage typo for %s: attribute=%d, description=%d",
+                    listing.url, attr_km, desc_km,
+                )
+        elif not attr_km or attr_km == 0:
+            # No attribute mileage but description has it
+            corrections["real_mileage_km"] = desc_km
+            corrections["mileage_suspect"] = False
+
+    # --- Needs repair ---
+    needs_repair = extras.get("needs_repair")
+    if needs_repair is not None:
+        corrections["needs_repair"] = bool(needs_repair)
+    elif extras.get("issues"):
+        # If issues list is non-empty, car likely needs some work
+        corrections["needs_repair"] = True
+
+    # --- Accident history ---
+    had_accident = extras.get("had_accident")
+    if had_accident is not None:
+        corrections["had_accident"] = bool(had_accident)
+    elif extras.get("accident_free") is not None:
+        corrections["had_accident"] = not extras["accident_free"]
+
+    # --- Customs/legalization ---
+    customs = extras.get("customs_cleared")
+    if customs is not None:
+        corrections["customs_cleared"] = bool(customs)
+    elif listing.origin and "import" in (listing.origin or "").lower():
+        # Imported car with no customs info → flag as unknown (None stays)
+        pass
+
+    # --- Estimated repair cost ---
+    repair_cost = extras.get("estimated_repair_cost_eur")
+    if repair_cost and isinstance(repair_cost, (int, float)) and repair_cost > 0:
+        corrections["estimated_repair_cost_eur"] = int(repair_cost)
+
+    return corrections
+
+
+def apply_corrections(listings: list) -> int:
+    """Apply data corrections to all listings that have LLM extras.
+
+    Modifies listings in place. Returns count of corrected listings.
+    """
+    corrected = 0
+    for listing in listings:
+        corrections = correct_listing_data(listing)
+        if not corrections:
+            continue
+
+        # Store corrections as a separate attribute for the CLI to pick up
+        if not hasattr(listing, "_corrections"):
+            listing._corrections = {}
+        listing._corrections.update(corrections)
+        corrected += 1
+
+        # Log significant corrections
+        if corrections.get("mileage_suspect"):
+            logger.info(
+                "Corrected %s: real_mileage=%s, needs_repair=%s, accident=%s",
+                listing.olx_id,
+                corrections.get("real_mileage_km"),
+                corrections.get("needs_repair"),
+                corrections.get("had_accident"),
+            )
+
+    logger.info("Applied corrections to %d / %d listings", corrected, len(listings))
+    return corrected

@@ -170,8 +170,17 @@ def get_listings_df(session: Session) -> pd.DataFrame:
             "condition": l.condition, "origin": l.origin,
             "city": l.city, "district": l.district,
             "seller_type": l.seller_type, "is_active": l.is_active,
+            "description": l.description,
+            "llm_extras": l.llm_extras,
             "first_seen_at": l.first_seen_at,
             "last_seen_at": l.last_seen_at,
+            # Enrichment columns
+            "needs_repair": l.needs_repair,
+            "had_accident": l.had_accident,
+            "real_mileage_km": l.real_mileage_km,
+            "mileage_suspect": l.mileage_suspect,
+            "customs_cleared": l.customs_cleared,
+            "estimated_repair_cost_eur": l.estimated_repair_cost_eur,
         })
     return pd.DataFrame(rows)
 
