@@ -21,8 +21,8 @@ llm:
   model: "google/gemma-3-12b-it:free"
 
 alerts:
-  telegram_bot_token: ""     # Get from @BotFather
-  telegram_chat_id: ""       # Your chat/group ID
+  telegram_bot_token: "8651422044:AAEf93eodK6d4F7fn1FVH-vh0H5JX-gb92s"
+  telegram_chat_id: "604665081"
   min_discount_pct: 15
   state_file: "data/alerts_state.json"
 
