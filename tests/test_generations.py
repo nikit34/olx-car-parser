@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from src.models.generations import get_generation, _MODEL_ALIASES
+from src.models.generations import get_generation, _get_model_aliases
 
 
 class TestGetGeneration:
@@ -39,9 +39,11 @@ class TestGetGeneration:
 
 class TestModelAliases:
     def test_bmw_series_aliases_exist(self):
+        aliases = _get_model_aliases()
         for model in ("116", "118", "120", "318", "320", "520", "530"):
-            assert model in _MODEL_ALIASES["BMW"]
+            assert model in aliases["BMW"]
 
     def test_mercedes_class_aliases_exist(self):
+        aliases = _get_model_aliases()
         for model in ("C 220", "E 220", "CLA 180"):
-            assert model in _MODEL_ALIASES["Mercedes-Benz"]
+            assert model in aliases["Mercedes-Benz"]
