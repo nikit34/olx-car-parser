@@ -1,22 +1,17 @@
-"""Car generation lookup: DBpedia SPARQL + LLM fallback for full coverage."""
+"""Car generation lookup: DBpedia SPARQL + static fallback for full coverage."""
 
 import json
 import logging
-import os
 import re
 import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
-import httpx
-import yaml
-
 logger = logging.getLogger(__name__)
 
 _DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 _CACHE_PATH = _DATA_DIR / "generations.json"
-_CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "settings.yaml"
 _generations: dict | None = None
 _CACHE_MAX_AGE = 24 * 3600  # refresh daily
 
@@ -24,6 +19,7 @@ _CACHE_MAX_AGE = 24 * 3600  # refresh daily
 # Brand normalization & model aliases
 # =========================================================================
 
+# DBpedia manufacturer label → standard brand name
 _BRAND_NORMALIZE: dict[str, str] = {
     "Volkswagen Group": "Volkswagen", "FAW-Volkswagen": "Volkswagen",
     "Mercedes-Benz Group": "Mercedes-Benz", "Daimler-Benz": "Mercedes-Benz",
@@ -36,6 +32,22 @@ _BRAND_NORMALIZE: dict[str, str] = {
     "Dongfeng Peugeot-Citroën": "Citroën",
     "Nissan Motor Company": "Nissan",
     "Honda Motor Company": "Honda", "Toyota Motor Corporation": "Toyota",
+    "Volvo Cars": "Volvo",
+    "Tesla, Inc.": "Tesla",
+    "Škoda Auto": "Škoda",
+    "DS Automobiles": "DS",
+    "Pontiac (automobile)": "Pontiac",
+    "British Motor Corporation": "Mini",
+    "SAIC Motor": "MG",
+    "MG Cars": "MG", "MG Motor": "MG", "MG cars": "MG",
+    "Stellantis Europe": "Fiat",
+}
+
+# Listing brand → canonical brand for lookup
+_BRAND_LOOKUP: dict[str, str] = {
+    "VW": "Volkswagen",
+    "Citroën": "Citroen",
+    "SEAT": "Seat",
 }
 
 _MODEL_ALIASES: dict[str, dict[str, str]] = {
@@ -83,16 +95,458 @@ _MODEL_ALIASES: dict[str, dict[str, str]] = {
     "Opel": {"Astra Sports Tourer": "Astra"},
     "Renault": {
         "Clio Sport Tourer": "Clio", "Mégane Break": "Mégane",
-        "Grand Scénic": "Scénic",
+        "Mégane E-Tech": "Mégane",
+        "Grand Scénic": "Scénic", "Grand Modus": "Modus",
     },
     "Peugeot": {"e-208": "208", "307 SW": "307", "407 SW": "407", "508 SW": "508"},
-    "Volkswagen": {"Golf Variant": "Golf"},
+    "Volkswagen": {"Golf Variant": "Golf", "ID.7": "ID.7"},
     "VW": {"Golf": "Golf"},
     "Seat": {"Ibiza ST": "Ibiza"},
+    "Citroen": {
+        "C4 Spacetourer": "C4", "C5 Break": "C5", "DS4": "DS4",
+        "e-Mehari": "e-Mehari",
+    },
+    "Porsche": {"Panamera Sport Turismo": "Panamera", "718 Boxster": "718 Boxster and Cayman"},
+    "Volvo": {"XC 90": "XC90"},
+    "Land Rover": {"Evoque": "Range Rover Evoque"},
+    "Smart": {"ForTwo Coupé": "ForTwo"},
+    "Toyota": {"107": "Aygo"},
 }
 
 # =========================================================================
-# Provider 1: DBpedia SPARQL
+# Static generation data — fallback for models DBpedia doesn't cover
+# =========================================================================
+
+_STATIC_GENERATIONS: dict[str, dict[str, list]] = {
+    "Seat": {
+        "Ibiza": [
+            {"name": "Mk2", "year_from": 1993, "year_to": 2002},
+            {"name": "6L", "year_from": 2002, "year_to": 2008},
+            {"name": "6J", "year_from": 2008, "year_to": 2017},
+            {"name": "KJ1", "year_from": 2017, "year_to": 2026},
+        ],
+        "Leon": [
+            {"name": "Mk1", "year_from": 1999, "year_to": 2005},
+            {"name": "Mk2", "year_from": 2005, "year_to": 2012},
+            {"name": "Mk3", "year_from": 2012, "year_to": 2020},
+            {"name": "Mk4", "year_from": 2020, "year_to": 2026},
+        ],
+        "Toledo": [
+            {"name": "1L", "year_from": 1991, "year_to": 1999},
+            {"name": "1M", "year_from": 1999, "year_to": 2004},
+            {"name": "5P", "year_from": 2004, "year_to": 2009},
+            {"name": "KG", "year_from": 2012, "year_to": 2019},
+        ],
+    },
+    "Citroen": {
+        "C3": [
+            {"name": "Mk1", "year_from": 2002, "year_to": 2009},
+            {"name": "Mk2", "year_from": 2009, "year_to": 2016},
+            {"name": "Mk3", "year_from": 2016, "year_to": 2024},
+        ],
+        "C4": [
+            {"name": "Mk1", "year_from": 2004, "year_to": 2010},
+            {"name": "Mk2", "year_from": 2010, "year_to": 2018},
+            {"name": "Mk3", "year_from": 2020, "year_to": 2026},
+        ],
+        "C5": [
+            {"name": "Mk1", "year_from": 2001, "year_to": 2007},
+            {"name": "Mk2", "year_from": 2008, "year_to": 2017},
+        ],
+        "DS4": [
+            {"name": "Gen1", "year_from": 2011, "year_to": 2018},
+        ],
+    },
+    "Volvo": {
+        "V40": [
+            {"name": "Mk1", "year_from": 1995, "year_to": 2004},
+            {"name": "Mk2", "year_from": 2012, "year_to": 2019},
+        ],
+        "V60": [
+            {"name": "Mk1", "year_from": 2010, "year_to": 2018},
+            {"name": "Mk2", "year_from": 2018, "year_to": 2026},
+        ],
+        "V90": [
+            {"name": "Mk2", "year_from": 2016, "year_to": 2026},
+        ],
+        "XC90": [
+            {"name": "Mk1", "year_from": 2002, "year_to": 2014},
+            {"name": "Mk2", "year_from": 2014, "year_to": 2026},
+        ],
+        "XC60": [
+            {"name": "Mk1", "year_from": 2008, "year_to": 2017},
+            {"name": "Mk2", "year_from": 2017, "year_to": 2026},
+        ],
+        "S60": [
+            {"name": "Mk1", "year_from": 2000, "year_to": 2009},
+            {"name": "Mk2", "year_from": 2010, "year_to": 2018},
+            {"name": "Mk3", "year_from": 2018, "year_to": 2026},
+        ],
+    },
+    "Mini": {
+        "Cooper": [
+            {"name": "R50", "year_from": 2000, "year_to": 2006},
+            {"name": "R56", "year_from": 2006, "year_to": 2013},
+            {"name": "F56", "year_from": 2013, "year_to": 2021},
+            {"name": "Mk4", "year_from": 2021, "year_to": 2026},
+        ],
+        "Countryman": [
+            {"name": "R60", "year_from": 2010, "year_to": 2016},
+            {"name": "F60", "year_from": 2017, "year_to": 2024},
+        ],
+    },
+    "Tesla": {
+        "Model 3": [
+            {"name": "Gen1", "year_from": 2017, "year_to": 2023},
+            {"name": "Highland", "year_from": 2023, "year_to": 2026},
+        ],
+        "Model X": [
+            {"name": "Gen1", "year_from": 2015, "year_to": 2021},
+            {"name": "Refresh", "year_from": 2021, "year_to": 2026},
+        ],
+        "Model S": [
+            {"name": "Gen1", "year_from": 2012, "year_to": 2021},
+            {"name": "Refresh", "year_from": 2021, "year_to": 2026},
+        ],
+        "Model Y": [
+            {"name": "Gen1", "year_from": 2020, "year_to": 2024},
+            {"name": "Juniper", "year_from": 2024, "year_to": 2026},
+        ],
+    },
+    "Smart": {
+        "ForTwo": [
+            {"name": "W450", "year_from": 1998, "year_to": 2007},
+            {"name": "W451", "year_from": 2007, "year_to": 2014},
+            {"name": "W453", "year_from": 2014, "year_to": 2023},
+        ],
+    },
+    "Cupra": {
+        "Born": [{"name": "Gen1", "year_from": 2021, "year_to": 2026}],
+        "Formentor": [{"name": "Gen1", "year_from": 2020, "year_to": 2026}],
+    },
+    "DS": {
+        "DS7": [{"name": "Gen1", "year_from": 2017, "year_to": 2024}],
+    },
+    "Opel": {
+        "Astra": [
+            {"name": "F", "year_from": 1991, "year_to": 1998},
+            {"name": "G", "year_from": 1998, "year_to": 2004},
+            {"name": "H", "year_from": 2004, "year_to": 2009},
+            {"name": "J", "year_from": 2009, "year_to": 2015},
+            {"name": "K", "year_from": 2015, "year_to": 2021},
+            {"name": "L", "year_from": 2021, "year_to": 2026},
+        ],
+        "Corsa": [
+            {"name": "B", "year_from": 1993, "year_to": 2000},
+            {"name": "C", "year_from": 2000, "year_to": 2006},
+            {"name": "D", "year_from": 2006, "year_to": 2014},
+            {"name": "E", "year_from": 2014, "year_to": 2019},
+            {"name": "F", "year_from": 2019, "year_to": 2026},
+        ],
+        "Vectra": [
+            {"name": "A", "year_from": 1988, "year_to": 1995},
+            {"name": "B", "year_from": 1995, "year_to": 2002},
+            {"name": "C", "year_from": 2002, "year_to": 2008},
+        ],
+    },
+    "Renault": {
+        "Clio": [
+            {"name": "Mk1", "year_from": 1990, "year_to": 1998},
+            {"name": "Mk2", "year_from": 1998, "year_to": 2005},
+            {"name": "Mk3", "year_from": 2005, "year_to": 2012},
+            {"name": "Mk4", "year_from": 2012, "year_to": 2019},
+            {"name": "Mk5", "year_from": 2019, "year_to": 2026},
+        ],
+        "Mégane": [
+            {"name": "Mk1", "year_from": 1995, "year_to": 2002},
+            {"name": "Mk2", "year_from": 2002, "year_to": 2008},
+            {"name": "Mk3", "year_from": 2008, "year_to": 2015},
+            {"name": "Mk4", "year_from": 2016, "year_to": 2023},
+        ],
+        "Captur": [
+            {"name": "Mk1", "year_from": 2013, "year_to": 2019},
+            {"name": "Mk2", "year_from": 2019, "year_to": 2026},
+        ],
+        "Twingo": [
+            {"name": "Mk1", "year_from": 1993, "year_to": 2007},
+            {"name": "Mk2", "year_from": 2007, "year_to": 2014},
+            {"name": "Mk3", "year_from": 2014, "year_to": 2024},
+        ],
+        "Scénic": [
+            {"name": "Mk1", "year_from": 1996, "year_to": 2003},
+            {"name": "Mk2", "year_from": 2003, "year_to": 2009},
+            {"name": "Mk3", "year_from": 2009, "year_to": 2016},
+            {"name": "Mk4", "year_from": 2016, "year_to": 2024},
+        ],
+        "Zoe": [
+            {"name": "Gen1", "year_from": 2012, "year_to": 2019},
+            {"name": "Gen2", "year_from": 2019, "year_to": 2024},
+        ],
+        "Modus": [{"name": "Gen1", "year_from": 2004, "year_to": 2012}],
+        "4": [{"name": "Gen1", "year_from": 1961, "year_to": 1992}],
+        "5": [
+            {"name": "Gen1", "year_from": 1972, "year_to": 1985},
+            {"name": "Supercinq", "year_from": 1984, "year_to": 1996},
+        ],
+    },
+    "Peugeot": {
+        "107": [{"name": "Gen1", "year_from": 2005, "year_to": 2014}],
+        "208": [
+            {"name": "Mk1", "year_from": 2012, "year_to": 2019},
+            {"name": "Mk2", "year_from": 2019, "year_to": 2026},
+        ],
+        "308": [
+            {"name": "Mk1", "year_from": 2007, "year_to": 2013},
+            {"name": "Mk2", "year_from": 2013, "year_to": 2021},
+            {"name": "Mk3", "year_from": 2021, "year_to": 2026},
+        ],
+        "307": [{"name": "Gen1", "year_from": 2001, "year_to": 2008}],
+        "405": [{"name": "Gen1", "year_from": 1987, "year_to": 1997}],
+        "407": [{"name": "Gen1", "year_from": 2004, "year_to": 2011}],
+        "508": [
+            {"name": "Mk1", "year_from": 2010, "year_to": 2018},
+            {"name": "Mk2", "year_from": 2018, "year_to": 2026},
+        ],
+        "3008": [
+            {"name": "Mk1", "year_from": 2008, "year_to": 2016},
+            {"name": "Mk2", "year_from": 2016, "year_to": 2024},
+        ],
+        "5008": [
+            {"name": "Mk1", "year_from": 2009, "year_to": 2017},
+            {"name": "Mk2", "year_from": 2017, "year_to": 2024},
+        ],
+    },
+    "Fiat": {
+        "Panda": [
+            {"name": "Mk1", "year_from": 1980, "year_to": 2003},
+            {"name": "Mk2", "year_from": 2003, "year_to": 2012},
+            {"name": "Mk3", "year_from": 2012, "year_to": 2024},
+        ],
+        "Punto": [
+            {"name": "Mk1", "year_from": 1993, "year_to": 1999},
+            {"name": "Mk2", "year_from": 1999, "year_to": 2010},
+            {"name": "Grande Punto", "year_from": 2005, "year_to": 2018},
+        ],
+        "Freemont": [{"name": "Gen1", "year_from": 2011, "year_to": 2016}],
+    },
+    "Ford": {
+        "KA": [
+            {"name": "Mk1", "year_from": 1996, "year_to": 2008},
+            {"name": "Mk2", "year_from": 2008, "year_to": 2016},
+            {"name": "Ka+", "year_from": 2016, "year_to": 2021},
+        ],
+        "Mondeo SW": [
+            {"name": "Mk3", "year_from": 2000, "year_to": 2007},
+            {"name": "Mk4", "year_from": 2007, "year_to": 2014},
+            {"name": "Mk5", "year_from": 2014, "year_to": 2022},
+        ],
+    },
+    "Honda": {
+        "Jazz": [
+            {"name": "Mk1", "year_from": 2001, "year_to": 2008},
+            {"name": "Mk2", "year_from": 2008, "year_to": 2013},
+            {"name": "Mk3", "year_from": 2014, "year_to": 2020},
+            {"name": "Mk4", "year_from": 2020, "year_to": 2026},
+        ],
+    },
+    "Hyundai": {
+        "i20": [
+            {"name": "Mk1", "year_from": 2008, "year_to": 2014},
+            {"name": "Mk2", "year_from": 2014, "year_to": 2020},
+            {"name": "Mk3", "year_from": 2020, "year_to": 2026},
+        ],
+        "i30": [
+            {"name": "Mk1", "year_from": 2007, "year_to": 2011},
+            {"name": "Mk2", "year_from": 2011, "year_to": 2017},
+            {"name": "Mk3", "year_from": 2017, "year_to": 2026},
+        ],
+        "Tucson": [
+            {"name": "Mk1", "year_from": 2004, "year_to": 2009},
+            {"name": "Mk2", "year_from": 2009, "year_to": 2015},
+            {"name": "Mk3", "year_from": 2015, "year_to": 2020},
+            {"name": "Mk4", "year_from": 2020, "year_to": 2026},
+        ],
+    },
+    "Mazda": {
+        "3": [
+            {"name": "BK", "year_from": 2003, "year_to": 2009},
+            {"name": "BL", "year_from": 2009, "year_to": 2013},
+            {"name": "BM", "year_from": 2013, "year_to": 2019},
+            {"name": "BP", "year_from": 2019, "year_to": 2026},
+        ],
+        "626": [
+            {"name": "GD", "year_from": 1987, "year_to": 1992},
+            {"name": "GE", "year_from": 1992, "year_to": 1997},
+            {"name": "GF", "year_from": 1997, "year_to": 2002},
+        ],
+        "CX-5": [
+            {"name": "Mk1", "year_from": 2012, "year_to": 2017},
+            {"name": "Mk2", "year_from": 2017, "year_to": 2026},
+        ],
+    },
+    "Nissan": {
+        "Juke": [
+            {"name": "F15", "year_from": 2010, "year_to": 2019},
+            {"name": "F16", "year_from": 2019, "year_to": 2026},
+        ],
+        "Pathfinder": [
+            {"name": "R51", "year_from": 2004, "year_to": 2012},
+            {"name": "R52", "year_from": 2012, "year_to": 2020},
+        ],
+        "Pulsar": [{"name": "C13", "year_from": 2014, "year_to": 2018}],
+    },
+    "Porsche": {
+        "Cayenne": [
+            {"name": "E1", "year_from": 2002, "year_to": 2010},
+            {"name": "E2", "year_from": 2010, "year_to": 2018},
+            {"name": "E3", "year_from": 2018, "year_to": 2026},
+        ],
+        "Panamera": [
+            {"name": "970", "year_from": 2009, "year_to": 2016},
+            {"name": "971", "year_from": 2016, "year_to": 2026},
+        ],
+        "Taycan": [{"name": "Gen1", "year_from": 2019, "year_to": 2026}],
+        "924": [{"name": "Gen1", "year_from": 1976, "year_to": 1988}],
+        "Macan": [
+            {"name": "Mk1", "year_from": 2014, "year_to": 2024},
+            {"name": "Mk2", "year_from": 2024, "year_to": 2026},
+        ],
+    },
+    "BMW": {
+        "M3": [
+            {"name": "E30", "year_from": 1986, "year_to": 1991},
+            {"name": "E36", "year_from": 1992, "year_to": 1999},
+            {"name": "E46", "year_from": 2000, "year_to": 2006},
+            {"name": "E90", "year_from": 2007, "year_to": 2013},
+            {"name": "F80", "year_from": 2014, "year_to": 2018},
+            {"name": "G80", "year_from": 2021, "year_to": 2026},
+        ],
+        "X4": [
+            {"name": "F26", "year_from": 2014, "year_to": 2018},
+            {"name": "G02", "year_from": 2018, "year_to": 2026},
+        ],
+    },
+    "Toyota": {
+        "Aygo": [
+            {"name": "Mk1", "year_from": 2005, "year_to": 2014},
+            {"name": "Mk2", "year_from": 2014, "year_to": 2023},
+        ],
+        "RAV4": [
+            {"name": "Mk3", "year_from": 2005, "year_to": 2012},
+            {"name": "Mk4", "year_from": 2012, "year_to": 2018},
+            {"name": "Mk5", "year_from": 2018, "year_to": 2026},
+        ],
+    },
+    "Mitsubishi": {
+        "Outlander": [
+            {"name": "Mk2", "year_from": 2006, "year_to": 2012},
+            {"name": "Mk3", "year_from": 2012, "year_to": 2021},
+            {"name": "Mk4", "year_from": 2021, "year_to": 2026},
+        ],
+        "Space Star": [
+            {"name": "Mk1", "year_from": 1998, "year_to": 2005},
+            {"name": "Mk2", "year_from": 2012, "year_to": 2026},
+        ],
+    },
+    "Jaguar": {
+        "E-Pace": [{"name": "Gen1", "year_from": 2017, "year_to": 2024}],
+        "I-Pace": [{"name": "Gen1", "year_from": 2018, "year_to": 2025}],
+        "F-Pace": [{"name": "Gen1", "year_from": 2016, "year_to": 2026}],
+    },
+    "Jeep": {
+        "Compass": [
+            {"name": "MK49", "year_from": 2006, "year_to": 2017},
+            {"name": "MP", "year_from": 2017, "year_to": 2026},
+        ],
+    },
+    "Land Rover": {
+        "Defender": [
+            {"name": "Mk1", "year_from": 1983, "year_to": 2016},
+            {"name": "L663", "year_from": 2019, "year_to": 2026},
+        ],
+        "Range Rover Evoque": [
+            {"name": "L538", "year_from": 2011, "year_to": 2019},
+            {"name": "L551", "year_from": 2019, "year_to": 2026},
+        ],
+    },
+    "Volkswagen": {
+        "Crafter": [
+            {"name": "Mk1", "year_from": 2006, "year_to": 2016},
+            {"name": "Mk2", "year_from": 2017, "year_to": 2026},
+        ],
+    },
+    "Audi": {
+        "A1": [
+            {"name": "8X", "year_from": 2010, "year_to": 2018},
+            {"name": "GB", "year_from": 2018, "year_to": 2026},
+        ],
+        "A3": [
+            {"name": "8L", "year_from": 1996, "year_to": 2003},
+            {"name": "8P", "year_from": 2003, "year_to": 2012},
+            {"name": "8V", "year_from": 2012, "year_to": 2020},
+            {"name": "8Y", "year_from": 2020, "year_to": 2026},
+        ],
+        "A4": [
+            {"name": "B5", "year_from": 1994, "year_to": 2001},
+            {"name": "B6", "year_from": 2001, "year_to": 2004},
+            {"name": "B7", "year_from": 2004, "year_to": 2008},
+            {"name": "B8", "year_from": 2008, "year_to": 2015},
+            {"name": "B9", "year_from": 2015, "year_to": 2026},
+        ],
+        "A5": [
+            {"name": "8T", "year_from": 2007, "year_to": 2016},
+            {"name": "F5", "year_from": 2016, "year_to": 2026},
+        ],
+        "Q3": [
+            {"name": "8U", "year_from": 2011, "year_to": 2018},
+            {"name": "F3", "year_from": 2018, "year_to": 2026},
+        ],
+        "Q5": [
+            {"name": "8R", "year_from": 2008, "year_to": 2017},
+            {"name": "FY", "year_from": 2017, "year_to": 2026},
+        ],
+    },
+    "Mercedes-Benz": {
+        "CLA-Class": [
+            {"name": "C117", "year_from": 2013, "year_to": 2019},
+            {"name": "C118", "year_from": 2019, "year_to": 2026},
+        ],
+        "CLC-Class": [{"name": "CL203", "year_from": 2008, "year_to": 2011}],
+        "GLA-Class": [
+            {"name": "X156", "year_from": 2013, "year_to": 2019},
+            {"name": "H247", "year_from": 2019, "year_to": 2026},
+        ],
+        "GLB-Class": [{"name": "X247", "year_from": 2019, "year_to": 2026}],
+        "GLC-Class": [
+            {"name": "X253", "year_from": 2015, "year_to": 2022},
+            {"name": "X254", "year_from": 2022, "year_to": 2026},
+        ],
+    },
+    "Kia": {
+        "Ceed": [
+            {"name": "Mk1", "year_from": 2006, "year_to": 2012},
+            {"name": "Mk2", "year_from": 2012, "year_to": 2018},
+            {"name": "Mk3", "year_from": 2018, "year_to": 2026},
+        ],
+    },
+    "Škoda": {
+        "Fabia": [
+            {"name": "Mk1", "year_from": 1999, "year_to": 2007},
+            {"name": "Mk2", "year_from": 2007, "year_to": 2014},
+            {"name": "Mk3", "year_from": 2014, "year_to": 2021},
+            {"name": "Mk4", "year_from": 2021, "year_to": 2026},
+        ],
+        "Superb": [
+            {"name": "Mk1", "year_from": 2001, "year_to": 2008},
+            {"name": "Mk2", "year_from": 2008, "year_to": 2015},
+            {"name": "Mk3", "year_from": 2015, "year_to": 2024},
+        ],
+    },
+}
+
+
+# =========================================================================
+# Provider: DBpedia SPARQL
 # =========================================================================
 
 _DBPEDIA_ENDPOINT = "https://dbpedia.org/sparql"
@@ -192,105 +646,6 @@ def _fetch_dbpedia() -> dict[str, dict[str, list]]:
 
 
 # =========================================================================
-# Provider 2: LLM (OpenRouter)
-# =========================================================================
-
-_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-_LLM_PROMPT = """\
-List ALL generations of the car "{brand} {model}" with production year ranges.
-Return ONLY a JSON array: [{{"name": "Mk1", "year_from": 1974, "year_to": 1983}}]
-If only one generation exists, return one entry. If model unknown, return []."""
-
-
-def _get_llm_config() -> dict:
-    cfg = {}
-    if _CONFIG_PATH.exists():
-        with open(_CONFIG_PATH) as f:
-            data = yaml.safe_load(f) or {}
-        cfg = data.get("llm", {})
-    return {
-        "api_key": os.environ.get("OPENROUTER_API_KEY", cfg.get("openrouter_api_key", "")),
-        "model": cfg.get("generation_model", "google/gemma-3-12b-it:free"),
-    }
-
-
-def _llm_query(brand: str, model: str) -> list[dict] | None:
-    cfg = _get_llm_config()
-    if not cfg["api_key"]:
-        return None
-    try:
-        resp = httpx.post(
-            _OPENROUTER_URL,
-            headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
-            json={
-                "model": cfg["model"],
-                "messages": [{"role": "user", "content": _LLM_PROMPT.format(brand=brand, model=model)}],
-                "max_tokens": 600, "temperature": 0.1,
-            },
-            timeout=30,
-        )
-        if resp.status_code != 200:
-            return None
-        content = resp.json()["choices"][0]["message"].get("content")
-        if not content:
-            return None
-        text = content.strip()
-        if "```" in text:
-            text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
-        start, end = text.find("["), text.rfind("]")
-        if start >= 0 and end > start:
-            text = text[start:end + 1]
-        gens = json.loads(text)
-        if not isinstance(gens, list):
-            return None
-        return [
-            {"name": str(g["name"]), "year_from": int(g["year_from"]), "year_to": int(g["year_to"])}
-            for g in gens
-            if isinstance(g, dict) and "name" in g and "year_from" in g and "year_to" in g
-        ] or None
-    except Exception as e:
-        logger.debug("LLM failed for %s %s: %s", brand, model, e)
-        return None
-
-
-def _fill_from_llm(result: dict, db_path: str | None = None) -> int:
-    cfg = _get_llm_config()
-    if not cfg["api_key"]:
-        logger.info("No OpenRouter API key — skipping LLM fill.")
-        return 0
-    import sqlite3
-    db_path = db_path or str(_DATA_DIR / "olx_cars.db")
-    if not Path(db_path).exists():
-        return 0
-    conn = sqlite3.connect(db_path)
-    models = conn.execute("SELECT DISTINCT brand, model FROM listings ORDER BY brand, model").fetchall()
-    conn.close()
-
-    filled = 0
-    failures = 0
-    for brand, model in models:
-        if _lookup_gens(result, brand, model):
-            continue
-        gens = _llm_query(brand, model)
-        if gens:
-            result.setdefault(brand, {})[model] = sorted(gens, key=lambda g: g["year_from"])
-            filled += 1
-            failures = 0
-        else:
-            failures += 1
-            if failures >= 5:
-                logger.warning("5 consecutive LLM failures — stopping.")
-                break
-        time.sleep(1)
-
-    if filled:
-        logger.info("LLM filled %d missing models", filled)
-    return filled
-
-
-# =========================================================================
 # Helpers
 # =========================================================================
 
@@ -314,12 +669,16 @@ def _merge(base: dict, extra: dict):
 
 
 def _lookup_gens(data: dict, brand: str, model: str) -> list | None:
-    gens = data.get(brand, {}).get(model)
-    if gens:
-        return gens
-    alias = _MODEL_ALIASES.get(brand, {}).get(model)
-    if alias:
-        return data.get(brand, {}).get(alias)
+    # Try original brand, then canonical alias
+    for b in (brand, _BRAND_LOOKUP.get(brand, brand)):
+        gens = data.get(b, {}).get(model)
+        if gens:
+            return gens
+        alias = _MODEL_ALIASES.get(b, {}).get(model)
+        if alias:
+            gens = data.get(b, {}).get(alias)
+            if gens:
+                return gens
     return None
 
 
@@ -328,7 +687,7 @@ def _lookup_gens(data: dict, brand: str, model: str) -> list | None:
 # =========================================================================
 
 def fetch_generations() -> dict:
-    """Fetch from DBpedia → LLM fallback."""
+    """Fetch from DBpedia, merge with static fallback data."""
     result = {}
 
     try:
@@ -336,10 +695,7 @@ def fetch_generations() -> dict:
     except Exception as e:
         logger.warning("DBpedia failed: %s", e)
 
-    try:
-        _fill_from_llm(result)
-    except Exception as e:
-        logger.warning("LLM fill failed: %s", e)
+    _merge(result, _STATIC_GENERATIONS)
 
     _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(_CACHE_PATH, "w", encoding="utf-8") as f:
