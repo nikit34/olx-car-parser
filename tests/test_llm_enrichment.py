@@ -1,4 +1,4 @@
-"""Tests for LLM enrichment: Ollama/OpenRouter fallback, pipeline, corrections, export."""
+"""Tests for LLM enrichment: Ollama, pipeline, corrections, export."""
 
 import json
 import queue
@@ -10,7 +10,6 @@ import pytest
 
 from src.parser.llm_enrichment import (
     _call_ollama,
-    _call_openrouter,
     _parse_llm_json,
     correct_listing_data,
     apply_corrections,
@@ -119,75 +118,31 @@ class TestCallOllama:
 
 
 # ---------------------------------------------------------------------------
-# _call_openrouter
+# enrich_from_description
 # ---------------------------------------------------------------------------
 
-class TestCallOpenrouter:
-    def test_success(self):
-        cfg = {"api_key": "sk-test", "model": "google/gemma-3-12b-it:free"}
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {
-            "choices": [{"message": {"content": json.dumps(VALID_LLM_JSON)}}]
-        }
-
-        with patch("src.parser.llm_enrichment.httpx.post", return_value=mock_resp):
-            result = _call_openrouter("Vendo carro", cfg)
-
-        assert result is not None
-        assert result["needs_repair"] is True
-
-    def test_no_api_key(self):
-        cfg = {"api_key": "", "model": "test"}
-        result = _call_openrouter("Vendo carro", cfg)
-        assert result is None
-
-    def test_api_error(self):
-        cfg = {"api_key": "sk-test", "model": "test"}
-        mock_resp = MagicMock()
-        mock_resp.status_code = 429
-
-        with patch("src.parser.llm_enrichment.httpx.post", return_value=mock_resp):
-            result = _call_openrouter("Vendo carro", cfg)
-
-        assert result is None
-
-
-# ---------------------------------------------------------------------------
-# enrich_from_description — fallback logic
-# ---------------------------------------------------------------------------
-
-class TestEnrichFallback:
+class TestEnrichFromDescription:
     def test_empty_description_returns_none(self):
         assert enrich_from_description("") is None
         assert enrich_from_description("short") is None
 
     @patch("src.parser.llm_enrichment._ollama_available", return_value=True)
     @patch("src.parser.llm_enrichment._call_ollama", return_value=VALID_LLM_JSON)
-    @patch("src.parser.llm_enrichment._call_openrouter")
-    def test_uses_ollama_when_available(self, mock_or, mock_ollama, mock_avail):
+    def test_calls_ollama(self, mock_ollama, mock_avail):
         result = enrich_from_description("Vendo BMW 320d com 180.000km reais")
         assert result == VALID_LLM_JSON
         mock_ollama.assert_called_once()
-        mock_or.assert_not_called()
 
     @patch("src.parser.llm_enrichment._ollama_available", return_value=True)
     @patch("src.parser.llm_enrichment._call_ollama", return_value=None)
-    @patch("src.parser.llm_enrichment._call_openrouter", return_value=VALID_LLM_JSON)
-    def test_falls_back_to_openrouter(self, mock_or, mock_ollama, mock_avail):
+    def test_returns_none_on_ollama_failure(self, mock_ollama, mock_avail):
         result = enrich_from_description("Vendo BMW 320d com 180.000km reais")
-        assert result == VALID_LLM_JSON
-        mock_ollama.assert_called_once()
-        mock_or.assert_called_once()
+        assert result is None
 
     @patch("src.parser.llm_enrichment._ollama_available", return_value=False)
-    @patch("src.parser.llm_enrichment._call_ollama")
-    @patch("src.parser.llm_enrichment._call_openrouter", return_value=VALID_LLM_JSON)
-    def test_skips_ollama_when_unavailable(self, mock_or, mock_ollama, mock_avail):
+    def test_returns_none_when_ollama_unavailable(self, mock_avail):
         result = enrich_from_description("Vendo BMW 320d com 180.000km reais")
-        assert result == VALID_LLM_JSON
-        mock_ollama.assert_not_called()
-        mock_or.assert_called_once()
+        assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +373,6 @@ class TestExportTrainingData:
 
         # Call export logic directly (avoid CLI runner complexity)
         from src.storage.repository import get_listings_df
-        import pandas as pd
         df = get_listings_df(db_session)
 
         count = 0

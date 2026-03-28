@@ -17,13 +17,8 @@ analytics:
   buy_signal_threshold: 10
 
 llm:
-  # Local Ollama (free, no limits) — preferred
-  prefer_local: true
   ollama_model: "qwen2.5:3b"
   ollama_url: "http://localhost:11434"
-  # OpenRouter fallback (free tier, rate-limited)
-  openrouter_api_key: "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"
-  model: "google/gemma-3-12b-it:free"
 
 alerts:
   telegram_bot_token: "8651422044:AAEf93eodK6d4F7fn1FVH-vh0H5JX-gb92s"

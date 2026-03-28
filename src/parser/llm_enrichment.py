@@ -1,16 +1,13 @@
-"""Enrich listing data using a local Ollama model or free OpenRouter API.
+"""Enrich listing data using a local Ollama model.
 
 Extracts additional structured info from description text:
 - Accident history, service history, extras/features
 - Number of owners, warranty, recent maintenance
 - Repair needs, real mileage, customs status, red flags
-
-Priority: Ollama (local, free, no limits) → OpenRouter (free tier, rate-limited).
 """
 
 import json
 import logging
-import os
 from pathlib import Path
 
 import httpx
@@ -20,7 +17,6 @@ logger = logging.getLogger(__name__)
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "settings.yaml"
 
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OLLAMA_URL = "http://localhost:11434"
 
 EXTRACTION_PROMPT = """\
@@ -76,11 +72,8 @@ def _get_config() -> dict:
             data = yaml.safe_load(f) or {}
         cfg = data.get("llm", {})
     return {
-        "api_key": os.environ.get("OPENROUTER_API_KEY", cfg.get("openrouter_api_key", "")),
-        "model": cfg.get("model", "nvidia/nemotron-3-super-120b-a12b:free"),
         "ollama_model": cfg.get("ollama_model", "qwen2.5:3b"),
         "ollama_url": cfg.get("ollama_url", OLLAMA_URL),
-        "prefer_local": cfg.get("prefer_local", True),
     }
 
 
@@ -125,7 +118,7 @@ def _call_ollama(description: str, cfg: dict) -> dict | None:
                     "num_predict": 800,
                 },
             },
-            timeout=120,  # local models are slower
+            timeout=120,
         )
         if resp.status_code != 200:
             logger.warning("Ollama API error: %s", resp.status_code)
@@ -139,42 +132,8 @@ def _call_ollama(description: str, cfg: dict) -> dict | None:
         return None
 
 
-def _call_openrouter(description: str, cfg: dict) -> dict | None:
-    """Call OpenRouter free model for extraction."""
-    if not cfg["api_key"]:
-        return None
-
-    try:
-        resp = httpx.post(
-            OPENROUTER_URL,
-            headers={
-                "Authorization": f"Bearer {cfg['api_key']}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": cfg["model"],
-                "messages": [
-                    {"role": "user", "content": EXTRACTION_PROMPT + description[:3000]},
-                ],
-                "max_tokens": 800,
-                "temperature": 0.1,
-            },
-            timeout=30,
-        )
-        if resp.status_code != 200:
-            logger.warning("OpenRouter API error: %s", resp.status_code)
-            return None
-
-        content = resp.json()["choices"][0]["message"]["content"]
-        return _parse_llm_json(content)
-
-    except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as e:
-        logger.debug("OpenRouter enrichment failed: %s", e)
-        return None
-
-
 def enrich_from_description(description: str) -> dict | None:
-    """Extract structured data from description using Ollama (local) or OpenRouter (cloud).
+    """Extract structured data from description using local Ollama.
 
     Returns dict with extracted fields, or None on failure.
     """
@@ -183,15 +142,11 @@ def enrich_from_description(description: str) -> dict | None:
 
     cfg = _get_config()
 
-    # Try local Ollama first (free, no limits)
-    if cfg["prefer_local"] and _ollama_available(cfg["ollama_url"]):
-        result = _call_ollama(description, cfg)
-        if result:
-            return result
-        logger.debug("Ollama failed, falling back to OpenRouter")
+    if not _ollama_available(cfg["ollama_url"]):
+        logger.warning("Ollama not running at %s. Skipping enrichment.", cfg["ollama_url"])
+        return None
 
-    # Fallback to OpenRouter
-    return _call_openrouter(description, cfg)
+    return _call_ollama(description, cfg)
 
 
 def enrich_listings_batch(listings: list, batch_size: int = 50) -> int:
@@ -200,14 +155,13 @@ def enrich_listings_batch(listings: list, batch_size: int = 50) -> int:
     Modifies listings in place. Returns count of enriched listings.
     """
     cfg = _get_config()
-    use_ollama = cfg["prefer_local"] and _ollama_available(cfg["ollama_url"])
 
-    if not use_ollama and not cfg["api_key"]:
-        logger.info("No LLM backend available (Ollama not running, no OpenRouter key). Skipping.")
+    if not _ollama_available(cfg["ollama_url"]):
+        logger.info("Ollama not running. Skipping LLM enrichment.")
         return 0
 
-    backend = f"Ollama ({cfg['ollama_model']})" if use_ollama else f"OpenRouter ({cfg['model']})"
-    logger.info("LLM enrichment using %s for up to %d listings", backend, min(batch_size, len(listings)))
+    logger.info("LLM enrichment using Ollama (%s) for up to %d listings",
+                cfg["ollama_model"], min(batch_size, len(listings)))
 
     enriched = 0
     failures = 0
