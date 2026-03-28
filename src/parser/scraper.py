@@ -333,16 +333,29 @@ class OlxScraper:
     # Full scrape
     # ------------------------------------------------------------------
 
-    def _enrich_one(self, listing: "RawListing") -> bool:
+    def _enrich_one(self, listing: "RawListing",
+                    on_ready=None) -> bool:
         """Enrich a single listing with detail page data. Returns True on success."""
         if self._stop_event.is_set() or not listing.url:
             return False
         self._delay()
         details = self.scrape_listing_detail(listing.url)
         _merge_details(listing, details)
+        if on_ready and listing.description:
+            on_ready(listing)
         return True
 
-    def scrape_all(self, enrich_details: bool = True) -> list[RawListing]:
+    def scrape_all(self, enrich_details: bool = True,
+                   on_detail_ready=None) -> list[RawListing]:
+        """Scrape all listings.
+
+        Args:
+            enrich_details: Fetch detail pages for each listing.
+            on_detail_ready: Optional callback ``fn(listing)`` called as soon as
+                a listing's detail page has been scraped and its description is
+                available.  This allows the caller to start LLM enrichment in
+                parallel with the remaining detail-page fetches.
+        """
         all_listings = []
         for page in range(1, self.config.max_pages + 1):
             page_listings = self.scrape_search_page(page)
@@ -365,7 +378,7 @@ class OlxScraper:
             failed = 0
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 future_to_idx = {
-                    executor.submit(self._enrich_one, listing): i
+                    executor.submit(self._enrich_one, listing, on_detail_ready): i
                     for i, listing in enumerate(all_listings)
                 }
                 for future in as_completed(future_to_idx):

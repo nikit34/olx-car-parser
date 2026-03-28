@@ -3,7 +3,9 @@
 import fcntl
 import json
 import logging
+import queue
 import sys
+import threading
 from pathlib import Path
 
 import pandas as pd
@@ -74,20 +76,73 @@ def scrape(
 
     console.print(f"[bold]Starting scrape of OLX.pt: up to {config.max_pages} pages...[/bold]")
 
+    # Pipeline: scraper feeds listings into a queue, LLM worker processes them
+    # in parallel as they arrive (instead of waiting for all scraping to finish).
+    from src.parser.llm_enrichment import enrich_from_description, apply_corrections
+
+    llm_queue: queue.Queue = queue.Queue()
+    llm_done = threading.Event()
+    llm_count = 0
+
+    def _llm_worker():
+        """Process listings from queue as they arrive from the scraper."""
+        nonlocal llm_count
+        failures = 0
+        while True:
+            try:
+                listing = llm_queue.get(timeout=2)
+            except queue.Empty:
+                if llm_done.is_set():
+                    break
+                continue
+            if listing is None:  # poison pill
+                break
+            if not listing.description or len(listing.description.strip()) < 20:
+                llm_queue.task_done()
+                continue
+            result = enrich_from_description(listing.description)
+            if result:
+                listing._llm_extras = result
+                llm_count += 1
+                failures = 0
+            else:
+                failures += 1
+                if failures >= 5:
+                    logging.getLogger(__name__).warning(
+                        "5 consecutive LLM failures, LLM worker stopping early.")
+                    # Drain remaining items
+                    llm_queue.task_done()
+                    while not llm_queue.empty():
+                        try:
+                            llm_queue.get_nowait()
+                            llm_queue.task_done()
+                        except queue.Empty:
+                            break
+                    break
+            llm_queue.task_done()
+
+    llm_thread = threading.Thread(target=_llm_worker, daemon=True)
+    llm_thread.start()
+
+    def _on_detail_ready(listing):
+        """Callback from scraper — listing has description, queue it for LLM."""
+        llm_queue.put(listing)
+
     with OlxScraper(config) as scraper:
-        raw_listings = scraper.scrape_all()
+        raw_listings = scraper.scrape_all(on_detail_ready=_on_detail_ready)
+
+    # Signal LLM worker that scraping is done, wait for it to finish
+    llm_done.set()
+    llm_queue.put(None)  # poison pill
+    llm_thread.join(timeout=300)
 
     if not raw_listings:
         console.print("[red]No listings scraped. OLX may have changed structure or blocked request.[/red]")
         raise typer.Exit(1)
 
     console.print(f"Scraped [bold]{len(raw_listings)}[/bold] listings.")
-
-    # LLM enrichment (if API key configured)
-    from src.parser.llm_enrichment import enrich_listings_batch, apply_corrections
-    llm_count = enrich_listings_batch(raw_listings)
     if llm_count:
-        console.print(f"LLM-enriched [bold]{llm_count}[/bold] listings from descriptions.")
+        console.print(f"LLM-enriched [bold]{llm_count}[/bold] listings (parallel with scraping).")
 
     # Cross-check and correct data using LLM-extracted info
     corrected_count = apply_corrections(raw_listings)
