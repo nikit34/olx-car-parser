@@ -72,33 +72,83 @@ def load_from_db() -> tuple[pd.DataFrame, pd.DataFrame] | None:
 
 
 def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.DataFrame:
-    """Find listings priced significantly below market median (generation-aware)."""
-    if history_df.empty or listings_df.empty:
+    """Find undervalued listings and rank by flip potential.
+
+    Scoring factors:
+    - Undervaluation: regression-based fair price vs actual (fallback to median)
+    - Liquidity: how fast this model sells (avg_days_to_sell)
+    - Trend: is the market price rising or falling
+    """
+    if listings_df.empty:
         return pd.DataFrame()
 
+    import numpy as np
     from src.models.generations import get_generation
+    from src.analytics.turnover import compute_turnover_stats
 
     signals = []
     active = listings_df[listings_df["is_active"]].copy() if "is_active" in listings_df.columns else listings_df.copy()
 
-    # Assign generation to each listing
     active["generation"] = active.apply(
         lambda r: get_generation(r["brand"], r["model"], r.get("year")), axis=1
     )
 
-    # Precompute generation-level medians from active listings
+    # --- Generation-level price stats ---
     priced = active[active["price_eur"].notna() & active["generation"].notna()]
     gen_stats = (
         priced
-        .groupby(["brand", "model", "generation"])["price_eur"]
-        .agg(gen_median="median", gen_count="count")
+        .groupby(["brand", "model", "generation"])
+        .agg(gen_median=("price_eur", "median"), gen_count=("price_eur", "count"))
         .reset_index()
     )
 
+    # --- Regression per generation: price ~ year + mileage ---
+    gen_regressions = {}
+    for (brand, model, gen), group in priced.groupby(["brand", "model", "generation"]):
+        subset = group[group["mileage_km"].notna() & group["year"].notna()]
+        if len(subset) < 5:
+            continue
+        X = np.column_stack([
+            subset["year"].values.astype(float),
+            subset["mileage_km"].values.astype(float),
+            np.ones(len(subset)),
+        ])
+        y = subset["price_eur"].values.astype(float)
+        try:
+            coeffs, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
+            gen_regressions[(brand, model, gen)] = coeffs
+        except Exception:
+            pass
+
+    # --- Liquidity: avg days to sell per brand+model ---
+    liquidity_map: dict[tuple, float] = {}
+    turnover = compute_turnover_stats(listings_df)
+    if not turnover.empty:
+        for _, row in turnover.iterrows():
+            days = row.get("avg_days_to_sell")
+            if pd.notna(days):
+                liquidity_map[(row["brand"], row["model"])] = float(days)
+
+    # --- Price trend from history (last 60 days) ---
+    trend_map: dict[tuple, float] = {}
+    if not history_df.empty and "date" in history_df.columns:
+        hist = history_df.copy()
+        hist["date"] = pd.to_datetime(hist["date"])
+        cutoff = pd.Timestamp.now() - pd.Timedelta(days=60)
+        recent = hist[hist["date"] >= cutoff]
+        for (brand, model), group in recent.groupby(["brand", "model"]):
+            sorted_g = group.sort_values("date")
+            if len(sorted_g) < 2:
+                continue
+            old_med = sorted_g.iloc[0]["median_price_eur"]
+            new_med = sorted_g.iloc[-1]["median_price_eur"]
+            if old_med and old_med > 0:
+                trend_map[(brand, model)] = round((new_med - old_med) / old_med * 100, 1)
+
+    # --- Score each listing ---
     for _, listing in active.iterrows():
         if pd.isna(listing.get("price_eur")):
             continue
-
         generation = listing.get("generation")
         if not generation:
             continue
@@ -113,33 +163,73 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         median = gs.iloc[0]["gen_median"]
         sample = int(gs.iloc[0]["gen_count"])
 
-        if median and listing["price_eur"] < median * 0.85:
-            discount = round((1 - listing["price_eur"] / median) * 100, 1)
-            sig = {
-                "olx_id": listing.get("olx_id", ""),
-                "url": listing.get("url", ""),
-                "brand": listing["brand"],
-                "model": listing["model"],
-                "year": listing.get("year"),
-                "generation": generation or "",
-                "price_eur": listing["price_eur"],
-                "median_price_eur": round(median),
-                "discount_pct": discount,
-                "sample_size": sample,
-                "city": listing.get("city", ""),
-                "district": listing.get("district", ""),
-                "mileage_km": listing.get("mileage_km"),
-                "fuel_type": listing.get("fuel_type", ""),
-            }
-            # Carry over computed columns if available
-            for col in ("days_listed", "price_change_eur", "price_change_pct", "eur_per_km"):
-                if col in listing.index:
-                    sig[col] = listing[col]
-            signals.append(sig)
+        if not median or listing["price_eur"] >= median * 0.85:
+            continue
+
+        price = listing["price_eur"]
+        year = listing.get("year")
+        mileage = listing.get("mileage_km")
+        brand = listing["brand"]
+        model = listing["model"]
+
+        # 1. Undervaluation (regression if ≥5 samples, else median)
+        reg_key = (brand, model, generation)
+        if reg_key in gen_regressions and pd.notna(year) and pd.notna(mileage):
+            coeffs = gen_regressions[reg_key]
+            predicted = max(coeffs[0] * float(year) + coeffs[1] * float(mileage) + coeffs[2], 0)
+            if predicted > 0:
+                undervaluation_pct = round((1 - price / predicted) * 100, 1)
+            else:
+                predicted = median
+                undervaluation_pct = round((1 - price / median) * 100, 1)
+        else:
+            predicted = median
+            undervaluation_pct = round((1 - price / median) * 100, 1)
+
+        discount_pct = round((1 - price / median) * 100, 1)
+
+        # 2. Liquidity multiplier (30 days = 1.0 baseline)
+        days_to_sell = liquidity_map.get((brand, model))
+        if days_to_sell and days_to_sell > 0:
+            liquidity_mult = min(max(30 / days_to_sell, 0.5), 2.0)
+        else:
+            liquidity_mult = 1.0
+
+        # 3. Trend multiplier (rising market = bonus)
+        trend_pct = trend_map.get((brand, model), 0.0)
+        trend_mult = min(max(1 + trend_pct / 100, 0.8), 1.2)
+
+        flip_score = round(undervaluation_pct * liquidity_mult * trend_mult, 1)
+
+        sig = {
+            "olx_id": listing.get("olx_id", ""),
+            "url": listing.get("url", ""),
+            "brand": brand,
+            "model": model,
+            "year": year,
+            "generation": generation or "",
+            "price_eur": price,
+            "predicted_price": round(predicted),
+            "median_price_eur": round(median),
+            "discount_pct": discount_pct,
+            "undervaluation_pct": undervaluation_pct,
+            "avg_days_to_sell": days_to_sell,
+            "price_trend_pct": trend_pct,
+            "flip_score": flip_score,
+            "sample_size": sample,
+            "city": listing.get("city", ""),
+            "district": listing.get("district", ""),
+            "mileage_km": mileage,
+            "fuel_type": listing.get("fuel_type", ""),
+        }
+        for col in ("days_listed", "price_change_eur", "price_change_pct", "eur_per_km"):
+            if col in listing.index:
+                sig[col] = listing[col]
+        signals.append(sig)
 
     df = pd.DataFrame(signals)
     if not df.empty:
-        df = df.sort_values("discount_pct", ascending=False)
+        df = df.sort_values("flip_score", ascending=False)
     return df
 
 

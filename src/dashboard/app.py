@@ -240,27 +240,26 @@ with tab_trends:
 # ---- TAB 2: Buy Signals --------------------------------------------------
 with tab_signals:
     st.subheader("Buy Opportunities")
-    st.caption("Listings priced 15%+ below market median")
+    st.caption("Flip score = undervaluation × liquidity × trend")
     if filtered_signals.empty:
         st.info("No buy signals with current filters.")
     else:
         top = filtered_signals.head(20).copy()
-        top["deal"] = top["discount_pct"].apply(lambda d: "🔥🔥🔥" if d > 25 else ("🔥🔥" if d > 20 else "🔥"))
+        top["deal"] = top["flip_score"].apply(lambda s: "🔥🔥🔥" if s > 30 else ("🔥🔥" if s > 20 else "🔥"))
         if "sample_size" in top.columns:
             top["confidence"] = top["sample_size"].apply(
                 lambda n: "High" if n >= 10 else ("Medium" if n >= 5 else "Low")
             )
 
-        signal_cols = ["deal", "brand", "model", "generation", "year", "price_eur", "median_price_eur", "discount_pct"]
+        signal_cols = ["deal", "brand", "model", "generation", "year",
+                       "price_eur", "predicted_price", "undervaluation_pct", "flip_score"]
+        if "avg_days_to_sell" in top.columns:
+            signal_cols.append("avg_days_to_sell")
+        if "price_trend_pct" in top.columns:
+            signal_cols.append("price_trend_pct")
         if "sample_size" in top.columns:
             signal_cols += ["sample_size", "confidence"]
-        if "days_listed" in top.columns:
-            signal_cols.append("days_listed")
-        if "price_change_pct" in top.columns:
-            signal_cols.append("price_change_pct")
-        if "eur_per_km" in top.columns:
-            signal_cols.append("eur_per_km")
-        signal_cols += ["city", "district", "mileage_km", "fuel_type"]
+        signal_cols += ["mileage_km", "city", "district", "fuel_type"]
         if "url" in top.columns:
             signal_cols.append("url")
 
@@ -268,19 +267,19 @@ with tab_signals:
             top[signal_cols].rename(columns={
                 "deal": "Deal", "brand": "Brand", "model": "Model",
                 "generation": "Generation", "year": "Year",
-                "price_eur": "Price (EUR)", "median_price_eur": "Median (EUR)",
-                "discount_pct": "Discount %", "sample_size": "# Listings",
-                "confidence": "Confidence", "days_listed": "Days Listed",
-                "price_change_pct": "Price Drop %", "eur_per_km": "EUR/km",
-                "city": "City", "district": "District",
-                "mileage_km": "Mileage", "fuel_type": "Fuel", "url": "Link",
+                "price_eur": "Price (EUR)", "predicted_price": "Fair Price (EUR)",
+                "undervaluation_pct": "Undervalued %", "flip_score": "Flip Score",
+                "avg_days_to_sell": "Avg Days to Sell", "price_trend_pct": "Trend %",
+                "sample_size": "# Listings", "confidence": "Confidence",
+                "mileage_km": "Mileage", "city": "City", "district": "District",
+                "fuel_type": "Fuel", "url": "Link",
             }),
             width="stretch", hide_index=True,
             column_config={"Link": st.column_config.LinkColumn("Link", display_text="Open")},
         )
-        fig_disc = px.histogram(filtered_signals, x="discount_pct", nbins=20,
-                                labels={"discount_pct": "Discount below median (%)"}, title="Discount Distribution", height=350)
-        st.plotly_chart(fig_disc, width="stretch")
+        fig_score = px.histogram(filtered_signals, x="flip_score", nbins=20,
+                                 labels={"flip_score": "Flip Score"}, title="Flip Score Distribution", height=350)
+        st.plotly_chart(fig_score, width="stretch")
 
 # ---- TAB 3: Listings Table -----------------------------------------------
 with tab_listings:

@@ -47,7 +47,7 @@ def scrape(
     delay_min: float = typer.Option(None, help="Min delay between requests (sec)"),
     delay_max: float = typer.Option(None, help="Max delay between requests (sec)"),
     private_only: bool = typer.Option(None, help="Only private sellers (Particular)"),
-    concurrency: int = typer.Option(None, help="Parallel detail page workers (default 5)"),
+    concurrency: int = typer.Option(None, help="Parallel detail page workers (default 8)"),
 ):
     """Scrape OLX.pt car listings and save to database."""
     # Prevent concurrent scrapes

@@ -66,7 +66,7 @@ class ScraperConfig:
     delay_max: float = 7.0
     private_only: bool = True
     timeout: float = 30.0
-    concurrency: int = 5
+    concurrency: int = 8
 
 
 @dataclass

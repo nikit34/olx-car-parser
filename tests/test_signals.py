@@ -26,6 +26,7 @@ class TestComputeSignals:
                 assert "a1" in signals["olx_id"].values
                 row = signals[signals["olx_id"] == "a1"].iloc[0]
                 assert row["discount_pct"] > 0
+                assert row["flip_score"] > 0
                 assert row["generation"] == "Mk7"
 
     def test_signal_has_required_fields(self, sample_listings_df, sample_history_df, generations_data):
@@ -33,5 +34,7 @@ class TestComputeSignals:
             signals = compute_signals(sample_listings_df, sample_history_df)
             if not signals.empty:
                 required = {"olx_id", "brand", "model", "generation", "year",
-                            "price_eur", "median_price_eur", "discount_pct", "sample_size"}
+                            "price_eur", "predicted_price", "median_price_eur",
+                            "discount_pct", "undervaluation_pct", "flip_score",
+                            "sample_size"}
                 assert required.issubset(set(signals.columns))
