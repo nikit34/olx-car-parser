@@ -56,15 +56,16 @@ for a in json.load(sys.stdin):
 
 if [ -n "$OLD_ID" ]; then
   echo "Deleting old asset ($OLD_ID)..."
-  curl -sf -X DELETE -H "$AUTH" -H "$ACCEPT" \
-    "$API/repos/$REPO/releases/assets/$OLD_ID" >/dev/null
+  curl -sf --retry 3 --retry-delay 2 -X DELETE -H "$AUTH" -H "$ACCEPT" \
+    "$API/repos/$REPO/releases/assets/$OLD_ID" >/dev/null || \
+    echo "Warning: failed to delete old asset, continuing anyway..."
 fi
 
 # --- Upload new asset ---
 SIZE=$(stat -f%z "$DB_FILE" 2>/dev/null || stat -c%s "$DB_FILE")
 echo "Uploading $DB_FILE ($SIZE bytes)..."
 
-curl -sf -X POST -H "$AUTH" -H "$ACCEPT" \
+curl -sf --retry 3 --retry-delay 2 -X POST -H "$AUTH" -H "$ACCEPT" \
   -H "Content-Type: application/octet-stream" \
   --data-binary "@$DB_FILE" \
   "$UPLOAD/repos/$REPO/releases/$RELEASE_ID/assets?name=$ASSET_NAME" >/dev/null
