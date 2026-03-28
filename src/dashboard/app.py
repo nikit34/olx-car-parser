@@ -14,6 +14,25 @@ _sys.path.insert(0, str(_Path(__file__).resolve().parent))
 
 from data_loader import load_all, load_portfolio
 
+
+def plotly_chart_with_click(fig, df, key, **kwargs):
+    """Render a Plotly chart; if a point with a URL is clicked, show a link button."""
+    event = st.plotly_chart(fig, on_select="rerun", key=key, **kwargs)
+    if event and event.selection and event.selection.points:
+        pt = event.selection.points[0]
+        url = None
+        # Try customdata first (px.scatter puts hover_data there as a list)
+        cd = pt.get("customdata")
+        if cd:
+            candidates = cd if isinstance(cd, (list, tuple)) else [cd]
+            for v in reversed(candidates):
+                if isinstance(v, str) and v.startswith("http"):
+                    url = v
+                    break
+        if url:
+            st.link_button("Open listing on OLX", url)
+
+
 # ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
@@ -319,7 +338,7 @@ with tab_deals:
             deals, x="predicted_price", y="price_eur",
             color="est_profit_eur", size="_scatter_size",
             color_continuous_scale="RdYlGn_r",
-            hover_data=["brand", "model", "year", "mileage_km"],
+            hover_data=["brand", "model", "year", "mileage_km", "url"],
             labels={
                 "predicted_price": "Fair Price (EUR)",
                 "price_eur": "Asking Price (EUR)",
@@ -336,7 +355,7 @@ with tab_deals:
             mode="lines", line=dict(dash="dash", color="gray", width=1),
             name="Break Even", showlegend=False,
         ))
-        st.plotly_chart(fig_scatter, width="stretch")
+        plotly_chart_with_click(fig_scatter, deals, key="deals_scatter", width="stretch")
 
         # --- Motivated sellers: biggest price drops ---
         if "price_drop_per_day" in deals.columns and deals["price_drop_per_day"].notna().any():
@@ -433,7 +452,7 @@ with tab_analytics:
                 yr_data, x="year", y="price_eur",
                 color="transmission",
                 symbol="transmission",
-                hover_data=["brand", "model", "mileage_km", "fuel_type", "district"],
+                hover_data=["brand", "model", "mileage_km", "fuel_type", "district", "url"],
                 labels={"year": "Year", "price_eur": "Price (EUR)", "transmission": "Transmission"},
                 height=500, opacity=0.75,
                 color_discrete_map={"Automática": "#e63946", "Manual": "#457b9d"},
@@ -450,7 +469,7 @@ with tab_analytics:
                         name=f"{trans} trend", showlegend=True,
                     ))
             fig_yr.update_layout(hovermode="closest")
-            st.plotly_chart(fig_yr, use_container_width=True)
+            plotly_chart_with_click(fig_yr, yr_data, key="yr_scatter", use_container_width=True)
 
         # ---- 2. Mileage vs Price colored by Fuel ----
         col_a, col_b = st.columns(2)
@@ -463,12 +482,12 @@ with tab_analytics:
                 fig_mil = px.scatter(
                     mil_data, x="mileage_km", y="price_eur",
                     color="fuel_type",
-                    hover_data=["brand", "model", "year", "transmission"],
+                    hover_data=["brand", "model", "year", "transmission", "url"],
                     labels={"mileage_km": "Mileage (km)", "price_eur": "Price (EUR)", "fuel_type": "Fuel"},
                     height=450, opacity=0.7,
                 )
                 fig_mil.update_layout(hovermode="closest")
-                st.plotly_chart(fig_mil, use_container_width=True)
+                plotly_chart_with_click(fig_mil, mil_data, key="mil_scatter", use_container_width=True)
 
         with col_b:
             st.subheader("Import vs National by Brand")
@@ -545,7 +564,7 @@ with tab_analytics:
                 font=dict(color="green", size=14, family="Arial Black"),
             )
             fig_val.update_layout(hovermode="closest")
-            st.plotly_chart(fig_val, use_container_width=True)
+            plotly_chart_with_click(fig_val, score_data, key="val_scatter", use_container_width=True)
 
             # Top 15 best value table
             top_val = score_data.nlargest(15, "value_score")
@@ -691,7 +710,7 @@ with tab_analytics:
                 height=500, opacity=0.8,
             )
             fig_sweet.update_layout(hovermode="closest")
-            st.plotly_chart(fig_sweet, use_container_width=True)
+            plotly_chart_with_click(fig_sweet, sweet, key="sweet_scatter", use_container_width=True)
 
             sweet_cols = ["label", "year", "price_eur", "mileage_km", "transmission",
                           "fuel_type", "horsepower", "origin", "district"]
@@ -867,9 +886,10 @@ with tab_compare:
             if not sd.empty:
                 sd["label"] = sd["brand"] + " " + sd["model"]
                 fig_sc = px.scatter(sd, x="mileage_km", y="price_eur", color="label",
+                                    hover_data=["year", "fuel_type", "url"],
                                     labels={"mileage_km": "Mileage (km)", "price_eur": "Price (EUR)", "label": "Model"},
                                     title="Price vs Mileage", height=500, opacity=0.7)
-                st.plotly_chart(fig_sc, width="stretch")
+                plotly_chart_with_click(fig_sc, sd, key="compare_scatter", width="stretch")
 
         if not turnover_df.empty:
             comparison_full = comparison.merge(turnover_df, on=["brand", "model"], how="left")
@@ -924,10 +944,16 @@ with tab_compare:
                 if selected_dep:
                     from src.analytics.regression import depreciation_curve
                     fig_dep = go.Figure()
+                    dep_all_subs = []
                     for label in selected_dep:
                         sub = dep_data[dep_data["label"] == label]
-                        fig_dep.add_trace(go.Scatter(x=sub["year"], y=sub["price_eur"],
-                                                      mode="markers", name=label, opacity=0.6))
+                        dep_all_subs.append(sub)
+                        fig_dep.add_trace(go.Scatter(
+                            x=sub["year"], y=sub["price_eur"],
+                            mode="markers", name=label, opacity=0.6,
+                            customdata=sub["url"].values if "url" in sub.columns else None,
+                            hovertemplate="%{x}, %{y:,.0f} EUR<extra>%{fullData.name}</extra>",
+                        ))
                         result = depreciation_curve(active, sub.iloc[0]["brand"], sub.iloc[0]["model"])
                         if result:
                             years = np.linspace(sub["year"].min(), sub["year"].max(), 50)
@@ -935,8 +961,9 @@ with tab_compare:
                             fig_dep.add_trace(go.Scatter(x=years, y=prices, mode="lines",
                                                           name=f"{label} (R²={result['r_squared']:.2f})",
                                                           line=dict(dash="dash")))
+                    dep_combined = pd.concat(dep_all_subs) if dep_all_subs else pd.DataFrame()
                     fig_dep.update_layout(xaxis_title="Year", yaxis_title="Price (EUR)", height=500, hovermode="closest")
-                    st.plotly_chart(fig_dep, width="stretch")
+                    plotly_chart_with_click(fig_dep, dep_combined, key="dep_scatter", width="stretch")
 
         # --- Seller Type Spread (Particular vs Profissional) ---
         st.subheader("Seller Type Spread")
