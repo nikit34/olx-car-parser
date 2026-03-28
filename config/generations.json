@@ -3751,25 +3751,6 @@
         "year_to": 2026
       }
     ],
-    "Superb": [
-      {
-        "name": "Mk1",
-        "year_from": 2001,
-        "year_to": 2008
-      },
-      {
-        "name": "Mk2",
-        "year_from": 2008,
-        "year_to": 2015
-      },
-      {
-        "name": "Mk3",
-        "year_from": 2015,
-        "year_to": 2024
-      }
-    ]
-  },
-  "Škoda Auto": {
     "Felicia": [
       {
         "name": "1959–1964",
@@ -3801,6 +3782,23 @@
         "name": "2012",
         "year_from": 2012,
         "year_to": 2019
+      }
+    ],
+    "Superb": [
+      {
+        "name": "Mk1",
+        "year_from": 2001,
+        "year_to": 2008
+      },
+      {
+        "name": "Mk2",
+        "year_from": 2008,
+        "year_to": 2015
+      },
+      {
+        "name": "Mk3",
+        "year_from": 2015,
+        "year_to": 2024
       }
     ]
   }
