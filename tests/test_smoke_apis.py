@@ -2,8 +2,6 @@
 
 import json
 import os
-import urllib.parse
-import urllib.request
 
 import pytest
 
@@ -28,40 +26,6 @@ def _get_api_key() -> str:
 
 
 _has_api_key = bool(_get_api_key())
-
-
-class TestDBpediaSmokeTest:
-    """Verify DBpedia SPARQL endpoint is reachable and returns automobile data."""
-
-    def test_dbpedia_returns_results(self):
-        query = """\
-PREFIX dbo: <http://dbpedia.org/ontology/>
-PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-SELECT DISTINCT ?genLabel ?sy WHERE {
-  ?gen a dbo:Automobile .
-  ?gen dbo:manufacturer ?mfg .
-  ?gen dbo:productionStartYear ?sy .
-  ?gen rdfs:label ?genLabel . FILTER(LANG(?genLabel) = "en")
-  ?mfg rdfs:label "Volkswagen"@en .
-} LIMIT 5"""
-
-        body = urllib.parse.urlencode({"query": query}).encode()
-        req = urllib.request.Request(
-            "https://dbpedia.org/sparql",
-            data=body,
-            headers={
-                "Accept": "application/sparql-results+json",
-                "User-Agent": "olx-car-parser-test/1.0",
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read())
-
-        results = data["results"]["bindings"]
-        assert len(results) > 0, "DBpedia returned no Volkswagen automobile data"
-        assert "genLabel" in results[0]
-        assert "sy" in results[0]
 
 
 @pytest.mark.skipif(not _has_api_key, reason="No OPENROUTER_API_KEY")

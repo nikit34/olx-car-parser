@@ -1,84 +1,8 @@
-"""Tests for car generation lookup logic (no network)."""
+"""Tests for car generation lookup logic."""
 
 from unittest.mock import patch
 
-from src.models.generations import (
-    _parse_dbpedia_label,
-    _fix_year_ranges,
-    _BRAND_NORMALIZE,
-    get_generation,
-    _MODEL_ALIASES,
-)
-
-
-class TestParseDbpediaLabel:
-    def test_parenthetical_chassis_code(self):
-        assert _parse_dbpedia_label("BMW 3 Series (E90)", "BMW") == ("3 Series", "E90")
-
-    def test_parenthetical_w_code(self):
-        assert _parse_dbpedia_label("Mercedes-Benz C-Class (W205)", "Mercedes-Benz") == ("C-Class", "W205")
-
-    def test_parenthetical_platform_code(self):
-        assert _parse_dbpedia_label("Toyota Yaris (XP150)", "Toyota") == ("Yaris", "XP150")
-
-    def test_mk_pattern(self):
-        assert _parse_dbpedia_label("Volkswagen Golf Mk7", "Volkswagen") == ("Golf", "Mk7")
-
-    def test_mk_with_space(self):
-        assert _parse_dbpedia_label("Volkswagen Polo Mk 4", "Volkswagen") == ("Polo", "Mk4")
-
-    def test_ordinal_generation(self):
-        assert _parse_dbpedia_label("Ford Fiesta (fifth generation)", "Ford") == ("Fiesta", "V")
-
-    def test_ordinal_eighth(self):
-        assert _parse_dbpedia_label("Honda Civic (eighth generation)", "Honda") == ("Civic", "VIII")
-
-    def test_no_generation_suffix(self):
-        assert _parse_dbpedia_label("Renault Clio", "Renault") is None
-
-    def test_no_generation_plain(self):
-        assert _parse_dbpedia_label("BMW 1 Series", "BMW") is None
-
-    def test_raw_brand_fallback(self):
-        assert _parse_dbpedia_label("Volkswagen Group Golf Mk7", "Volkswagen Group") == ("Golf", "Mk7")
-
-
-class TestFixYearRanges:
-    def test_fixes_equal_years(self):
-        data = {"VW": {"Golf": [
-            {"name": "Mk1", "year_from": 1974, "year_to": 1974},
-            {"name": "Mk2", "year_from": 1983, "year_to": 1992},
-        ]}}
-        _fix_year_ranges(data)
-        assert data["VW"]["Golf"][0]["year_to"] == 1982  # next gen - 1
-
-    def test_fixes_last_gen_to_2026(self):
-        data = {"VW": {"Golf": [
-            {"name": "Mk8", "year_from": 2019, "year_to": 2019},
-        ]}}
-        _fix_year_ranges(data)
-        assert data["VW"]["Golf"][0]["year_to"] == 2026
-
-    def test_no_change_if_valid(self):
-        data = {"VW": {"Golf": [
-            {"name": "Mk7", "year_from": 2012, "year_to": 2019},
-        ]}}
-        _fix_year_ranges(data)
-        assert data["VW"]["Golf"][0]["year_to"] == 2019
-
-
-class TestBrandNormalize:
-    def test_volkswagen_group(self):
-        assert _BRAND_NORMALIZE.get("Volkswagen Group") == "Volkswagen"
-
-    def test_mercedes_benz_group(self):
-        assert _BRAND_NORMALIZE.get("Mercedes-Benz Group") == "Mercedes-Benz"
-
-    def test_passthrough(self):
-        assert _BRAND_NORMALIZE.get("Toyota", "Toyota") == "Toyota"
-
-    def test_ford_motor_company(self):
-        assert _BRAND_NORMALIZE.get("Ford Motor Company") == "Ford"
+from src.models.generations import get_generation, _MODEL_ALIASES
 
 
 class TestGetGeneration:
