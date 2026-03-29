@@ -55,7 +55,7 @@ def _ollama_available(base_url: str) -> bool:
     if _ollama_status is not None:
         return _ollama_status
     try:
-        resp = httpx.get(f"{base_url}/api/tags", timeout=3)
+        resp = httpx.get(f"{base_url}/api/tags", timeout=10)
         _ollama_status = resp.status_code == 200
     except httpx.HTTPError:
         _ollama_status = False

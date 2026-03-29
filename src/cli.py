@@ -53,13 +53,16 @@ def _llm_worker(in_q: multiprocessing.Queue, out_q: multiprocessing.Queue,
     from src.parser.llm_enrichment import enrich_from_description, _ollama_available, _get_config
     from queue import Empty
 
-    cfg = _get_config()
-    if not _ollama_available(cfg["ollama_url"]):
-        return
-
     log = logging.getLogger("llm_worker")
     logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+                        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                        handlers=[logging.StreamHandler(sys.stdout)])
+
+    cfg = _get_config()
+    if not _ollama_available(cfg["ollama_url"]):
+        log.warning("Ollama not available at %s, worker exiting.", cfg["ollama_url"])
+        return
+
     log.info("LLM worker started (Ollama %s)", cfg["ollama_model"])
 
     enriched = 0
