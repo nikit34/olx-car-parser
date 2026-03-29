@@ -28,7 +28,6 @@ jobs:
 
       - name: Ensure Ollama is running
         run: |
-          launchctl setenv OLLAMA_NUM_PARALLEL 2
           pkill -f "Ollama" || true
           sleep 2
           open -a Ollama

@@ -53,6 +53,13 @@ cat > "$PLIST_PATH" <<EOF
     </array>
     <key>RunAtLoad</key>
     <true/>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>OLLAMA_NUM_PARALLEL</key>
+        <string>2</string>
+        <key>OLLAMA_FLASH_ATTENTION</key>
+        <string>1</string>
+    </dict>
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
