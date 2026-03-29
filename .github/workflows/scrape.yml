@@ -38,6 +38,7 @@ jobs:
           done
           if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
             echo "Ollama is running (OLLAMA_NUM_PARALLEL=2)"
+            ollama pull qwen2.5:1.5b
             curl -s http://localhost:11434/api/tags | python3 -c "import sys,json; tags=json.load(sys.stdin); print('Models:', [m['name'] for m in tags.get('models',[])])"
           else
             echo "::error::Ollama failed to start after 30s"

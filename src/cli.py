@@ -137,7 +137,7 @@ def scrape(
     console.print(f"Already enriched: {len(enriched_hashes)} listings in DB")
 
     # Start LLM workers as separate processes (no GIL contention with scraper threads)
-    # 2 workers = 2 parallel Ollama requests (3B model fits twice in 8GB)
+    # 2 workers = 2 parallel Ollama requests (OLLAMA_NUM_PARALLEL=2)
     num_workers = 2
     llm_in: multiprocessing.Queue = multiprocessing.Queue()
     llm_out: multiprocessing.Queue = multiprocessing.Queue()

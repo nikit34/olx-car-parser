@@ -86,7 +86,7 @@ class TestCallOllama:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
-            "message": {"content": json.dumps(VALID_LLM_JSON)}
+            "response": json.dumps(VALID_LLM_JSON)
         }
 
         with patch("src.parser.llm_enrichment.httpx.post", return_value=mock_resp):
@@ -109,7 +109,7 @@ class TestCallOllama:
         cfg = {"ollama_url": "http://localhost:11434", "ollama_model": "qwen2.5:3b"}
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = {"message": {"content": "Sorry I cannot help"}}
+        mock_resp.json.return_value = {"response": "Sorry I cannot help"}
 
         with patch("src.parser.llm_enrichment.httpx.post", return_value=mock_resp):
             result = _call_ollama("Vendo carro", cfg)

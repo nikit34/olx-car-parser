@@ -41,7 +41,7 @@ def _get_config() -> dict:
             data = yaml.safe_load(f) or {}
         cfg = data.get("llm", {})
     return {
-        "ollama_model": cfg.get("ollama_model", "qwen2.5:3b"),
+        "ollama_model": cfg.get("ollama_model", "qwen2.5:1.5b"),
         "ollama_url": cfg.get("ollama_url", OLLAMA_URL),
     }
 
@@ -75,17 +75,15 @@ def _call_ollama(description: str, cfg: dict) -> dict | None:
     """Call local Ollama model for extraction."""
     try:
         resp = httpx.post(
-            f"{cfg['ollama_url']}/api/chat",
+            f"{cfg['ollama_url']}/api/generate",
             json={
                 "model": cfg["ollama_model"],
-                "messages": [
-                    {"role": "user", "content": EXTRACTION_PROMPT + description[:2000]},
-                ],
-                "format": "json",  # forces valid JSON output, faster
+                "prompt": EXTRACTION_PROMPT + description[:1200],
+                "format": "json",
                 "stream": False,
                 "options": {
                     "temperature": 0.0,
-                    "num_predict": 512,
+                    "num_predict": 256,
                     "num_ctx": 1024,
                 },
             },
@@ -95,7 +93,7 @@ def _call_ollama(description: str, cfg: dict) -> dict | None:
             logger.warning("Ollama API error: %s", resp.status_code)
             return None
 
-        content = resp.json()["message"]["content"]
+        content = resp.json()["response"]
         return _parse_llm_json(content)
 
     except httpx.TimeoutException:
