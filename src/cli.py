@@ -24,6 +24,7 @@ from src.storage.repository import (
 
 app = typer.Typer(help="OLX.pt Car Parser — scrape, store, analyze")
 console = Console()
+log = logging.getLogger("cli")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -113,7 +114,7 @@ def scrape(
     try:
         fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
-        console.print("[red]Another scrape is already running. Exiting.[/red]")
+        log.error("Another scrape is already running. Exiting.")
         raise typer.Exit(1)
 
     init_db()
@@ -128,13 +129,13 @@ def scrape(
         concurrency=concurrency if concurrency is not None else cfg.get("concurrency", 5),
     )
 
-    console.print(f"[bold]Starting scrape of OLX.pt: up to {config.max_pages} pages...[/bold]")
+    log.info("Starting scrape of OLX.pt: up to %d pages...", config.max_pages)
 
     # Load existing enrichment hashes to skip unchanged descriptions
     from hashlib import md5
     from src.storage.repository import get_enriched_hashes
     enriched_hashes = get_enriched_hashes(session)
-    console.print(f"Already enriched: {len(enriched_hashes)} listings in DB")
+    log.info("Already enriched: %d listings in DB", len(enriched_hashes))
 
     # Start LLM workers as separate processes (no GIL contention with scraper threads)
     # 2 workers = 2 parallel Ollama requests (OLLAMA_NUM_PARALLEL=2)
@@ -166,7 +167,7 @@ def scrape(
                 continue
             llm_in.put((listing.olx_id, listing.description))
             sent_to_llm += 1
-        console.print(f"  Page done: {len(batch)} listings → {sent_to_llm} sent to LLM, {skipped_llm} skipped")
+        log.info("Page done: %d listings -> %d sent to LLM, %d skipped", len(batch), sent_to_llm, skipped_llm)
 
     with OlxScraper(config) as scraper:
         raw_listings = scraper.scrape_all(on_batch_ready=_on_batch)
@@ -174,7 +175,7 @@ def scrape(
     # Signal LLM workers: poison pills to drain queue, then shutdown event as fallback
     for _ in llm_procs:
         llm_in.put(None)
-    console.print(f"Scraping done ({len(raw_listings)} listings). Waiting for LLM to finish...")
+    log.info("Scraping done (%d listings). Waiting for LLM to finish...", len(raw_listings))
     llm_shutdown.set()
     for p in llm_procs:
         p.join()
@@ -185,21 +186,22 @@ def scrape(
         olx_id, result = llm_out.get_nowait()
         llm_results[olx_id] = result
 
-    console.print(f"LLM enriched [bold]{len(llm_results)}[/bold] / {sent_to_llm} listings.")
+    log.info("LLM enriched %d / %d listings", len(llm_results), sent_to_llm)
 
     if not raw_listings:
-        console.print("[red]No listings scraped.[/red]")
+        log.error("No listings scraped.")
         raise typer.Exit(1)
 
     # Apply corrections and save to DB
     from src.parser.llm_enrichment import correct_listing_data
 
-    console.print("Saving to database...")
+    log.info("Saving %d listings to database...", len(raw_listings))
     saved = 0
     unmatched_count = 0
     active_ids: set[str] = set()
 
-    for raw in raw_listings:
+    total = len(raw_listings)
+    for i, raw in enumerate(raw_listings, 1):
         if not raw.brand and not raw.title:
             continue
 
@@ -247,16 +249,18 @@ def scrape(
             upsert_unmatched(session, data, reason)
             unmatched_count += 1
 
+        if i % 100 == 0 or i == total:
+            log.info("DB save progress: %d / %d", i, total)
+
+    log.info("Marking inactive and committing...")
     mark_inactive(session, active_ids)
     session.commit()
 
-    console.print(f"[green]Saved {saved} listings ({len(llm_results)} enriched).[/green]")
-    if unmatched_count:
-        console.print(f"[yellow]{unmatched_count} listings unmatched (no generation).[/yellow]")
+    log.info("Saved %d listings (%d enriched), %d unmatched", saved, len(llm_results), unmatched_count)
 
-    console.print("Computing market stats...")
+    log.info("Computing market stats...")
     compute_market_stats(session)
-    console.print("[green]Done![/green]")
+    log.info("Done!")
 
 
 @app.command()
@@ -277,7 +281,7 @@ def enrich():
 
     cfg = _get_config()
     if not _ollama_available(cfg["ollama_url"]):
-        console.print("[red]Ollama is not running.[/red]")
+        log.error("Ollama is not running.")
         raise typer.Exit(1)
 
     pending = (
@@ -287,10 +291,10 @@ def enrich():
     )
 
     if not pending:
-        console.print("[green]All listings already enriched.[/green]")
+        log.info("All listings already enriched.")
         return
 
-    console.print(f"[bold]Enriching {len(pending)} listings with Ollama ({cfg['ollama_model']})...[/bold]")
+    log.info("Enriching %d listings with Ollama (%s)...", len(pending), cfg['ollama_model'])
 
     enriched = 0
     failures = 0
@@ -311,15 +315,15 @@ def enrich():
             failures = 0
             if enriched % 25 == 0:
                 session.commit()
-                console.print(f"  Progress: {enriched}/{len(pending)}")
+                log.info("Enrich progress: %d / %d", enriched, len(pending))
         else:
             failures += 1
             if failures >= 5:
-                console.print("[red]5 consecutive LLM failures, stopping.[/red]")
+                log.error("5 consecutive LLM failures, stopping.")
                 break
 
     session.commit()
-    console.print(f"[green]Enriched {enriched} listings.[/green]")
+    log.info("Enriched %d listings.", enriched)
 
 
 @app.command()
