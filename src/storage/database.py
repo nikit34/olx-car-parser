@@ -54,6 +54,7 @@ def init_db(db_path: str | None = None):
         ("mileage_suspect", "BOOLEAN"),
         ("customs_cleared", "BOOLEAN"),
         ("estimated_repair_cost_eur", "INTEGER"),
+        ("llm_description_hash", "TEXT"),
     ]
     with engine.connect() as conn:
         for col_name, col_type in _migrate_columns:

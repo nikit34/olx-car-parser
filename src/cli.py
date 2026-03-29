@@ -130,6 +130,12 @@ def scrape(
 
     console.print(f"[bold]Starting scrape of OLX.pt: up to {config.max_pages} pages...[/bold]")
 
+    # Load existing enrichment hashes to skip unchanged descriptions
+    from hashlib import md5
+    from src.storage.repository import get_enriched_hashes
+    enriched_hashes = get_enriched_hashes(session)
+    console.print(f"Already enriched: {len(enriched_hashes)} listings in DB")
+
     # Start LLM workers as separate processes (no GIL contention with scraper threads)
     # 2 workers = 2 parallel Ollama requests (3B model fits twice in 8GB)
     num_workers = 2
@@ -144,14 +150,23 @@ def scrape(
 
     # Scraper sends each listing directly to LLM via queue
     sent_to_llm = 0
+    skipped_llm = 0
+
+    def _desc_hash(text: str) -> str:
+        return md5(text.strip().encode()).hexdigest()
 
     def _on_batch(batch):
-        nonlocal sent_to_llm
+        nonlocal sent_to_llm, skipped_llm
         for listing in batch:
-            if listing.description and len(listing.description.strip()) >= 20:
-                llm_in.put((listing.olx_id, listing.description))
-                sent_to_llm += 1
-        console.print(f"  Page done: {len(batch)} listings → {sent_to_llm} sent to LLM")
+            if not listing.description or len(listing.description.strip()) < 20:
+                continue
+            h = _desc_hash(listing.description)
+            if enriched_hashes.get(listing.olx_id) == h:
+                skipped_llm += 1
+                continue
+            llm_in.put((listing.olx_id, listing.description))
+            sent_to_llm += 1
+        console.print(f"  Page done: {len(batch)} listings → {sent_to_llm} sent to LLM, {skipped_llm} skipped")
 
     with OlxScraper(config) as scraper:
         raw_listings = scraper.scrape_all(on_batch_ready=_on_batch)
@@ -209,6 +224,7 @@ def scrape(
             "city": raw.city, "district": raw.district,
             "seller_type": raw.seller_type, "description": raw.description,
             "llm_extras": json.dumps(llm_data, ensure_ascii=False) if llm_data else None,
+            "llm_description_hash": _desc_hash(raw.description) if llm_data and raw.description else None,
             "needs_repair": corrections.get("needs_repair"),
             "had_accident": corrections.get("had_accident"),
             "real_mileage_km": corrections.get("real_mileage_km"),

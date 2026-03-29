@@ -73,10 +73,13 @@ def upsert_unmatched(session: Session, data: dict, reason: str) -> UnmatchedList
     return row
 
 
-def get_enriched_olx_ids(session: Session) -> set[str]:
-    """Return olx_ids of listings that already have llm_extras."""
-    rows = session.query(Listing.olx_id).filter(Listing.llm_extras.isnot(None)).all()
-    return {r[0] for r in rows}
+def get_enriched_hashes(session: Session) -> dict[str, str]:
+    """Return {olx_id: description_hash} for listings that have llm_extras."""
+    rows = session.query(Listing.olx_id, Listing.llm_description_hash).filter(
+        Listing.llm_extras.isnot(None),
+        Listing.llm_description_hash.isnot(None),
+    ).all()
+    return {r[0]: r[1] for r in rows}
 
 
 def mark_inactive(session: Session, active_olx_ids: set[str]):

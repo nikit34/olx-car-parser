@@ -41,6 +41,7 @@ class Listing(Base):
     seller_type = Column(String)           # Particular / Profissional
     description = Column(Text)              # Listing description text
     llm_extras = Column(Text)               # JSON: LLM-extracted structured data from description
+    llm_description_hash = Column(String)    # Hash of description used for LLM enrichment
     first_seen_at = Column(DateTime, default=datetime.utcnow)
     last_seen_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     is_active = Column(Boolean, default=True)
