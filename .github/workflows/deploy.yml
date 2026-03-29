@@ -38,7 +38,7 @@ jobs:
 
       - name: Ensure Ollama is installed
         run: |
-          MODEL=$(python3 -c "import yaml; print(yaml.safe_load(open('config/settings.yaml'))['llm']['ollama_model'])")
+          MODEL=$(grep 'ollama_model:' config/settings.yaml | awk '{print $2}' | tr -d '"')
           if curl -sf http://localhost:11434/api/tags 2>/dev/null | grep -q "$MODEL"; then
             echo "Ollama OK with $MODEL"
           else
