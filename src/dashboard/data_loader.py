@@ -12,7 +12,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 DB_PATH = PROJECT_ROOT / "data" / "olx_cars.db"
 
 
-_DB_MAX_AGE_SECONDS = 6 * 3600  # re-download every 6 hours on Cloud
+_DB_MAX_AGE_SECONDS = 24 * 3600  # re-download daily (matches scrape schedule)
 
 
 def _ensure_db() -> bool:
