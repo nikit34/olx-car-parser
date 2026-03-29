@@ -12,27 +12,57 @@ sys.path.insert(0, str(PROJECT_ROOT))
 DB_PATH = PROJECT_ROOT / "data" / "olx_cars.db"
 
 
-_DB_MAX_AGE_SECONDS = 24 * 3600  # re-download daily (matches scrape schedule)
+_CHECK_INTERVAL_SECONDS = 2 * 3600  # check for new release every 2 hours
+
+
+def _release_updated(repo: str) -> str | None:
+    """Return download URL if the release asset is newer than local DB, else None."""
+    import httpx
+
+    api_url = f"https://api.github.com/repos/{repo}/releases/tags/latest-data"
+    try:
+        resp = httpx.get(api_url, timeout=10)
+        if resp.status_code != 200:
+            return None
+        for asset in resp.json().get("assets", []):
+            if asset["name"] == "olx_cars.db":
+                remote_ts = asset["updated_at"]  # ISO 8601
+                from datetime import datetime, timezone
+                remote_dt = datetime.fromisoformat(remote_ts.replace("Z", "+00:00"))
+                if DB_PATH.exists():
+                    local_dt = datetime.fromtimestamp(DB_PATH.stat().st_mtime, tz=timezone.utc)
+                    if remote_dt <= local_dt:
+                        return None  # local is up to date
+                return asset["browser_download_url"]
+    except Exception:
+        return None
+    return None
 
 
 def _ensure_db() -> bool:
-    """Download DB from GitHub Releases if missing or stale."""
+    """Download DB from GitHub Releases if missing or newer version available."""
     import time
 
-    needs_download = not DB_PATH.exists()
-    if DB_PATH.exists():
-        age = time.time() - DB_PATH.stat().st_mtime
-        if age > _DB_MAX_AGE_SECONDS and os.environ.get("STREAMLIT_SHARING_MODE"):
-            needs_download = True  # stale on Cloud — refresh
+    if not os.environ.get("STREAMLIT_SHARING_MODE"):
+        return DB_PATH.exists()
 
-    if not needs_download:
+    if not DB_PATH.exists():
+        needs_check = True
+    else:
+        age = time.time() - DB_PATH.stat().st_mtime
+        needs_check = age > _CHECK_INTERVAL_SECONDS
+
+    if not needs_check:
         return True
 
     repo = os.environ.get("GITHUB_REPOSITORY", "nikit34/olx-car-parser")
     if not repo:
         return DB_PATH.exists()
 
-    url = f"https://github.com/{repo}/releases/download/latest-data/olx_cars.db"
+    url = _release_updated(repo)
+    if not url:
+        return DB_PATH.exists()
+
     try:
         import httpx
 
