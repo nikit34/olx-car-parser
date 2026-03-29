@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import src.parser.llm_enrichment as llm_mod
 from src.parser.llm_enrichment import (
     _call_ollama,
     _get_config,
@@ -82,6 +83,9 @@ class TestParseLlmJson:
 # ---------------------------------------------------------------------------
 
 class TestCallOllama:
+    def setup_method(self):
+        llm_mod._http_client = None
+
     def test_success(self):
         cfg = _get_config()
         mock_resp = MagicMock()
@@ -89,8 +93,10 @@ class TestCallOllama:
         mock_resp.json.return_value = {
             "response": json.dumps(VALID_LLM_JSON)
         }
+        mock_client = MagicMock()
+        mock_client.post.return_value = mock_resp
 
-        with patch("src.parser.llm_enrichment.httpx.post", return_value=mock_resp):
+        with patch("src.parser.llm_enrichment._get_client", return_value=mock_client):
             result = _call_ollama("Vendo carro com 100km", cfg)
 
         assert result is not None
@@ -100,8 +106,10 @@ class TestCallOllama:
         cfg = _get_config()
         mock_resp = MagicMock()
         mock_resp.status_code = 500
+        mock_client = MagicMock()
+        mock_client.post.return_value = mock_resp
 
-        with patch("src.parser.llm_enrichment.httpx.post", return_value=mock_resp):
+        with patch("src.parser.llm_enrichment._get_client", return_value=mock_client):
             result = _call_ollama("Vendo carro", cfg)
 
         assert result is None
@@ -111,8 +119,10 @@ class TestCallOllama:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"response": "Sorry I cannot help"}
+        mock_client = MagicMock()
+        mock_client.post.return_value = mock_resp
 
-        with patch("src.parser.llm_enrichment.httpx.post", return_value=mock_resp):
+        with patch("src.parser.llm_enrichment._get_client", return_value=mock_client):
             result = _call_ollama("Vendo carro", cfg)
 
         assert result is None

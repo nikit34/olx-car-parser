@@ -48,6 +48,17 @@ def _get_config() -> dict:
 
 _ollama_status: bool | None = None
 
+# Persistent HTTP client — reuses TCP connection across all LLM calls
+_http_client: httpx.Client | None = None
+
+
+def _get_client(base_url: str) -> httpx.Client:
+    """Return a persistent httpx.Client, creating one if needed."""
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.Client(base_url=base_url, timeout=60)
+    return _http_client
+
 
 def _ollama_available(base_url: str) -> bool:
     """Check if Ollama is running locally. Result is cached for the process lifetime."""
@@ -55,7 +66,8 @@ def _ollama_available(base_url: str) -> bool:
     if _ollama_status is not None:
         return _ollama_status
     try:
-        resp = httpx.get(f"{base_url}/api/tags", timeout=10)
+        client = _get_client(base_url)
+        resp = client.get("/api/tags")
         _ollama_status = resp.status_code == 200
     except httpx.HTTPError:
         _ollama_status = False
@@ -74,8 +86,9 @@ def _parse_llm_json(content: str) -> dict | None:
 def _call_ollama(description: str, cfg: dict) -> dict | None:
     """Call local Ollama model for extraction."""
     try:
-        resp = httpx.post(
-            f"{cfg['ollama_url']}/api/generate",
+        client = _get_client(cfg["ollama_url"])
+        resp = client.post(
+            "/api/generate",
             json={
                 "model": cfg["ollama_model"],
                 "prompt": EXTRACTION_PROMPT + description[:1200],
@@ -87,7 +100,6 @@ def _call_ollama(description: str, cfg: dict) -> dict | None:
                     "num_ctx": 1024,
                 },
             },
-            timeout=60,
         )
         if resp.status_code != 200:
             logger.warning("Ollama API error: %s", resp.status_code)
