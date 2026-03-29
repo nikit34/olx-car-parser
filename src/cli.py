@@ -146,7 +146,7 @@ def scrape(
         llm_in.put(None)
     console.print(f"Scraping done ({len(raw_listings)} listings). Waiting for LLM to finish...")
     for p in llm_procs:
-        p.join(timeout=sent_to_llm * 10 + 120)  # ~10 sec/listing with 2 workers + buffer
+        p.join(timeout=sent_to_llm * 20 + 300)
         if p.is_alive():
             p.terminate()
 
