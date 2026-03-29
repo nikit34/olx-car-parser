@@ -16,6 +16,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Clean up old code from server directory
+        run: |
+          cd /Users/anastasia/olx-car-parser
+          find . -maxdepth 1 ! -name '.' ! -name 'data' ! -name '.env' -exec rm -rf {} +
+
       - name: Link persistent data directory
         run: |
           rm -rf data
