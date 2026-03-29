@@ -98,6 +98,9 @@ def _call_ollama(description: str, cfg: dict) -> dict | None:
         content = resp.json()["message"]["content"]
         return _parse_llm_json(content)
 
+    except httpx.TimeoutException:
+        logger.warning("Ollama request timed out")
+        return None
     except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as e:
         logger.debug("Ollama enrichment failed: %s", e)
         return None

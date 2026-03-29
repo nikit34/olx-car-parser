@@ -43,9 +43,15 @@ def _load_scraper_config() -> dict:
     return {}
 
 
-def _llm_worker(in_q: multiprocessing.Queue, out_q: multiprocessing.Queue):
-    """Separate process: reads (olx_id, description) from in_q, sends (olx_id, result) to out_q."""
+def _llm_worker(in_q: multiprocessing.Queue, out_q: multiprocessing.Queue,
+                shutdown: multiprocessing.Event):
+    """Separate process: reads (olx_id, description) from in_q, sends (olx_id, result) to out_q.
+
+    Exits when it receives a poison pill (None) or when the shutdown event is set
+    and the queue is empty.
+    """
     from src.parser.llm_enrichment import enrich_from_description, _ollama_available, _get_config
+    from queue import Empty
 
     cfg = _get_config()
     if not _ollama_available(cfg["ollama_url"]):
@@ -59,7 +65,12 @@ def _llm_worker(in_q: multiprocessing.Queue, out_q: multiprocessing.Queue):
     enriched = 0
     failures = 0
     while True:
-        item = in_q.get()
+        try:
+            item = in_q.get(timeout=60)
+        except Empty:
+            if shutdown.is_set():
+                break
+            continue
         if item is None:  # poison pill
             break
         olx_id, description = item
@@ -121,9 +132,10 @@ def scrape(
     num_workers = 2
     llm_in: multiprocessing.Queue = multiprocessing.Queue()
     llm_out: multiprocessing.Queue = multiprocessing.Queue()
+    llm_shutdown = multiprocessing.Event()
     llm_procs = []
     for _ in range(num_workers):
-        p = multiprocessing.Process(target=_llm_worker, args=(llm_in, llm_out), daemon=True)
+        p = multiprocessing.Process(target=_llm_worker, args=(llm_in, llm_out, llm_shutdown), daemon=True)
         p.start()
         llm_procs.append(p)
 
@@ -141,14 +153,13 @@ def scrape(
     with OlxScraper(config) as scraper:
         raw_listings = scraper.scrape_all(on_batch_ready=_on_batch)
 
-    # Signal all LLM workers to finish (one poison pill per worker)
+    # Signal LLM workers: poison pills to drain queue, then shutdown event as fallback
     for _ in llm_procs:
         llm_in.put(None)
     console.print(f"Scraping done ({len(raw_listings)} listings). Waiting for LLM to finish...")
+    llm_shutdown.set()
     for p in llm_procs:
-        p.join(timeout=sent_to_llm * 20 + 300)
-        if p.is_alive():
-            p.terminate()
+        p.join()
 
     # Collect LLM results
     llm_results: dict[str, dict] = {}
