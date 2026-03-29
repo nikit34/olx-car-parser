@@ -12,7 +12,7 @@ import sys as _sys
 from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parent))
 
-from data_loader import load_all, load_portfolio
+from data_loader import load_all, load_portfolio, _force_next_check
 
 
 def plotly_chart_with_click(fig, df, key, **kwargs):
@@ -68,6 +68,7 @@ if listings_df.empty:
 else:
     st.sidebar.success(f"{len(listings_df)} listings loaded")
     if st.sidebar.button("Refresh data"):
+        _force_next_check()
         st.cache_data.clear()
         st.rerun()
 

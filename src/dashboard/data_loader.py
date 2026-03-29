@@ -39,6 +39,12 @@ def _release_updated(repo: str) -> str | None:
     return None
 
 
+def _force_next_check():
+    """Reset the check timer so the next _ensure_db() call hits GitHub API."""
+    if DB_PATH.exists():
+        os.utime(DB_PATH, (0, 0))
+
+
 def _ensure_db() -> bool:
     """Download DB from GitHub Releases if missing or newer version available."""
     import time
