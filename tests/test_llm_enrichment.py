@@ -260,86 +260,60 @@ class TestApplyCorrections:
 
 
 # ---------------------------------------------------------------------------
-# Pipeline: queue-based LLM worker
+# Pipeline: multiprocessing-based LLM worker (uses actual _llm_worker from CLI)
 # ---------------------------------------------------------------------------
 
 class TestLlmPipeline:
+    @patch("src.parser.llm_enrichment._ollama_available", return_value=True)
     @patch("src.parser.llm_enrichment.enrich_from_description", return_value=VALID_LLM_JSON)
-    def test_queue_feeds_llm_worker(self, mock_enrich):
-        """Simulate the CLI pipeline: scraper puts listings in queue, worker processes."""
-        from src.parser.llm_enrichment import enrich_from_description
+    def test_queue_feeds_llm_worker(self, mock_enrich, mock_avail):
+        """Simulate the CLI pipeline: scraper puts (olx_id, desc) in queue, worker processes."""
+        import multiprocessing
+        from src.cli import _llm_worker
 
-        llm_queue: queue.Queue = queue.Queue()
-        llm_done = threading.Event()
+        in_q = multiprocessing.Queue()
+        out_q = multiprocessing.Queue()
+        shutdown = multiprocessing.Event()
+
+        worker = threading.Thread(target=_llm_worker, args=(in_q, out_q, shutdown))
+        worker.start()
+
+        for i in range(5):
+            in_q.put((f"test-{i}", f"Vendo carro {i} com {i*50000}km muitos detalhes"))
+
+        in_q.put(None)  # poison pill
+        worker.join(timeout=10)
+
         results = []
-
-        def _worker():
-            while True:
-                try:
-                    listing = llm_queue.get(timeout=1)
-                except queue.Empty:
-                    if llm_done.is_set():
-                        break
-                    continue
-                if listing is None:
-                    break
-                result = enrich_from_description(listing.description)
-                if result:
-                    listing._llm_extras = result
-                    results.append(listing)
-                llm_queue.task_done()
-
-        worker = threading.Thread(target=_worker, daemon=True)
-        worker.start()
-
-        # Simulate scraper producing listings
-        listings = [FakeListing(olx_id=f"test-{i}",
-                                description=f"Vendo carro {i} com {i*50000}km")
-                    for i in range(5)]
-        for l in listings:
-            llm_queue.put(l)
-
-        llm_done.set()
-        llm_queue.put(None)
-        worker.join(timeout=10)
-
+        while not out_q.empty():
+            results.append(out_q.get_nowait())
         assert len(results) == 5
-        assert all(hasattr(l, "_llm_extras") for l in results)
-        assert mock_enrich.call_count == 5
+        assert all(r[1] == VALID_LLM_JSON for r in results)
 
+    @patch("src.parser.llm_enrichment._ollama_available", return_value=True)
     @patch("src.parser.llm_enrichment.enrich_from_description", return_value=None)
-    def test_worker_handles_failures(self, mock_enrich):
-        """Worker continues processing even if LLM returns None."""
-        llm_queue: queue.Queue = queue.Queue()
-        llm_done = threading.Event()
-        processed = []
+    def test_worker_handles_failures(self, mock_enrich, mock_avail):
+        """Worker sends None results and exits after 5 consecutive failures."""
+        import multiprocessing
+        from src.cli import _llm_worker
 
-        def _worker():
-            while True:
-                try:
-                    listing = llm_queue.get(timeout=1)
-                except queue.Empty:
-                    if llm_done.is_set():
-                        break
-                    continue
-                if listing is None:
-                    break
-                from src.parser.llm_enrichment import enrich_from_description
-                enrich_from_description(listing.description)
-                processed.append(listing)
-                llm_queue.task_done()
+        in_q = multiprocessing.Queue()
+        out_q = multiprocessing.Queue()
+        shutdown = multiprocessing.Event()
 
-        worker = threading.Thread(target=_worker, daemon=True)
+        for i in range(7):
+            in_q.put((f"fail-{i}", f"Vendo carro numero {i} com muitos quilometros"))
+
+        worker = threading.Thread(target=_llm_worker, args=(in_q, out_q, shutdown))
         worker.start()
-
-        for i in range(3):
-            llm_queue.put(FakeListing(olx_id=f"fail-{i}"))
-
-        llm_done.set()
-        llm_queue.put(None)
         worker.join(timeout=10)
 
-        assert len(processed) == 3
+        results = []
+        while not out_q.empty():
+            results.append(out_q.get_nowait())
+        # Exits after 5 consecutive failures
+        assert len(results) == 5
+        assert all(r[1] is None for r in results)
 
 
 # ---------------------------------------------------------------------------
