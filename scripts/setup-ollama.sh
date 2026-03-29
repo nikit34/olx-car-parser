@@ -70,7 +70,9 @@ cat > "$PLIST_PATH" <<EOF
 </plist>
 EOF
 
-# 5. Reload LaunchAgent
+# 5. Kill GUI Ollama (it ignores plist env), reload via LaunchAgent
+pkill -9 -f "Ollama" 2>/dev/null || true
+sleep 2
 launchctl bootout gui/$(id -u) "$PLIST_PATH" 2>/dev/null || true
 sleep 1
 launchctl bootstrap gui/$(id -u) "$PLIST_PATH"
