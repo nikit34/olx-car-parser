@@ -116,11 +116,16 @@ def scrape(
 
     console.print(f"[bold]Starting scrape of OLX.pt: up to {config.max_pages} pages...[/bold]")
 
-    # Start LLM worker as separate process (no GIL contention with scraper threads)
+    # Start LLM workers as separate processes (no GIL contention with scraper threads)
+    # 2 workers = 2 parallel Ollama requests (3B model fits twice in 8GB)
+    num_workers = 2
     llm_in: multiprocessing.Queue = multiprocessing.Queue()
     llm_out: multiprocessing.Queue = multiprocessing.Queue()
-    llm_proc = multiprocessing.Process(target=_llm_worker, args=(llm_in, llm_out), daemon=True)
-    llm_proc.start()
+    llm_procs = []
+    for _ in range(num_workers):
+        p = multiprocessing.Process(target=_llm_worker, args=(llm_in, llm_out), daemon=True)
+        p.start()
+        llm_procs.append(p)
 
     # Scraper sends each listing directly to LLM via queue
     sent_to_llm = 0
@@ -136,12 +141,14 @@ def scrape(
     with OlxScraper(config) as scraper:
         raw_listings = scraper.scrape_all(on_batch_ready=_on_batch)
 
-    # Signal LLM worker to finish, wait for it
-    llm_in.put(None)
+    # Signal all LLM workers to finish (one poison pill per worker)
+    for _ in llm_procs:
+        llm_in.put(None)
     console.print(f"Scraping done ({len(raw_listings)} listings). Waiting for LLM to finish...")
-    llm_proc.join(timeout=sent_to_llm * 30 + 60)
-    if llm_proc.is_alive():
-        llm_proc.terminate()
+    for p in llm_procs:
+        p.join(timeout=sent_to_llm * 15 + 60)
+        if p.is_alive():
+            p.terminate()
 
     # Collect LLM results
     llm_results: dict[str, dict] = {}

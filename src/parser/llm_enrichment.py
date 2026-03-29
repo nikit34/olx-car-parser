@@ -20,48 +20,17 @@ CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "settin
 OLLAMA_URL = "http://localhost:11434"
 
 EXTRACTION_PROMPT = """\
-You are a data extraction assistant for Portuguese car listings. Given a description \
-in Portuguese, extract ALL available structured information. Return ONLY valid JSON \
-with these fields (use null if not mentioned or unclear):
+Extract structured data from this Portuguese car listing. JSON fields (null if unknown):
+num_owners(int), had_accident(bool), accident_details(str), service_history(bool), \
+needs_repair(bool), repair_details(str), estimated_repair_cost_eur(int), \
+mileage_in_description_km(int), customs_cleared(bool), imported(bool), \
+mechanical_condition("excellent"/"good"/"fair"/"poor"), paint_condition(same), \
+suspicious_signs(list), extras(list), issues(list), reason_for_sale(str).
+Rules: mileage_in_description_km=any km mentioned (e.g. "150 mil km"→150000). \
+needs_repair=true if ANY repair/damage mentioned. had_accident=true if collision mentioned. \
+customs_cleared=look for "desalfandegado","legalizado","por legalizar". \
+estimated_repair_cost_eur=estimate from issues (e.g. embraiagem→800).
 
-{
-  "num_owners": <int or null>,
-  "accident_free": <bool or null>,
-  "had_accident": <bool or null>,
-  "accident_details": <string or null>,
-  "service_history": <bool or null>,
-  "warranty_months": <int or null>,
-  "recent_maintenance": <string or null>,
-  "needs_repair": <bool or null>,
-  "repair_details": <string or null>,
-  "estimated_repair_cost_eur": <int or null>,
-  "mileage_in_description_km": <int or null>,
-  "customs_cleared": <bool or null>,
-  "imported": <bool or null>,
-  "legal_issues": [<list of documentation/legal problems>],
-  "mechanical_condition": <string: "excellent"/"good"/"fair"/"poor" or null>,
-  "paint_condition": <string: "excellent"/"good"/"fair"/"poor" or null>,
-  "suspicious_signs": [<list of red flags: mileage tampering, hidden damage, etc.>],
-  "extras": [<list of notable extras/features as short strings>],
-  "issues": [<list of mentioned problems/defects>],
-  "reason_for_sale": <string or null>
-}
-
-IMPORTANT rules:
-- "mileage_in_description_km": extract ANY mileage number the seller mentions in the text \
-(e.g. "150 mil km", "150.000km", "apenas 80000"). Convert to integer km. This may differ from \
-the listing attributes — the description often has the real value.
-- "needs_repair": true if the seller mentions ANY repair needed, bodywork damage, mechanical \
-issues, parts to replace, "para peças", "necessita de reparação", paint damage, etc.
-- "had_accident": true if ANY accident, collision, or damage event is mentioned.
-- "customs_cleared": for imported cars, whether customs/legalization is done. Look for \
-"desalfandegado", "legalizado", "documentação em ordem", "sem documentos", "por legalizar".
-- "suspicious_signs": list things like impossibly low mileage for age, contradictions in \
-description, "livro de revisões perdido", vague damage descriptions, etc.
-- "estimated_repair_cost_eur": rough estimate ONLY if the seller mentions specific repair \
-costs or you can estimate from described issues (e.g. "precisa de embraiagem" → ~800).
-
-Description:
 """
 
 
@@ -110,15 +79,17 @@ def _call_ollama(description: str, cfg: dict) -> dict | None:
             json={
                 "model": cfg["ollama_model"],
                 "messages": [
-                    {"role": "user", "content": EXTRACTION_PROMPT + description[:3000]},
+                    {"role": "user", "content": EXTRACTION_PROMPT + description[:2000]},
                 ],
+                "format": "json",  # forces valid JSON output, faster
                 "stream": False,
                 "options": {
-                    "temperature": 0.1,
-                    "num_predict": 800,
+                    "temperature": 0.0,
+                    "num_predict": 512,
+                    "num_ctx": 1024,
                 },
             },
-            timeout=120,
+            timeout=60,
         )
         if resp.status_code != 200:
             logger.warning("Ollama API error: %s", resp.status_code)
