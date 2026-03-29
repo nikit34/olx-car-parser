@@ -28,8 +28,16 @@ jobs:
 
       - name: Ensure Ollama is running
         run: |
+          launchctl setenv OLLAMA_NUM_PARALLEL 2
+          pkill -f "Ollama" || true
+          sleep 2
+          open -a Ollama
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:11434/api/tags >/dev/null 2>&1 && break
+            sleep 1
+          done
           if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
-            echo "Ollama is running"
+            echo "Ollama is running (OLLAMA_NUM_PARALLEL=2)"
             curl -s http://localhost:11434/api/tags | python3 -c "import sys,json; tags=json.load(sys.stdin); print('Models:', [m['name'] for m in tags.get('models',[])])"
           else
             echo "ERROR: Ollama not running. LLM enrichment will be skipped."
