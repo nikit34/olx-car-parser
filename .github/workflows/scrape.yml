@@ -35,15 +35,22 @@ jobs:
             echo "ERROR: Ollama not running. LLM enrichment will be skipped."
           fi
 
-      - name: Run scraper
+      - name: Scrape + Enrich (parallel)
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: .venv/bin/python -m src.cli scrape
+        run: |
+          # Start LLM enrichment in background — polls DB for new listings
+          .venv/bin/python -m src.cli enrich --watch --idle-timeout 120 &
+          ENRICH_PID=$!
+          echo "Enrich PID: $ENRICH_PID"
 
-      - name: Enrich with LLM
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-        run: .venv/bin/python -m src.cli enrich
+          # Scrape saves to DB incrementally (per page)
+          .venv/bin/python -m src.cli scrape
+
+          # Wait for enrich to finish remaining listings
+          echo "Scrape done. Waiting for enrich to finish..."
+          wait $ENRICH_PID || true
+          echo "Enrich done."
 
       - name: Send Telegram alerts
         env:

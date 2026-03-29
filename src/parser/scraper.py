@@ -345,64 +345,65 @@ class OlxScraper:
             on_ready(listing)
         return True
 
+    def _enrich_batch(self, listings: list[RawListing]) -> tuple[int, int]:
+        """Fetch detail pages for a batch of listings. Returns (ok, failed)."""
+        workers = self.config.concurrency
+        enriched = 0
+        failed = 0
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_to_idx = {
+                executor.submit(self._enrich_one, listing): i
+                for i, listing in enumerate(listings)
+            }
+            for future in as_completed(future_to_idx):
+                try:
+                    if future.result():
+                        enriched += 1
+                    else:
+                        failed += 1
+                except Exception:
+                    failed += 1
+                if self._stop_event.is_set():
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    break
+        return enriched, failed
+
     def scrape_all(self, enrich_details: bool = True,
-                   on_detail_ready=None) -> list[RawListing]:
+                   on_batch_ready=None) -> list[RawListing]:
         """Scrape all listings.
 
         Args:
             enrich_details: Fetch detail pages for each listing.
-            on_detail_ready: Optional callback ``fn(listing)`` called as soon as
-                a listing's detail page has been scraped and its description is
-                available.  This allows the caller to start LLM enrichment in
-                parallel with the remaining detail-page fetches.
+            on_batch_ready: Optional callback ``fn(batch: list[RawListing])``
+                called after each page's detail pages are fetched and saved.
+                Allows the caller to persist listings to DB incrementally.
         """
         all_listings = []
         for page in range(1, self.config.max_pages + 1):
             page_listings = self.scrape_search_page(page)
             if page_listings is None:
-                # Redirect detected — we've passed the last real page.
                 break
             if not page_listings:
                 logger.info("No more listings at page %d, stopping", page)
                 break
-            all_listings.extend(page_listings)
-            logger.info("Total so far: %d listings", len(all_listings))
-            self._delay()
 
-        if enrich_details:
-            total = len(all_listings)
-            workers = self.config.concurrency
-            logger.info("Enriching %d listings with detail pages (concurrency=%d)...",
-                        total, workers)
-            enriched = 0
-            failed = 0
-            with ThreadPoolExecutor(max_workers=workers) as executor:
-                future_to_idx = {
-                    executor.submit(self._enrich_one, listing, on_detail_ready): i
-                    for i, listing in enumerate(all_listings)
-                }
-                for future in as_completed(future_to_idx):
-                    try:
-                        if future.result():
-                            enriched += 1
-                        else:
-                            failed += 1
-                    except Exception:
-                        idx = future_to_idx[future]
-                        logger.debug("Error enriching listing %d: %s",
-                                     idx, all_listings[idx].url, exc_info=True)
-                        failed += 1
-                    done = enriched + failed
-                    if done % 50 == 0 or done == total:
-                        logger.info("Enrichment progress: %d / %d (ok=%d, fail=%d)",
-                                    done, total, enriched, failed)
-                    if self._stop_event.is_set():
-                        logger.warning("Stopping enrichment early — IP appears blocked. "
-                                       "Enriched %d / %d before stop.", enriched, total)
-                        executor.shutdown(wait=False, cancel_futures=True)
-                        break
-            logger.info("Enrichment complete: %d succeeded, %d failed out of %d",
-                        enriched, failed, total)
+            if enrich_details:
+                ok, fail = self._enrich_batch(page_listings)
+                logger.info("Page %d: %d listings, details ok=%d fail=%d",
+                            page, len(page_listings), ok, fail)
+            else:
+                logger.info("Page %d: %d listings", page, len(page_listings))
+
+            all_listings.extend(page_listings)
+
+            if on_batch_ready:
+                on_batch_ready(page_listings)
+
+            if self._stop_event.is_set():
+                logger.warning("Stopping early — IP blocked. Got %d listings.", len(all_listings))
+                break
+
+            self._delay()
 
         logger.info("Scraping complete: %d total listings", len(all_listings))
         return all_listings
