@@ -5,7 +5,10 @@ import json
 import logging
 import multiprocessing
 import sys
+import threading
+from hashlib import md5
 from pathlib import Path
+from queue import Queue, Empty
 
 import pandas as pd
 import typer
@@ -79,10 +82,11 @@ def _llm_worker(in_q: multiprocessing.Queue, out_q: multiprocessing.Queue,
             break
         olx_id, description = item
         if not description or len(description.strip()) < 20:
+            out_q.put((olx_id, None))
             continue
         result = enrich_from_description(description)
+        out_q.put((olx_id, result))
         if result:
-            out_q.put((olx_id, result))
             enriched += 1
             failures = 0
             if enriched % 25 == 0:
@@ -96,120 +100,51 @@ def _llm_worker(in_q: multiprocessing.Queue, out_q: multiprocessing.Queue,
     log.info("LLM worker done: %d enriched", enriched)
 
 
-@app.command()
-def scrape(
-    pages: int = typer.Option(None, help="Max pages to scrape (default from config)"),
-    delay_min: float = typer.Option(None, help="Min delay between requests (sec)"),
-    delay_max: float = typer.Option(None, help="Max delay between requests (sec)"),
-    private_only: bool = typer.Option(None, help="Only private sellers (Particular)"),
-    concurrency: int = typer.Option(None, help="Parallel detail page workers (default 8)"),
-):
-    """Scrape OLX.pt car listings, enrich with LLM, save to database.
+def _desc_hash(text: str) -> str:
+    return md5(text.strip().encode()).hexdigest()
 
-    Scraper and LLM run in parallel: scraper feeds listings directly to
-    LLM worker process via queue (no DB round-trip).
-    """
-    _LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
-    lock_file = open(_LOCK_PATH, "w")
-    try:
-        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        log.error("Another scrape is already running. Exiting.")
-        raise typer.Exit(1)
 
-    init_db()
-    session = get_session()
+def _llm_to_db(llm_out: multiprocessing.Queue, raw_by_id: dict, db_queue: Queue):
+    """Thread: pairs LLM results with raw listings, forwards to db_queue."""
+    merged = 0
+    while True:
+        item = llm_out.get()
+        if item is None:
+            break
+        olx_id, result = item
+        raw = raw_by_id.get(olx_id)
+        if raw:
+            db_queue.put((raw, result))
+            merged += 1
+    log.info("LLM merger done: %d forwarded to DB", merged)
 
-    cfg = _load_scraper_config()
-    config = ScraperConfig(
-        max_pages=pages if pages is not None else cfg.get("max_pages", 25),
-        delay_min=delay_min if delay_min is not None else cfg.get("request_delay_min", 2.0),
-        delay_max=delay_max if delay_max is not None else cfg.get("request_delay_max", 5.0),
-        private_only=private_only if private_only is not None else cfg.get("private_only", True),
-        concurrency=concurrency if concurrency is not None else cfg.get("concurrency", 5),
-    )
 
-    log.info("Starting scrape of OLX.pt: up to %d pages...", config.max_pages)
-
-    # Load existing enrichment hashes to skip unchanged descriptions
-    from hashlib import md5
-    from src.storage.repository import get_enriched_hashes
-    enriched_hashes = get_enriched_hashes(session)
-    log.info("Already enriched: %d listings in DB", len(enriched_hashes))
-
-    # Start LLM workers as separate processes (no GIL contention with scraper threads)
-    # 2 workers = 2 parallel Ollama requests (OLLAMA_NUM_PARALLEL=2)
-    num_workers = 2
-    llm_in: multiprocessing.Queue = multiprocessing.Queue()
-    llm_out: multiprocessing.Queue = multiprocessing.Queue()
-    llm_shutdown = multiprocessing.Event()
-    llm_procs = []
-    for _ in range(num_workers):
-        p = multiprocessing.Process(target=_llm_worker, args=(llm_in, llm_out, llm_shutdown), daemon=True)
-        p.start()
-        llm_procs.append(p)
-
-    # Scraper sends each listing directly to LLM via queue
-    sent_to_llm = 0
-    skipped_llm = 0
-
-    def _desc_hash(text: str) -> str:
-        return md5(text.strip().encode()).hexdigest()
-
-    def _on_batch(batch):
-        nonlocal sent_to_llm, skipped_llm
-        for listing in batch:
-            if not listing.description or len(listing.description.strip()) < 20:
-                continue
-            h = _desc_hash(listing.description)
-            if enriched_hashes.get(listing.olx_id) == h:
-                skipped_llm += 1
-                continue
-            llm_in.put((listing.olx_id, listing.description))
-            sent_to_llm += 1
-        log.info("Page done: %d listings -> %d sent to LLM, %d skipped", len(batch), sent_to_llm, skipped_llm)
-
-    with OlxScraper(config) as scraper:
-        raw_listings = scraper.scrape_all(on_batch_ready=_on_batch)
-
-    # Signal LLM workers: poison pills to drain queue, then shutdown event as fallback
-    for _ in llm_procs:
-        llm_in.put(None)
-    log.info("Scraping done (%d listings). Waiting for LLM to finish...", len(raw_listings))
-    llm_shutdown.set()
-    for p in llm_procs:
-        p.join()
-
-    # Collect LLM results
-    llm_results: dict[str, dict] = {}
-    while not llm_out.empty():
-        olx_id, result = llm_out.get_nowait()
-        llm_results[olx_id] = result
-
-    log.info("LLM enriched %d / %d listings", len(llm_results), sent_to_llm)
-
-    if not raw_listings:
-        log.error("No listings scraped.")
-        raise typer.Exit(1)
-
-    # Apply corrections and save to DB
+def _db_worker(db_queue: Queue, result: dict):
+    """Thread: reads (raw_listing, llm_data|None) from db_queue, saves to DB."""
     from src.parser.llm_enrichment import correct_listing_data
 
-    log.info("Saving %d listings to database...", len(raw_listings))
+    session = get_session()
     saved = 0
-    unmatched_count = 0
+    enriched = 0
+    unmatched = 0
     active_ids: set[str] = set()
+    processed = 0
 
-    total = len(raw_listings)
-    for i, raw in enumerate(raw_listings, 1):
+    while True:
+        item = db_queue.get()
+        if item is None:
+            break
+
+        raw, llm_data = item
+
         if not raw.brand and not raw.title:
+            processed += 1
             continue
 
-        # Attach LLM result if available
-        llm_data = llm_results.get(raw.olx_id)
         if llm_data:
             raw._llm_extras = llm_data
             corrections = correct_listing_data(raw)
+            enriched += 1
         else:
             corrections = {}
 
@@ -247,19 +182,164 @@ def scrape(
             reason = "no_year" if not raw.year else "no_generation_match"
             data["price_eur"] = raw.price_eur
             upsert_unmatched(session, data, reason)
-            unmatched_count += 1
+            unmatched += 1
 
-        if i % 100 == 0 or i == total:
-            log.info("DB save progress: %d / %d", i, total)
+        processed += 1
+        if processed % 100 == 0:
+            session.commit()
+            log.info("DB save progress: %d saved, %d enriched, %d unmatched",
+                     saved, enriched, unmatched)
 
-    log.info("Marking inactive and committing...")
-    mark_inactive(session, active_ids)
     session.commit()
+    session.close()
+    log.info("DB worker done: %d saved, %d enriched, %d unmatched",
+             saved, enriched, unmatched)
+    result["saved"] = saved
+    result["enriched"] = enriched
+    result["unmatched"] = unmatched
+    result["active_ids"] = active_ids
 
-    log.info("Saved %d listings (%d enriched), %d unmatched", saved, len(llm_results), unmatched_count)
 
-    log.info("Computing market stats...")
-    compute_market_stats(session)
+@app.command()
+def scrape(
+    pages: int = typer.Option(None, help="Max pages to scrape (default from config)"),
+    delay_min: float = typer.Option(None, help="Min delay between requests (sec)"),
+    delay_max: float = typer.Option(None, help="Max delay between requests (sec)"),
+    private_only: bool = typer.Option(None, help="Only private sellers (Particular)"),
+    concurrency: int = typer.Option(None, help="Parallel detail page workers (default 8)"),
+):
+    """Scrape OLX.pt car listings, enrich with LLM, save to database.
+
+    Streaming pipeline: Scraper -> LLM -> DB all run in parallel.
+    Listings are saved to DB as soon as LLM finishes (or immediately if
+    no enrichment needed), without waiting for the full scrape to complete.
+    """
+    _LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = open(_LOCK_PATH, "w")
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        log.error("Another scrape is already running. Exiting.")
+        raise typer.Exit(1)
+
+    init_db()
+    session = get_session()
+
+    cfg = _load_scraper_config()
+    config = ScraperConfig(
+        max_pages=pages if pages is not None else cfg.get("max_pages", 25),
+        delay_min=delay_min if delay_min is not None else cfg.get("request_delay_min", 2.0),
+        delay_max=delay_max if delay_max is not None else cfg.get("request_delay_max", 5.0),
+        private_only=private_only if private_only is not None else cfg.get("private_only", True),
+        concurrency=concurrency if concurrency is not None else cfg.get("concurrency", 5),
+    )
+
+    log.info("Starting scrape of OLX.pt: up to %d pages...", config.max_pages)
+
+    # Load existing enrichment hashes to skip unchanged descriptions
+    from src.storage.repository import get_enriched_hashes
+    enriched_hashes = get_enriched_hashes(session)
+    session.close()
+    log.info("Already enriched: %d listings in DB", len(enriched_hashes))
+
+    # --- Streaming pipeline: Scraper -> LLM -> DB (all run in parallel) ---
+
+    # Queues
+    llm_in: multiprocessing.Queue = multiprocessing.Queue()
+    llm_out: multiprocessing.Queue = multiprocessing.Queue()
+    db_queue: Queue = Queue()
+
+    # LLM workers (separate processes — no GIL contention)
+    llm_shutdown = multiprocessing.Event()
+    num_workers = 2
+    llm_procs = []
+    for _ in range(num_workers):
+        p = multiprocessing.Process(target=_llm_worker, args=(llm_in, llm_out, llm_shutdown), daemon=True)
+        p.start()
+        llm_procs.append(p)
+
+    # Merger thread: pairs LLM results with raw listings -> db_queue
+    raw_by_id: dict = {}
+    merger = threading.Thread(target=_llm_to_db, args=(llm_out, raw_by_id, db_queue), daemon=True)
+    merger.start()
+
+    # DB worker thread: saves listings as they arrive
+    db_result: dict = {}
+    db_thread = threading.Thread(target=_db_worker, args=(db_queue, db_result), daemon=True)
+    db_thread.start()
+
+    # Scraper callback: sends each listing to LLM or directly to DB
+    sent_to_llm = 0
+    skipped_llm = 0
+
+    def _on_batch(batch):
+        nonlocal sent_to_llm, skipped_llm
+        for listing in batch:
+            raw_by_id[listing.olx_id] = listing
+            if not listing.description or len(listing.description.strip()) < 20:
+                db_queue.put((listing, None))
+                continue
+            h = _desc_hash(listing.description)
+            if enriched_hashes.get(listing.olx_id) == h:
+                skipped_llm += 1
+                db_queue.put((listing, None))
+                continue
+            llm_in.put((listing.olx_id, listing.description))
+            sent_to_llm += 1
+        log.info("Page done: %d listings -> %d sent to LLM, %d skipped", len(batch), sent_to_llm, skipped_llm)
+
+    with OlxScraper(config) as scraper:
+        raw_listings = scraper.scrape_all(on_batch_ready=_on_batch)
+
+    # --- Shutdown: drain pipeline in order ---
+
+    # 1. Stop LLM workers
+    for _ in llm_procs:
+        llm_in.put(None)
+    log.info("Scraping done (%d listings). Waiting for pipeline to drain...", len(raw_listings))
+    llm_shutdown.set()
+    for p in llm_procs:
+        p.join()
+
+    # 2. Drain leftover llm_in (workers may have exited early on failures)
+    drained = 0
+    while True:
+        try:
+            item = llm_in.get_nowait()
+        except Empty:
+            break
+        if item is not None:
+            olx_id, _ = item
+            raw = raw_by_id.get(olx_id)
+            if raw:
+                db_queue.put((raw, None))
+                drained += 1
+    if drained:
+        log.warning("LLM workers exited early: %d listings saved without enrichment", drained)
+
+    # 3. Stop merger (all LLM results flushed)
+    llm_out.put(None)
+    merger.join()
+
+    # 4. Stop DB worker (all items queued)
+    db_queue.put(None)
+    db_thread.join()
+
+    if not raw_listings:
+        log.error("No listings scraped.")
+        raise typer.Exit(1)
+
+    # 5. Final: mark inactive & market stats (need full picture)
+    final_session = get_session()
+    log.info("Marking inactive and computing market stats...")
+    mark_inactive(final_session, db_result.get("active_ids", set()))
+    compute_market_stats(final_session)
+    final_session.commit()
+    final_session.close()
+
+    log.info("Saved %d listings (%d enriched), %d unmatched",
+             db_result.get("saved", 0), db_result.get("enriched", 0),
+             db_result.get("unmatched", 0))
     log.info("Done!")
 
 
