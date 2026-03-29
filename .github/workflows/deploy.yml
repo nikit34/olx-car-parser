@@ -38,11 +38,11 @@ jobs:
 
       - name: Ensure Ollama is installed
         run: |
-          if curl -sf http://localhost:11434/api/tags 2>/dev/null | grep -q "qwen2.5:3b"; then
-            echo "Ollama OK with qwen2.5:3b"
+          if curl -sf http://localhost:11434/api/tags 2>/dev/null | grep -q "qwen2.5:1.5b"; then
+            echo "Ollama OK with qwen2.5:1.5b"
           else
             echo "Setting up Ollama..."
-            bash /Users/anastasia/olx-car-parser/scripts/setup-ollama.sh qwen2.5:3b
+            bash /Users/anastasia/olx-car-parser/scripts/setup-ollama.sh qwen2.5:1.5b
           fi
 
       - name: Restart dashboard

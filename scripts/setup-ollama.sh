@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-MODEL="${1:-qwen2.5:3b}"
+MODEL="${1:-qwen2.5:1.5b}"
 OLLAMA_BIN="/Applications/Ollama.app/Contents/Resources/ollama"
 PLIST_NAME="com.olx-car-parser.ollama"
 PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_NAME}.plist"

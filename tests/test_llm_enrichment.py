@@ -82,7 +82,7 @@ class TestParseLlmJson:
 
 class TestCallOllama:
     def test_success(self):
-        cfg = {"ollama_url": "http://localhost:11434", "ollama_model": "qwen2.5:3b"}
+        cfg = {"ollama_url": "http://localhost:11434", "ollama_model": "qwen2.5:1.5b"}
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
@@ -96,7 +96,7 @@ class TestCallOllama:
         assert result["had_accident"] is False
 
     def test_api_error(self):
-        cfg = {"ollama_url": "http://localhost:11434", "ollama_model": "qwen2.5:3b"}
+        cfg = {"ollama_url": "http://localhost:11434", "ollama_model": "qwen2.5:1.5b"}
         mock_resp = MagicMock()
         mock_resp.status_code = 500
 
@@ -106,7 +106,7 @@ class TestCallOllama:
         assert result is None
 
     def test_invalid_json_response(self):
-        cfg = {"ollama_url": "http://localhost:11434", "ollama_model": "qwen2.5:3b"}
+        cfg = {"ollama_url": "http://localhost:11434", "ollama_model": "qwen2.5:1.5b"}
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"response": "Sorry I cannot help"}
