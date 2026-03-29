@@ -17,7 +17,7 @@ analytics:
   buy_signal_threshold: 10
 
 llm:
-  ollama_model: "qwen2.5:1.5b"
+  ollama_model: "car-parser"
   ollama_url: "http://localhost:11434"
 
 alerts:
