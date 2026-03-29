@@ -26,6 +26,14 @@ jobs:
           /opt/homebrew/bin/python3.11 -m venv .venv 2>/dev/null || true
           .venv/bin/pip install -q -r requirements.txt
 
+      - name: Ensure Ollama is installed
+        run: |
+          if ! command -v ollama &>/dev/null; then
+            echo "::error::Ollama is not installed. Run: brew install ollama"
+            exit 1
+          fi
+          echo "Ollama binary: $(which ollama)"
+
       - name: Ensure Ollama is running
         run: |
           launchctl setenv OLLAMA_NUM_PARALLEL 2
