@@ -40,7 +40,8 @@ jobs:
             echo "Ollama is running (OLLAMA_NUM_PARALLEL=2)"
             curl -s http://localhost:11434/api/tags | python3 -c "import sys,json; tags=json.load(sys.stdin); print('Models:', [m['name'] for m in tags.get('models',[])])"
           else
-            echo "ERROR: Ollama not running. LLM enrichment will be skipped."
+            echo "::error::Ollama failed to start after 30s"
+            exit 1
           fi
 
       - name: Scrape + Enrich
