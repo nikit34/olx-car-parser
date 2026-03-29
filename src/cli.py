@@ -3,8 +3,8 @@
 import fcntl
 import json
 import logging
+import multiprocessing
 import sys
-import time
 from pathlib import Path
 
 import pandas as pd
@@ -43,41 +43,42 @@ def _load_scraper_config() -> dict:
     return {}
 
 
-def _save_batch(session, batch, active_ids):
-    """Save a batch of RawListings to DB. Returns (saved, unmatched) counts."""
-    saved = 0
-    unmatched = 0
-    for raw in batch:
-        if not raw.brand and not raw.title:
+def _llm_worker(in_q: multiprocessing.Queue, out_q: multiprocessing.Queue):
+    """Separate process: reads (olx_id, description) from in_q, sends (olx_id, result) to out_q."""
+    from src.parser.llm_enrichment import enrich_from_description, _ollama_available, _get_config
+
+    cfg = _get_config()
+    if not _ollama_available(cfg["ollama_url"]):
+        return
+
+    log = logging.getLogger("llm_worker")
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    log.info("LLM worker started (Ollama %s)", cfg["ollama_model"])
+
+    enriched = 0
+    failures = 0
+    while True:
+        item = in_q.get()
+        if item is None:  # poison pill
+            break
+        olx_id, description = item
+        if not description or len(description.strip()) < 20:
             continue
-        data = {
-            "olx_id": raw.olx_id, "url": raw.url, "title": raw.title,
-            "brand": raw.brand, "model": raw.model or "", "year": raw.year,
-            "mileage_km": raw.mileage_km, "engine_cc": raw.engine_cc,
-            "fuel_type": raw.fuel_type, "horsepower": raw.horsepower,
-            "transmission": raw.transmission, "segment": raw.segment,
-            "doors": raw.doors, "seats": raw.seats, "color": raw.color,
-            "condition": raw.condition, "origin": raw.origin,
-            "registration_month": raw.registration_month,
-            "registration_plate": raw.registration_plate,
-            "city": raw.city, "district": raw.district,
-            "seller_type": raw.seller_type, "description": raw.description,
-        }
-        generation = get_generation(raw.brand, raw.model or "", raw.year)
-        if generation:
-            data["generation"] = generation
-            listing = upsert_listing(session, data)
-            if raw.price_eur is not None:
-                add_price_snapshot(session, listing.id, raw.price_eur, raw.negotiable)
-            active_ids.add(raw.olx_id)
-            saved += 1
+        result = enrich_from_description(description)
+        if result:
+            out_q.put((olx_id, result))
+            enriched += 1
+            failures = 0
+            if enriched % 25 == 0:
+                log.info("LLM progress: %d enriched", enriched)
         else:
-            reason = "no_year" if not raw.year else "no_generation_match"
-            data["price_eur"] = raw.price_eur
-            upsert_unmatched(session, data, reason)
-            unmatched += 1
-    session.commit()
-    return saved, unmatched
+            failures += 1
+            if failures >= 5:
+                log.warning("5 consecutive LLM failures, worker stopping.")
+                break
+
+    log.info("LLM worker done: %d enriched", enriched)
 
 
 @app.command()
@@ -88,10 +89,10 @@ def scrape(
     private_only: bool = typer.Option(None, help="Only private sellers (Particular)"),
     concurrency: int = typer.Option(None, help="Parallel detail page workers (default 8)"),
 ):
-    """Scrape OLX.pt car listings and save to database incrementally.
+    """Scrape OLX.pt car listings, enrich with LLM, save to database.
 
-    Saves each page's listings to DB immediately after detail pages are fetched.
-    Run 'enrich --watch' in parallel to process descriptions with LLM.
+    Scraper and LLM run in parallel: scraper feeds listings directly to
+    LLM worker process via queue (no DB round-trip).
     """
     _LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     lock_file = open(_LOCK_PATH, "w")
@@ -115,28 +116,106 @@ def scrape(
 
     console.print(f"[bold]Starting scrape of OLX.pt: up to {config.max_pages} pages...[/bold]")
 
-    total_saved = 0
-    total_unmatched = 0
-    active_ids: set[str] = set()
+    # Start LLM worker as separate process (no GIL contention with scraper threads)
+    llm_in: multiprocessing.Queue = multiprocessing.Queue()
+    llm_out: multiprocessing.Queue = multiprocessing.Queue()
+    llm_proc = multiprocessing.Process(target=_llm_worker, args=(llm_in, llm_out), daemon=True)
+    llm_proc.start()
+
+    # Scraper sends each listing directly to LLM via queue
+    sent_to_llm = 0
 
     def _on_batch(batch):
-        nonlocal total_saved, total_unmatched
-        s, u = _save_batch(session, batch, active_ids)
-        total_saved += s
-        total_unmatched += u
-        console.print(f"  Saved batch: {s} listings (+{u} unmatched), total {total_saved}")
+        nonlocal sent_to_llm
+        for listing in batch:
+            if listing.description and len(listing.description.strip()) >= 20:
+                llm_in.put((listing.olx_id, listing.description))
+                sent_to_llm += 1
+        console.print(f"  Page done: {len(batch)} listings → {sent_to_llm} sent to LLM")
 
     with OlxScraper(config) as scraper:
         raw_listings = scraper.scrape_all(on_batch_ready=_on_batch)
+
+    # Signal LLM worker to finish, wait for it
+    llm_in.put(None)
+    console.print(f"Scraping done ({len(raw_listings)} listings). Waiting for LLM to finish...")
+    llm_proc.join(timeout=sent_to_llm * 30 + 60)
+    if llm_proc.is_alive():
+        llm_proc.terminate()
+
+    # Collect LLM results
+    llm_results: dict[str, dict] = {}
+    while not llm_out.empty():
+        olx_id, result = llm_out.get_nowait()
+        llm_results[olx_id] = result
+
+    console.print(f"LLM enriched [bold]{len(llm_results)}[/bold] / {sent_to_llm} listings.")
 
     if not raw_listings:
         console.print("[red]No listings scraped.[/red]")
         raise typer.Exit(1)
 
+    # Apply corrections and save to DB
+    from src.parser.llm_enrichment import correct_listing_data
+
+    console.print("Saving to database...")
+    saved = 0
+    unmatched_count = 0
+    active_ids: set[str] = set()
+
+    for raw in raw_listings:
+        if not raw.brand and not raw.title:
+            continue
+
+        # Attach LLM result if available
+        llm_data = llm_results.get(raw.olx_id)
+        if llm_data:
+            raw._llm_extras = llm_data
+            corrections = correct_listing_data(raw)
+        else:
+            corrections = {}
+
+        data = {
+            "olx_id": raw.olx_id, "url": raw.url, "title": raw.title,
+            "brand": raw.brand, "model": raw.model or "", "year": raw.year,
+            "mileage_km": raw.mileage_km, "engine_cc": raw.engine_cc,
+            "fuel_type": raw.fuel_type, "horsepower": raw.horsepower,
+            "transmission": raw.transmission, "segment": raw.segment,
+            "doors": raw.doors, "seats": raw.seats, "color": raw.color,
+            "condition": raw.condition, "origin": raw.origin,
+            "registration_month": raw.registration_month,
+            "registration_plate": raw.registration_plate,
+            "city": raw.city, "district": raw.district,
+            "seller_type": raw.seller_type, "description": raw.description,
+            "llm_extras": json.dumps(llm_data, ensure_ascii=False) if llm_data else None,
+            "needs_repair": corrections.get("needs_repair"),
+            "had_accident": corrections.get("had_accident"),
+            "real_mileage_km": corrections.get("real_mileage_km"),
+            "mileage_suspect": corrections.get("mileage_suspect"),
+            "customs_cleared": corrections.get("customs_cleared"),
+            "estimated_repair_cost_eur": corrections.get("estimated_repair_cost_eur"),
+        }
+
+        generation = get_generation(raw.brand, raw.model or "", raw.year)
+        if generation:
+            data["generation"] = generation
+            listing = upsert_listing(session, data)
+            if raw.price_eur is not None:
+                add_price_snapshot(session, listing.id, raw.price_eur, raw.negotiable)
+            active_ids.add(raw.olx_id)
+            saved += 1
+        else:
+            reason = "no_year" if not raw.year else "no_generation_match"
+            data["price_eur"] = raw.price_eur
+            upsert_unmatched(session, data, reason)
+            unmatched_count += 1
+
     mark_inactive(session, active_ids)
     session.commit()
 
-    console.print(f"[green]Scrape done: {total_saved} saved, {total_unmatched} unmatched.[/green]")
+    console.print(f"[green]Saved {saved} listings ({len(llm_results)} enriched).[/green]")
+    if unmatched_count:
+        console.print(f"[yellow]{unmatched_count} listings unmatched (no generation).[/yellow]")
 
     console.print("Computing market stats...")
     compute_market_stats(session)
@@ -144,20 +223,16 @@ def scrape(
 
 
 @app.command()
-def enrich(
-    watch: bool = typer.Option(False, "--watch", "-w",
-                               help="Keep polling DB for new listings until idle"),
-    idle_timeout: int = typer.Option(120, help="Seconds to wait without new listings before exiting (watch mode)"),
-):
-    """Enrich listings with LLM — extracts structured data from descriptions.
+def enrich():
+    """Enrich unenriched listings already in DB with LLM.
 
     Processes only listings that don't have llm_extras yet.
-    Use --watch to keep polling for new listings (run alongside scrape).
+    Use this to backfill listings scraped before LLM was set up.
     """
     from src.parser.llm_enrichment import (
-        enrich_from_description, _ollama_available, _get_config,
+        enrich_from_description, correct_listing_data,
+        _ollama_available, _get_config,
     )
-    from src.parser.llm_enrichment import correct_listing_data
     from src.models.listing import Listing
 
     init_db()
@@ -165,66 +240,49 @@ def enrich(
 
     cfg = _get_config()
     if not _ollama_available(cfg["ollama_url"]):
-        console.print("[red]Ollama is not running. Start it first: ollama serve[/red]")
+        console.print("[red]Ollama is not running.[/red]")
         raise typer.Exit(1)
 
-    console.print(f"[bold]LLM enrichment via Ollama ({cfg['ollama_model']})[/bold]")
-    if watch:
-        console.print(f"Watch mode: polling DB, idle timeout {idle_timeout}s")
+    pending = (
+        session.query(Listing)
+        .filter(Listing.llm_extras.is_(None), Listing.description.isnot(None))
+        .all()
+    )
 
-    total_enriched = 0
+    if not pending:
+        console.print("[green]All listings already enriched.[/green]")
+        return
+
+    console.print(f"[bold]Enriching {len(pending)} listings with Ollama ({cfg['ollama_model']})...[/bold]")
+
+    enriched = 0
     failures = 0
-    last_activity = time.time()
-
-    while True:
-        # Get next batch of unenriched listings
-        pending = (
-            session.query(Listing)
-            .filter(Listing.llm_extras.is_(None), Listing.description.isnot(None))
-            .limit(25)
-            .all()
-        )
-
-        if not pending:
-            if not watch:
-                break
-            # Watch mode: wait for new listings
-            if time.time() - last_activity > idle_timeout:
-                console.print(f"No new listings for {idle_timeout}s. Exiting.")
-                break
-            time.sleep(5)
-            session.expire_all()  # refresh from DB
+    for listing in pending:
+        if not listing.description or len(listing.description.strip()) < 20:
+            listing.llm_extras = "{}"
             continue
 
-        last_activity = time.time()
-
-        for listing in pending:
-            if not listing.description or len(listing.description.strip()) < 20:
-                listing.llm_extras = "{}"  # mark as processed (empty)
-                continue
-
-            result = enrich_from_description(listing.description)
-            if result:
-                listing.llm_extras = json.dumps(result, ensure_ascii=False)
-                listing._llm_extras = result
-                corrections = correct_listing_data(listing)
-                for field, value in corrections.items():
-                    if hasattr(listing, field):
-                        setattr(listing, field, value)
-                total_enriched += 1
-                failures = 0
-            else:
-                failures += 1
-                if failures >= 5:
-                    console.print("[red]5 consecutive LLM failures, stopping.[/red]")
-                    session.commit()
-                    return
-
-        session.commit()
-        console.print(f"  Enriched batch: total {total_enriched}")
+        result = enrich_from_description(listing.description)
+        if result:
+            listing.llm_extras = json.dumps(result, ensure_ascii=False)
+            listing._llm_extras = result
+            corrections = correct_listing_data(listing)
+            for field, value in corrections.items():
+                if hasattr(listing, field):
+                    setattr(listing, field, value)
+            enriched += 1
+            failures = 0
+            if enriched % 25 == 0:
+                session.commit()
+                console.print(f"  Progress: {enriched}/{len(pending)}")
+        else:
+            failures += 1
+            if failures >= 5:
+                console.print("[red]5 consecutive LLM failures, stopping.[/red]")
+                break
 
     session.commit()
-    console.print(f"[green]Enrichment done: {total_enriched} listings processed.[/green]")
+    console.print(f"[green]Enriched {enriched} listings.[/green]")
 
 
 @app.command()
