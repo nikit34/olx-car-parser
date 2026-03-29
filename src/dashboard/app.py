@@ -512,7 +512,7 @@ with tab_analytics:
 
         # ---- 3. Value Score: composite metric ----
         st.subheader("Value Score — Best Cars for the Money")
-        st.caption("Score = newer year + lower mileage + lower price relative to segment. Higher = better deal.")
+        st.caption("Score = year (25) + mileage (30) + price (15) + condition (10) + fuel (10) + HP (5) + transmission (5). Higher = better deal.")
 
         score_data = ana[
             ana["year"].notna() & ana["mileage_km"].notna() & (ana["mileage_km"] > 0)
@@ -535,11 +535,35 @@ with tab_analytics:
             else:
                 score_data["hp_norm"] = 0.5
 
+            # Fuel type: hybrids retain value best, diesel good, EV risky
+            fuel_rank = {"Híbrido": 1.0, "Híbrido Plug-in": 1.0,
+                         "Eléctrico": 0.8, "Diesel": 0.7, "Gasolina": 0.5, "GPL": 0.3}
+            score_data["fuel_norm"] = score_data["fuel_type"].map(fuel_rank).fillna(0.5)
+
+            # Transmission: automatic commands higher resale premium
+            score_data["trans_norm"] = np.where(
+                score_data["transmission"] == "Automática", 1.0,
+                np.where(score_data["transmission"] == "Manual", 0.5, 0.5),
+            )
+
+            # Condition: no accident + no repair = best; penalty for issues
+            score_data["condition_norm"] = 1.0
+            if "had_accident" in score_data.columns:
+                score_data.loc[score_data["had_accident"] == True, "condition_norm"] = 0.2
+            if "needs_repair" in score_data.columns:
+                score_data.loc[
+                    (score_data["needs_repair"] == True) & (score_data["condition_norm"] > 0.2),
+                    "condition_norm",
+                ] = 0.5
+
             score_data["value_score"] = (
-                score_data["year_norm"] * 30
-                + score_data["mileage_norm"] * 25
-                + score_data["price_norm"] * 30
-                + score_data["hp_norm"] * 15
+                score_data["year_norm"] * 25
+                + score_data["mileage_norm"] * 30
+                + score_data["price_norm"] * 15
+                + score_data["hp_norm"] * 5
+                + score_data["fuel_norm"] * 10
+                + score_data["trans_norm"] * 5
+                + score_data["condition_norm"] * 10
             )
 
             fig_val = px.scatter(

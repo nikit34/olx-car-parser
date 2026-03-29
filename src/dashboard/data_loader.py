@@ -99,7 +99,7 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         priced_gen
         .groupby(["brand", "model", "generation"])
         .agg(gen_median=("price_eur", "median"), gen_count=("price_eur", "count"),
-             gen_year_median=("year", "median"))
+             gen_year_median=("year", "median"), gen_mileage_median=("mileage_km", "median"))
         .reset_index()
     )
 
@@ -109,7 +109,7 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         priced_all
         .groupby(["brand", "model"])
         .agg(model_median=("price_eur", "median"), model_count=("price_eur", "count"),
-             model_year_median=("year", "median"))
+             model_year_median=("year", "median"), model_mileage_median=("mileage_km", "median"))
         .reset_index()
     )
 
@@ -190,6 +190,7 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         median = None
         sample = 0
         group_year_median = None
+        group_mileage_median = None
         if generation:
             gs = gen_stats[
                 (gen_stats["brand"] == brand)
@@ -200,6 +201,7 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
                 median = gs.iloc[0]["gen_median"]
                 sample = int(gs.iloc[0]["gen_count"])
                 group_year_median = gs.iloc[0]["gen_year_median"]
+                group_mileage_median = gs.iloc[0]["gen_mileage_median"]
 
         if median is None:
             ms = model_stats[
@@ -210,6 +212,7 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
             median = ms.iloc[0]["model_median"]
             sample = int(ms.iloc[0]["model_count"])
             group_year_median = ms.iloc[0]["model_year_median"]
+            group_mileage_median = ms.iloc[0]["model_mileage_median"]
 
         if not median or price >= median * 0.85:
             continue
@@ -235,6 +238,13 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         else:
             year_mult = 1.0
 
+        # 2b. Mileage multiplier — lower mileage = better flip (30% per median deviation)
+        if pd.notna(mileage) and pd.notna(group_mileage_median) and group_mileage_median > 0:
+            mileage_ratio = (float(group_mileage_median) - float(mileage)) / float(group_mileage_median)
+            mileage_mult = min(max(1 + mileage_ratio * 0.3, 0.5), 2.0)
+        else:
+            mileage_mult = 1.0
+
         # 3. Liquidity multiplier (30 days = 1.0 baseline)
         days_to_sell = liquidity_map.get((brand, model))
         if days_to_sell and days_to_sell > 0:
@@ -246,7 +256,7 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         trend_pct = trend_map.get((brand, model), 0.0)
         trend_mult = min(max(1 + trend_pct / 100, 0.8), 1.2)
 
-        flip_score = round(undervaluation_pct * year_mult * liquidity_mult * trend_mult, 1)
+        flip_score = round(undervaluation_pct * year_mult * mileage_mult * liquidity_mult * trend_mult, 1)
 
         sig = {
             "olx_id": listing.get("olx_id", ""),
