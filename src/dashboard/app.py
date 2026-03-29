@@ -64,7 +64,7 @@ def get_portfolio():
 st.sidebar.title("Filters")
 
 if listings_df.empty:
-    st.sidebar.warning("No data. Run `python -m src.cli scrape` to collect listings.")
+    st.sidebar.warning("Нет данных. Запустите `python -m src.cli scrape` для сбора объявлений.")
 else:
     st.sidebar.success(f"{len(listings_df)} listings loaded")
     if st.sidebar.button("Refresh data"):
@@ -187,17 +187,18 @@ st.divider()
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
-tab_deals, tab_analytics, tab_trends, tab_listings, tab_compare, tab_geo, tab_portfolio, tab_unmatched = st.tabs([
-    "Deals", "Analytics", "Price Trends", "Listings", "Compare Models", "Geography", "Portfolio", "Unmatched",
+tab_deals, tab_analytics, tab_trends, tab_listings, tab_compare, tab_geo, tab_lifespan, tab_portfolio, tab_unmatched = st.tabs([
+    "Сделки", "Аналитика", "Тренды цен", "Объявления", "Сравнение", "География", "Срок жизни", "Портфель", "Без поколения",
 ])
 
 # ---- TAB 1: Deals (Buy Signals) --------------------------------------------
 with tab_deals:
-    st.subheader("Underpriced Cars")
-    st.caption("Sorted by flip score = undervaluation % x liquidity x trend. Profit = fair price - asking price.")
+    st.subheader("Недооценённые автомобили")
+    st.caption("Рейтинг по flip-скору = недооценка % × ликвидность × тренд. Прибыль = справедливая цена − запрашиваемая цена. "
+               "Чем выше скор — тем выгоднее потенциальная сделка.")
 
     if filtered_signals.empty:
-        st.info("No deals found with current filters. Try broadening your search.")
+        st.info("Сделок не найдено. Попробуйте расширить фильтры.")
     else:
         deals = filtered_signals.copy()
 
@@ -317,7 +318,7 @@ with tab_deals:
             fig_profit = px.histogram(
                 deals, x="est_profit_eur", nbins=20,
                 labels={"est_profit_eur": "Estimated Profit (EUR)"},
-                title="Profit Distribution", height=350,
+                title="Распределение прибыли", height=350,
             )
             fig_profit.update_layout(showlegend=False)
             st.plotly_chart(fig_profit, width="stretch")
@@ -333,7 +334,7 @@ with tab_deals:
                 brand_deals, x="count", y="brand", orientation="h",
                 color="avg_profit", color_continuous_scale="Greens",
                 labels={"count": "Deals", "brand": "Brand", "avg_profit": "Avg Profit"},
-                title="Deals by Brand", height=350,
+                title="Сделки по маркам", height=350,
             )
             fig_brands.update_layout(yaxis=dict(autorange="reversed"))
             st.plotly_chart(fig_brands, width="stretch")
@@ -351,7 +352,7 @@ with tab_deals:
                 "est_profit_eur": "Profit (EUR)",
                 "flip_score": "Score",
             },
-            title="Asking Price vs Fair Price (below diagonal = deal)",
+            title="Запрашиваемая цена vs Справедливая цена (ниже диагонали = выгода)",
             height=500,
         )
         # Add diagonal line (price = fair price)
@@ -365,8 +366,9 @@ with tab_deals:
 
         # --- Motivated sellers: biggest price drops ---
         if "price_drop_per_day" in deals.columns and deals["price_drop_per_day"].notna().any():
-            st.subheader("Motivated Sellers")
-            st.caption("Sellers actively dropping prices — more negotiation room")
+            st.subheader("Мотивированные продавцы")
+            st.caption("Продавцы, активно снижающие цену — больше пространства для торга. "
+                       "Чем быстрее падает цена, тем больше продавец хочет продать.")
             motivated = deals[deals["price_drop_per_day"].notna() & (deals["price_drop_per_day"] < 0)].copy()
             motivated = motivated.sort_values("price_drop_per_day")
             if not motivated.empty:
@@ -401,8 +403,9 @@ with tab_deals:
             & (deals["days_listed"] > 0)
         ].copy() if "price_change_pct" in deals.columns else pd.DataFrame()
         if not drop_data.empty and len(drop_data) >= 5:
-            st.subheader("When Do Sellers Drop Prices?")
-            st.caption("Avg price change % by days on market — shows when to expect discounts")
+            st.subheader("Когда продавцы снижают цену?")
+            st.caption("Средний % изменения цены по периодам на рынке. "
+                       "Показывает через сколько дней продавцы начинают давать скидки.")
             drop_data["days_bucket"] = pd.cut(
                 drop_data["days_listed"],
                 bins=[0, 7, 14, 21, 30, 45, 60, 90, 999],
@@ -432,13 +435,14 @@ with tab_deals:
 
 # ---- TAB: Analytics — find optimal cars by value combination -----------------
 with tab_analytics:
-    st.subheader("Price Factor Analytics")
-    st.caption("Find cars with the best combination of value factors at the lowest price")
+    st.subheader("Аналитика ценовых факторов")
+    st.caption("Поиск автомобилей с лучшим сочетанием характеристик по минимальной цене. "
+               "Графики показывают как год, пробег, топливо и КПП влияют на стоимость.")
 
     ana = active[active["price_eur"].notna()].copy()
 
     if ana.empty:
-        st.info("No active listings with prices.")
+        st.info("Нет активных объявлений с ценами.")
     else:
         # Prepare columns
         if "year" in ana.columns:
@@ -450,8 +454,9 @@ with tab_analytics:
             ana["label_year"] = ana["label"] + " " + ana["year"].astype(int).astype(str)
 
         # ---- 1. Year vs Price colored by Transmission ----
-        st.subheader("Year vs Price by Transmission")
-        st.caption("Automatic costs 2.4x more — find young manual bargains below the trend")
+        st.subheader("Год vs Цена по типу КПП")
+        st.caption("АКПП стоит в среднем в 2.4 раза дороже МКПП. "
+                   "Ищите молодые машины с МКПП ниже линии тренда — это потенциальные выгоды.")
         yr_data = ana[ana["year"].notna()].copy()
         if not yr_data.empty:
             fig_yr = px.scatter(
@@ -481,8 +486,9 @@ with tab_analytics:
         col_a, col_b = st.columns(2)
 
         with col_a:
-            st.subheader("Mileage vs Price by Fuel")
-            st.caption("Diesel holds value longer at high mileage — look for low-km gasoline deals")
+            st.subheader("Пробег vs Цена по типу топлива")
+            st.caption("Дизель дольше держит цену при большом пробеге. "
+                       "Ищите бензиновые авто с низким пробегом — они недооценены рынком.")
             mil_data = ana[ana["mileage_km"].notna()].copy()
             if not mil_data.empty:
                 fig_mil = px.scatter(
@@ -496,8 +502,8 @@ with tab_analytics:
                 plotly_chart_with_click(fig_mil, mil_data, key="mil_scatter", use_container_width=True)
 
         with col_b:
-            st.subheader("Import vs National by Brand")
-            st.caption("Imports cost more — national cars of premium brands = hidden value")
+            st.subheader("Импорт vs Национальный по маркам")
+            st.caption("Импортные авто стоят дороже. Национальные машины премиум-марок — скрытая выгода.")
             origin_data = ana[ana["origin"].notna() & ana["brand"].notna()].copy()
             if not origin_data.empty:
                 brand_origin = (
@@ -517,8 +523,9 @@ with tab_analytics:
                     st.plotly_chart(fig_orig, use_container_width=True)
 
         # ---- 3. Value Score: composite metric ----
-        st.subheader("Value Score — Best Cars for the Money")
-        st.caption("Score = year (25) + mileage (30) + price (15) + condition (10) + fuel (10) + HP (5) + transmission (5). Higher = better deal.")
+        st.subheader("Value Score — лучшие авто за свои деньги")
+        st.caption("Скор = год (25) + пробег (30) + цена (15) + состояние (10) + топливо (10) + л.с. (5) + КПП (5). "
+                   "Чем выше скор — тем лучше соотношение цена/качество. Зелёная зона = оптимальные варианты.")
 
         score_data = ana[
             ana["year"].notna() & ana["mileage_km"].notna() & (ana["mileage_km"] > 0)
@@ -621,8 +628,9 @@ with tab_analytics:
             )
 
         # ---- 4. Depreciation Heatmap: Brand x Age ----
-        st.subheader("Depreciation Heatmap: Brand x Age")
-        st.caption("Median price by brand and age bucket — find brands that hold value")
+        st.subheader("Карта амортизации: Марка × Возраст")
+        st.caption("Медиана цены по марке и возрастной группе. "
+                   "Тёплые цвета = дорогие, холодные = дешёвые. Показывает какие марки лучше сохраняют стоимость.")
         dep_heat = ana[ana["year"].notna()].copy()
         if not dep_heat.empty:
             dep_heat["age_bucket"] = pd.cut(
@@ -658,7 +666,8 @@ with tab_analytics:
         col_c, col_d = st.columns(2)
 
         with col_c:
-            st.subheader("Transmission + Fuel: Median Price")
+            st.subheader("КПП + Топливо: медиана цены")
+            # Caption added below after data check
             tf_data = ana[ana["transmission"].notna() & ana["fuel_type"].notna()].copy()
             if not tf_data.empty:
                 pivot_tf = tf_data.pivot_table(
@@ -681,8 +690,8 @@ with tab_analytics:
                     st.plotly_chart(fig_tf, use_container_width=True)
 
         with col_d:
-            st.subheader("EUR per 1000 km by Brand")
-            st.caption("Cost efficiency — lower = more km for your money")
+            st.subheader("EUR за 1000 км по маркам")
+            st.caption("Стоимость за единицу пробега. Чем ниже показатель — тем больше километров за ваши деньги.")
             eur_km = ana[ana["eur_per_1k_km"].notna() & (ana["eur_per_1k_km"] < 1000)].copy()
             if not eur_km.empty:
                 brand_eur_km = (
@@ -702,8 +711,8 @@ with tab_analytics:
                     st.plotly_chart(fig_ekm, use_container_width=True)
 
         # ---- 6. Sweet Spot Finder: interactive filters ----
-        st.subheader("Sweet Spot Finder")
-        st.caption("Set your constraints — see what fits best")
+        st.subheader("Поиск оптимального авто")
+        st.caption("Задайте ваши ограничения (бюджет, возраст, пробег, КПП) и смотрите что подходит лучше всего.")
 
         ss1, ss2, ss3, ss4 = st.columns(4)
         with ss1:
@@ -726,7 +735,7 @@ with tab_analytics:
             sweet = sweet[sweet["transmission"] == prefer_trans]
 
         if sweet.empty:
-            st.warning("No cars match these criteria. Try relaxing the constraints.")
+            st.warning("Нет машин по этим критериям. Попробуйте ослабить ограничения.")
         else:
             sweet = sweet.sort_values("price_eur")
             st.success(f"{len(sweet)} cars found")
@@ -765,9 +774,11 @@ with tab_analytics:
 
 # ---- TAB 2: Price Trends + Seasonality --------------------------------------
 with tab_trends:
-    st.subheader("Price Trends Over Time")
+    st.subheader("Динамика цен")
+    st.caption("Как менялись медианные цены моделей со временем. "
+               "Растущий тренд = рынок дорожает, падающий = снижение спроса.")
     if filtered_history.empty:
-        st.info("No price history yet. Run scraper multiple times to build up trend data.")
+        st.info("Нет истории цен. Запустите скрапер несколько раз для сбора данных.")
     else:
         fh = filtered_history.copy()
         fh["label"] = fh["brand"] + " " + fh["model"]
@@ -777,7 +788,9 @@ with tab_trends:
         fig.update_layout(hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=-0.3))
         st.plotly_chart(fig, width="stretch")
 
-        st.subheader("Price Range Band")
+        st.subheader("Ценовой коридор")
+        st.caption("Полоса между минимальной и максимальной ценой модели. "
+                   "Узкий коридор = стабильный рынок, широкий = разброс в ценах.")
         if selected_models and len(selected_models) == 1:
             mh = fh[fh["model"] == selected_models[0]]
             fig_band = go.Figure()
@@ -789,12 +802,14 @@ with tab_trends:
             fig_band.update_layout(height=400, yaxis_title="Price (EUR)", hovermode="x unified")
             st.plotly_chart(fig_band, width="stretch")
         else:
-            st.caption("Select exactly one model to see the price range band.")
+            st.caption("Выберите ровно одну модель для просмотра ценового коридора.")
 
     # --- Seasonality ---
-    st.subheader("Seasonality")
+    st.subheader("Сезонность")
+    st.caption("Индекс цен по месяцам (100 = среднегодовая). "
+               "Ниже 100 = дешевле, выше = дороже. Помогает выбрать лучший момент для покупки/продажи.")
     if history_df.empty:
-        st.info("Need multiple months of data for seasonality analysis.")
+        st.info("Нужны данные за несколько месяцев для анализа сезонности.")
     else:
         from src.analytics.seasonality import compute_seasonality, best_buy_sell_months
 
@@ -822,14 +837,15 @@ with tab_trends:
 
                 bbs = best_buy_sell_months(season_data)
                 if not bbs.empty:
-                    st.caption("Best months to buy (low index) and sell (high index)")
+                    st.caption("Лучшие месяцы для покупки (низкий индекс) и продажи (высокий индекс)")
                     st.dataframe(bbs, hide_index=True)
         else:
-            st.info("Need at least 3 months of scraped data. Keep the scraper running!")
+            st.info("Нужно минимум 3 месяца данных. Продолжайте запускать скрапер!")
 
     # --- Fuel Type Premium Trend ---
-    st.subheader("Fuel Type Premium Trend")
-    st.caption("How median prices change by fuel type over time — spot diesel decline or hybrid growth")
+    st.subheader("Тренд цен по типу топлива")
+    st.caption("Как менялись медианные цены разных типов топлива со временем. "
+               "Показывает тренды: снижение дизеля, рост гибридов и т.д.")
     if not history_df.empty and "fuel_type" in active.columns:
         fuel_ts_data = listings_df[
             listings_df["price_eur"].notna() & listings_df["fuel_type"].notna()
@@ -857,7 +873,8 @@ with tab_trends:
 
 # ---- TAB 3: Listings Table -------------------------------------------------
 with tab_listings:
-    st.subheader("All Listings")
+    st.subheader("Все объявления")
+    st.caption("Полная таблица всех объявлений с фильтрами. Кликните по заголовку столбца для сортировки.")
     display_cols = [c for c in [
         "brand", "model", "year", "price_eur", "days_listed",
         "price_change_eur", "price_change_pct", "eur_per_km",
@@ -887,9 +904,10 @@ with tab_listings:
 
 # ---- TAB 4: Compare Models ---------------------------------------------------
 with tab_compare:
-    st.subheader("Model Comparison")
+    st.subheader("Сравнение моделей")
+    st.caption("Боксплот и скаттер по моделям. Помогает сравнить ценовые диапазоны и ликвидность разных моделей.")
     if filtered_listings.empty or not active["price_eur"].notna().any():
-        st.info("No data for comparison with current filters.")
+        st.info("Нет данных для сравнения с текущими фильтрами.")
     else:
         comparison = (
             active[active["price_eur"].notna()]
@@ -958,7 +976,8 @@ with tab_compare:
         )
 
         # --- Depreciation Curve ---
-        st.subheader("Depreciation Curve")
+        st.subheader("Кривая амортизации")
+        st.caption("Как цена падает по годам для каждой модели. R² показывает надёжность тренда (ближе к 1 = точнее).")
         dep_data = active[active["price_eur"].notna() & active["year"].notna()].copy()
         if not dep_data.empty:
             dep_data["label"] = dep_data["brand"] + " " + dep_data["model"]
@@ -996,8 +1015,9 @@ with tab_compare:
                     plotly_chart_with_click(fig_dep, dep_combined, key="dep_scatter", width="stretch")
 
         # --- Seller Type Spread (Particular vs Profissional) ---
-        st.subheader("Seller Type Spread")
-        st.caption("Difference between private and dealer prices — this is the flipper's margin")
+        st.subheader("Разница «частник vs дилер»")
+        st.caption("Разница в медиане цены между частниками и дилерами. "
+                   "Это и есть маржа перекупа: купить у частника, продать по дилерской цене.")
         if "seller_type" in active.columns:
             spread_data = active[active["price_eur"].notna() & active["seller_type"].notna()].copy()
             spread_data["label"] = spread_data["brand"] + " " + spread_data["model"]
@@ -1045,8 +1065,9 @@ with tab_compare:
                         )
 
         # --- Mileage Sensitivity ---
-        st.subheader("Mileage Sensitivity")
-        st.caption("Price drop per 10,000 km — models with low sensitivity are better for high-mileage flips")
+        st.subheader("Чувствительность цены к пробегу")
+        st.caption("Падение цены за каждые 10 000 км. "
+                   "Модели с низкой чувствительностью (близко к 0) — лучше для перепродажи с большим пробегом.")
         mil_sens_data = active[
             active["price_eur"].notna() & active["mileage_km"].notna()
             & (active["mileage_km"] > 0)
@@ -1096,8 +1117,9 @@ with tab_compare:
                 )
 
         # --- Year Sweet Spot ---
-        st.subheader("Year Sweet Spot")
-        st.caption("For each model — which years have the best flip margin (below-market deals available)")
+        st.subheader("Оптимальные года для покупки")
+        st.caption("Для каждой модели — какие года выпуска дают наибольшую маржу при перепродаже. "
+                   "Высокий Gap % = большая разница между минимальной и медианной ценой.")
         sweet_data = active[
             active["price_eur"].notna() & active["year"].notna()
         ].copy()
@@ -1154,9 +1176,11 @@ with tab_compare:
 
 # ---- TAB 5: Geography + Competition Density ---------------------------------
 with tab_geo:
-    st.subheader("Listings by Location")
+    st.subheader("Объявления по регионам")
+    st.caption("Распределение объявлений и цен по районам Португалии. "
+               "Помогает найти регионы с меньшей конкуренцией и лучшими ценами.")
     if active.empty or "district" not in active.columns:
-        st.info("No location data available.")
+        st.info("Нет данных о расположении.")
     else:
         col_g1, col_g2 = st.columns(2)
         with col_g1:
@@ -1192,7 +1216,8 @@ with tab_geo:
             )
 
         # --- Regional Price Differences ---
-        st.subheader("Regional Price Differences")
+        st.subheader("Региональные различия в ценах")
+        st.caption("Цены на одну и ту же модель в разных районах. Арбитраж = купить дёшево в одном районе, продать дороже в другом.")
         geo_active = active[active["price_eur"].notna() & active["district"].notna()].copy()
         if not geo_active.empty:
             geo_active["label"] = geo_active["brand"] + " " + geo_active["model"]
@@ -1234,7 +1259,9 @@ with tab_geo:
                                          })
 
         # --- Competition Density ---
-        st.subheader("Competition Density")
+        st.subheader("Плотность конкуренции")
+        st.caption("Сколько аналогичных авто продаётся в районе. "
+                   "Высокая насыщенность = больше конкурентов, дольше продажа.")
         from src.analytics.competition import compute_competition_density
         comp_density = compute_competition_density(listings_df, turnover_df)
         if not comp_density.empty:
@@ -1271,12 +1298,362 @@ with tab_geo:
                     )
                     st.plotly_chart(fig_comp, width="stretch")
         else:
-            st.info("Not enough data for competition analysis.")
+            st.info("Недостаточно данных для анализа конкуренции.")
 
-# ---- TAB 6: Portfolio / Deal Tracker ----------------------------------------
+# ---- TAB: Срок жизни (Listing Lifespan Analysis) ----------------------------
+with tab_lifespan:
+    st.subheader("Срок жизни объявлений")
+    st.caption("Анализ того, как долго объявления остаются на OLX. "
+               "Неактивные = проданные или снятые. Короткий срок жизни = высокий спрос или выгодная цена.")
+
+    life = filtered_listings.copy()
+
+    if life.empty or "first_seen_at" not in life.columns:
+        st.info("Нет данных для анализа срока жизни.")
+    else:
+        life["first_seen"] = pd.to_datetime(life["first_seen_at"]).dt.tz_localize(None)
+        life["last_seen"] = pd.to_datetime(life["last_seen_at"]).dt.tz_localize(None)
+        now = pd.Timestamp.now()
+
+        life["lifespan_days"] = np.where(
+            life["is_active"],
+            (now - life["first_seen"]).dt.days,
+            (life["last_seen"] - life["first_seen"]).dt.days,
+        )
+        life["status"] = np.where(life["is_active"], "На OLX", "Продано / снято")
+
+        inactive_life = life[~life["is_active"]].copy()
+        active_life = life[life["is_active"]].copy()
+
+        # --- KPIs ---
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Всего объявлений", f"{len(life):,}")
+        k2.metric("Активных", f"{len(active_life):,}")
+        k3.metric("Продано / снято", f"{len(inactive_life):,}")
+        if not inactive_life.empty:
+            median_life = inactive_life["lifespan_days"].median()
+            k4.metric("Медиана срока (снятые)", f"{median_life:.0f} дн.")
+        else:
+            k4.metric("Медиана срока (снятые)", "—")
+
+        st.divider()
+
+        # --- 1. Distribution + Survival curve ---
+        col_l1, col_l2 = st.columns(2)
+
+        with col_l1:
+            st.markdown("#### Распределение срока жизни")
+            st.caption("Сколько объявлений продержались определённое количество дней. "
+                       "Пик слева = быстро ушедшие с рынка (высокий спрос или заниженная цена).")
+            if not inactive_life.empty:
+                fig_life_hist = px.histogram(
+                    inactive_life, x="lifespan_days", nbins=30,
+                    labels={"lifespan_days": "Дней на OLX"},
+                    color_discrete_sequence=["#3498db"],
+                    height=400,
+                )
+                fig_life_hist.update_layout(
+                    xaxis_title="Дней на OLX",
+                    yaxis_title="Количество объявлений",
+                    showlegend=False,
+                )
+                st.plotly_chart(fig_life_hist, use_container_width=True)
+            else:
+                st.info("Нет снятых объявлений для анализа.")
+
+        with col_l2:
+            st.markdown("#### Кривая выживаемости")
+            st.caption("Какой % объявлений ещё на рынке через N дней. "
+                       "Резкое падение = массовые продажи. Плоский участок = «зависшие» объявления.")
+            if not inactive_life.empty and len(inactive_life) >= 5:
+                max_days = int(inactive_life["lifespan_days"].quantile(0.95))
+                days_range = range(0, max(max_days + 1, 2))
+                total = len(inactive_life)
+                survival = [{"Дней": d, "На рынке %": (inactive_life["lifespan_days"] > d).sum() / total * 100}
+                            for d in days_range]
+                surv_df = pd.DataFrame(survival)
+
+                fig_surv = px.line(
+                    surv_df, x="Дней", y="На рынке %",
+                    labels={"Дней": "Дней на OLX", "На рынке %": "% ещё на рынке"},
+                    height=400,
+                )
+                fig_surv.update_traces(fill="tozeroy", fillcolor="rgba(52, 152, 219, 0.15)")
+                fig_surv.update_layout(yaxis_range=[0, 105])
+                for pct_label, pct in [("25% ушли", 75), ("50% ушли", 50), ("75% ушли", 25)]:
+                    day_at = surv_df[surv_df["На рынке %"] <= pct]
+                    if not day_at.empty:
+                        d = int(day_at.iloc[0]["Дней"])
+                        fig_surv.add_vline(x=d, line_dash="dot", line_color="gray", opacity=0.5)
+                        fig_surv.add_annotation(x=d, y=pct + 5, text=f"{pct_label}: {d}д",
+                                                showarrow=False, font=dict(size=10, color="gray"))
+                st.plotly_chart(fig_surv, use_container_width=True)
+
+        # --- 2. Median lifespan by brand ---
+        st.markdown("#### Медианный срок жизни по маркам")
+        st.caption("Какие марки продаются быстрее всего? Зелёные = быстрее медианы, красные = медленнее. "
+                   "Короткий срок = высокий спрос, длинный = возможно завышена цена.")
+        if not inactive_life.empty:
+            brand_life = (
+                inactive_life.groupby("brand")
+                .agg(median_days=("lifespan_days", "median"), count=("lifespan_days", "size"))
+                .reset_index()
+            )
+            brand_life = brand_life[brand_life["count"] >= 3].sort_values("median_days")
+            if not brand_life.empty:
+                overall_med = brand_life["median_days"].median()
+                colors = ["#2ecc71" if d <= overall_med else "#e74c3c" for d in brand_life["median_days"]]
+                fig_brand_life = go.Figure(go.Bar(
+                    x=brand_life["median_days"], y=brand_life["brand"],
+                    orientation="h", marker_color=colors,
+                    text=[f"{d:.0f} дн. ({c} авто)" for d, c in zip(brand_life["median_days"], brand_life["count"])],
+                    textposition="auto",
+                ))
+                fig_brand_life.update_layout(
+                    xaxis_title="Медиана дней на OLX", yaxis_title="",
+                    height=max(300, len(brand_life) * 30 + 80),
+                    yaxis=dict(autorange="reversed"),
+                )
+                st.plotly_chart(fig_brand_life, use_container_width=True)
+
+        # --- 3. Price vs Lifespan + Lifespan by price range ---
+        col_l3, col_l4 = st.columns(2)
+
+        with col_l3:
+            st.markdown("#### Цена vs Срок жизни")
+            st.caption("Зависимость цены от времени на OLX. "
+                       "Дешёвые авто обычно уходят быстрее. Точки внизу слева = горячие лоты.")
+            price_inactive = inactive_life[inactive_life["price_eur"].notna()]
+            if not price_inactive.empty and len(price_inactive) >= 5:
+                fig_price_life = px.scatter(
+                    price_inactive, x="lifespan_days", y="price_eur",
+                    color="brand",
+                    hover_data=["model", "year", "mileage_km", "url"],
+                    labels={"lifespan_days": "Дней на OLX", "price_eur": "Цена (EUR)", "brand": "Марка"},
+                    height=450, opacity=0.7,
+                )
+                fig_price_life.update_layout(hovermode="closest")
+                plotly_chart_with_click(fig_price_life, price_inactive, key="price_life_scatter", use_container_width=True)
+
+        with col_l4:
+            st.markdown("#### Срок жизни по ценовым диапазонам")
+            st.caption("В каком ценовом сегменте объявления уходят быстрее. "
+                       "Самые ликвидные ценовые точки видны сразу.")
+            price_life = inactive_life[inactive_life["price_eur"].notna()].copy()
+            if not price_life.empty and len(price_life) >= 5:
+                price_life["price_bucket"] = pd.cut(
+                    price_life["price_eur"],
+                    bins=[0, 3000, 5000, 8000, 12000, 18000, 25000, 40000, 999999],
+                    labels=["<3k", "3-5k", "5-8k", "8-12k", "12-18k", "18-25k", "25-40k", "40k+"],
+                )
+                bucket_life = (
+                    price_life.groupby("price_bucket", observed=True)
+                    .agg(median_days=("lifespan_days", "median"), count=("lifespan_days", "size"))
+                    .reset_index()
+                )
+                bucket_life = bucket_life[bucket_life["count"] >= 2]
+                if not bucket_life.empty:
+                    fig_bucket = px.bar(
+                        bucket_life, x="price_bucket", y="median_days",
+                        text=[f"{d:.0f}д ({c})" for d, c in zip(bucket_life["median_days"], bucket_life["count"])],
+                        labels={"price_bucket": "Ценовой диапазон (EUR)", "median_days": "Медиана дней"},
+                        color="median_days", color_continuous_scale="RdYlGn_r",
+                        height=400,
+                    )
+                    fig_bucket.update_traces(textposition="auto")
+                    fig_bucket.update_layout(showlegend=False)
+                    st.plotly_chart(fig_bucket, use_container_width=True)
+
+        # --- 4. Quick sellers ---
+        st.divider()
+        st.markdown("#### Быстрые продажи (до 7 дней)")
+        st.caption("Объявления, которые были на OLX менее недели — самые горячие лоты. "
+                   "Анализ характеристик помогает понять, что пользуется максимальным спросом.")
+
+        quick = inactive_life[inactive_life["lifespan_days"] <= 7].copy()
+        if quick.empty:
+            st.info("Нет объявлений, снятых менее чем за 7 дней.")
+        else:
+            st.success(f"Найдено {len(quick)} быстрых продаж из {len(inactive_life)} снятых "
+                       f"({len(quick)/max(len(inactive_life),1)*100:.0f}%)")
+
+            col_q1, col_q2 = st.columns(2)
+
+            with col_q1:
+                st.markdown("**Сравнение: быстрые vs долгие продажи**")
+                st.caption("Что отличает быстро проданные авто от зависших.")
+                slow = inactive_life[inactive_life["lifespan_days"] > 30].copy()
+
+                comparison_rows = []
+                for metric, label, fmt in [
+                    ("price_eur", "Медиана цены (EUR)", "{:,.0f}"),
+                    ("year", "Медиана года", "{:.0f}"),
+                    ("mileage_km", "Медиана пробега (км)", "{:,.0f}"),
+                ]:
+                    if metric in quick.columns:
+                        q_val = quick[metric].median()
+                        s_val = slow[metric].median() if not slow.empty else None
+                        comparison_rows.append({
+                            "Показатель": label,
+                            "Быстрые (< 7д)": fmt.format(q_val) if pd.notna(q_val) else "—",
+                            "Долгие (> 30д)": fmt.format(s_val) if s_val is not None and pd.notna(s_val) else "—",
+                        })
+
+                if "fuel_type" in quick.columns:
+                    q_fuel = quick["fuel_type"].value_counts(normalize=True).head(3)
+                    s_fuel = slow["fuel_type"].value_counts(normalize=True).head(3) if not slow.empty else pd.Series(dtype=float)
+                    comparison_rows.append({
+                        "Показатель": "Топ топливо",
+                        "Быстрые (< 7д)": ", ".join(f"{f} ({p:.0%})" for f, p in q_fuel.items()),
+                        "Долгие (> 30д)": ", ".join(f"{f} ({p:.0%})" for f, p in s_fuel.items()) if not s_fuel.empty else "—",
+                    })
+
+                if "transmission" in quick.columns:
+                    q_auto = (quick["transmission"] == "Automática").mean()
+                    s_auto = (slow["transmission"] == "Automática").mean() if not slow.empty else None
+                    comparison_rows.append({
+                        "Показатель": "Доля АКПП",
+                        "Быстрые (< 7д)": f"{q_auto:.0%}",
+                        "Долгие (> 30д)": f"{s_auto:.0%}" if s_auto is not None else "—",
+                    })
+
+                if comparison_rows:
+                    st.dataframe(pd.DataFrame(comparison_rows), hide_index=True)
+
+            with col_q2:
+                st.markdown("**Топ марки по быстрым продажам**")
+                st.caption("Процент показывает долю быстрых продаж от всех снятых объявлений марки.")
+                q_brands = quick["brand"].value_counts().reset_index()
+                q_brands.columns = ["brand", "quick_count"]
+                total_brands = inactive_life["brand"].value_counts().reset_index()
+                total_brands.columns = ["brand", "total_count"]
+                q_brands = q_brands.merge(total_brands, on="brand")
+                q_brands["quick_pct"] = (q_brands["quick_count"] / q_brands["total_count"] * 100).round(1)
+                q_brands = q_brands.sort_values("quick_count", ascending=False).head(10)
+
+                fig_q_brands = px.bar(
+                    q_brands, x="quick_count", y="brand", orientation="h",
+                    text=[f"{c} ({p:.0f}%)" for c, p in zip(q_brands["quick_count"], q_brands["quick_pct"])],
+                    labels={"quick_count": "Быстрых продаж", "brand": "Марка"},
+                    color="quick_pct", color_continuous_scale="Greens",
+                    height=350,
+                )
+                fig_q_brands.update_traces(textposition="auto")
+                fig_q_brands.update_layout(yaxis=dict(autorange="reversed"), showlegend=False)
+                st.plotly_chart(fig_q_brands, use_container_width=True)
+
+            # Quick sellers table
+            quick_sorted = quick.sort_values("lifespan_days")
+            q_cols = ["brand", "model", "year", "price_eur", "mileage_km",
+                      "fuel_type", "transmission", "district", "lifespan_days"]
+            if "url" in quick_sorted.columns:
+                q_cols.append("url")
+            avail_q = [c for c in q_cols if c in quick_sorted.columns]
+            st.dataframe(
+                quick_sorted.head(30)[avail_q].rename(columns={
+                    "brand": "Марка", "model": "Модель", "year": "Год",
+                    "price_eur": "Цена (EUR)", "mileage_km": "Пробег",
+                    "fuel_type": "Топливо", "transmission": "КПП",
+                    "district": "Район", "lifespan_days": "Дней на OLX",
+                    "url": "Ссылка",
+                }),
+                hide_index=True,
+                column_config={
+                    "Цена (EUR)": st.column_config.NumberColumn(format="%d EUR"),
+                    "Пробег": st.column_config.NumberColumn(format="%,d км"),
+                    "Ссылка": st.column_config.LinkColumn("Ссылка", display_text="Открыть"),
+                },
+            )
+
+        # --- 5. Lifespan by model ---
+        st.divider()
+        st.markdown("#### Срок жизни по моделям")
+        st.caption("Медианное время на OLX для каждой модели. "
+                   "Зелёные = продаются быстрее среднего, красные = медленнее.")
+
+        if not inactive_life.empty:
+            inactive_life["label"] = inactive_life["brand"] + " " + inactive_life["model"]
+            model_life = (
+                inactive_life.groupby("label")
+                .agg(median_days=("lifespan_days", "median"), count=("lifespan_days", "size"))
+                .reset_index()
+            )
+            model_life = model_life[model_life["count"] >= 3].sort_values("median_days")
+
+            if not model_life.empty:
+                overall_median = inactive_life["lifespan_days"].median()
+                colors_m = ["#2ecc71" if d <= overall_median else "#e74c3c" for d in model_life["median_days"]]
+                fig_model_life = go.Figure(go.Bar(
+                    x=model_life["median_days"], y=model_life["label"],
+                    orientation="h", marker_color=colors_m,
+                    text=[f"{d:.0f}д ({c})" for d, c in zip(model_life["median_days"], model_life["count"])],
+                    textposition="auto",
+                ))
+                fig_model_life.add_vline(x=overall_median, line_dash="dash", line_color="gray",
+                                          annotation_text=f"Медиана: {overall_median:.0f}д")
+                fig_model_life.update_layout(
+                    xaxis_title="Медиана дней на OLX", yaxis_title="",
+                    height=max(400, len(model_life) * 28 + 80),
+                    yaxis=dict(autorange="reversed"),
+                )
+                st.plotly_chart(fig_model_life, use_container_width=True)
+
+        # --- 6. Lifespan by district ---
+        st.markdown("#### Срок жизни по районам")
+        st.caption("Где машины продаются быстрее? Короткий срок в районе = высокий спрос или мало предложений.")
+        if not inactive_life.empty and "district" in inactive_life.columns:
+            dist_life = (
+                inactive_life[inactive_life["district"].notna()]
+                .groupby("district")
+                .agg(median_days=("lifespan_days", "median"), count=("lifespan_days", "size"))
+                .reset_index()
+            )
+            dist_life = dist_life[dist_life["count"] >= 3].sort_values("median_days")
+            if not dist_life.empty:
+                fig_dist_life = px.bar(
+                    dist_life, x="median_days", y="district", orientation="h",
+                    text=[f"{d:.0f}д ({c})" for d, c in zip(dist_life["median_days"], dist_life["count"])],
+                    labels={"median_days": "Медиана дней", "district": "Район"},
+                    color="median_days", color_continuous_scale="RdYlGn_r",
+                    height=max(300, len(dist_life) * 30 + 80),
+                )
+                fig_dist_life.update_traces(textposition="auto")
+                fig_dist_life.update_layout(yaxis=dict(autorange="reversed"), showlegend=False)
+                st.plotly_chart(fig_dist_life, use_container_width=True)
+
+        # --- 7. Active listings age distribution ---
+        st.divider()
+        st.markdown("#### Возраст активных объявлений")
+        st.caption("Сколько дней текущие объявления уже на OLX. "
+                   "Объявления-долгожители (> 30д) часто имеют завышенную цену или проблемы.")
+        if not active_life.empty:
+            fig_active_age = px.histogram(
+                active_life, x="lifespan_days", nbins=25,
+                labels={"lifespan_days": "Дней на OLX"},
+                color_discrete_sequence=["#e67e22"],
+                height=350,
+            )
+            fig_active_age.update_layout(
+                xaxis_title="Дней на OLX", yaxis_title="Количество объявлений",
+                showlegend=False,
+            )
+            # Mark 30-day threshold
+            fig_active_age.add_vline(x=30, line_dash="dash", line_color="red", opacity=0.5,
+                                      annotation_text="30 дней", annotation_position="top right")
+            st.plotly_chart(fig_active_age, use_container_width=True)
+
+            stale = active_life[active_life["lifespan_days"] > 30]
+            if not stale.empty:
+                st.caption(f"**{len(stale)}** объявлений висят более 30 дней "
+                           f"({len(stale)/max(len(active_life),1)*100:.0f}% от активных). "
+                           "Они могут быть готовы к снижению цены — потенциал для торга.")
+
+
+# ---- TAB: Portfolio / Deal Tracker ----------------------------------------
 with tab_portfolio:
-    st.subheader("Deal Portfolio")
-    st.caption("Track your car purchases, repairs, and sales")
+    st.subheader("Портфель сделок")
+    st.caption("Учёт ваших покупок, ремонтов и продаж автомобилей. "
+               "Добавляйте сделки и отслеживайте ROI.")
 
     # Add new deal form
     with st.expander("Add New Deal", expanded=False):
@@ -1315,7 +1692,7 @@ with tab_portfolio:
     portfolio_df = get_portfolio()
 
     if portfolio_df.empty:
-        st.info("No deals tracked yet. Add your first deal above.")
+        st.info("Нет отслеживаемых сделок. Добавьте первую сделку выше.")
     else:
         # Summary metrics
         sold = portfolio_df[portfolio_df["sell_price_eur"].notna()]
@@ -1376,11 +1753,12 @@ with tab_portfolio:
 
 # ---- TAB 8: Unmatched Listings -----------------------------------------------
 with tab_unmatched:
-    st.subheader("Unmatched Listings")
-    st.caption("Listings where car generation could not be determined — review and add to generations seed")
+    st.subheader("Объявления без поколения")
+    st.caption("Объявления, для которых не удалось определить поколение автомобиля. "
+               "Проверьте и при необходимости добавьте в конфигурацию поколений.")
 
     if unmatched_df.empty:
-        st.info("No unmatched listings. All scraped cars have a known generation.")
+        st.info("Нет объявлений без поколения. Все машины распознаны.")
     else:
         st.metric("Unmatched", len(unmatched_df))
 
@@ -1391,14 +1769,14 @@ with tab_unmatched:
             .reset_index()
             .sort_values("count", ascending=False)
         )
-        st.subheader("Missing Generations")
+        st.subheader("Недостающие поколения")
         st.dataframe(summary.rename(columns={
             "brand": "Brand", "model": "Model", "reason": "Reason",
             "count": "Count", "years": "Years",
         }), hide_index=True)
 
         # Full table
-        st.subheader("All Unmatched")
+        st.subheader("Все нераспознанные")
         um_cols = ["brand", "model", "year", "price_eur", "mileage_km",
                    "fuel_type", "city", "district", "reason"]
         if "url" in unmatched_df.columns:
