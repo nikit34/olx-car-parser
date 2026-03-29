@@ -4,7 +4,9 @@
 
 set -euo pipefail
 
-MODEL="${1:-qwen2.5:1.5b}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DEFAULT_MODEL=$(python3 -c "import yaml; print(yaml.safe_load(open('${SCRIPT_DIR}/../config/settings.yaml'))['llm']['ollama_model'])" 2>/dev/null || echo "qwen2.5:1.5b")
+MODEL="${1:-$DEFAULT_MODEL}"
 OLLAMA_BIN="/Applications/Ollama.app/Contents/Resources/ollama"
 PLIST_NAME="com.olx-car-parser.ollama"
 PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_NAME}.plist"

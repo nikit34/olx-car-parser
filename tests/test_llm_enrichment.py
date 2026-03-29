@@ -10,6 +10,7 @@ import pytest
 
 from src.parser.llm_enrichment import (
     _call_ollama,
+    _get_config,
     _parse_llm_json,
     correct_listing_data,
     apply_corrections,
@@ -82,7 +83,7 @@ class TestParseLlmJson:
 
 class TestCallOllama:
     def test_success(self):
-        cfg = {"ollama_url": "http://localhost:11434", "ollama_model": "qwen2.5:1.5b"}
+        cfg = _get_config()
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
@@ -96,7 +97,7 @@ class TestCallOllama:
         assert result["had_accident"] is False
 
     def test_api_error(self):
-        cfg = {"ollama_url": "http://localhost:11434", "ollama_model": "qwen2.5:1.5b"}
+        cfg = _get_config()
         mock_resp = MagicMock()
         mock_resp.status_code = 500
 
@@ -106,7 +107,7 @@ class TestCallOllama:
         assert result is None
 
     def test_invalid_json_response(self):
-        cfg = {"ollama_url": "http://localhost:11434", "ollama_model": "qwen2.5:1.5b"}
+        cfg = _get_config()
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"response": "Sorry I cannot help"}
