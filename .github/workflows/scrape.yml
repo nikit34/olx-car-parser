@@ -40,6 +40,11 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: .venv/bin/python -m src.cli scrape
 
+      - name: Enrich with LLM
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: .venv/bin/python -m src.cli enrich
+
       - name: Send Telegram alerts
         env:
           PYTHONPATH: ${{ github.workspace }}

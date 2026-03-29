@@ -3,9 +3,7 @@
 import fcntl
 import json
 import logging
-import queue
 import sys
-import threading
 from pathlib import Path
 
 import pandas as pd
@@ -76,93 +74,14 @@ def scrape(
 
     console.print(f"[bold]Starting scrape of OLX.pt: up to {config.max_pages} pages...[/bold]")
 
-    # Pipeline: scraper feeds listings into a queue, LLM worker processes them
-    # in parallel as they arrive (instead of waiting for all scraping to finish).
-    # Only NEW listings (without llm_extras) are queued.
-    from src.parser.llm_enrichment import enrich_from_description, apply_corrections
-
-    already_enriched = get_enriched_olx_ids(session)
-    if already_enriched:
-        console.print(f"Skipping LLM for [bold]{len(already_enriched)}[/bold] already-enriched listings.")
-
-    llm_queue: queue.Queue = queue.Queue()
-    llm_done = threading.Event()
-    llm_count = 0
-
-    def _llm_worker():
-        """Process listings from queue as they arrive from the scraper."""
-        nonlocal llm_count
-        log = logging.getLogger(__name__)
-        failures = 0
-        while True:
-            try:
-                listing = llm_queue.get(timeout=2)
-            except queue.Empty:
-                if llm_done.is_set():
-                    break
-                continue
-            if listing is None:  # poison pill
-                break
-            if not listing.description or len(listing.description.strip()) < 20:
-                llm_queue.task_done()
-                continue
-            result = enrich_from_description(listing.description)
-            if result:
-                listing._llm_extras = result
-                llm_count += 1
-                failures = 0
-                if llm_count % 25 == 0:
-                    log.info("LLM progress: %d enriched, ~%d in queue",
-                             llm_count, llm_queue.qsize())
-            else:
-                failures += 1
-                if failures >= 5:
-                    logging.getLogger(__name__).warning(
-                        "5 consecutive LLM failures, LLM worker stopping early.")
-                    # Drain remaining items
-                    llm_queue.task_done()
-                    while not llm_queue.empty():
-                        try:
-                            llm_queue.get_nowait()
-                            llm_queue.task_done()
-                        except queue.Empty:
-                            break
-                    break
-            llm_queue.task_done()
-
-    llm_thread = threading.Thread(target=_llm_worker, daemon=True)
-    llm_thread.start()
-
-    def _on_detail_ready(listing):
-        """Callback from scraper — queue only NEW listings for LLM."""
-        if listing.olx_id not in already_enriched:
-            llm_queue.put(listing)
-
     with OlxScraper(config) as scraper:
-        raw_listings = scraper.scrape_all(on_detail_ready=_on_detail_ready)
-
-    # Signal LLM worker that scraping is done, wait for it to finish
-    llm_done.set()
-    llm_queue.put(None)  # poison pill
-    remaining = llm_queue.qsize()
-    if remaining > 0:
-        console.print(f"Scraping done. Waiting for LLM to finish ~{remaining} remaining listings...")
-    llm_thread.join(timeout=remaining * 30 + 60)  # ~30 sec per listing + buffer
+        raw_listings = scraper.scrape_all()
 
     if not raw_listings:
         console.print("[red]No listings scraped. OLX may have changed structure or blocked request.[/red]")
         raise typer.Exit(1)
 
-    console.print(f"Scraped [bold]{len(raw_listings)}[/bold] listings.")
-    if llm_count:
-        console.print(f"LLM-enriched [bold]{llm_count}[/bold] listings (parallel with scraping).")
-
-    # Cross-check and correct data using LLM-extracted info
-    corrected_count = apply_corrections(raw_listings)
-    if corrected_count:
-        console.print(f"Corrected data for [bold]{corrected_count}[/bold] listings (mileage, repair, accidents).")
-
-    console.print("Saving to database...")
+    console.print(f"Scraped [bold]{len(raw_listings)}[/bold] listings. Saving to database...")
 
     saved = 0
     unmatched_count = 0
@@ -170,9 +89,6 @@ def scrape(
     for raw in raw_listings:
         if not raw.brand and not raw.title:
             continue
-
-        # Build corrections from LLM cross-check
-        corrections = getattr(raw, "_corrections", {})
 
         data = {
             "olx_id": raw.olx_id,
@@ -198,14 +114,6 @@ def scrape(
             "district": raw.district,
             "seller_type": raw.seller_type,
             "description": raw.description,
-            "llm_extras": json.dumps(raw._llm_extras) if hasattr(raw, "_llm_extras") and raw._llm_extras else None,
-            # Enrichment columns from LLM cross-check
-            "needs_repair": corrections.get("needs_repair"),
-            "had_accident": corrections.get("had_accident"),
-            "real_mileage_km": corrections.get("real_mileage_km"),
-            "mileage_suspect": corrections.get("mileage_suspect"),
-            "customs_cleared": corrections.get("customs_cleared"),
-            "estimated_repair_cost_eur": corrections.get("estimated_repair_cost_eur"),
         }
 
         # Determine generation — route to main or unmatched table
@@ -233,6 +141,73 @@ def scrape(
     console.print("Computing market stats...")
     compute_market_stats(session)
     console.print("[green]Done![/green]")
+
+
+@app.command()
+def enrich():
+    """Enrich listings with LLM — extracts structured data from descriptions.
+
+    Processes only listings that don't have llm_extras yet.
+    """
+    from src.parser.llm_enrichment import (
+        enrich_from_description, apply_corrections, _ollama_available, _get_config,
+    )
+    from src.models.listing import Listing
+
+    init_db()
+    session = get_session()
+
+    cfg = _get_config()
+    if not _ollama_available(cfg["ollama_url"]):
+        console.print("[red]Ollama is not running. Start it first: ollama serve[/red]")
+        raise typer.Exit(1)
+
+    # Get listings without llm_extras that have descriptions
+    pending = (
+        session.query(Listing)
+        .filter(Listing.llm_extras.is_(None), Listing.description.isnot(None))
+        .all()
+    )
+
+    if not pending:
+        console.print("[green]All listings already enriched. Nothing to do.[/green]")
+        return
+
+    console.print(f"[bold]Enriching {len(pending)} listings with Ollama ({cfg['ollama_model']})...[/bold]")
+
+    enriched = 0
+    failures = 0
+    for i, listing in enumerate(pending):
+        if not listing.description or len(listing.description.strip()) < 20:
+            continue
+
+        result = enrich_from_description(listing.description)
+        if result:
+            listing.llm_extras = json.dumps(result, ensure_ascii=False)
+
+            # Cross-check corrections
+            listing._llm_extras = result
+            from src.parser.llm_enrichment import correct_listing_data
+            corrections = correct_listing_data(listing)
+            if corrections:
+                for field, value in corrections.items():
+                    if hasattr(listing, field):
+                        setattr(listing, field, value)
+
+            enriched += 1
+            failures = 0
+
+            if enriched % 25 == 0:
+                session.commit()
+                console.print(f"  Progress: {enriched}/{len(pending)} enriched")
+        else:
+            failures += 1
+            if failures >= 5:
+                console.print("[red]5 consecutive LLM failures, stopping.[/red]")
+                break
+
+    session.commit()
+    console.print(f"[green]Enriched {enriched} listings ({len(pending) - enriched} skipped/failed).[/green]")
 
 
 @app.command()
