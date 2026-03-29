@@ -51,7 +51,7 @@ def init_db(db_path: str | None = None):
         ("needs_repair", "BOOLEAN"),
         ("had_accident", "BOOLEAN"),
         ("real_mileage_km", "INTEGER"),
-        ("mileage_suspect", "BOOLEAN"),
+        ("num_owners", "INTEGER"),
         ("customs_cleared", "BOOLEAN"),
         ("estimated_repair_cost_eur", "INTEGER"),
         ("llm_description_hash", "TEXT"),

@@ -116,6 +116,8 @@ price_max_val = int(listings_df["price_eur"].max()) + 1000 if "price_eur" in lis
 price_range = st.sidebar.slider("Price (EUR)", min_value=0, max_value=price_max_val, value=(0, price_max_val), step=500)
 
 only_private = st.sidebar.checkbox("Particular only", value=False)
+hide_needs_repair = st.sidebar.checkbox("Hide needs repair", value=False)
+only_customs_cleared = st.sidebar.checkbox("Only customs cleared", value=False)
 
 # ---------------------------------------------------------------------------
 # Apply filters
@@ -137,6 +139,10 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
         f = f[f["price_eur"].notna() & (f["price_eur"] >= price_range[0]) & (f["price_eur"] <= price_range[1])]
     if only_private and "seller_type" in f.columns:
         f = f[f["seller_type"] == "Particular"]
+    if hide_needs_repair and "needs_repair" in f.columns:
+        f = f[f["needs_repair"] != True]
+    if only_customs_cleared and "customs_cleared" in f.columns:
+        f = f[f["customs_cleared"] == True]
     return f
 
 

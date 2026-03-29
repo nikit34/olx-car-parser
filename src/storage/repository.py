@@ -187,7 +187,7 @@ def get_listings_df(session: Session) -> pd.DataFrame:
             "needs_repair": l.needs_repair,
             "had_accident": l.had_accident,
             "real_mileage_km": l.real_mileage_km,
-            "mileage_suspect": l.mileage_suspect,
+            "num_owners": l.num_owners,
             "customs_cleared": l.customs_cleared,
             "estimated_repair_cost_eur": l.estimated_repair_cost_eur,
         })

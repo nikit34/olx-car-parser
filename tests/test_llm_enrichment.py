@@ -161,24 +161,22 @@ class TestEnrichFromDescription:
 # ---------------------------------------------------------------------------
 
 class TestCorrectListingData:
-    def test_mileage_mismatch_flags_suspect(self):
+    def test_mileage_mismatch_uses_description(self):
         listing = FakeListing(mileage_km=100000)
         listing._llm_extras = {"mileage_in_description_km": 180000}
         corrections = correct_listing_data(listing)
-        assert corrections["mileage_suspect"] is True
         assert corrections["real_mileage_km"] == 180000
 
-    def test_mileage_close_no_flag(self):
+    def test_mileage_close_uses_description(self):
         listing = FakeListing(mileage_km=150000)
         listing._llm_extras = {"mileage_in_description_km": 155000}
         corrections = correct_listing_data(listing)
-        assert "mileage_suspect" not in corrections
+        assert corrections["real_mileage_km"] == 155000
 
-    def test_mileage_typo_detection(self):
+    def test_attribute_higher_uses_description(self):
         listing = FakeListing(mileage_km=300000)
         listing._llm_extras = {"mileage_in_description_km": 100000}
         corrections = correct_listing_data(listing)
-        assert corrections["mileage_suspect"] is True
         assert corrections["real_mileage_km"] == 100000
 
     def test_no_attribute_mileage_uses_description(self):
@@ -186,7 +184,24 @@ class TestCorrectListingData:
         listing._llm_extras = {"mileage_in_description_km": 120000}
         corrections = correct_listing_data(listing)
         assert corrections["real_mileage_km"] == 120000
-        assert corrections["mileage_suspect"] is False
+
+    def test_no_description_mileage_falls_back_to_attribute(self):
+        listing = FakeListing(mileage_km=95000)
+        listing._llm_extras = {}
+        corrections = correct_listing_data(listing)
+        assert corrections["real_mileage_km"] == 95000
+
+    def test_num_owners_from_description(self):
+        listing = FakeListing()
+        listing._llm_extras = {"num_owners": 2}
+        corrections = correct_listing_data(listing)
+        assert corrections["num_owners"] == 2
+
+    def test_num_owners_missing(self):
+        listing = FakeListing()
+        listing._llm_extras = {"num_owners": None}
+        corrections = correct_listing_data(listing)
+        assert "num_owners" not in corrections
 
     def test_needs_repair_from_extras(self):
         listing = FakeListing()

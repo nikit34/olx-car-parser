@@ -180,7 +180,7 @@ def correct_listing_data(listing) -> dict:
     and an updated llm_extras JSON.
     """
     extras = getattr(listing, "_llm_extras", None)
-    if not extras:
+    if extras is None:
         return {}
 
     corrections = {}
@@ -195,24 +195,24 @@ def correct_listing_data(listing) -> dict:
             # Description mentions significantly higher mileage → attribute is suspect
             if desc_km > attr_km * 1.3 and (desc_km - attr_km) > 5000:
                 corrections["real_mileage_km"] = desc_km
-                corrections["mileage_suspect"] = True
                 logger.info(
                     "Mileage mismatch for %s: attribute=%d, description=%d → using description",
                     listing.url, attr_km, desc_km,
                 )
-            # Description mentions significantly lower → could be seller's round number
-            # but if attribute is suspiciously high (typo?), description might be correct
-            elif attr_km > desc_km * 2 and (attr_km - desc_km) > 50000:
+            else:
+                # Attribute >= description or close — use description as the detailed source
                 corrections["real_mileage_km"] = desc_km
-                corrections["mileage_suspect"] = True
-                logger.info(
-                    "Possible mileage typo for %s: attribute=%d, description=%d",
-                    listing.url, attr_km, desc_km,
-                )
         elif not attr_km or attr_km == 0:
             # No attribute mileage but description has it
             corrections["real_mileage_km"] = desc_km
-            corrections["mileage_suspect"] = False
+    elif attr_km and attr_km > 0:
+        # No mileage in description — fall back to attribute
+        corrections["real_mileage_km"] = attr_km
+
+    # --- Number of owners ---
+    num_owners = extras.get("num_owners")
+    if num_owners and isinstance(num_owners, (int, float)) and num_owners > 0:
+        corrections["num_owners"] = int(num_owners)
 
     # --- Needs repair ---
     needs_repair = extras.get("needs_repair")
@@ -263,7 +263,7 @@ def apply_corrections(listings: list) -> int:
         corrected += 1
 
         # Log significant corrections
-        if corrections.get("mileage_suspect"):
+        if corrections.get("real_mileage_km") and corrections.get("real_mileage_km") != getattr(listing, "mileage_km", None):
             logger.info(
                 "Corrected %s: real_mileage=%s, needs_repair=%s, accident=%s",
                 listing.olx_id,

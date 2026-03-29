@@ -123,6 +123,7 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         lambda r: get_generation(r["brand"], r["model"], r.get("year")), axis=1
     )
 
+
     # --- Generation-level stats ---
     priced_gen = active[active["price_eur"].notna() & active["generation"].notna()]
     gen_stats = (
@@ -361,6 +362,9 @@ def load_all():
     if db_data is not None:
         listings, history = db_data
         listings = enrich_listings(listings)
+        # Use LLM-corrected mileage everywhere (sellers game filters with fake low values)
+        if "real_mileage_km" in listings.columns:
+            listings["mileage_km"] = listings["real_mileage_km"].fillna(listings["mileage_km"])
         signals = compute_signals(listings, history)
         turnover = compute_turnover_stats(listings)
     else:

@@ -228,7 +228,7 @@ def scrape(
             "needs_repair": corrections.get("needs_repair"),
             "had_accident": corrections.get("had_accident"),
             "real_mileage_km": corrections.get("real_mileage_km"),
-            "mileage_suspect": corrections.get("mileage_suspect"),
+            "num_owners": corrections.get("num_owners"),
             "customs_cleared": corrections.get("customs_cleared"),
             "estimated_repair_cost_eur": corrections.get("estimated_repair_cost_eur"),
         }
@@ -432,7 +432,7 @@ def export_training_data(
             except (json.JSONDecodeError, TypeError):
                 continue
 
-            for col in ("needs_repair", "had_accident", "mileage_suspect",
+            for col in ("needs_repair", "had_accident", "num_owners",
                         "customs_cleared", "real_mileage_km", "estimated_repair_cost_eur"):
                 val = row.get(col)
                 if val is not None and not (isinstance(val, float) and pd.isna(val)):

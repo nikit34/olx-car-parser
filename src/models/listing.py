@@ -52,7 +52,7 @@ class Listing(Base):
     needs_repair = Column(Boolean)              # Car needs repair/has known issues
     had_accident = Column(Boolean)              # Car was in an accident/collision
     real_mileage_km = Column(Integer)           # Mileage from description (may differ from attribute)
-    mileage_suspect = Column(Boolean)           # Attribute mileage doesn't match description
+    num_owners = Column(Integer)                # Number of previous owners (from description)
     customs_cleared = Column(Boolean)           # Import: customs/legalization done
     estimated_repair_cost_eur = Column(Integer) # Rough repair cost estimate from description
 
