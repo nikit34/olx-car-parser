@@ -45,10 +45,3 @@ jobs:
             echo "Setting up Ollama with $MODEL..."
             bash /Users/anastasia/olx-car-parser/scripts/setup-ollama.sh "$MODEL"
           fi
-
-      - name: Restart dashboard
-        run: |
-          PLIST="$HOME/Library/LaunchAgents/com.olx-car-parser.dashboard.plist"
-          launchctl bootout gui/$(id -u) "$PLIST" 2>/dev/null || true
-          launchctl bootstrap gui/$(id -u) "$PLIST"
-          echo "Dashboard restarted on port 8501"
