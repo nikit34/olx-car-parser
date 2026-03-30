@@ -66,6 +66,7 @@ st.sidebar.title("Filters")
 
 if listings_df.empty:
     st.sidebar.warning("Нет данных. Запустите `python -m src.cli scrape` для сбора объявлений.")
+    st.stop()
 else:
     st.sidebar.success(f"{len(listings_df)} listings loaded")
     if st.sidebar.button("Refresh data"):
@@ -442,7 +443,7 @@ with tab_analytics:
     st.caption("Поиск автомобилей с лучшим сочетанием характеристик по минимальной цене. "
                "Графики показывают как год, пробег, топливо и КПП влияют на стоимость.")
 
-    ana = active[active["price_eur"].notna()].copy()
+    ana = active[active["price_eur"].notna()].copy() if "price_eur" in active.columns else pd.DataFrame()
 
     if ana.empty:
         st.info("Нет активных объявлений с ценами.")
