@@ -49,9 +49,6 @@ def _ensure_db() -> bool:
     """Download DB from GitHub Releases if missing or newer version available."""
     import time
 
-    if not os.environ.get("STREAMLIT_SHARING_MODE"):
-        return DB_PATH.exists()
-
     if not DB_PATH.exists():
         needs_check = True
     else:
