@@ -1,0 +1,6 @@
+FROM ./car-parser-q4km.gguf
+
+PARAMETER temperature 0.1
+PARAMETER num_predict 512
+PARAMETER stop "<|im_end|>"
+PARAMETER stop "<|endoftext|>"

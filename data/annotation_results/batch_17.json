@@ -1,0 +1,1435 @@
+[
+  {
+    "id": 878,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": false,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 46500,
+      "customs_cleared": null,
+      "imported": false,
+      "mechanical_condition": "excellent",
+      "paint_condition": "excellent",
+      "suspicious_signs": [],
+      "extras": [
+        "Carplay",
+        "GPS/Navegação",
+        "Bancos desportivos pele/alcântara",
+        "Iluminação ambiente",
+        "Volante multifunções pele",
+        "Sensores estacionamento frente e trás",
+        "Ar condicionado automático",
+        "Modos de condução Dynamic Select",
+        "Sensores luz e chuva",
+        "Assistência de estacionamento",
+        "Sistema aviso colisão"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 879,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": null,
+      "needs_repair": null,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": null,
+      "customs_cleared": null,
+      "imported": false,
+      "mechanical_condition": null,
+      "paint_condition": null,
+      "suspicious_signs": ["Descrição mínima, pede contacto telefónico"],
+      "extras": [],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 880,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": false,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 96298,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 881,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": null,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": null,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": "good",
+      "suspicious_signs": ["Bateria nova instalada pelo seguro - possível incidente prévio"],
+      "extras": [
+        "Autopilot básico",
+        "Câmeras 360°",
+        "Bancos em pele",
+        "2 cabos de carregamento originais",
+        "Wrap lilás",
+        "Front lip",
+        "Bateria nova Tesla (07/2025 com garantia até 2029)"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 882,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 165000,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "AC automático",
+        "Fecho central",
+        "Jantes especiais",
+        "Caixa de 6 velocidades",
+        "USB/Aux",
+        "Cruise control",
+        "Vidros elétricos",
+        "Luzes automáticas"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 883,
+    "llm_extras": {
+      "num_owners": 1,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 68000,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": "excellent",
+      "suspicious_signs": [],
+      "extras": [
+        "Ar condicionado",
+        "Direção assistida",
+        "Volante multifunções",
+        "Rádio com leitor de CDs",
+        "Jantes de liga leve",
+        "Regulação do volante em altura",
+        "Retrovisores elétricos",
+        "Vidros elétricos",
+        "Faróis reguláveis em altura",
+        "Banco condutor regulável em altura",
+        "Fecho central com comando",
+        "Bateria nova Tudor",
+        "Pastilhas de travão novas"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 884,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 190000,
+      "customs_cleared": null,
+      "imported": false,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": ["Quadrante substituído - km mostram 280000 mas documentação indica 190000"],
+      "extras": [
+        "Teto panorâmico",
+        "Cruise control adaptativo",
+        "Orientação pelas linhas da estrada",
+        "3 modos de condução"
+      ],
+      "issues": ["Quadrante substituído, discrepância de km"],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 885,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": true,
+      "repair_details": "Retoque no pára-choques da frente + capô, verniz da pintura a descascar, banco do condutor a precisar de ser estufado",
+      "estimated_repair_cost_eur": 1200,
+      "mileage_in_description_km": 400000,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "good",
+      "paint_condition": "poor",
+      "suspicious_signs": [],
+      "extras": [
+        "Escovas automáticas",
+        "Espelhos rebatíveis",
+        "Luzes automáticas",
+        "Cruise control",
+        "Teto de abrir"
+      ],
+      "issues": [
+        "Retoque no pára-choques da frente e capô",
+        "Verniz da pintura a descascar",
+        "Banco do condutor a precisar de ser estufado"
+      ],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 886,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 238000,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "good",
+      "paint_condition": "good",
+      "suspicious_signs": [],
+      "extras": [
+        "IVA dedutível",
+        "Garantia 18 meses",
+        "Possibilidade de financiamento"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 887,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": null,
+      "needs_repair": true,
+      "repair_details": "Motor do vidro traseiro do lado do condutor não funciona; marcas normais de uso",
+      "estimated_repair_cost_eur": 150,
+      "mileage_in_description_km": null,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "good",
+      "paint_condition": "fair",
+      "suspicious_signs": [],
+      "extras": [
+        "Ar condicionado",
+        "Teto de abrir",
+        "4 vidros elétricos",
+        "Espelhos retrovisores com aquecimento",
+        "Direção assistida",
+        "Sensores de estacionamento"
+      ],
+      "issues": [
+        "Motor do vidro traseiro do lado do condutor não funciona",
+        "Marcas normais de uso"
+      ],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 888,
+    "llm_extras": {
+      "num_owners": 1,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 85000,
+      "customs_cleared": null,
+      "imported": false,
+      "mechanical_condition": "excellent",
+      "paint_condition": "excellent",
+      "suspicious_signs": [],
+      "extras": [
+        "Caixa automática",
+        "Faróis LED e nevoeiros LED",
+        "Sensores estacionamento dianteiros e traseiros",
+        "Cruise control com travagem automática",
+        "Bancos pele Dakota",
+        "Volante desportivo em pele",
+        "Sistema som HiFi",
+        "BMW ConnectedDrive",
+        "Mãos-livres USB",
+        "Assistente de máximos automático",
+        "Sensor de chuva e luz",
+        "Vidros com proteção solar",
+        "Espelho interior anti-encandeamento",
+        "Barras de tejadilho preto",
+        "Monitorização pressão pneus",
+        "Servotronic",
+        "Jantes 16\""
+      ],
+      "issues": [],
+      "reason_for_sale": "Mudança de viatura"
+    }
+  },
+  {
+    "id": 889,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": null,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 117600,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": null,
+      "paint_condition": null,
+      "suspicious_signs": ["Descrição muito curta"],
+      "extras": [
+        "Câmara de marcha atrás"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 890,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 205000,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 891,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": null,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 272727,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "AC",
+        "Computador de bordo",
+        "Vidros elétricos",
+        "ABS",
+        "Espelhos elétricos"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 892,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 180000,
+      "customs_cleared": null,
+      "imported": false,
+      "mechanical_condition": "excellent",
+      "paint_condition": "excellent",
+      "suspicious_signs": [],
+      "extras": [
+        "Pack M exterior e interior",
+        "Apple CarPlay sem fios",
+        "Câmaras 360°",
+        "Faróis Adaptive LED",
+        "Máximos direcionais e automáticos",
+        "Estofos em pele",
+        "Cockpit full digital"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 893,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": null,
+      "customs_cleared": null,
+      "imported": false,
+      "mechanical_condition": "excellent",
+      "paint_condition": "good",
+      "suspicious_signs": [],
+      "extras": [
+        "AC",
+        "Sistema multimédia X-Touch",
+        "Ecrã tátil",
+        "Bluetooth",
+        "Câmara traseira",
+        "Ligação smartphone"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 894,
+    "llm_extras": {
+      "num_owners": 1,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": null,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "good",
+      "paint_condition": "good",
+      "suspicious_signs": [],
+      "extras": [
+        "Versão Tekna (topo de gama)",
+        "Cruise control",
+        "Sistema Keyless",
+        "Ar condicionado automático",
+        "Bancos dianteiros aquecidos",
+        "Estofos em pele preta",
+        "GPS integrado com ecrã",
+        "Luzes xenon",
+        "Câmara de marcha atrás",
+        "Espelhos elétricos e rebatíveis",
+        "Teto panorâmico",
+        "Sensores de chuva",
+        "Faróis com ativação automática"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 895,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": null,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": null,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": ["Motor substituído (motor anterior tinha 200000km)"],
+      "extras": [
+        "Apple CarPlay e Android Auto",
+        "Bateria nova",
+        "Distribuição nova",
+        "Bomba de água nova",
+        "Corpo do filtro de óleo novo"
+      ],
+      "issues": ["Motor substituído"],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 896,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": null,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "Jantes 17\"",
+        "Rádio interativo",
+        "GPS",
+        "Câmara traseira",
+        "Sensores frente/trás",
+        "4 vidros elétricos",
+        "Start & Stop",
+        "Auto Hold",
+        "Sensor de luzes",
+        "Consola e rádio originais novos"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 897,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": null,
+      "customs_cleared": null,
+      "imported": false,
+      "mechanical_condition": "excellent",
+      "paint_condition": "good",
+      "suspicious_signs": [],
+      "extras": [
+        "Jantes 18\" raras",
+        "Pack travagem desportiva Brembo",
+        "Pack carbono original",
+        "Sensores de estacionamento",
+        "Pack Chilly com luzes ambiente",
+        "Cruise control",
+        "Discos e pastilhas novos",
+        "Distribuição e bomba de água",
+        "Bomba de alta pressão",
+        "Turbo revisto",
+        "Bomba de vácuo",
+        "Tampa de válvulas",
+        "Sondas O2"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 898,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": false,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 145741,
+      "customs_cleared": null,
+      "imported": false,
+      "mechanical_condition": "excellent",
+      "paint_condition": "excellent",
+      "suspicious_signs": [],
+      "extras": [
+        "Jantes liga leve 17\" originais Mercedes",
+        "Volante desportivo multifunções em pele",
+        "Cruise control",
+        "Limitador de velocidade (Speedtronic)",
+        "Sensores de luz e chuva",
+        "Ar condicionado",
+        "Computador de bordo",
+        "Relatório CarVertical limpo"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 899,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": null,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 299000,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": ["Convite para trazer mecânico pode indicar incerteza"],
+      "extras": [
+        "Rádio com colunas novas",
+        "Faróis traseiros e frontais novos",
+        "4 rodas novas",
+        "Bateria nova"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 900,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": null,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": ["Descrição muito curta e vaga"],
+      "extras": [
+        "Pneus recentes"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 901,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": false,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": null,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": "good",
+      "suspicious_signs": [],
+      "extras": [
+        "Teto panorâmico",
+        "Ecrã tátil central",
+        "Bluetooth/mãos livres",
+        "Cruise control + limitador de velocidade",
+        "Ar condicionado automático",
+        "Sensores de estacionamento",
+        "Jantes de liga leve",
+        "Luzes diurnas LED",
+        "Vidros escurecidos"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 902,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": null,
+      "needs_repair": true,
+      "repair_details": "Amolgadela na lateral, marcas normais da idade (maioritariamente estéticos)",
+      "estimated_repair_cost_eur": 500,
+      "mileage_in_description_km": null,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "good",
+      "paint_condition": "fair",
+      "suspicious_signs": [],
+      "extras": [
+        "Teto de abrir",
+        "4 velas novas"
+      ],
+      "issues": [
+        "Amolgadela na lateral",
+        "Marcas normais da idade"
+      ],
+      "reason_for_sale": "Adquiriu carro novo e não tem onde guardar nem possibilidade de manter os dois"
+    }
+  },
+  {
+    "id": 903,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": null,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": null,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "Caixa automática com mudanças no volante",
+        "Teto panorâmico com cortina elétrica",
+        "Ar condicionado automático",
+        "Stop&Start",
+        "GPS",
+        "Sensores de estacionamento",
+        "Retrovisores elétricos",
+        "Cruise control",
+        "Limitador de velocidade",
+        "Vidros elétricos",
+        "Luzes automáticas",
+        "Comandos no volante",
+        "Patilhas de mudanças no volante"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 904,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": null,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 259000,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "Caixa automática",
+        "AC automático",
+        "Patilhas no volante",
+        "Jantes 16\"",
+        "Cruise control",
+        "Sensores traseiros",
+        "Luzes automáticas"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 905,
+    "llm_extras": {
+      "num_owners": 1,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": null,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": "excellent",
+      "suspicious_signs": [],
+      "extras": [
+        "Caixa automática com patilhas",
+        "ABS com sistema de travagem de emergência",
+        "ESP controlo de estabilidade",
+        "Sensores de parqueamento com câmara marcha atrás",
+        "Sensores de luz e chuva",
+        "Vidros elétricos",
+        "Retrovisores elétricos",
+        "Faróis LED com luzes diurnas",
+        "Rádio MP3 com som e bluetooth",
+        "Fecho central com comando e alarme",
+        "Ar condicionado automático e digital",
+        "Comandos no volante",
+        "Banco condutor multifunções",
+        "Volante regulável em altura e profundidade"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 906,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": null,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "Direção assistida",
+        "Vidros elétricos",
+        "Ar condicionado",
+        "Rádio com Bluetooth"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 907,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 335000,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "Distribuição completa + bomba de água (Jan 2026)",
+        "Embraiagem completa + bimassa + óleo da caixa (Jan 2026)",
+        "Travões novos frente e trás (2025)",
+        "Alinhamento da direção (Jan 2026)",
+        "Versão FR desportiva"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 908,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 137000,
+      "customs_cleared": null,
+      "imported": false,
+      "mechanical_condition": "excellent",
+      "paint_condition": "excellent",
+      "suspicious_signs": [],
+      "extras": [
+        "Kit AMG"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 909,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": null,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": null,
+      "customs_cleared": null,
+      "imported": false,
+      "mechanical_condition": null,
+      "paint_condition": null,
+      "suspicious_signs": ["Descrição muito curta"],
+      "extras": [],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 910,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": null,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": null,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": ["Descrição muito curta"],
+      "extras": [
+        "Pneus novos"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 911,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 191600,
+      "customs_cleared": null,
+      "imported": false,
+      "mechanical_condition": "good",
+      "paint_condition": "fair",
+      "suspicious_signs": [],
+      "extras": [
+        "Ar condicionado"
+      ],
+      "issues": ["Mazelas de utilização diária no interior e exterior"],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 912,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": null,
+      "needs_repair": null,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 212000,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": null,
+      "paint_condition": null,
+      "suspicious_signs": ["Descrição mínima"],
+      "extras": [],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 913,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": null,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": null,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": "good",
+      "suspicious_signs": [],
+      "extras": [
+        "Caixa automática sequencial",
+        "Versão Sport",
+        "AC",
+        "ESP",
+        "Retrovisor elétrico",
+        "ABS",
+        "2 vidros elétricos",
+        "Tranca central de portas",
+        "Bancos frente com ajuste elétrico lombar e coluna",
+        "Luz xénon",
+        "Alarme",
+        "Piloto automático",
+        "Volante multifunções",
+        "Computador de bordo",
+        "Barras tejadilho",
+        "Auto rádio"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 914,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "needs_repair": true,
+      "repair_details": "Precisa de injetores e turbo; pequenos toques na embaladeira",
+      "estimated_repair_cost_eur": 2500,
+      "mileage_in_description_km": 265000,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "poor",
+      "paint_condition": "fair",
+      "suspicious_signs": ["Falta de manutenção durante anos, venda para peças ou arranjo"],
+      "extras": [
+        "Auto rádio Pioneer"
+      ],
+      "issues": [
+        "Precisa de injetores",
+        "Precisa de turbo",
+        "Pequenos toques na embaladeira",
+        "Manutenções não feitas durante anos"
+      ],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 915,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 303600,
+      "customs_cleared": null,
+      "imported": false,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "Caixa automática",
+        "Rádio/GPS",
+        "Estofos em pele e tecido",
+        "Bancos desportivos e regulação elétrica",
+        "Bluetooth",
+        "Volante multifunções",
+        "Jantes liga leve 17\"",
+        "Faróis Bi-Xénon",
+        "Frisos cromados Avantgarde",
+        "AC automático bi-zona com saídas traseiras",
+        "Sensores estacionamento dianteiros e traseiros"
+      ],
+      "issues": [],
+      "reason_for_sale": "Não tem tempo para usufruir do carro, pouco anda"
+    }
+  },
+  {
+    "id": 916,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": null,
+      "needs_repair": true,
+      "repair_details": "Pintura desgastada",
+      "estimated_repair_cost_eur": 500,
+      "mileage_in_description_km": 317866,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "fair",
+      "paint_condition": "poor",
+      "suspicious_signs": [],
+      "extras": [
+        "Rádio Pioneer + colunas"
+      ],
+      "issues": [
+        "Pintura desgastada"
+      ],
+      "reason_for_sale": "Vai trocar por um mais recente"
+    }
+  },
+  {
+    "id": 917,
+    "llm_extras": {
+      "num_owners": 1,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 97000,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "Black Edition"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 918,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": null,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": null,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": null,
+      "paint_condition": null,
+      "suspicious_signs": ["Carro modificado (270cv, bobines R8, downpipe, linha direta) - possível Stage tuning"],
+      "extras": [
+        "Bobines R8",
+        "Downpipe",
+        "Faróis bidirecionais",
+        "Rádio com CarPlay",
+        "Linha direta"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 919,
+    "llm_extras": {
+      "num_owners": 2,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": null,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": null,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "AC automático dual zone",
+        "Vidros elétricos",
+        "Piloto automático",
+        "Sistema multimédia com Bluetooth",
+        "Entrada USB"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 920,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": true,
+      "accident_details": "Pancada no para-choques visível nas fotos, toques de pintura fruto do uso citadino",
+      "service_history": true,
+      "needs_repair": true,
+      "repair_details": "Toques de pintura e pancada no para-choques (estéticos)",
+      "estimated_repair_cost_eur": 800,
+      "mileage_in_description_km": 271000,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": "fair",
+      "suspicious_signs": [],
+      "extras": [
+        "Ar condicionado",
+        "Sensores traseiros",
+        "Bluetooth",
+        "Painel de controlo novo",
+        "4 pneus novos",
+        "Embraiagem trocada na marca (2018-2022)"
+      ],
+      "issues": [
+        "Toques de pintura",
+        "Pancada no para-choques"
+      ],
+      "reason_for_sale": "Oportunidade de comprar um novo num excelente negócio"
+    }
+  },
+  {
+    "id": 921,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": null,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "Ar condicionado",
+        "Computador de bordo",
+        "Vidros elétricos",
+        "Fecho central com comando",
+        "Rádio/CD",
+        "Direção assistida"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 922,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": null,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 160000,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": null,
+      "paint_condition": null,
+      "suspicious_signs": ["Descrição mínima"],
+      "extras": [
+        "Kit distribuição mudada"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 923,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 59401,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": "excellent",
+      "suspicious_signs": [],
+      "extras": [
+        "ST-Line X Design",
+        "EcoBoost MHEV híbrido",
+        "Caixa manual 6 velocidades"
+      ],
+      "issues": [],
+      "reason_for_sale": "Redução do número de veículos"
+    }
+  },
+  {
+    "id": 924,
+    "llm_extras": {
+      "num_owners": 1,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": null,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "good",
+      "paint_condition": "fair",
+      "suspicious_signs": [],
+      "extras": [
+        "7 lugares individuais"
+      ],
+      "issues": ["Marcas de uso"],
+      "reason_for_sale": "Falta de uso"
+    }
+  },
+  {
+    "id": 925,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 169000,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "good",
+      "paint_condition": "good",
+      "suspicious_signs": [],
+      "extras": [
+        "Jantes 18\"",
+        "Cruise control",
+        "ABS e ESP",
+        "Rádio Android Auto e CarPlay GPS",
+        "Climatrónico AC automático",
+        "Luzes diurnas"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  },
+  {
+    "id": 926,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": 143000,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": "good",
+      "paint_condition": "good",
+      "suspicious_signs": [],
+      "extras": [
+        "Pintura completa recente",
+        "Bateria nova",
+        "2 pneus novos",
+        "Revisão completa recente",
+        "3 escovas limpa vidros novas"
+      ],
+      "issues": [],
+      "reason_for_sale": "Já não precisa dele"
+    }
+  },
+  {
+    "id": 927,
+    "llm_extras": {
+      "num_owners": null,
+      "had_accident": null,
+      "accident_details": null,
+      "service_history": null,
+      "needs_repair": false,
+      "repair_details": null,
+      "estimated_repair_cost_eur": null,
+      "mileage_in_description_km": null,
+      "customs_cleared": null,
+      "imported": null,
+      "mechanical_condition": null,
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "Pack M",
+        "Teto panorâmico",
+        "GPS profissional",
+        "Faróis LED 3D",
+        "Jantes liga leve 20\"",
+        "Suspensão desportiva",
+        "Suspensão pneumática",
+        "Bluetooth",
+        "Sistema de navegação",
+        "Sistema de som",
+        "Controlo por voz",
+        "AC automático",
+        "Estofos em tecido",
+        "AC traseiro",
+        "Banco condutor regulação elétrica",
+        "Banco passageiro regulação elétrica",
+        "Banco condutor aquecido",
+        "Banco passageiro aquecido",
+        "Regulação lombar elétrica",
+        "Bancos desportivos dianteiros",
+        "Volante em pele",
+        "Volante desportivo",
+        "Arranque sem chave",
+        "Sensor de chuva",
+        "Vidros elétricos dianteiros e traseiros",
+        "Vidros traseiros escurecidos",
+        "Cruise control",
+        "Faróis Xenon",
+        "Sensor estacionamento dianteiro e traseiro",
+        "Retrovisores elétricos aquecidos e retrácteis",
+        "Assistente de ângulo morto",
+        "Limitador de velocidade",
+        "Luzes direcionais dinâmicas",
+        "Limpa faróis",
+        "Luzes diurnas LED",
+        "Faróis de nevoeiro",
+        "Farolim traseiro LED",
+        "Start/Stop",
+        "Controlo pressão pneus",
+        "Travão de mão elétrico",
+        "Direção assistida",
+        "ABS",
+        "ESP",
+        "Chamada automática SOS",
+        "Airbags completos",
+        "ISOFIX"
+      ],
+      "issues": [],
+      "reason_for_sale": null
+    }
+  }
+]
