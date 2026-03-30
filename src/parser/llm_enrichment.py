@@ -193,30 +193,17 @@ def correct_listing_data(listing) -> dict:
     if desc_km and isinstance(desc_km, (int, float)) and desc_km > 0:
         desc_km = int(desc_km)
         if attr_km and attr_km > 0:
-            ratio = desc_km / attr_km
-            # LLM "mil" conversion error: desc ≈ attr × 100 (e.g. 4300 → 430000)
-            if 80 <= ratio <= 120:
-                corrections["real_mileage_km"] = attr_km
-                logger.info(
-                    "Mileage 100x error for %s: attribute=%d, description=%d "
-                    "→ using attribute (LLM likely mishandled 'mil')",
-                    listing.url, attr_km, desc_km,
-                )
-            # Description genuinely higher — attribute may be stale/wrong
-            elif desc_km > attr_km * 1.3 and (desc_km - attr_km) > 5000:
+            if desc_km > attr_km * 1.3 and (desc_km - attr_km) > 5000:
                 corrections["real_mileage_km"] = desc_km
                 logger.info(
                     "Mileage mismatch for %s: attribute=%d, description=%d → using description",
                     listing.url, attr_km, desc_km,
                 )
             else:
-                # Values are close — use attribute (structured data)
-                corrections["real_mileage_km"] = attr_km
+                corrections["real_mileage_km"] = desc_km
         elif not attr_km or attr_km == 0:
-            # No attribute mileage but description has it
             corrections["real_mileage_km"] = desc_km
     elif attr_km and attr_km > 0:
-        # No mileage in description — fall back to attribute
         corrections["real_mileage_km"] = attr_km
 
     # --- Number of owners ---

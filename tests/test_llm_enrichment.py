@@ -167,31 +167,17 @@ class TestCorrectListingData:
         corrections = correct_listing_data(listing)
         assert corrections["real_mileage_km"] == 180000
 
-    def test_mileage_close_uses_attribute(self):
+    def test_mileage_close_uses_description(self):
         listing = FakeListing(mileage_km=150000)
         listing._llm_extras = {"mileage_in_description_km": 155000}
         corrections = correct_listing_data(listing)
-        assert corrections["real_mileage_km"] == 150000
+        assert corrections["real_mileage_km"] == 155000
 
-    def test_attribute_higher_uses_attribute(self):
+    def test_attribute_higher_uses_description(self):
         listing = FakeListing(mileage_km=300000)
         listing._llm_extras = {"mileage_in_description_km": 100000}
         corrections = correct_listing_data(listing)
-        assert corrections["real_mileage_km"] == 300000
-
-    def test_mileage_100x_error_uses_attribute(self):
-        """LLM misinterprets 'mil' and returns attr*100 — trust attribute."""
-        listing = FakeListing(mileage_km=4300)
-        listing._llm_extras = {"mileage_in_description_km": 430000}
-        corrections = correct_listing_data(listing)
-        assert corrections["real_mileage_km"] == 4300
-
-    def test_mileage_high_but_plausible_uses_description(self):
-        """High mileage (e.g. commercial vehicle) — trust description."""
-        listing = FakeListing(mileage_km=150000)
-        listing._llm_extras = {"mileage_in_description_km": 600000}
-        corrections = correct_listing_data(listing)
-        assert corrections["real_mileage_km"] == 600000
+        assert corrections["real_mileage_km"] == 100000
 
     def test_no_attribute_mileage_uses_description(self):
         listing = FakeListing(mileage_km=0)
