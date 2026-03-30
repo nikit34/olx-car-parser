@@ -293,8 +293,8 @@ class TestLlmWorker:
         t.join(timeout=10)
 
         results = []
-        while not out_q.empty():
-            results.append(out_q.get_nowait())
+        for _ in range(3):
+            results.append(out_q.get(timeout=5))
         assert len(results) == 3
         for olx_id, result in results:
             assert result == VALID_LLM_RESULT
@@ -313,7 +313,7 @@ class TestLlmWorker:
         t.start()
         t.join(timeout=10)
 
-        olx_id, result = out_q.get_nowait()
+        olx_id, result = out_q.get(timeout=5)
         assert olx_id == "fail-1"
         assert result is None
 
@@ -332,8 +332,8 @@ class TestLlmWorker:
         t.join(timeout=10)
 
         results = []
-        while not out_q.empty():
-            results.append(out_q.get_nowait())
+        for _ in range(5):
+            results.append(out_q.get(timeout=5))
         # Worker exits after 5 consecutive failures, processes exactly 5
         assert len(results) == 5
 
@@ -351,7 +351,7 @@ class TestLlmWorker:
         t.start()
         t.join(timeout=10)
 
-        olx_id, result = out_q.get_nowait()
+        olx_id, result = out_q.get(timeout=5)
         assert olx_id == "short-1"
         assert result is None
         mock_enrich.assert_not_called()
