@@ -30,7 +30,8 @@ def plotly_chart_with_click(fig, df, key, **kwargs):
                     url = v
                     break
         if url:
-            st.link_button("Open listing on OLX", url)
+            label = "Open on StandVirtual" if "standvirtual.com" in url else "Open on OLX"
+            st.link_button(label, url)
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +257,8 @@ with tab_deals:
                 if details:
                     st.caption(" · ".join(details))
                 if deal.get("url"):
-                    st.markdown(f"[Open on OLX]({deal['url']})")
+                    link_label = "Open on StandVirtual" if "standvirtual.com" in deal["url"] else "Open on OLX"
+                    st.markdown(f"[{link_label}]({deal['url']})")
 
         st.divider()
 

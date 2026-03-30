@@ -96,6 +96,7 @@ class RawListing:
     district: str = ""
     seller_type: str = "Particular"
     description: str = ""
+    source: str = "olx"  # "olx" or "standvirtual"
 
 
 class OlxScraper:
@@ -194,7 +195,8 @@ class OlxScraper:
                 url = link.get("href", "")
                 if not url.startswith("http"):
                     url = "https://www.olx.pt" + url
-                if "/d/anuncio/" not in url:
+                # Accept OLX listings (/d/anuncio/) and StandVirtual cross-posts
+                if "/d/anuncio/" not in url and "standvirtual.com" not in url:
                     continue
 
                 olx_id_match = re.search(r"ID(\w+)\.html", url)
@@ -330,6 +332,108 @@ class OlxScraper:
         return details
 
     # ------------------------------------------------------------------
+    # StandVirtual detail page
+    # ------------------------------------------------------------------
+
+    def scrape_standvirtual_detail(self, url: str) -> dict:
+        """Parse a standvirtual.com listing detail page."""
+        result = self._fetch(url)
+        if not result:
+            return {}
+
+        _final_url, html = result
+        soup = BeautifulSoup(html, "lxml")
+        details: dict = {}
+
+        # Mapping: data-testid -> (field_name, parser)
+        SV_FIELDS = {
+            "make": ("brand", None),
+            "model": ("model", None),
+            "mileage": ("mileage_km", _safe_int),
+            "fuel_type": ("fuel_type", None),
+            "gearbox": ("transmission", None),
+            "first_registration_year": ("year", _safe_int),
+            "first_registration_month": ("registration_month", None),
+            "engine_capacity": ("engine_cc", _safe_int),
+            "engine_power": ("horsepower", _safe_int),
+            "door_count": ("doors", None),
+            "color": ("color", None),
+            "body_type": ("segment", None),
+            "new_used": ("condition", None),
+            "transmission": ("drive_type", None),
+        }
+
+        # StandVirtual labels baked into text (e.g. "MarcaNissan", "Quilómetros130 000 km")
+        SV_LABEL_PREFIXES = {
+            "make": "Marca",
+            "model": "Modelo",
+            "mileage": "Quilómetros",
+            "fuel_type": "Combustível",
+            "gearbox": "Tipo de Caixa",
+            "first_registration_year": "Ano",
+            "first_registration_month": "Mês de Registo",
+            "engine_capacity": "Cilindrada",
+            "engine_power": "Potência",
+            "door_count": "Nº de portas",
+            "color": "Cor",
+            "body_type": "Segmento",
+            "new_used": "Condição",
+            "transmission": "Tracção",
+        }
+
+        for testid, (field, parser) in SV_FIELDS.items():
+            el = soup.find(attrs={"data-testid": testid})
+            if not el:
+                continue
+            text = el.get_text(strip=True)
+            prefix = SV_LABEL_PREFIXES.get(testid, "")
+            if prefix and text.startswith(prefix):
+                text = text[len(prefix):].strip()
+            # Strip trailing units (km, cm3, cv)
+            text = re.sub(r"\s*(km|cm3|cv)$", "", text).strip()
+            if parser:
+                details[field] = parser(text)
+            else:
+                details[field] = text
+
+        # Price
+        price_el = soup.find(attrs={"data-testid": "ad-price"})
+        if price_el:
+            details["price_eur"] = _parse_eur_price(price_el.get_text(strip=True))
+
+        # Negotiable (check summary area)
+        summary = soup.find(attrs={"data-testid": "summary-info-area"})
+        if summary:
+            details["negotiable"] = "negociável" in summary.get_text(strip=True).lower()
+
+        # Seller type
+        seller = soup.find(attrs={"data-testid": "seller-header"})
+        if seller:
+            seller_text = seller.get_text(strip=True)
+            if "Particular" in seller_text:
+                details["seller_type"] = "Particular"
+            elif "Profissional" in seller_text or "Stand" in seller_text:
+                details["seller_type"] = "Profissional"
+
+        # Description
+        desc_el = soup.find(attrs={"data-testid": "content-description-section"})
+        if desc_el:
+            details["description"] = desc_el.get_text(separator="\n", strip=True)
+
+        # Breadcrumbs for location (if available)
+        breadcrumb = soup.find(attrs={"data-testid": "breadcrumb-section"})
+        if breadcrumb:
+            items = [el.get_text(strip=True) for el in breadcrumb.find_all("a")]
+            # Breadcrumbs: Carros > Brand > Model (no location in standvirtual breadcrumbs)
+
+        # Extract olx_id from URL
+        id_match = re.search(r"ID(\w+)\.html", url)
+        if id_match:
+            details["olx_id"] = id_match.group(1)
+
+        return details
+
+    # ------------------------------------------------------------------
     # Full scrape
     # ------------------------------------------------------------------
 
@@ -339,7 +443,10 @@ class OlxScraper:
         if self._stop_event.is_set() or not listing.url:
             return False
         self._delay()
-        details = self.scrape_listing_detail(listing.url)
+        if "standvirtual.com" in listing.url:
+            details = self.scrape_standvirtual_detail(listing.url)
+        else:
+            details = self.scrape_listing_detail(listing.url)
         _merge_details(listing, details)
         if on_ready and listing.description:
             on_ready(listing)
@@ -523,3 +630,184 @@ def _safe_float(val) -> float | None:
         return float(re.sub(r"[^\d.]", "", cleaned))
     except (ValueError, TypeError):
         return None
+
+
+# ---------------------------------------------------------------------------
+# StandVirtual search page scraper
+# ---------------------------------------------------------------------------
+
+SV_BASE_URL = "https://www.standvirtual.com/carros/particulares/"
+
+# dt text -> RawListing field
+SV_CARD_FIELDS = {
+    "mileage": "mileage_km",
+    "fuel_type": "fuel_type",
+    "gearbox": "transmission",
+    "first_registration_year": "year",
+}
+
+
+class StandVirtualScraper:
+    """Scraper for standvirtual.com search pages + detail pages."""
+
+    def __init__(self, config: ScraperConfig | None = None):
+        self.config = config or ScraperConfig(base_url=SV_BASE_URL)
+        self._olx_scraper = OlxScraper(config)  # reuse HTTP client + detail parser
+
+    @property
+    def _stop_event(self):
+        return self._olx_scraper._stop_event
+
+    def _delay(self):
+        self._olx_scraper._delay()
+
+    def _fetch(self, url: str) -> tuple[str, str] | None:
+        return self._olx_scraper._fetch(url)
+
+    # ------------------------------------------------------------------
+    # Search results page
+    # ------------------------------------------------------------------
+
+    def scrape_search_page(self, page: int = 1) -> list[RawListing] | None:
+        url = self.config.base_url + f"?page={page}"
+        logger.info("Scraping StandVirtual page %d: %s", page, url)
+
+        result = self._fetch(url)
+        if not result:
+            return []
+
+        final_url, html = result
+
+        if page > 1 and f"page={page}" not in final_url:
+            logger.info("SV page %d redirected to %s — no more pages", page, final_url)
+            return None
+
+        return self._parse_search_page(html)
+
+    def _parse_search_page(self, html: str) -> list[RawListing]:
+        soup = BeautifulSoup(html, "lxml")
+        listings = []
+
+        for article in soup.find_all("article"):
+            try:
+                link = article.find("a", href=True)
+                if not link:
+                    continue
+                url = link.get("href", "")
+                if "/anuncio/" not in url:
+                    continue
+
+                id_match = re.search(r"ID(\w+)\.html", url)
+                if not id_match:
+                    continue
+                olx_id = id_match.group(1)
+
+                title_el = article.find("h2") or article.find("h3") or article.find("h1")
+                title = title_el.get_text(strip=True) if title_el else ""
+
+                # Price: h3 that contains digits (not the title h2)
+                price_eur = None
+                for h3 in article.find_all("h3"):
+                    text = h3.get_text(strip=True).replace(" ", "")
+                    if re.match(r"^[\d.]+$", text):
+                        price_eur = _safe_float(text)
+                        break
+
+                # Specs from dt/dd pairs
+                specs: dict = {}
+                dts = article.find_all("dt")
+                dds = article.find_all("dd")
+                for dt, dd in zip(dts, dds):
+                    key = dt.get_text(strip=True)
+                    val = dd.get_text(strip=True)
+                    field = SV_CARD_FIELDS.get(key)
+                    if field:
+                        specs[field] = val
+
+                year = _safe_int(specs.get("year"))
+                mileage_raw = specs.get("mileage_km", "")
+                mileage_km = _safe_int(mileage_raw.replace("km", "").strip()) if mileage_raw else None
+
+                brand = _extract_brand_from_title(title)
+
+                listings.append(RawListing(
+                    olx_id=olx_id,
+                    url=url,
+                    title=title,
+                    price_eur=price_eur,
+                    brand=brand,
+                    year=year,
+                    mileage_km=mileage_km,
+                    fuel_type=specs.get("fuel_type"),
+                    transmission=specs.get("transmission"),
+                    source="standvirtual",
+                ))
+            except Exception as e:
+                logger.debug("Error parsing SV article: %s", e)
+
+        logger.info("Parsed %d listings from StandVirtual search page", len(listings))
+        return listings
+
+    # ------------------------------------------------------------------
+    # Detail & enrichment (delegate to OlxScraper)
+    # ------------------------------------------------------------------
+
+    def scrape_listing_detail(self, url: str) -> dict:
+        return self._olx_scraper.scrape_standvirtual_detail(url)
+
+    def _enrich_one(self, listing: RawListing, on_ready=None) -> bool:
+        if self._stop_event.is_set() or not listing.url:
+            return False
+        self._delay()
+        details = self.scrape_listing_detail(listing.url)
+        _merge_details(listing, details)
+        if on_ready and listing.description:
+            on_ready(listing)
+        return True
+
+    def _enrich_batch(self, listings: list[RawListing]) -> tuple[int, int]:
+        return self._olx_scraper._enrich_batch(listings)
+
+    # ------------------------------------------------------------------
+    # Full scrape
+    # ------------------------------------------------------------------
+
+    def scrape_all(self, enrich_details: bool = True,
+                   on_batch_ready=None) -> list[RawListing]:
+        all_listings = []
+        for page in range(1, self.config.max_pages + 1):
+            page_listings = self.scrape_search_page(page)
+            if page_listings is None:
+                break
+            if not page_listings:
+                logger.info("SV: no more listings at page %d, stopping", page)
+                break
+
+            if enrich_details:
+                ok, fail = self._enrich_batch(page_listings)
+                logger.info("SV page %d: %d listings, details ok=%d fail=%d",
+                            page, len(page_listings), ok, fail)
+            else:
+                logger.info("SV page %d: %d listings", page, len(page_listings))
+
+            all_listings.extend(page_listings)
+            if on_batch_ready:
+                on_batch_ready(page_listings)
+
+            if self._stop_event.is_set():
+                logger.warning("SV stopping early — blocked. Got %d listings.", len(all_listings))
+                break
+
+            self._delay()
+
+        logger.info("StandVirtual scraping complete: %d total listings", len(all_listings))
+        return all_listings
+
+    def close(self):
+        self._olx_scraper.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()

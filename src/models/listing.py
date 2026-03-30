@@ -56,6 +56,9 @@ class Listing(Base):
     customs_cleared = Column(Boolean)           # Import: customs/legalization done
     estimated_repair_cost_eur = Column(Integer) # Rough repair cost estimate from description
 
+    source = Column(String, default="olx")     # "olx" or "standvirtual"
+    duplicate_of = Column(String)              # olx_id of the canonical listing (fuzzy dedup)
+
     price_snapshots = relationship("PriceSnapshot", back_populates="listing", lazy="dynamic")
 
 
@@ -110,6 +113,7 @@ class UnmatchedListing(Base):
     seller_type = Column(String)
     description = Column(Text)
     reason = Column(String)              # "no_year", "no_generation_match"
+    source = Column(String, default="olx")     # "olx" or "standvirtual"
     first_seen_at = Column(DateTime, default=datetime.utcnow)
     last_seen_at = Column(DateTime, default=datetime.utcnow)
     is_active = Column(Boolean, default=True)

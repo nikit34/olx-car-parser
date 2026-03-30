@@ -55,11 +55,22 @@ def init_db(db_path: str | None = None):
         ("customs_cleared", "BOOLEAN"),
         ("estimated_repair_cost_eur", "INTEGER"),
         ("llm_description_hash", "TEXT"),
+        ("source", "TEXT DEFAULT 'olx'"),
+        ("duplicate_of", "TEXT"),
+    ]
+    _migrate_unmatched_columns = [
+        ("source", "TEXT DEFAULT 'olx'"),
     ]
     with engine.connect() as conn:
         for col_name, col_type in _migrate_columns:
             try:
                 conn.execute(text(f"ALTER TABLE listings ADD COLUMN {col_name} {col_type}"))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+        for col_name, col_type in _migrate_unmatched_columns:
+            try:
+                conn.execute(text(f"ALTER TABLE unmatched_listings ADD COLUMN {col_name} {col_type}"))
                 conn.commit()
             except Exception:
                 conn.rollback()

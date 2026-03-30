@@ -125,6 +125,10 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
     signals = []
     active = listings_df[listings_df["is_active"]].copy() if "is_active" in listings_df.columns else listings_df.copy()
 
+    # Exclude cross-platform duplicates from stats
+    if "duplicate_of" in active.columns:
+        active = active[active["duplicate_of"].isna()].copy()
+
     active["generation"] = active.apply(
         lambda r: get_generation(r["brand"], r["model"], r.get("year")), axis=1
     )

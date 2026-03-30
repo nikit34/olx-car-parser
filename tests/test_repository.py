@@ -9,6 +9,7 @@ from src.storage.repository import (
     upsert_unmatched,
     mark_inactive,
     compute_market_stats,
+    deduplicate_cross_platform,
     get_listings_df,
     get_unmatched_df,
 )
@@ -137,3 +138,73 @@ class TestGetDataFrames:
         df = get_unmatched_df(db_session)
         assert len(df) == 1
         assert df.iloc[0]["reason"] == "no_generation_match"
+
+
+class TestDeduplicateCrossPlatform:
+    def _make_listing(self, db_session, olx_id, source, brand="Volkswagen",
+                      model="Golf", year=2015, mileage=100000, price=12000,
+                      district="Porto"):
+        data = {
+            "olx_id": olx_id,
+            "url": f"https://{'standvirtual.com' if source == 'standvirtual' else 'olx.pt'}/{olx_id}",
+            "brand": brand, "model": model, "year": year, "generation": "Mk7",
+            "mileage_km": mileage, "city": district, "district": district,
+            "source": source,
+        }
+        listing = upsert_listing(db_session, data)
+        add_price_snapshot(db_session, listing.id, price)
+        return listing
+
+    def test_marks_duplicate_when_same_car_on_both(self, db_session):
+        self._make_listing(db_session, "olx-1", "olx")
+        self._make_listing(db_session, "sv-1", "standvirtual")
+        db_session.commit()
+
+        count = deduplicate_cross_platform(db_session)
+        assert count == 1
+
+        olx = db_session.query(Listing).filter_by(olx_id="olx-1").one()
+        sv = db_session.query(Listing).filter_by(olx_id="sv-1").one()
+        # One should be marked as duplicate of the other
+        assert (olx.duplicate_of is not None) or (sv.duplicate_of is not None)
+
+    def test_no_dedup_when_different_year(self, db_session):
+        self._make_listing(db_session, "olx-2", "olx", year=2015)
+        self._make_listing(db_session, "sv-2", "standvirtual", year=2018)
+        db_session.commit()
+
+        count = deduplicate_cross_platform(db_session)
+        assert count == 0
+
+    def test_no_dedup_when_mileage_too_different(self, db_session):
+        self._make_listing(db_session, "olx-3", "olx", mileage=100000)
+        self._make_listing(db_session, "sv-3", "standvirtual", mileage=200000)
+        db_session.commit()
+
+        count = deduplicate_cross_platform(db_session)
+        assert count == 0
+
+    def test_no_dedup_when_price_too_different(self, db_session):
+        self._make_listing(db_session, "olx-4", "olx", price=10000)
+        self._make_listing(db_session, "sv-4", "standvirtual", price=20000)
+        db_session.commit()
+
+        count = deduplicate_cross_platform(db_session)
+        assert count == 0
+
+    def test_no_dedup_within_same_platform(self, db_session):
+        self._make_listing(db_session, "olx-5a", "olx")
+        self._make_listing(db_session, "olx-5b", "olx")
+        db_session.commit()
+
+        count = deduplicate_cross_platform(db_session)
+        assert count == 0
+
+    def test_dedup_with_close_price_and_mileage(self, db_session):
+        """5% difference in price and mileage should still match."""
+        self._make_listing(db_session, "olx-6", "olx", price=10000, mileage=100000)
+        self._make_listing(db_session, "sv-6", "standvirtual", price=10500, mileage=105000)
+        db_session.commit()
+
+        count = deduplicate_cross_platform(db_session)
+        assert count == 1

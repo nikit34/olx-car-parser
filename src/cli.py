@@ -17,12 +17,12 @@ from rich.table import Table
 
 _LOCK_PATH = Path(__file__).resolve().parent.parent / "data" / "scrape.lock"
 
-from src.parser.scraper import OlxScraper, ScraperConfig
+from src.parser.scraper import OlxScraper, StandVirtualScraper, ScraperConfig, SV_BASE_URL
 from src.storage.database import get_session, init_db
 from src.models.generations import get_generation
 from src.storage.repository import (
-    add_price_snapshot, compute_market_stats, get_listings_df,
-    mark_inactive, upsert_listing, upsert_unmatched,
+    add_price_snapshot, compute_market_stats, deduplicate_cross_platform,
+    get_listings_df, mark_inactive, upsert_listing, upsert_unmatched,
 )
 
 app = typer.Typer(help="OLX.pt Car Parser — scrape, store, analyze")
@@ -168,6 +168,7 @@ def _db_worker(db_queue: Queue, result: dict):
             "num_owners": corrections.get("num_owners"),
             "customs_cleared": corrections.get("customs_cleared"),
             "estimated_repair_cost_eur": corrections.get("estimated_repair_cost_eur"),
+            "source": getattr(raw, "source", "olx"),
         }
 
         generation = get_generation(raw.brand, raw.model or "", raw.year)
@@ -291,12 +292,27 @@ def scrape(
     with OlxScraper(config) as scraper:
         raw_listings = scraper.scrape_all(on_batch_ready=_on_batch)
 
+    # --- Scrape StandVirtual (same pipeline) ---
+    sv_config = ScraperConfig(
+        base_url=SV_BASE_URL,
+        max_pages=config.max_pages,
+        delay_min=config.delay_min,
+        delay_max=config.delay_max,
+        private_only=True,
+        concurrency=config.concurrency,
+    )
+    log.info("Starting scrape of StandVirtual: up to %d pages...", sv_config.max_pages)
+    with StandVirtualScraper(sv_config) as sv_scraper:
+        sv_listings = sv_scraper.scrape_all(on_batch_ready=_on_batch)
+    raw_listings.extend(sv_listings)
+
     # --- Shutdown: drain pipeline in order ---
 
     # 1. Stop LLM workers
     for _ in llm_procs:
         llm_in.put(None)
-    log.info("Scraping done (%d listings). Waiting for pipeline to drain...", len(raw_listings))
+    log.info("Scraping done (%d OLX + %d SV = %d total). Waiting for pipeline to drain...",
+             len(raw_listings) - len(sv_listings), len(sv_listings), len(raw_listings))
     llm_shutdown.set()
     for p in llm_procs:
         p.join()
@@ -329,10 +345,13 @@ def scrape(
         log.error("No listings scraped.")
         raise typer.Exit(1)
 
-    # 5. Final: mark inactive & market stats (need full picture)
+    # 5. Final: mark inactive, dedup, & market stats (need full picture)
     final_session = get_session()
-    log.info("Marking inactive and computing market stats...")
+    log.info("Marking inactive, deduplicating, and computing market stats...")
     mark_inactive(final_session, db_result.get("active_ids", set()))
+    dedup_count = deduplicate_cross_platform(final_session)
+    if dedup_count:
+        log.info("Marked %d cross-platform duplicates", dedup_count)
     compute_market_stats(final_session)
     final_session.commit()
     final_session.close()

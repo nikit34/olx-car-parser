@@ -58,6 +58,7 @@ def upsert_unmatched(session: Session, data: dict, reason: str) -> UnmatchedList
         "seller_type": data.get("seller_type"),
         "description": data.get("description"),
         "reason": reason,
+        "source": data.get("source", "olx"),
     }
     if row:
         for k, v in fields.items():
@@ -88,6 +89,75 @@ def mark_inactive(session: Session, active_olx_ids: set[str]):
         Listing.is_active == True,
         ~Listing.olx_id.in_(active_olx_ids),
     ).update({"is_active": False}, synchronize_session="fetch")
+
+
+def deduplicate_cross_platform(session: Session) -> int:
+    """Detect likely duplicates between OLX and StandVirtual.
+
+    When the same car is manually posted on both platforms, match by
+    (brand, model, year, mileage ±10%, price ±10%, district).
+    The earlier-seen listing is canonical; the duplicate gets ``duplicate_of`` set.
+    Returns the number of newly marked duplicates.
+    """
+    import logging
+    log = logging.getLogger("dedup")
+
+    active = session.query(Listing).filter(
+        Listing.is_active == True,
+        Listing.duplicate_of.is_(None),
+        Listing.brand != "",
+        Listing.year.isnot(None),
+        Listing.mileage_km.isnot(None),
+    ).all()
+
+    by_key: dict[tuple, list[Listing]] = {}
+    for l in active:
+        # Group by (brand, model, year, district) for candidate pairs
+        key = (l.brand.lower(), (l.model or "").lower(), l.year, (l.district or "").lower())
+        by_key.setdefault(key, []).append(l)
+
+    marked = 0
+    for key, group in by_key.items():
+        if len(group) < 2:
+            continue
+        # Only check cross-platform pairs
+        olx_listings = [l for l in group if (l.source or "olx") == "olx"]
+        sv_listings = [l for l in group if (l.source or "olx") == "standvirtual"]
+        if not olx_listings or not sv_listings:
+            continue
+
+        for sv in sv_listings:
+            for olx in olx_listings:
+                if sv.duplicate_of or olx.duplicate_of:
+                    continue
+                # Mileage within 10%
+                if sv.mileage_km and olx.mileage_km:
+                    ratio = sv.mileage_km / olx.mileage_km if olx.mileage_km else 0
+                    if not (0.9 <= ratio <= 1.1):
+                        continue
+                # Price within 10% (compare latest snapshots)
+                sv_price = sv.price_snapshots.order_by(PriceSnapshot.scraped_at.desc()).first()
+                olx_price = olx.price_snapshots.order_by(PriceSnapshot.scraped_at.desc()).first()
+                if sv_price and olx_price and sv_price.price_eur and olx_price.price_eur:
+                    p_ratio = sv_price.price_eur / olx_price.price_eur
+                    if not (0.9 <= p_ratio <= 1.1):
+                        continue
+                # Match! Keep whichever was seen first as canonical
+                if (olx.first_seen_at or datetime.max) <= (sv.first_seen_at or datetime.max):
+                    sv.duplicate_of = olx.olx_id
+                    log.info("Dedup: SV %s is duplicate of OLX %s (%s %s %s)",
+                             sv.olx_id, olx.olx_id, sv.brand, sv.model, sv.year)
+                else:
+                    olx.duplicate_of = sv.olx_id
+                    log.info("Dedup: OLX %s is duplicate of SV %s (%s %s %s)",
+                             olx.olx_id, sv.olx_id, sv.brand, sv.model, sv.year)
+                marked += 1
+                break  # each SV listing matches at most one OLX listing
+
+    if marked:
+        session.commit()
+        log.info("Dedup: marked %d cross-platform duplicates", marked)
+    return marked
 
 
 def compute_market_stats(session: Session, target_date: date | None = None):
@@ -190,6 +260,8 @@ def get_listings_df(session: Session) -> pd.DataFrame:
             "num_owners": l.num_owners,
             "customs_cleared": l.customs_cleared,
             "estimated_repair_cost_eur": l.estimated_repair_cost_eur,
+            "source": l.source or "olx",
+            "duplicate_of": l.duplicate_of,
         })
     return pd.DataFrame(rows)
 
@@ -217,7 +289,8 @@ def get_unmatched_df(session: Session) -> pd.DataFrame:
         "brand": u.brand, "model": u.model, "year": u.year,
         "price_eur": u.price_eur, "mileage_km": u.mileage_km,
         "fuel_type": u.fuel_type, "city": u.city, "district": u.district,
-        "reason": u.reason, "first_seen_at": u.first_seen_at,
+        "reason": u.reason, "source": u.source or "olx",
+        "first_seen_at": u.first_seen_at,
     } for u in q])
 
 
