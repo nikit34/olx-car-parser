@@ -26,7 +26,8 @@ needs_repair(bool), repair_details(str), estimated_repair_cost_eur(int), \
 mileage_in_description_km(int), customs_cleared(bool), imported(bool), \
 mechanical_condition("excellent"/"good"/"fair"/"poor"), paint_condition(same), \
 suspicious_signs(list), extras(list), issues(list), reason_for_sale(str).
-Rules: mileage_in_description_km=any km mentioned (e.g. "150 mil km"→150000). \
+Rules: mileage_in_description_km=exact km as integer ("4300 km"→4300, "150 mil km"→150000, \
+"89.500km"→89500, "4.300km"→4300). "mil"=thousand ONLY when written as a separate word. \
 needs_repair=true if ANY repair/damage mentioned. had_accident=true if collision mentioned. \
 customs_cleared=look for "desalfandegado","legalizado","por legalizar". \
 estimated_repair_cost_eur=estimate from issues (e.g. embraiagem→800).
@@ -192,16 +193,25 @@ def correct_listing_data(listing) -> dict:
     if desc_km and isinstance(desc_km, (int, float)) and desc_km > 0:
         desc_km = int(desc_km)
         if attr_km and attr_km > 0:
-            # Description mentions significantly higher mileage → attribute is suspect
-            if desc_km > attr_km * 1.3 and (desc_km - attr_km) > 5000:
+            ratio = desc_km / attr_km
+            # LLM "mil" conversion error: desc ≈ attr × 100 (e.g. 4300 → 430000)
+            if 80 <= ratio <= 120:
+                corrections["real_mileage_km"] = attr_km
+                logger.info(
+                    "Mileage 100x error for %s: attribute=%d, description=%d "
+                    "→ using attribute (LLM likely mishandled 'mil')",
+                    listing.url, attr_km, desc_km,
+                )
+            # Description genuinely higher — attribute may be stale/wrong
+            elif desc_km > attr_km * 1.3 and (desc_km - attr_km) > 5000:
                 corrections["real_mileage_km"] = desc_km
                 logger.info(
                     "Mileage mismatch for %s: attribute=%d, description=%d → using description",
                     listing.url, attr_km, desc_km,
                 )
             else:
-                # Attribute >= description or close — use description as the detailed source
-                corrections["real_mileage_km"] = desc_km
+                # Values are close — use attribute (structured data)
+                corrections["real_mileage_km"] = attr_km
         elif not attr_km or attr_km == 0:
             # No attribute mileage but description has it
             corrections["real_mileage_km"] = desc_km
