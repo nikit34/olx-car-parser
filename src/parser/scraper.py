@@ -456,6 +456,7 @@ class OlxScraper:
         if self._stop_event.is_set() or not listing.url:
             return False
         self._delay()
+        logger.debug("Fetching detail: %s", listing.url)
         if "standvirtual.com" in listing.url:
             details = self.scrape_standvirtual_detail(listing.url)
         else:
@@ -465,27 +466,39 @@ class OlxScraper:
             on_ready(listing)
         return True
 
+    _ENRICH_TIMEOUT = 90  # seconds — max time per detail page (incl. retries)
+
     def _enrich_batch(self, listings: list[RawListing]) -> tuple[int, int]:
         """Fetch detail pages for a batch of listings. Returns (ok, failed)."""
         workers = self.config.concurrency
         enriched = 0
         failed = 0
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            future_to_idx = {
-                executor.submit(self._enrich_one, listing): i
-                for i, listing in enumerate(listings)
+            future_to_listing = {
+                executor.submit(self._enrich_one, listing): listing
+                for listing in listings
             }
-            for future in as_completed(future_to_idx):
-                try:
-                    if future.result():
-                        enriched += 1
-                    else:
+            try:
+                for future in as_completed(future_to_listing,
+                                           timeout=self._ENRICH_TIMEOUT):
+                    try:
+                        if future.result():
+                            enriched += 1
+                        else:
+                            failed += 1
+                    except Exception:
                         failed += 1
-                except Exception:
+                    if self._stop_event.is_set():
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        break
+            except TimeoutError:
+                not_done = [f for f in future_to_listing if not f.done()]
+                for f in not_done:
+                    url = future_to_listing[f].url
+                    logger.warning("Detail fetch timed out (>%ds): %s",
+                                   self._ENRICH_TIMEOUT, url)
+                    f.cancel()
                     failed += 1
-                if self._stop_event.is_set():
-                    executor.shutdown(wait=False, cancel_futures=True)
-                    break
         return enriched, failed
 
     def scrape_all(self, enrich_details: bool = True,
