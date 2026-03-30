@@ -169,6 +169,7 @@ def _db_worker(db_queue: Queue, result: dict):
             "customs_cleared": corrections.get("customs_cleared"),
             "estimated_repair_cost_eur": corrections.get("estimated_repair_cost_eur"),
             "source": getattr(raw, "source", "olx"),
+            "posted_at": getattr(raw, "_posted_at", None),
         }
 
         generation = get_generation(raw.brand, raw.model or "", raw.year)

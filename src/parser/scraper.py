@@ -322,6 +322,11 @@ class OlxScraper:
         if desc_el:
             details["description"] = desc_el.get_text(separator="\n", strip=True)
 
+        # Posted/updated date
+        posted_el = soup.select_one("[data-testid='ad-posted-at']")
+        if posted_el:
+            details["posted_at"] = _parse_pt_date(posted_el.get_text(strip=True))
+
         if "olx_id" not in details:
             footer = soup.select_one("[data-testid='ad-footer-bar-section']")
             if footer:
@@ -426,6 +431,14 @@ class OlxScraper:
             items = [el.get_text(strip=True) for el in breadcrumb.find_all("a")]
             # Breadcrumbs: Carros > Brand > Model (no location in standvirtual breadcrumbs)
 
+        # Posted/updated date (SV has it as plain text: "29 de março de 2026 às 22:17")
+        for p in soup.find_all("p"):
+            pt_text = p.get_text(strip=True)
+            parsed = _parse_pt_date(pt_text)
+            if parsed:
+                details["posted_at"] = parsed
+                break
+
         # Extract olx_id from URL
         id_match = re.search(r"ID(\w+)\.html", url)
         if id_match:
@@ -529,7 +542,39 @@ class OlxScraper:
 # Helpers
 # ---------------------------------------------------------------------------
 
+_PT_MONTHS = {
+    "janeiro": 1, "fevereiro": 2, "março": 3, "abril": 4,
+    "maio": 5, "junho": 6, "julho": 7, "agosto": 8,
+    "setembro": 9, "outubro": 10, "novembro": 11, "dezembro": 12,
+}
+
+
+def _parse_pt_date(text: str):
+    """Parse a Portuguese date string like '29 de março de 2026 às 22:17'.
+
+    Returns a ``datetime`` or *None*.
+    """
+    from datetime import datetime
+    m = re.search(r"(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})", text)
+    if not m:
+        return None
+    day, month_name, year = int(m.group(1)), m.group(2).lower(), int(m.group(3))
+    month = _PT_MONTHS.get(month_name)
+    if not month:
+        return None
+    hour, minute = 0, 0
+    time_m = re.search(r"(\d{1,2}):(\d{2})", text)
+    if time_m:
+        hour, minute = int(time_m.group(1)), int(time_m.group(2))
+    try:
+        return datetime(year, month, day, hour, minute)
+    except ValueError:
+        return None
+
 def _merge_details(listing: RawListing, details: dict):
+    # Store posted_at separately (not a RawListing field — handled in DB layer)
+    if "posted_at" in details:
+        listing._posted_at = details.pop("posted_at")
     for key, value in details.items():
         if value is not None and hasattr(listing, key):
             current = getattr(listing, key)

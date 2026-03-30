@@ -4,6 +4,8 @@ import re
 
 import pytest
 
+from datetime import datetime
+
 from src.parser.scraper import (
     OlxScraper,
     RawListing,
@@ -14,6 +16,7 @@ from src.parser.scraper import (
     _fix_mileage,
     _merge_details,
     _parse_eur_price,
+    _parse_pt_date,
 )
 
 
@@ -289,3 +292,41 @@ class TestStandVirtualSearchParsing:
         listings = sv._parse_search_page(SV_SEARCH_HTML)
         sv.close()
         assert all(l.source == "standvirtual" for l in listings)
+
+
+# ---------------------------------------------------------------------------
+# Portuguese date parsing
+# ---------------------------------------------------------------------------
+
+class TestParsePtDate:
+    def test_olx_format(self):
+        d = _parse_pt_date("Para o topo a 29 de março de 2026")
+        assert d == datetime(2026, 3, 29, 0, 0)
+
+    def test_sv_format_with_time(self):
+        d = _parse_pt_date("29 de março de 2026 às 22:17")
+        assert d == datetime(2026, 3, 29, 22, 17)
+
+    def test_all_months(self):
+        for month_name, month_num in [
+            ("janeiro", 1), ("fevereiro", 2), ("março", 3), ("abril", 4),
+            ("maio", 5), ("junho", 6), ("julho", 7), ("agosto", 8),
+            ("setembro", 9), ("outubro", 10), ("novembro", 11), ("dezembro", 12),
+        ]:
+            d = _parse_pt_date(f"1 de {month_name} de 2025")
+            assert d.month == month_num, f"Failed for {month_name}"
+
+    def test_returns_none_for_garbage(self):
+        assert _parse_pt_date("hello world") is None
+        assert _parse_pt_date("") is None
+
+    def test_olx_detail_posted_at(self):
+        """OLX detail page stores posted_at in _posted_at after merge."""
+        scraper = OlxScraper(ScraperConfig())
+        html = '''<html><body>
+        <div data-testid="ad-posted-at">Para o topo a 15 de fevereiro de 2026</div>
+        </body></html>'''
+        scraper._fetch = lambda url, retries=3: (url, html)
+        d = scraper.scrape_listing_detail("https://www.olx.pt/d/anuncio/test-IDxyz.html")
+        assert d["posted_at"] == datetime(2026, 2, 15, 0, 0)
+        scraper.close()

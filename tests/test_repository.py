@@ -211,10 +211,14 @@ class TestDeduplicateCrossPlatform:
 
     def test_merges_attributes_into_canonical(self, db_session):
         """Canonical listing gets missing fields filled from the duplicate."""
-        # OLX listing has no color/horsepower
+        from datetime import datetime
+
+        # OLX listing: more recently updated, but no color
         olx = self._make_listing(db_session, "olx-7", "olx")
-        # SV listing has color and horsepower
+        olx.last_seen_at = datetime(2026, 3, 30)
+        # SV listing: older, but has color and engine details
         sv = self._make_listing(db_session, "sv-7", "standvirtual")
+        sv.last_seen_at = datetime(2026, 3, 20)
         sv.color = "Vermelho"
         sv.horsepower = 130
         sv.engine_cc = 1598
@@ -222,6 +226,34 @@ class TestDeduplicateCrossPlatform:
 
         deduplicate_cross_platform(db_session)
 
+        # OLX is canonical (more recent), gets SV's attributes
         canonical = db_session.query(Listing).filter_by(olx_id="olx-7").one()
+        assert canonical.duplicate_of is None
         assert canonical.color == "Vermelho"
         assert canonical.engine_cc == 1598
+
+    def test_most_recently_updated_is_canonical(self, db_session):
+        """The listing with the latest last_seen_at becomes canonical."""
+        from datetime import datetime, timedelta
+
+        olx = self._make_listing(db_session, "olx-8", "olx")
+        sv = self._make_listing(db_session, "sv-8", "standvirtual")
+        # SV was updated more recently
+        olx.last_seen_at = datetime(2026, 3, 1)
+        sv.last_seen_at = datetime(2026, 3, 28)
+        # SV has a fresher description, OLX has color
+        sv.description = "Carro recém-revisado, tudo em ordem"
+        olx.color = "Preto"
+        db_session.commit()
+
+        deduplicate_cross_platform(db_session)
+
+        sv = db_session.query(Listing).filter_by(olx_id="sv-8").one()
+        olx = db_session.query(Listing).filter_by(olx_id="olx-8").one()
+        # SV is canonical (more recent), OLX is duplicate
+        assert olx.duplicate_of == "sv-8"
+        assert sv.duplicate_of is None
+        # SV got OLX's color
+        assert sv.color == "Preto"
+        # SV kept its own description
+        assert "recém-revisado" in sv.description

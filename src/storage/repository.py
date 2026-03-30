@@ -14,15 +14,18 @@ def upsert_listing(session: Session, data: dict) -> Listing:
     """Insert or update a listing by olx_id. Returns the Listing object."""
     listing = session.query(Listing).filter_by(olx_id=data["olx_id"]).first()
     now = datetime.utcnow()
+    # Use the site-parsed date if available, fall back to scrape time
+    posted_at = data.pop("posted_at", None)
+    seen_at = posted_at or now
 
     if listing:
         for key, value in data.items():
             if key != "olx_id" and value is not None:
                 setattr(listing, key, value)
-        listing.last_seen_at = now
+        listing.last_seen_at = seen_at
         listing.is_active = True
     else:
-        listing = Listing(**data, first_seen_at=now, last_seen_at=now, is_active=True)
+        listing = Listing(**data, first_seen_at=seen_at, last_seen_at=seen_at, is_active=True)
         session.add(listing)
 
     session.flush()
@@ -162,8 +165,8 @@ def deduplicate_cross_platform(session: Session) -> int:
                     p_ratio = sv_price.price_eur / olx_price.price_eur
                     if not (0.9 <= p_ratio <= 1.1):
                         continue
-                # Match! Keep whichever was seen first as canonical
-                if (olx.first_seen_at or datetime.max) <= (sv.first_seen_at or datetime.max):
+                # Match! Keep the most recently updated as canonical
+                if (olx.last_seen_at or datetime.min) >= (sv.last_seen_at or datetime.min):
                     canonical, duplicate = olx, sv
                 else:
                     canonical, duplicate = sv, olx
