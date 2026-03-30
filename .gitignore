@@ -16,6 +16,12 @@ build/
 .ruff_cache/
 .pytest_cache/
 
+# Model weights & adapters (too large for git, use HuggingFace/releases)
+*.gguf
+*.safetensors
+data/car-parser-fused*/
+data/mlx_adapters*/
+
 # Local IDE/agent state
 .claude/
 .cursor/
