@@ -208,3 +208,20 @@ class TestDeduplicateCrossPlatform:
 
         count = deduplicate_cross_platform(db_session)
         assert count == 1
+
+    def test_merges_attributes_into_canonical(self, db_session):
+        """Canonical listing gets missing fields filled from the duplicate."""
+        # OLX listing has no color/horsepower
+        olx = self._make_listing(db_session, "olx-7", "olx")
+        # SV listing has color and horsepower
+        sv = self._make_listing(db_session, "sv-7", "standvirtual")
+        sv.color = "Vermelho"
+        sv.horsepower = 130
+        sv.engine_cc = 1598
+        db_session.commit()
+
+        deduplicate_cross_platform(db_session)
+
+        canonical = db_session.query(Listing).filter_by(olx_id="olx-7").one()
+        assert canonical.color == "Vermelho"
+        assert canonical.engine_cc == 1598

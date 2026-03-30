@@ -91,12 +91,32 @@ def mark_inactive(session: Session, active_olx_ids: set[str]):
     ).update({"is_active": False}, synchronize_session="fetch")
 
 
+_MERGE_FIELDS = [
+    "model", "engine_cc", "fuel_type", "horsepower", "transmission",
+    "segment", "doors", "seats", "color", "condition", "origin",
+    "registration_month", "registration_plate", "city", "district",
+    "seller_type", "description", "llm_extras", "llm_description_hash",
+    "needs_repair", "had_accident", "real_mileage_km", "num_owners",
+    "customs_cleared", "estimated_repair_cost_eur", "generation",
+]
+
+
+def _merge_into_canonical(canonical: "Listing", duplicate: "Listing"):
+    """Fill empty fields on the canonical listing from the duplicate."""
+    for field in _MERGE_FIELDS:
+        canon_val = getattr(canonical, field, None)
+        dup_val = getattr(duplicate, field, None)
+        if (canon_val is None or canon_val == "") and dup_val not in (None, ""):
+            setattr(canonical, field, dup_val)
+
+
 def deduplicate_cross_platform(session: Session) -> int:
     """Detect likely duplicates between OLX and StandVirtual.
 
     When the same car is manually posted on both platforms, match by
     (brand, model, year, mileage ±10%, price ±10%, district).
     The earlier-seen listing is canonical; the duplicate gets ``duplicate_of`` set.
+    Missing attributes on the canonical listing are filled from the duplicate.
     Returns the number of newly marked duplicates.
     """
     import logging
@@ -144,13 +164,15 @@ def deduplicate_cross_platform(session: Session) -> int:
                         continue
                 # Match! Keep whichever was seen first as canonical
                 if (olx.first_seen_at or datetime.max) <= (sv.first_seen_at or datetime.max):
-                    sv.duplicate_of = olx.olx_id
-                    log.info("Dedup: SV %s is duplicate of OLX %s (%s %s %s)",
-                             sv.olx_id, olx.olx_id, sv.brand, sv.model, sv.year)
+                    canonical, duplicate = olx, sv
                 else:
-                    olx.duplicate_of = sv.olx_id
-                    log.info("Dedup: OLX %s is duplicate of SV %s (%s %s %s)",
-                             olx.olx_id, sv.olx_id, sv.brand, sv.model, sv.year)
+                    canonical, duplicate = sv, olx
+                duplicate.duplicate_of = canonical.olx_id
+                _merge_into_canonical(canonical, duplicate)
+                log.info("Dedup: %s %s is duplicate of %s %s (%s %s %s)",
+                         duplicate.source, duplicate.olx_id,
+                         canonical.source, canonical.olx_id,
+                         sv.brand, sv.model, sv.year)
                 marked += 1
                 break  # each SV listing matches at most one OLX listing
 
