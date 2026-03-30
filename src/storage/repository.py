@@ -86,6 +86,14 @@ def get_enriched_hashes(session: Session) -> dict[str, str]:
     return {r[0]: r[1] for r in rows}
 
 
+def get_duplicate_ids(session: Session) -> set[str]:
+    """Return olx_ids of listings marked as duplicates."""
+    rows = session.query(Listing.olx_id).filter(
+        Listing.duplicate_of.isnot(None),
+    ).all()
+    return {r[0] for r in rows}
+
+
 def mark_inactive(session: Session, active_olx_ids: set[str]):
     """Mark listings not seen in this scrape as inactive."""
     session.query(Listing).filter(
@@ -129,8 +137,10 @@ def deduplicate_cross_platform(session: Session) -> int:
         Listing.is_active == True,
         Listing.duplicate_of.is_(None),
         Listing.brand != "",
+        Listing.model != "",
         Listing.year.isnot(None),
         Listing.mileage_km.isnot(None),
+        Listing.mileage_km != 0,
     ).all()
 
     by_key: dict[tuple, list[Listing]] = {}
@@ -153,11 +163,12 @@ def deduplicate_cross_platform(session: Session) -> int:
             for olx in olx_listings:
                 if sv.duplicate_of or olx.duplicate_of:
                     continue
-                # Mileage within 10%
-                if sv.mileage_km and olx.mileage_km:
-                    ratio = sv.mileage_km / olx.mileage_km if olx.mileage_km else 0
-                    if not (0.9 <= ratio <= 1.1):
-                        continue
+                # Mileage within 10% (require both to have mileage)
+                if not sv.mileage_km or not olx.mileage_km:
+                    continue
+                ratio = sv.mileage_km / olx.mileage_km
+                if not (0.9 <= ratio <= 1.1):
+                    continue
                 # Price within 10% (compare latest snapshots)
                 sv_price = sv.price_snapshots.order_by(PriceSnapshot.scraped_at.desc()).first()
                 olx_price = olx.price_snapshots.order_by(PriceSnapshot.scraped_at.desc()).first()

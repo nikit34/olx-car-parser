@@ -22,7 +22,8 @@ from src.storage.database import get_session, init_db
 from src.models.generations import get_generation
 from src.storage.repository import (
     add_price_snapshot, compute_market_stats, deduplicate_cross_platform,
-    get_listings_df, mark_inactive, upsert_listing, upsert_unmatched,
+    get_duplicate_ids, get_listings_df, mark_inactive, upsert_listing,
+    upsert_unmatched,
 )
 
 app = typer.Typer(help="OLX.pt Car Parser — scrape, store, analyze")
@@ -241,8 +242,10 @@ def scrape(
     # Load existing enrichment hashes to skip unchanged descriptions
     from src.storage.repository import get_enriched_hashes
     enriched_hashes = get_enriched_hashes(session)
+    duplicate_ids = get_duplicate_ids(session)
     session.close()
-    log.info("Already enriched: %d listings in DB", len(enriched_hashes))
+    log.info("Already enriched: %d listings, %d duplicates in DB",
+             len(enriched_hashes), len(duplicate_ids))
 
     # --- Streaming pipeline: Scraper -> LLM -> DB (all run in parallel) ---
 
@@ -279,6 +282,10 @@ def scrape(
         for listing in batch:
             raw_by_id[listing.olx_id] = listing
             if not listing.description or len(listing.description.strip()) < 20:
+                db_queue.put((listing, None))
+                continue
+            if listing.olx_id in duplicate_ids:
+                skipped_llm += 1
                 db_queue.put((listing, None))
                 continue
             h = _desc_hash(listing.description)
