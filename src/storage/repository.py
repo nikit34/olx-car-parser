@@ -96,10 +96,13 @@ def get_duplicate_ids(session: Session) -> set[str]:
 
 def mark_inactive(session: Session, active_olx_ids: set[str]):
     """Mark listings not seen in this scrape as inactive."""
-    session.query(Listing).filter(
+    import logging
+    log = logging.getLogger(__name__)
+    count = session.query(Listing).filter(
         Listing.is_active == True,
         ~Listing.olx_id.in_(active_olx_ids),
-    ).update({"is_active": False}, synchronize_session="fetch")
+    ).update({"is_active": False}, synchronize_session="evaluate")
+    log.info("Marked %d listings as inactive", count)
 
 
 _MERGE_FIELDS = [
@@ -143,6 +146,26 @@ def deduplicate_cross_platform(session: Session) -> int:
         Listing.mileage_km != 0,
     ).all()
 
+    log.info("Dedup: loaded %d active candidates", len(active))
+
+    # Pre-fetch latest price per listing in one query (avoid N+1 lazy loads)
+    latest_sub = (
+        session.query(
+            PriceSnapshot.listing_id,
+            func.max(PriceSnapshot.scraped_at).label("max_at"),
+        )
+        .group_by(PriceSnapshot.listing_id)
+        .subquery()
+    )
+    price_rows = (
+        session.query(PriceSnapshot.listing_id, PriceSnapshot.price_eur)
+        .join(latest_sub,
+              (PriceSnapshot.listing_id == latest_sub.c.listing_id)
+              & (PriceSnapshot.scraped_at == latest_sub.c.max_at))
+        .all()
+    )
+    latest_prices: dict[int, float | None] = {lid: price for lid, price in price_rows}
+
     by_key: dict[tuple, list[Listing]] = {}
     for l in active:
         # Group by (brand, model, year, district) for candidate pairs
@@ -169,11 +192,11 @@ def deduplicate_cross_platform(session: Session) -> int:
                 ratio = sv.mileage_km / olx.mileage_km
                 if not (0.9 <= ratio <= 1.1):
                     continue
-                # Price within 10% (compare latest snapshots)
-                sv_price = sv.price_snapshots.order_by(PriceSnapshot.scraped_at.desc()).first()
-                olx_price = olx.price_snapshots.order_by(PriceSnapshot.scraped_at.desc()).first()
-                if sv_price and olx_price and sv_price.price_eur and olx_price.price_eur:
-                    p_ratio = sv_price.price_eur / olx_price.price_eur
+                # Price within 10% (use pre-fetched latest prices)
+                sv_price = latest_prices.get(sv.id)
+                olx_price = latest_prices.get(olx.id)
+                if sv_price and olx_price:
+                    p_ratio = sv_price / olx_price
                     if not (0.9 <= p_ratio <= 1.1):
                         continue
                 # Match! Keep the most recently updated as canonical
@@ -198,65 +221,77 @@ def deduplicate_cross_platform(session: Session) -> int:
 
 def compute_market_stats(session: Session, target_date: date | None = None):
     """Compute and store daily aggregate stats per brand+model."""
+    import logging
+    from statistics import median as _median
+    log = logging.getLogger(__name__)
+
     target_date = target_date or date.today()
 
-    stmt = (
-        select(
-            Listing.brand,
-            Listing.model,
-            func.min(Listing.year).label("year_from"),
-            func.max(Listing.year).label("year_to"),
-            func.count(PriceSnapshot.id).label("listing_count"),
-            func.avg(PriceSnapshot.price_eur).label("avg_price_eur"),
-            func.min(PriceSnapshot.price_eur).label("min_price_eur"),
-            func.max(PriceSnapshot.price_eur).label("max_price_eur"),
+    # Single query: all (brand, model, year, price) for active listings
+    rows = (
+        session.query(
+            Listing.brand, Listing.model, Listing.year, PriceSnapshot.price_eur,
         )
         .join(PriceSnapshot, PriceSnapshot.listing_id == Listing.id)
-        .where(Listing.is_active == True)
-        .where(PriceSnapshot.price_eur.isnot(None))
-        .group_by(Listing.brand, Listing.model)
+        .filter(Listing.is_active == True, PriceSnapshot.price_eur.isnot(None))
+        .all()
     )
+    log.info("Market stats: fetched %d price rows", len(rows))
 
-    rows = session.execute(stmt).all()
+    # Aggregate in Python — no N+1 queries
+    groups: dict[tuple[str, str], dict] = {}
+    for brand, model, year, price in rows:
+        key = (brand, model)
+        if key not in groups:
+            groups[key] = {"prices": [], "years": []}
+        groups[key]["prices"].append(float(price))
+        if year is not None:
+            groups[key]["years"].append(year)
 
-    for row in rows:
-        prices = [
-            p for (p,) in session.query(PriceSnapshot.price_eur)
-            .join(Listing)
-            .filter(
-                Listing.brand == row.brand,
-                Listing.model == row.model,
-                Listing.is_active == True,
-                PriceSnapshot.price_eur.isnot(None),
-            ).all()
-        ]
-        median = float(pd.Series(prices).median()) if prices else None
+    # Pre-fetch existing MarketStats for target_date (avoid N queries in loop)
+    existing_map: dict[tuple, MarketStats] = {}
+    for ms in session.query(MarketStats).filter_by(date=target_date).all():
+        existing_map[(ms.brand, ms.model, ms.year_from, ms.year_to)] = ms
 
-        existing = session.query(MarketStats).filter_by(
-            brand=row.brand, model=row.model,
-            year_from=row.year_from, year_to=row.year_to,
-            date=target_date,
-        ).first()
+    log.info("Market stats: computing for %d brand+model groups...", len(groups))
+
+    for i, ((brand, model), data) in enumerate(groups.items()):
+        prices = data["prices"]
+        years = data["years"]
+
+        median_price = _median(prices) if prices else None
+        avg_price = sum(prices) / len(prices) if prices else None
+        min_price = min(prices) if prices else None
+        max_price = max(prices) if prices else None
+        count = len(prices)
+        year_from = min(years) if years else None
+        year_to = max(years) if years else None
+
+        stats_key = (brand, model, year_from, year_to)
+        existing = existing_map.get(stats_key)
 
         if existing:
-            existing.median_price_eur = median
-            existing.avg_price_eur = row.avg_price_eur
-            existing.min_price_eur = row.min_price_eur
-            existing.max_price_eur = row.max_price_eur
-            existing.listing_count = row.listing_count
+            existing.median_price_eur = median_price
+            existing.avg_price_eur = avg_price
+            existing.min_price_eur = min_price
+            existing.max_price_eur = max_price
+            existing.listing_count = count
         else:
-            session.add(MarketStats(
-                brand=row.brand, model=row.model,
-                year_from=row.year_from, year_to=row.year_to,
+            ms = MarketStats(
+                brand=brand, model=model,
+                year_from=year_from, year_to=year_to,
                 date=target_date,
-                median_price_eur=median,
-                avg_price_eur=row.avg_price_eur,
-                min_price_eur=row.min_price_eur,
-                max_price_eur=row.max_price_eur,
-                listing_count=row.listing_count,
-            ))
+                median_price_eur=median_price,
+                avg_price_eur=avg_price,
+                min_price_eur=min_price,
+                max_price_eur=max_price,
+                listing_count=count,
+            )
+            session.add(ms)
+            existing_map[stats_key] = ms
 
     session.commit()
+    log.info("Market stats: saved %d groups for %s", len(groups), target_date)
 
 
 # ---------------------------------------------------------------------------

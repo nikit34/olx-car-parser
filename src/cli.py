@@ -355,11 +355,13 @@ def scrape(
 
     # 5. Final: mark inactive, dedup, & market stats (need full picture)
     final_session = get_session()
-    log.info("Marking inactive, deduplicating, and computing market stats...")
+    log.info("Marking inactive listings...")
     mark_inactive(final_session, db_result.get("active_ids", set()))
+    log.info("Deduplicating cross-platform...")
     dedup_count = deduplicate_cross_platform(final_session)
     if dedup_count:
         log.info("Marked %d cross-platform duplicates", dedup_count)
+    log.info("Computing market stats...")
     compute_market_stats(final_session)
     final_session.commit()
     final_session.close()
