@@ -104,6 +104,31 @@ def load_from_db() -> tuple[pd.DataFrame, pd.DataFrame] | None:
         return None
 
 
+def _expected_lifespan_km(engine_cc: int | None, fuel_type: str | None) -> float:
+    """Estimated km before major engine overhaul, based on displacement and fuel.
+
+    Smaller engines wear faster per km due to higher RPM under load.
+    Diesel engines typically last ~40% longer than petrol.
+    """
+    is_diesel = bool(fuel_type and "diesel" in str(fuel_type).lower())
+
+    if engine_cc is None or engine_cc <= 0:
+        return 350_000 if is_diesel else 250_000
+
+    if engine_cc < 1000:
+        base = 150_000
+    elif engine_cc < 1400:
+        base = 200_000
+    elif engine_cc < 2000:
+        base = 250_000
+    elif engine_cc < 2500:
+        base = 300_000
+    else:
+        base = 350_000
+
+    return base * 1.4 if is_diesel else float(base)
+
+
 def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.DataFrame:
     """Find undervalued listings and rank by flip potential.
 
@@ -111,6 +136,7 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
     - Undervaluation: regression-based fair price vs actual (fallback to median)
     - Liquidity: how fast this model sells (avg_days_to_sell)
     - Trend: is the market price rising or falling
+    - Engine life: remaining engine lifespan based on mileage, displacement and fuel
     """
     if listings_df.empty:
         return pd.DataFrame()
@@ -151,21 +177,31 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         .reset_index()
     )
 
-    # --- Regression per generation: price ~ year + mileage ---
+    # --- Regression per generation: price ~ year + mileage + engine_cc ---
     gen_regressions = {}
     for (brand, model, gen), group in priced_gen.groupby(["brand", "model", "generation"]):
         subset = group[group["mileage_km"].notna() & group["year"].notna()]
         if len(subset) < 5:
             continue
-        X = np.column_stack([
-            subset["year"].values.astype(float),
-            subset["mileage_km"].values.astype(float),
-            np.ones(len(subset)),
-        ])
+        has_cc = "engine_cc" in subset.columns and subset["engine_cc"].notna().sum() >= len(subset) * 0.5
+        if has_cc:
+            cc_vals = subset["engine_cc"].fillna(subset["engine_cc"].median()).values.astype(float)
+            X = np.column_stack([
+                subset["year"].values.astype(float),
+                subset["mileage_km"].values.astype(float),
+                cc_vals,
+                np.ones(len(subset)),
+            ])
+        else:
+            X = np.column_stack([
+                subset["year"].values.astype(float),
+                subset["mileage_km"].values.astype(float),
+                np.ones(len(subset)),
+            ])
         y = subset["price_eur"].values.astype(float)
         try:
             coeffs, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
-            gen_regressions[(brand, model, gen)] = coeffs
+            gen_regressions[(brand, model, gen)] = (coeffs, has_cc)
         except Exception:
             pass
 
@@ -175,15 +211,25 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         subset = group[group["mileage_km"].notna() & group["year"].notna()]
         if len(subset) < 5:
             continue
-        X = np.column_stack([
-            subset["year"].values.astype(float),
-            subset["mileage_km"].values.astype(float),
-            np.ones(len(subset)),
-        ])
+        has_cc = "engine_cc" in subset.columns and subset["engine_cc"].notna().sum() >= len(subset) * 0.5
+        if has_cc:
+            cc_vals = subset["engine_cc"].fillna(subset["engine_cc"].median()).values.astype(float)
+            X = np.column_stack([
+                subset["year"].values.astype(float),
+                subset["mileage_km"].values.astype(float),
+                cc_vals,
+                np.ones(len(subset)),
+            ])
+        else:
+            X = np.column_stack([
+                subset["year"].values.astype(float),
+                subset["mileage_km"].values.astype(float),
+                np.ones(len(subset)),
+            ])
         y = subset["price_eur"].values.astype(float)
         try:
             coeffs, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
-            model_regressions[(brand, model)] = coeffs
+            model_regressions[(brand, model)] = (coeffs, has_cc)
         except Exception:
             pass
 
@@ -257,12 +303,22 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
 
         # 1. Undervaluation (regression: generation → model fallback → median)
         predicted = None
+        engine_cc = listing.get("engine_cc")
+        fuel_type = listing.get("fuel_type")
+        cc_float = float(engine_cc) if pd.notna(engine_cc) and engine_cc else None
+
         if generation and (brand, model, generation) in gen_regressions and pd.notna(year) and pd.notna(mileage):
-            coeffs = gen_regressions[(brand, model, generation)]
-            predicted = max(coeffs[0] * float(year) + coeffs[1] * float(mileage) + coeffs[2], 0)
+            coeffs, has_cc = gen_regressions[(brand, model, generation)]
+            if has_cc and cc_float:
+                predicted = max(coeffs[0] * float(year) + coeffs[1] * float(mileage) + coeffs[2] * cc_float + coeffs[3], 0)
+            elif not has_cc:
+                predicted = max(coeffs[0] * float(year) + coeffs[1] * float(mileage) + coeffs[2], 0)
         if (predicted is None or predicted <= 0) and (brand, model) in model_regressions and pd.notna(year) and pd.notna(mileage):
-            coeffs = model_regressions[(brand, model)]
-            predicted = max(coeffs[0] * float(year) + coeffs[1] * float(mileage) + coeffs[2], 0)
+            coeffs, has_cc = model_regressions[(brand, model)]
+            if has_cc and cc_float:
+                predicted = max(coeffs[0] * float(year) + coeffs[1] * float(mileage) + coeffs[2] * cc_float + coeffs[3], 0)
+            elif not has_cc:
+                predicted = max(coeffs[0] * float(year) + coeffs[1] * float(mileage) + coeffs[2], 0)
         if predicted is None or predicted <= 0:
             predicted = median
 
@@ -283,6 +339,19 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         else:
             mileage_mult = 1.0
 
+        # 2c. Engine life multiplier — penalize cars near end-of-life for their engine size
+        #     Small engines (< 1.2L) wear out faster, so 200k km on a 1.0L is worse than on a 2.0L
+        if pd.notna(mileage) and mileage > 0:
+            lifespan = _expected_lifespan_km(
+                int(engine_cc) if pd.notna(engine_cc) and engine_cc else None,
+                fuel_type if pd.notna(fuel_type) else None,
+            )
+            remaining_pct = max(0, 1 - float(mileage) / lifespan)
+            # 0% remaining → 0.3x, 50% → 1.0x, 80%+ → 1.3x
+            engine_life_mult = min(0.3 + remaining_pct * 1.4, 1.5)
+        else:
+            engine_life_mult = 1.0
+
         # 3. Liquidity multiplier (30 days = 1.0 baseline)
         days_to_sell = liquidity_map.get((brand, model))
         if days_to_sell and days_to_sell > 0:
@@ -294,7 +363,64 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         trend_pct = trend_map.get((brand, model), 0.0)
         trend_mult = min(max(1 + trend_pct / 100, 0.8), 1.2)
 
-        flip_score = round(undervaluation_pct * year_mult * mileage_mult * liquidity_mult * trend_mult, 1)
+        # 5. Condition multiplier — accident/repair history from LLM
+        had_accident = listing.get("had_accident")
+        needs_repair = listing.get("needs_repair")
+        repair_cost = listing.get("estimated_repair_cost_eur")
+        if pd.notna(had_accident) and had_accident:
+            condition_mult = 0.3
+        elif pd.notna(needs_repair) and needs_repair:
+            condition_mult = 0.5
+        else:
+            condition_mult = 1.0
+
+        # 5b. Repair cost deduction — subtract estimated repair from predicted profit
+        repair_deduction = 0
+        if pd.notna(repair_cost) and repair_cost and repair_cost > 0:
+            repair_deduction = float(repair_cost)
+
+        # 6. Customs multiplier — unlegalised imports cost 500-1500 EUR extra
+        customs_cleared = listing.get("customs_cleared")
+        if pd.notna(customs_cleared) and customs_cleared is False:
+            customs_mult = 0.7
+        else:
+            customs_mult = 1.0
+
+        # 7. Motivated seller multiplier — long listing + price drops = negotiation room
+        days_listed = listing.get("days_listed") if "days_listed" in listing.index else None
+        price_change = listing.get("price_change_eur") if "price_change_eur" in listing.index else None
+        if pd.notna(days_listed) and days_listed > 30 and pd.notna(price_change) and price_change < 0:
+            # Seller already dropping price — more room to negotiate
+            motivated_mult = min(1.0 + abs(float(price_change)) / float(price) * 0.5, 1.3)
+        elif pd.notna(days_listed) and days_listed > 60:
+            # Stale listing — some negotiation room even without explicit drops
+            motivated_mult = 1.1
+        else:
+            motivated_mult = 1.0
+
+        # 8. Number of owners — more owners = more wear, less trust
+        num_owners = listing.get("num_owners")
+        if pd.notna(num_owners) and num_owners and int(num_owners) > 0:
+            n = int(num_owners)
+            if n == 1:
+                owners_mult = 1.15
+            elif n == 2:
+                owners_mult = 1.0
+            elif n == 3:
+                owners_mult = 0.9
+            else:
+                owners_mult = 0.75
+        else:
+            owners_mult = 1.0
+
+        flip_score = round(
+            undervaluation_pct * year_mult * mileage_mult * engine_life_mult
+            * liquidity_mult * trend_mult * condition_mult * customs_mult
+            * motivated_mult * owners_mult, 1
+        )
+
+        # Adjust predicted profit for repair costs
+        adjusted_predicted = predicted - repair_deduction
 
         sig = {
             "olx_id": listing.get("olx_id", ""),
@@ -304,11 +430,17 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
             "year": year,
             "generation": generation or "",
             "price_eur": price,
-            "predicted_price": round(predicted),
+            "predicted_price": round(adjusted_predicted),
             "median_price_eur": round(median),
             "discount_pct": discount_pct,
             "undervaluation_pct": undervaluation_pct,
+            "engine_cc": int(engine_cc) if pd.notna(engine_cc) and engine_cc else None,
             "year_mult": round(year_mult, 2),
+            "engine_life_mult": round(engine_life_mult, 2),
+            "condition_mult": round(condition_mult, 2),
+            "customs_mult": round(customs_mult, 2),
+            "motivated_mult": round(motivated_mult, 2),
+            "owners_mult": round(owners_mult, 2),
             "avg_days_to_sell": days_to_sell,
             "price_trend_pct": trend_pct,
             "flip_score": flip_score,
@@ -317,6 +449,12 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
             "district": listing.get("district", ""),
             "mileage_km": mileage,
             "fuel_type": listing.get("fuel_type", ""),
+            "had_accident": bool(had_accident) if pd.notna(had_accident) else None,
+            "needs_repair": bool(needs_repair) if pd.notna(needs_repair) else None,
+            "estimated_repair_cost_eur": int(repair_cost) if pd.notna(repair_cost) and repair_cost else None,
+            "num_owners": int(num_owners) if pd.notna(num_owners) and num_owners else None,
+            "customs_cleared": bool(customs_cleared) if pd.notna(customs_cleared) else None,
+            "negotiable": bool(listing.get("negotiable")) if "negotiable" in listing.index and pd.notna(listing.get("negotiable")) else None,
         }
         for col in ("days_listed", "price_change_eur", "price_change_pct", "eur_per_km"):
             if col in listing.index:

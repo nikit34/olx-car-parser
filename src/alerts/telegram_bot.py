@@ -65,6 +65,25 @@ def _format_deal(deal: dict) -> str:
         lines.append(f"🛣 {int(mileage):,} km")
     if location:
         lines.append(f"📍 {location}")
+
+    # Condition warnings
+    warnings = []
+    if deal.get("had_accident"):
+        warnings.append("ДТП")
+    if deal.get("needs_repair"):
+        repair_cost = deal.get("estimated_repair_cost_eur")
+        if repair_cost and not (isinstance(repair_cost, float) and repair_cost != repair_cost):
+            warnings.append(f"ремонт ~{int(repair_cost):,} EUR")
+        else:
+            warnings.append("нужен ремонт")
+    if deal.get("customs_cleared") is False:
+        warnings.append("не растаможен")
+    num_owners = deal.get("num_owners")
+    if num_owners and not (isinstance(num_owners, float) and num_owners != num_owners) and int(num_owners) >= 3:
+        warnings.append(f"{int(num_owners)} владельцев")
+    if warnings:
+        lines.append(f"⚠️ {', '.join(warnings)}")
+
     if url:
         lines.append(f"\n<a href=\"{url}\">Open on OLX</a>")
 

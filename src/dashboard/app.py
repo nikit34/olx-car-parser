@@ -197,8 +197,8 @@ tab_deals, tab_analytics, tab_trends, tab_listings, tab_compare, tab_geo, tab_li
 # ---- TAB 1: Deals (Buy Signals) --------------------------------------------
 with tab_deals:
     st.subheader("Недооценённые автомобили")
-    st.caption("Рейтинг по flip-скору = недооценка % × ликвидность × тренд. Прибыль = справедливая цена − запрашиваемая цена. "
-               "Чем выше скор — тем выгоднее потенциальная сделка.")
+    st.caption("Flip-скор = недооценка % × год × пробег × ресурс двигателя × состояние × растаможка × мотивация продавца × владельцы × ликвидность × тренд. "
+               "Прибыль = справедливая цена − запрашиваемая цена − стоимость ремонта.")
 
     if filtered_signals.empty:
         st.info("Сделок не найдено. Попробуйте расширить фильтры.")
@@ -250,6 +250,8 @@ with tab_deals:
                     details.append(f"{int(deal['mileage_km']):,} km")
                 if deal.get("fuel_type"):
                     details.append(deal["fuel_type"])
+                if pd.notna(deal.get("engine_cc")) and deal.get("engine_cc"):
+                    details.append(f"{int(deal['engine_cc'])/1000:.1f}L")
                 if deal.get("district"):
                     details.append(deal["district"])
                 drop_day = deal.get("price_drop_per_day")
@@ -257,6 +259,23 @@ with tab_deals:
                     details.append(f"seller dropping {drop_day:.0f} EUR/day")
                 if details:
                     st.caption(" · ".join(details))
+                # Condition warnings
+                warns = []
+                if deal.get("had_accident"):
+                    warns.append("ДТП")
+                if deal.get("needs_repair"):
+                    rc = deal.get("estimated_repair_cost_eur")
+                    if pd.notna(rc) and rc:
+                        warns.append(f"ремонт ~{int(rc):,} EUR")
+                    else:
+                        warns.append("нужен ремонт")
+                if deal.get("customs_cleared") is False:
+                    warns.append("не растаможен")
+                n_own = deal.get("num_owners")
+                if pd.notna(n_own) and n_own and int(n_own) >= 3:
+                    warns.append(f"{int(n_own)} владельцев")
+                if warns:
+                    st.warning(", ".join(warns))
                 if deal.get("url"):
                     link_label = "Open on StandVirtual" if "standvirtual.com" in deal["url"] else "Open on OLX"
                     st.markdown(f"[{link_label}]({deal['url']})")
@@ -271,7 +290,10 @@ with tab_deals:
             signal_cols.append("avg_days_to_sell")
         if "sample_size" in deals.columns:
             signal_cols += ["sample_size", "confidence"]
-        signal_cols += ["mileage_km", "fuel_type", "district", "city"]
+        signal_cols += ["mileage_km", "engine_cc", "fuel_type", "district", "city"]
+        for extra_col in ["had_accident", "needs_repair", "estimated_repair_cost_eur", "num_owners", "customs_cleared"]:
+            if extra_col in deals.columns and deals[extra_col].notna().any():
+                signal_cols.append(extra_col)
         if "days_listed" in deals.columns:
             signal_cols.append("days_listed")
         if "price_change_eur" in deals.columns:
@@ -291,8 +313,11 @@ with tab_deals:
                 "profit_per_day": "EUR/day",
                 "undervaluation_pct": "Below Market %", "flip_score": "Score",
                 "avg_days_to_sell": "Days to Sell", "sample_size": "Sample",
-                "confidence": "Conf", "mileage_km": "Mileage",
+                "confidence": "Conf", "mileage_km": "Mileage", "engine_cc": "CC",
                 "fuel_type": "Fuel", "district": "District", "city": "City",
+                "had_accident": "Accident", "needs_repair": "Repair",
+                "estimated_repair_cost_eur": "Repair Cost",
+                "num_owners": "Owners", "customs_cleared": "Customs",
                 "days_listed": "Listed", "price_change_eur": "Price Drop",
                 "price_drop_per_day": "Drop/day",
                 "url": "Link",
@@ -308,6 +333,12 @@ with tab_deals:
                 "Score": st.column_config.NumberColumn(format="%.0f"),
                 "Days to Sell": st.column_config.NumberColumn(format="%.0f"),
                 "Mileage": st.column_config.NumberColumn(format="%,d km"),
+                "CC": st.column_config.NumberColumn(format="%d"),
+                "Accident": st.column_config.CheckboxColumn(),
+                "Repair": st.column_config.CheckboxColumn(),
+                "Repair Cost": st.column_config.NumberColumn(format="%d EUR"),
+                "Owners": st.column_config.NumberColumn(format="%d"),
+                "Customs": st.column_config.CheckboxColumn(),
                 "Listed": st.column_config.NumberColumn(format="%d d"),
                 "Price Drop": st.column_config.NumberColumn(format="%+d EUR"),
                 "Drop/day": st.column_config.NumberColumn(format="%+.0f EUR"),
@@ -528,7 +559,8 @@ with tab_analytics:
 
         # ---- 3. Value Score: composite metric ----
         st.subheader("Value Score — лучшие авто за свои деньги")
-        st.caption("Скор = год (25) + пробег (30) + цена (15) + состояние (10) + топливо (10) + л.с. (5) + КПП (5). "
+        st.caption("Скор = год (25) + ресурс двигателя (30) + цена (15) + состояние (10) + топливо (10) + л.с. (5) + КПП (5). "
+                   "Пробег нормализуется по объёму двигателя: малолитражки изнашиваются быстрее. "
                    "Чем выше скор — тем лучше соотношение цена/качество. Зелёная зона = оптимальные варианты.")
 
         score_data = ana[
@@ -538,7 +570,16 @@ with tab_analytics:
         if len(score_data) >= 5:
             # Normalize each factor 0-1 (higher = better)
             score_data["year_norm"] = (score_data["year"] - score_data["year"].min()) / max(score_data["year"].max() - score_data["year"].min(), 1)
-            score_data["mileage_norm"] = 1 - (score_data["mileage_km"] - score_data["mileage_km"].min()) / max(score_data["mileage_km"].max() - score_data["mileage_km"].min(), 1)
+            # Mileage normalized by engine lifespan: 200k on 1.0L ≠ 200k on 2.0L
+            from src.dashboard.data_loader import _expected_lifespan_km
+            score_data["_lifespan"] = score_data.apply(
+                lambda r: _expected_lifespan_km(
+                    int(r["engine_cc"]) if pd.notna(r.get("engine_cc")) and r.get("engine_cc") else None,
+                    r.get("fuel_type") if pd.notna(r.get("fuel_type")) else None,
+                ), axis=1,
+            )
+            score_data["_wear_pct"] = (score_data["mileage_km"] / score_data["_lifespan"]).clip(0, 1)
+            score_data["mileage_norm"] = 1 - score_data["_wear_pct"]
             score_data["price_norm"] = 1 - (score_data["price_eur"] - score_data["price_eur"].min()) / max(score_data["price_eur"].max() - score_data["price_eur"].min(), 1)
             hp_ok = score_data["horsepower"].notna() & (score_data["horsepower"] > 0)
             if hp_ok.sum() > 5:
@@ -884,6 +925,8 @@ with tab_listings:
         "price_change_eur", "price_change_pct", "eur_per_km",
         "mileage_km", "engine_cc",
         "fuel_type", "horsepower", "transmission", "segment",
+        "had_accident", "needs_repair", "estimated_repair_cost_eur",
+        "num_owners", "customs_cleared",
         "city", "district", "seller_type", "is_active", "url",
     ] if c in filtered_listings.columns]
 
@@ -899,6 +942,11 @@ with tab_listings:
             "mileage_km": st.column_config.NumberColumn("Mileage", format="%d km"),
             "engine_cc": st.column_config.NumberColumn("Engine (cc)", format="%d"),
             "horsepower": st.column_config.NumberColumn("HP", format="%d"),
+            "had_accident": st.column_config.CheckboxColumn("Accident"),
+            "needs_repair": st.column_config.CheckboxColumn("Repair"),
+            "estimated_repair_cost_eur": st.column_config.NumberColumn("Repair Cost", format="%d EUR"),
+            "num_owners": st.column_config.NumberColumn("Owners", format="%d"),
+            "customs_cleared": st.column_config.CheckboxColumn("Customs"),
             "is_active": st.column_config.CheckboxColumn("Active"),
             "url": st.column_config.LinkColumn("Link", display_text="Open"),
         },
@@ -1493,6 +1541,7 @@ with tab_lifespan:
                     ("price_eur", "Медиана цены (EUR)", "{:,.0f}"),
                     ("year", "Медиана года", "{:.0f}"),
                     ("mileage_km", "Медиана пробега (км)", "{:,.0f}"),
+                    ("engine_cc", "Медиана объёма (cc)", "{:,.0f}"),
                 ]:
                     if metric in quick.columns:
                         q_val = quick[metric].median()
@@ -1520,6 +1569,17 @@ with tab_lifespan:
                         "Быстрые (< 7д)": f"{q_auto:.0%}",
                         "Долгие (> 30д)": f"{s_auto:.0%}" if s_auto is not None else "—",
                     })
+
+                # Condition comparison
+                for col, label in [("had_accident", "Доля с ДТП"), ("needs_repair", "Доля с ремонтом")]:
+                    if col in quick.columns and quick[col].notna().any():
+                        q_pct = (quick[col] == True).mean()
+                        s_pct = (slow[col] == True).mean() if not slow.empty and col in slow.columns else None
+                        comparison_rows.append({
+                            "Показатель": label,
+                            "Быстрые (< 7д)": f"{q_pct:.0%}",
+                            "Долгие (> 30д)": f"{s_pct:.0%}" if s_pct is not None else "—",
+                        })
 
                 if comparison_rows:
                     st.dataframe(pd.DataFrame(comparison_rows), hide_index=True)

@@ -42,8 +42,9 @@ def estimate_price(
     year: int,
     mileage_km: int,
     fuel_type: str | None = None,
+    engine_cc: int | None = None,
 ) -> dict | None:
-    """Multivariate regression: price ~ year + mileage.
+    """Multivariate regression: price ~ year + mileage [+ engine_cc].
 
     Returns dict with predicted, p25, median, p75, sample_size,
     or None if fewer than 5 data points.
@@ -64,15 +65,33 @@ def estimate_price(
     if len(subset) < 5:
         return None
 
-    X = np.column_stack([
-        subset["year"].values.astype(float),
-        subset["mileage_km"].values.astype(float),
-        np.ones(len(subset)),
-    ])
+    has_cc = (
+        engine_cc is not None
+        and "engine_cc" in subset.columns
+        and subset["engine_cc"].notna().sum() >= len(subset) * 0.5
+    )
+    if has_cc:
+        cc_vals = subset["engine_cc"].fillna(subset["engine_cc"].median()).values.astype(float)
+        X = np.column_stack([
+            subset["year"].values.astype(float),
+            subset["mileage_km"].values.astype(float),
+            cc_vals,
+            np.ones(len(subset)),
+        ])
+    else:
+        X = np.column_stack([
+            subset["year"].values.astype(float),
+            subset["mileage_km"].values.astype(float),
+            np.ones(len(subset)),
+        ])
+
     y = subset["price_eur"].values.astype(float)
     coeffs, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
 
-    predicted = coeffs[0] * year + coeffs[1] * mileage_km + coeffs[2]
+    if has_cc:
+        predicted = coeffs[0] * year + coeffs[1] * mileage_km + coeffs[2] * engine_cc + coeffs[3]
+    else:
+        predicted = coeffs[0] * year + coeffs[1] * mileage_km + coeffs[2]
     residuals = y - X @ coeffs
 
     return {
