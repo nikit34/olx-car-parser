@@ -681,7 +681,7 @@ def _safe_float(val) -> float | None:
 # StandVirtual search page scraper
 # ---------------------------------------------------------------------------
 
-SV_BASE_URL = "https://www.standvirtual.com/carros/particulares/"
+SV_BASE_URL = "https://www.standvirtual.com/carros"
 
 # dt text -> RawListing field
 SV_CARD_FIELDS = {
@@ -714,7 +714,10 @@ class StandVirtualScraper:
     # ------------------------------------------------------------------
 
     def scrape_search_page(self, page: int = 1) -> list[RawListing] | None:
-        url = self.config.base_url + f"?page={page}"
+        params = [f"page={page}"]
+        if self.config.private_only:
+            params.append("search%5Bprivate_business%5D=private")
+        url = self.config.base_url + "?" + "&".join(params)
         logger.info("Scraping StandVirtual page %d: %s", page, url)
 
         result = self._fetch(url)
