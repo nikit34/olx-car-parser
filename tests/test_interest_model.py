@@ -16,9 +16,9 @@ def _active_listings() -> pd.DataFrame:
                 "year": 2016,
                 "price_eur": 8200,
                 "days_listed": 12,
-                "needs_repair": False,
-                "had_accident": False,
-                "num_owners": 2,
+                "desc_mentions_repair": False,
+                "desc_mentions_accident": False,
+                "desc_mentions_num_owners": 2,
             },
             {
                 "olx_id": "a2",
@@ -28,9 +28,9 @@ def _active_listings() -> pd.DataFrame:
                 "year": 2017,
                 "price_eur": 9100,
                 "days_listed": 18,
-                "needs_repair": False,
-                "had_accident": False,
-                "num_owners": 1,
+                "desc_mentions_repair": False,
+                "desc_mentions_accident": False,
+                "desc_mentions_num_owners": 1,
             },
             {
                 "olx_id": "a3",
@@ -40,9 +40,9 @@ def _active_listings() -> pd.DataFrame:
                 "year": 2014,
                 "price_eur": 12500,
                 "days_listed": 4,
-                "needs_repair": False,
-                "had_accident": False,
-                "num_owners": 2,
+                "desc_mentions_repair": False,
+                "desc_mentions_accident": False,
+                "desc_mentions_num_owners": 2,
             },
             {
                 "olx_id": "a4",
@@ -52,9 +52,9 @@ def _active_listings() -> pd.DataFrame:
                 "year": 2012,
                 "price_eur": 6500,
                 "days_listed": 42,
-                "needs_repair": True,
-                "had_accident": False,
-                "num_owners": 4,
+                "desc_mentions_repair": True,
+                "desc_mentions_accident": False,
+                "desc_mentions_num_owners": 4,
             },
             {
                 "olx_id": "a5",
@@ -64,9 +64,9 @@ def _active_listings() -> pd.DataFrame:
                 "year": 2013,
                 "price_eur": 7100,
                 "days_listed": 37,
-                "needs_repair": False,
-                "had_accident": True,
-                "num_owners": 5,
+                "desc_mentions_repair": False,
+                "desc_mentions_accident": True,
+                "desc_mentions_num_owners": 5,
             },
         ]
     )
@@ -152,3 +152,32 @@ def test_interest_scoring_can_learn_from_portfolio_examples():
     positive_probs = scored.loc[scored["portfolio_positive"], "interest_probability"]
     negative_probs = scored.loc[~scored["portfolio_positive"], "interest_probability"]
     assert positive_probs.min() > negative_probs.median()
+
+
+def test_interest_scoring_uses_explicit_feedback_labels():
+    feedback_df = pd.DataFrame(
+        [
+            {"olx_id": "a1", "feedback_label": "skipped", "feedback_notes": "too risky"},
+            {"olx_id": "a3", "feedback_label": "interesting", "feedback_notes": "call seller"},
+        ]
+    )
+
+    scored = score_interest_candidates(
+        _active_listings(),
+        _deal_signals(),
+        pd.DataFrame(),
+        feedback_df,
+        min_positive_labels=2,
+    )
+
+    assert not scored.empty
+    assert set(scored["model_source"]) == {"feedback-trained"}
+
+    skipped_row = scored.loc[scored["olx_id"] == "a1"].iloc[0]
+    interesting_row = scored.loc[scored["olx_id"] == "a3"].iloc[0]
+
+    assert skipped_row["interest_class"] == "Skipped"
+    assert skipped_row["interest_probability"] <= 0.08
+    assert interesting_row["feedback_label"] == "interesting"
+    assert interesting_row["interest_class"] in {"Review", "Hot now", "Watchlist"}
+    assert "you marked it as interesting" in interesting_row["interest_reason"]

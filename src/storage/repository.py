@@ -6,6 +6,7 @@ import pandas as pd
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from src.models.interest_feedback import ListingFeedback
 from src.models.listing import Listing, PriceSnapshot, MarketStats, UnmatchedListing
 from src.models.portfolio import PortfolioDeal
 
@@ -110,8 +111,8 @@ _MERGE_FIELDS = [
     "segment", "doors", "seats", "color", "condition", "origin",
     "registration_month", "registration_plate", "city", "district",
     "seller_type", "description", "llm_extras", "llm_description_hash",
-    "needs_repair", "had_accident", "real_mileage_km", "num_owners",
-    "customs_cleared", "estimated_repair_cost_eur", "generation",
+    "desc_mentions_repair", "desc_mentions_accident", "real_mileage_km", "desc_mentions_num_owners",
+    "desc_mentions_customs_cleared", "desc_estimated_repair_cost_eur", "right_hand_drive", "generation",
 ]
 
 
@@ -325,12 +326,13 @@ def get_listings_df(session: Session) -> pd.DataFrame:
             "first_seen_at": l.first_seen_at,
             "last_seen_at": l.last_seen_at,
             # Enrichment columns
-            "needs_repair": l.needs_repair,
-            "had_accident": l.had_accident,
+            "desc_mentions_repair": l.desc_mentions_repair,
+            "desc_mentions_accident": l.desc_mentions_accident,
             "real_mileage_km": l.real_mileage_km,
-            "num_owners": l.num_owners,
-            "customs_cleared": l.customs_cleared,
-            "estimated_repair_cost_eur": l.estimated_repair_cost_eur,
+            "desc_mentions_num_owners": l.desc_mentions_num_owners,
+            "desc_mentions_customs_cleared": l.desc_mentions_customs_cleared,
+            "desc_estimated_repair_cost_eur": l.desc_estimated_repair_cost_eur,
+            "right_hand_drive": l.right_hand_drive,
             "source": l.source or "olx",
             "duplicate_of": l.duplicate_of,
         })
@@ -363,6 +365,70 @@ def get_unmatched_df(session: Session) -> pd.DataFrame:
         "reason": u.reason, "source": u.source or "olx",
         "first_seen_at": u.first_seen_at,
     } for u in q])
+
+
+# ---------------------------------------------------------------------------
+# Listing feedback CRUD
+# ---------------------------------------------------------------------------
+
+def upsert_listing_feedback(session: Session, data: dict) -> ListingFeedback:
+    olx_id = str(data["olx_id"]).strip()
+    row = session.query(ListingFeedback).filter_by(olx_id=olx_id).first()
+
+    payload = {
+        "url": data.get("url"),
+        "title": data.get("title"),
+        "brand": data.get("brand"),
+        "model": data.get("model"),
+        "year": data.get("year"),
+        "price_eur": data.get("price_eur"),
+        "label": data["label"],
+        "notes": data.get("notes"),
+    }
+
+    if row:
+        for key, value in payload.items():
+            setattr(row, key, value)
+    else:
+        row = ListingFeedback(olx_id=olx_id, **payload)
+        session.add(row)
+
+    session.commit()
+    return row
+
+
+def delete_listing_feedback(session: Session, olx_id: str) -> bool:
+    row = session.query(ListingFeedback).filter_by(olx_id=str(olx_id).strip()).first()
+    if not row:
+        return False
+    session.delete(row)
+    session.commit()
+    return True
+
+
+def get_listing_feedback_df(session: Session) -> pd.DataFrame:
+    q = session.query(ListingFeedback).order_by(ListingFeedback.updated_at.desc()).all()
+    if not q:
+        return pd.DataFrame()
+    return pd.DataFrame(
+        [
+            {
+                "id": row.id,
+                "olx_id": row.olx_id,
+                "url": row.url,
+                "title": row.title,
+                "brand": row.brand,
+                "model": row.model,
+                "year": row.year,
+                "price_eur": row.price_eur,
+                "feedback_label": row.label,
+                "feedback_notes": row.notes,
+                "feedback_created_at": row.created_at,
+                "feedback_updated_at": row.updated_at,
+            }
+            for row in q
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------

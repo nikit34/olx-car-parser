@@ -33,16 +33,16 @@ class FakeListing:
 
 
 VALID_LLM_JSON = {
-    "num_owners": 2,
+    "desc_mentions_num_owners": 2,
     "accident_free": True,
-    "had_accident": False,
+    "desc_mentions_accident": False,
     "accident_details": None,
     "service_history": True,
-    "needs_repair": True,
+    "desc_mentions_repair": True,
     "repair_details": "precisa de embraiagem",
-    "estimated_repair_cost_eur": 800,
+    "desc_estimated_repair_cost_eur": 800,
     "mileage_in_description_km": 180000,
-    "customs_cleared": None,
+    "desc_mentions_customs_cleared": None,
     "imported": None,
     "legal_issues": [],
     "mechanical_condition": "good",
@@ -100,7 +100,7 @@ class TestCallOllama:
             result = _call_ollama("Vendo carro com 100km", cfg)
 
         assert result is not None
-        assert result["had_accident"] is False
+        assert result["desc_mentions_accident"] is False
 
     def test_api_error(self):
         cfg = _get_config()
@@ -193,45 +193,45 @@ class TestCorrectListingData:
 
     def test_num_owners_from_description(self):
         listing = FakeListing()
-        listing._llm_extras = {"num_owners": 2}
+        listing._llm_extras = {"desc_mentions_num_owners": 2}
         corrections = correct_listing_data(listing)
-        assert corrections["num_owners"] == 2
+        assert corrections["desc_mentions_num_owners"] == 2
 
     def test_num_owners_missing(self):
         listing = FakeListing()
-        listing._llm_extras = {"num_owners": None}
+        listing._llm_extras = {"desc_mentions_num_owners": None}
         corrections = correct_listing_data(listing)
-        assert "num_owners" not in corrections
+        assert "desc_mentions_num_owners" not in corrections
 
     def test_needs_repair_from_extras(self):
         listing = FakeListing()
-        listing._llm_extras = {"needs_repair": True}
+        listing._llm_extras = {"desc_mentions_repair": True}
         corrections = correct_listing_data(listing)
-        assert corrections["needs_repair"] is True
+        assert corrections["desc_mentions_repair"] is True
 
     def test_needs_repair_inferred_from_issues(self):
         listing = FakeListing()
-        listing._llm_extras = {"needs_repair": None, "issues": ["motor faz barulho"]}
+        listing._llm_extras = {"desc_mentions_repair": None, "issues": ["motor faz barulho"]}
         corrections = correct_listing_data(listing)
-        assert corrections["needs_repair"] is True
+        assert corrections["desc_mentions_repair"] is True
 
     def test_accident_from_accident_free(self):
         listing = FakeListing()
-        listing._llm_extras = {"had_accident": None, "accident_free": True}
+        listing._llm_extras = {"desc_mentions_accident": None, "accident_free": True}
         corrections = correct_listing_data(listing)
-        assert corrections["had_accident"] is False
+        assert corrections["desc_mentions_accident"] is False
 
     def test_customs_cleared(self):
         listing = FakeListing(origin="Importado")
-        listing._llm_extras = {"customs_cleared": True}
+        listing._llm_extras = {"desc_mentions_customs_cleared": True}
         corrections = correct_listing_data(listing)
-        assert corrections["customs_cleared"] is True
+        assert corrections["desc_mentions_customs_cleared"] is True
 
     def test_repair_cost(self):
         listing = FakeListing()
-        listing._llm_extras = {"estimated_repair_cost_eur": 1500}
+        listing._llm_extras = {"desc_estimated_repair_cost_eur": 1500}
         corrections = correct_listing_data(listing)
-        assert corrections["estimated_repair_cost_eur"] == 1500
+        assert corrections["desc_estimated_repair_cost_eur"] == 1500
 
     def test_no_extras_returns_empty(self):
         listing = FakeListing()
@@ -246,11 +246,11 @@ class TestCorrectListingData:
 class TestApplyCorrections:
     def test_applies_to_listings_with_extras(self):
         listing = FakeListing()
-        listing._llm_extras = {"needs_repair": True, "had_accident": False}
+        listing._llm_extras = {"desc_mentions_repair": True, "desc_mentions_accident": False}
         count = apply_corrections([listing])
         assert count == 1
-        assert listing._corrections["needs_repair"] is True
-        assert listing._corrections["had_accident"] is False
+        assert listing._corrections["desc_mentions_repair"] is True
+        assert listing._corrections["desc_mentions_accident"] is False
 
     def test_skips_listings_without_extras(self):
         listing = FakeListing()
@@ -400,4 +400,4 @@ class TestExportTrainingData:
         assert line["messages"][1]["role"] == "assistant"
         # Verify the completion is valid JSON
         completion = json.loads(line["messages"][1]["content"])
-        assert completion["needs_repair"] is True
+        assert completion["desc_mentions_repair"] is True

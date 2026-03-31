@@ -363,25 +363,29 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         trend_pct = trend_map.get((brand, model), 0.0)
         trend_mult = min(max(1 + trend_pct / 100, 0.8), 1.2)
 
-        # 5. Condition multiplier — accident/repair history from LLM
-        had_accident = listing.get("had_accident")
-        needs_repair = listing.get("needs_repair")
-        repair_cost = listing.get("estimated_repair_cost_eur")
-        if pd.notna(had_accident) and had_accident:
+        # 5. Description-mention multiplier — extracted from listing text
+        desc_mentions_accident = listing.get("desc_mentions_accident")
+        desc_mentions_repair = listing.get("desc_mentions_repair")
+        desc_estimated_repair_cost_eur = listing.get("desc_estimated_repair_cost_eur")
+        if pd.notna(desc_mentions_accident) and desc_mentions_accident:
             condition_mult = 0.3
-        elif pd.notna(needs_repair) and needs_repair:
+        elif pd.notna(desc_mentions_repair) and desc_mentions_repair:
             condition_mult = 0.5
         else:
             condition_mult = 1.0
 
         # 5b. Repair cost deduction — subtract estimated repair from predicted profit
         repair_deduction = 0
-        if pd.notna(repair_cost) and repair_cost and repair_cost > 0:
-            repair_deduction = float(repair_cost)
+        if (
+            pd.notna(desc_estimated_repair_cost_eur)
+            and desc_estimated_repair_cost_eur
+            and desc_estimated_repair_cost_eur > 0
+        ):
+            repair_deduction = float(desc_estimated_repair_cost_eur)
 
-        # 6. Customs multiplier — unlegalised imports cost 500-1500 EUR extra
-        customs_cleared = listing.get("customs_cleared")
-        if pd.notna(customs_cleared) and customs_cleared is False:
+        # 6. Customs multiplier — based on description mention only
+        desc_mentions_customs_cleared = listing.get("desc_mentions_customs_cleared")
+        if pd.notna(desc_mentions_customs_cleared) and desc_mentions_customs_cleared is False:
             customs_mult = 0.7
         else:
             customs_mult = 1.0
@@ -398,10 +402,17 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         else:
             motivated_mult = 1.0
 
-        # 8. Number of owners — more owners = more wear, less trust
-        num_owners = listing.get("num_owners")
-        if pd.notna(num_owners) and num_owners and int(num_owners) > 0:
-            n = int(num_owners)
+        # 8. Right-hand drive penalty
+        right_hand_drive = listing.get("right_hand_drive")
+        if pd.notna(right_hand_drive) and right_hand_drive:
+            rhd_mult = 0.6
+        else:
+            rhd_mult = 1.0
+
+        # 9. Owner count mentioned in description
+        desc_mentions_num_owners = listing.get("desc_mentions_num_owners")
+        if pd.notna(desc_mentions_num_owners) and desc_mentions_num_owners and int(desc_mentions_num_owners) > 0:
+            n = int(desc_mentions_num_owners)
             if n == 1:
                 owners_mult = 1.15
             elif n == 2:
@@ -416,7 +427,7 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         flip_score = round(
             undervaluation_pct * year_mult * mileage_mult * engine_life_mult
             * liquidity_mult * trend_mult * condition_mult * customs_mult
-            * motivated_mult * owners_mult, 1
+            * motivated_mult * owners_mult * rhd_mult, 1
         )
 
         # Adjust predicted profit for repair costs
@@ -441,6 +452,7 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
             "customs_mult": round(customs_mult, 2),
             "motivated_mult": round(motivated_mult, 2),
             "owners_mult": round(owners_mult, 2),
+            "rhd_mult": round(rhd_mult, 2),
             "avg_days_to_sell": days_to_sell,
             "price_trend_pct": trend_pct,
             "flip_score": flip_score,
@@ -449,11 +461,28 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
             "district": listing.get("district", ""),
             "mileage_km": mileage,
             "fuel_type": listing.get("fuel_type", ""),
-            "had_accident": bool(had_accident) if pd.notna(had_accident) else None,
-            "needs_repair": bool(needs_repair) if pd.notna(needs_repair) else None,
-            "estimated_repair_cost_eur": int(repair_cost) if pd.notna(repair_cost) and repair_cost else None,
-            "num_owners": int(num_owners) if pd.notna(num_owners) and num_owners else None,
-            "customs_cleared": bool(customs_cleared) if pd.notna(customs_cleared) else None,
+            "desc_mentions_accident": bool(desc_mentions_accident) if pd.notna(desc_mentions_accident) else None,
+            "desc_mentions_repair": bool(desc_mentions_repair) if pd.notna(desc_mentions_repair) else None,
+            "desc_estimated_repair_cost_eur": (
+                int(desc_estimated_repair_cost_eur)
+                if pd.notna(desc_estimated_repair_cost_eur) and desc_estimated_repair_cost_eur
+                else None
+            ),
+            "desc_mentions_num_owners": (
+                int(desc_mentions_num_owners)
+                if pd.notna(desc_mentions_num_owners) and desc_mentions_num_owners
+                else None
+            ),
+            "desc_mentions_customs_cleared": (
+                bool(desc_mentions_customs_cleared)
+                if pd.notna(desc_mentions_customs_cleared)
+                else None
+            ),
+            "right_hand_drive": (
+                bool(right_hand_drive)
+                if pd.notna(right_hand_drive)
+                else None
+            ),
             "negotiable": bool(listing.get("negotiable")) if "negotiable" in listing.index and pd.notna(listing.get("negotiable")) else None,
         }
         for col in ("days_listed", "price_change_eur", "price_change_pct", "eur_per_km"):
@@ -494,6 +523,22 @@ def load_portfolio() -> pd.DataFrame:
         return get_portfolio_df(session)
     except Exception as e:
         print(f"Warning: could not load portfolio: {e}")
+        return pd.DataFrame()
+
+
+def load_listing_feedback() -> pd.DataFrame:
+    """Load manual shortlist feedback from database."""
+    if not _ensure_db():
+        return pd.DataFrame()
+    try:
+        from src.storage.database import init_db, get_session
+        from src.storage.repository import get_listing_feedback_df
+
+        init_db(str(DB_PATH))
+        session = get_session()
+        return get_listing_feedback_df(session)
+    except Exception as e:
+        print(f"Warning: could not load listing feedback: {e}")
         return pd.DataFrame()
 
 

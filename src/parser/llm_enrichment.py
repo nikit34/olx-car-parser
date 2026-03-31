@@ -1,9 +1,9 @@
 """Enrich listing data using a local Ollama model.
 
 Extracts additional structured info from description text:
-- Accident history, service history, extras/features
-- Number of owners, warranty, recent maintenance
-- Repair needs, real mileage, customs status, red flags
+- Description mentions of accidents, repairs, customs status
+- Description-mentioned owner count, warranty, recent maintenance
+- Real mileage, red flags, extras/features
 """
 
 import json
@@ -21,18 +21,29 @@ OLLAMA_URL = "http://localhost:11434"
 
 EXTRACTION_PROMPT = """\
 Extract structured data from this Portuguese car listing. JSON fields (null if unknown):
-num_owners(int), had_accident(bool), accident_details(str), service_history(bool), \
-needs_repair(bool), repair_details(str), estimated_repair_cost_eur(int), \
-mileage_in_description_km(int), customs_cleared(bool), imported(bool), \
+desc_mentions_num_owners(int), desc_mentions_accident(bool), accident_details(str), service_history(bool), \
+desc_mentions_repair(bool), repair_details(str), desc_estimated_repair_cost_eur(int), \
+mileage_in_description_km(int), desc_mentions_customs_cleared(bool), imported(bool), \
+right_hand_drive(bool), \
 mechanical_condition("excellent"/"good"/"fair"/"poor"), paint_condition(same), \
 suspicious_signs(list), extras(list), issues(list), reason_for_sale(str).
 Rules: mileage_in_description_km=exact km as integer ("4300 km"→4300, "150 mil km"→150000, \
 "89.500km"→89500, "4.300km"→4300). "mil"=thousand ONLY when written as a separate word. \
-needs_repair=true if ANY repair/damage mentioned. had_accident=true if collision mentioned. \
-customs_cleared=look for "desalfandegado","legalizado","por legalizar". \
-estimated_repair_cost_eur=estimate from issues (e.g. embraiagem→800).
+desc_mentions_repair=true if ANY repair/damage mentioned. desc_mentions_accident=true if collision mentioned. \
+desc_mentions_customs_cleared=look for "desalfandegado","legalizado","por legalizar". \
+desc_estimated_repair_cost_eur=estimate from issues (e.g. embraiagem→800). \
+right_hand_drive=true if right-hand drive/UK/Japan import/"mão inglesa"/"volante à direita"/"condução à direita".
 
 """
+
+
+_EXTRAS_KEY_ALIASES = {
+    "desc_mentions_num_owners": "num_owners",
+    "desc_mentions_accident": "had_accident",
+    "desc_mentions_repair": "needs_repair",
+    "desc_estimated_repair_cost_eur": "estimated_repair_cost_eur",
+    "desc_mentions_customs_cleared": "customs_cleared",
+}
 
 
 def _get_config() -> dict:
@@ -131,7 +142,29 @@ def enrich_from_description(description: str) -> dict | None:
         logger.warning("Ollama not running at %s. Skipping enrichment.", cfg["ollama_url"])
         return None
 
-    return _call_ollama(description, cfg)
+    result = _call_ollama(description, cfg)
+    return normalize_llm_extras(result) if result else None
+
+
+def normalize_llm_extras(extras: dict | None) -> dict | None:
+    """Normalize legacy and current extraction keys to the current schema."""
+    if not extras:
+        return extras
+
+    normalized = dict(extras)
+    for new_key, old_key in _EXTRAS_KEY_ALIASES.items():
+        if new_key not in normalized and old_key in normalized:
+            normalized[new_key] = normalized[old_key]
+    return normalized
+
+
+def _get_extra(extras: dict, key: str):
+    legacy_key = _EXTRAS_KEY_ALIASES.get(key)
+    if key in extras:
+        return extras.get(key)
+    if legacy_key:
+        return extras.get(legacy_key)
+    return extras.get(key)
 
 
 def enrich_listings_batch(listings: list, batch_size: int = 50) -> int:
@@ -156,7 +189,7 @@ def enrich_listings_batch(listings: list, batch_size: int = 50) -> int:
 
         result = enrich_from_description(listing.description)
         if result:
-            listing._llm_extras = result
+            listing._llm_extras = normalize_llm_extras(result)
             enriched += 1
             failures = 0  # reset on success
         else:
@@ -177,12 +210,13 @@ def correct_listing_data(listing) -> dict:
     """Cross-check listing attributes against LLM-extracted data and return corrections.
 
     Returns a dict with corrected/enriched fields to apply to the listing.
-    The dict includes both top-level column values (needs_repair, had_accident, etc.)
+    The dict includes top-level column values derived from description mentions.
     and an updated llm_extras JSON.
     """
     extras = getattr(listing, "_llm_extras", None)
     if extras is None:
         return {}
+    extras = normalize_llm_extras(extras)
 
     corrections = {}
 
@@ -207,37 +241,41 @@ def correct_listing_data(listing) -> dict:
         corrections["real_mileage_km"] = attr_km
 
     # --- Number of owners ---
-    num_owners = extras.get("num_owners")
+    num_owners = _get_extra(extras, "desc_mentions_num_owners")
     if num_owners and isinstance(num_owners, (int, float)) and num_owners > 0:
-        corrections["num_owners"] = int(num_owners)
+        corrections["desc_mentions_num_owners"] = int(num_owners)
 
-    # --- Needs repair ---
-    needs_repair = extras.get("needs_repair")
+    # --- Description mentions repair ---
+    needs_repair = _get_extra(extras, "desc_mentions_repair")
     if needs_repair is not None:
-        corrections["needs_repair"] = bool(needs_repair)
+        corrections["desc_mentions_repair"] = bool(needs_repair)
     elif extras.get("issues"):
-        # If issues list is non-empty, car likely needs some work
-        corrections["needs_repair"] = True
+        corrections["desc_mentions_repair"] = True
 
-    # --- Accident history ---
-    had_accident = extras.get("had_accident")
+    # --- Description mentions accident ---
+    had_accident = _get_extra(extras, "desc_mentions_accident")
     if had_accident is not None:
-        corrections["had_accident"] = bool(had_accident)
+        corrections["desc_mentions_accident"] = bool(had_accident)
     elif extras.get("accident_free") is not None:
-        corrections["had_accident"] = not extras["accident_free"]
+        corrections["desc_mentions_accident"] = not extras["accident_free"]
 
-    # --- Customs/legalization ---
-    customs = extras.get("customs_cleared")
+    # --- Description mentions customs/legalization ---
+    customs = _get_extra(extras, "desc_mentions_customs_cleared")
     if customs is not None:
-        corrections["customs_cleared"] = bool(customs)
+        corrections["desc_mentions_customs_cleared"] = bool(customs)
     elif listing.origin and "import" in (listing.origin or "").lower():
         # Imported car with no customs info → flag as unknown (None stays)
         pass
 
-    # --- Estimated repair cost ---
-    repair_cost = extras.get("estimated_repair_cost_eur")
+    # --- Description-estimated repair cost ---
+    repair_cost = _get_extra(extras, "desc_estimated_repair_cost_eur")
     if repair_cost and isinstance(repair_cost, (int, float)) and repair_cost > 0:
-        corrections["estimated_repair_cost_eur"] = int(repair_cost)
+        corrections["desc_estimated_repair_cost_eur"] = int(repair_cost)
+
+    # --- Right-hand drive ---
+    rhd = extras.get("right_hand_drive")
+    if rhd is not None:
+        corrections["right_hand_drive"] = bool(rhd)
 
     return corrections
 
@@ -262,11 +300,11 @@ def apply_corrections(listings: list) -> int:
         # Log significant corrections
         if corrections.get("real_mileage_km") and corrections.get("real_mileage_km") != getattr(listing, "mileage_km", None):
             logger.info(
-                "Corrected %s: real_mileage=%s, needs_repair=%s, accident=%s",
+                "Corrected %s: real_mileage=%s, desc_mentions_repair=%s, desc_mentions_accident=%s",
                 listing.olx_id,
                 corrections.get("real_mileage_km"),
-                corrections.get("needs_repair"),
-                corrections.get("had_accident"),
+                corrections.get("desc_mentions_repair"),
+                corrections.get("desc_mentions_accident"),
             )
 
     logger.info("Applied corrections to %d / %d listings", corrected, len(listings))

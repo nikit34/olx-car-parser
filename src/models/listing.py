@@ -48,13 +48,14 @@ class Listing(Base):
 
     generation = Column(String)               # Car generation (e.g. "Golf VII", "E90")
 
-    # Enrichment columns (populated from LLM analysis of description)
-    needs_repair = Column(Boolean)              # Car needs repair/has known issues
-    had_accident = Column(Boolean)              # Car was in an accident/collision
+    # Enrichment columns (extracted from listing description text)
+    desc_mentions_repair = Column(Boolean)
+    desc_mentions_accident = Column(Boolean)
     real_mileage_km = Column(Integer)           # Mileage from description (may differ from attribute)
-    num_owners = Column(Integer)                # Number of previous owners (from description)
-    customs_cleared = Column(Boolean)           # Import: customs/legalization done
-    estimated_repair_cost_eur = Column(Integer) # Rough repair cost estimate from description
+    desc_mentions_num_owners = Column(Integer)
+    desc_mentions_customs_cleared = Column(Boolean)
+    desc_estimated_repair_cost_eur = Column(Integer)
+    right_hand_drive = Column(Boolean)
 
     source = Column(String, default="olx")     # "olx" or "standvirtual"
     duplicate_of = Column(String)              # olx_id of the canonical listing (fuzzy dedup)

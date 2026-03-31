@@ -12,7 +12,7 @@ import sys as _sys
 from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parent))
 
-from data_loader import load_all, load_portfolio, _force_next_check
+from data_loader import load_all, load_listing_feedback, load_portfolio, _force_next_check
 from src.analytics.interest_model import score_interest_candidates
 
 
@@ -41,6 +41,19 @@ DISPLAY_LABELS = {
     "transmission_group": "КПП",
     "brand": "Марка",
     "district_group": "Район",
+}
+
+FEEDBACK_LABELS_RU = {
+    "interesting": "Интересно",
+    "skipped": "Пропустить",
+    "bought": "Куплено",
+}
+
+MODEL_SOURCE_LABELS = {
+    "feedback+portfolio-trained": "Модель подстроена под ваш shortlist по ручной разметке и сделкам из портфеля.",
+    "feedback-trained": "Модель подстроена под ваш shortlist по ручной разметке.",
+    "portfolio-trained": "Модель подстроена под сделки из портфеля.",
+    "prior": "Пока мало подтверждённых решений, поэтому используется базовая эвристика shortlist.",
 }
 
 
@@ -136,6 +149,10 @@ listings_df, history_df, signals_df, brands_models, turnover_df, _portfolio_init
 def get_portfolio():
     return load_portfolio()
 
+
+def get_listing_feedback():
+    return load_listing_feedback()
+
 # ---------------------------------------------------------------------------
 # Sidebar — filters
 # ---------------------------------------------------------------------------
@@ -208,8 +225,12 @@ price_max_val = int(listings_df["price_eur"].max()) + 1000 if "price_eur" in lis
 price_range = st.sidebar.slider("Price (EUR)", min_value=0, max_value=price_max_val, value=(0, price_max_val), step=500)
 
 only_private = st.sidebar.checkbox("Particular only", value=False)
-hide_needs_repair = st.sidebar.checkbox("Hide needs repair", value=False)
-only_customs_cleared = st.sidebar.checkbox("Only customs cleared", value=False)
+hide_desc_mentions_repair = st.sidebar.checkbox("Hide description mentions repair", value=False)
+only_desc_mentions_customs_cleared = st.sidebar.checkbox("Only description mentions customs cleared", value=False)
+hide_right_hand_drive = st.sidebar.checkbox("Hide right-hand drive", value=False)
+st.sidebar.caption(
+    "`repair`, `customs cleared`, `right-hand drive` — извлечённые упоминания из описания объявления."
+)
 st.sidebar.markdown("### Display")
 cohort_min_size = st.sidebar.slider("Минимум объявлений в группе", min_value=3, max_value=20, value=6)
 chart_top_n = st.sidebar.slider("Сколько групп показывать", min_value=5, max_value=25, value=12)
@@ -234,10 +255,12 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
         f = f[f["price_eur"].notna() & (f["price_eur"] >= price_range[0]) & (f["price_eur"] <= price_range[1])]
     if only_private and "seller_type" in f.columns:
         f = f[f["seller_type"] == "Particular"]
-    if hide_needs_repair and "needs_repair" in f.columns:
-        f = f[f["needs_repair"] != True]
-    if only_customs_cleared and "customs_cleared" in f.columns:
-        f = f[f["customs_cleared"] == True]
+    if hide_desc_mentions_repair and "desc_mentions_repair" in f.columns:
+        f = f[f["desc_mentions_repair"] != True]
+    if only_desc_mentions_customs_cleared and "desc_mentions_customs_cleared" in f.columns:
+        f = f[f["desc_mentions_customs_cleared"] == True]
+    if hide_right_hand_drive and "right_hand_drive" in f.columns:
+        f = f[f["right_hand_drive"] != True]
     return f
 
 
@@ -348,11 +371,16 @@ with tab_deals:
         roi_threshold = deals["est_roi_pct"].dropna().quantile(0.7)
 
         def classify_deal(row: pd.Series) -> str:
-            risky = bool(row.get("needs_repair")) or bool(row.get("had_accident")) or row.get("customs_cleared") is False
+            text_mentions_issue = (
+                bool(row.get("desc_mentions_repair"))
+                or bool(row.get("desc_mentions_accident"))
+                or row.get("desc_mentions_customs_cleared") is False
+                or bool(row.get("right_hand_drive"))
+            )
             motivated = pd.notna(row.get("price_drop_per_day")) and row.get("price_drop_per_day") < 0
             sample_size = row.get("sample_size") if pd.notna(row.get("sample_size")) else 0
-            if risky:
-                return "Risky upside"
+            if text_mentions_issue:
+                return "Description mentions issues"
             if pd.notna(row.get("profit_per_day")) and row.get("profit_per_day") >= profit_day_threshold:
                 return "Quick flip"
             if sample_size >= max(cohort_min_size, 8) and row.get("est_roi_pct", 0) >= roi_threshold:
@@ -388,48 +416,64 @@ with tab_deals:
                     details.append(f"seller dropping {drop_day:.0f} EUR/day")
                 if details:
                     st.caption(" · ".join(details))
-                # Condition warnings
-                warns = []
-                if deal.get("had_accident"):
-                    warns.append("ДТП")
-                if deal.get("needs_repair"):
-                    rc = deal.get("estimated_repair_cost_eur")
+                description_mentions = []
+                if deal.get("desc_mentions_accident"):
+                    description_mentions.append("упоминание ДТП")
+                if deal.get("desc_mentions_repair"):
+                    rc = deal.get("desc_estimated_repair_cost_eur")
                     if pd.notna(rc) and rc:
-                        warns.append(f"ремонт ~{int(rc):,} EUR")
+                        description_mentions.append(f"упоминание ремонта ~{int(rc):,} EUR")
                     else:
-                        warns.append("нужен ремонт")
-                if deal.get("customs_cleared") is False:
-                    warns.append("не растаможен")
-                n_own = deal.get("num_owners")
+                        description_mentions.append("упоминание ремонта")
+                if deal.get("desc_mentions_customs_cleared") is False:
+                    description_mentions.append("нет упоминания о растаможке")
+                if deal.get("right_hand_drive"):
+                    description_mentions.append("правый руль")
+                n_own = deal.get("desc_mentions_num_owners")
                 if pd.notna(n_own) and n_own and int(n_own) >= 3:
-                    warns.append(f"{int(n_own)} владельцев")
-                if warns:
-                    st.warning(", ".join(warns))
+                    description_mentions.append(f"упоминание: {int(n_own)} владельцев")
+                if description_mentions:
+                    st.caption("Из описания: " + ", ".join(description_mentions))
                 if deal.get("url"):
                     link_label = "Open on StandVirtual" if "standvirtual.com" in deal["url"] else "Open on OLX"
                     st.markdown(f"[{link_label}]({deal['url']})")
 
         st.divider()
 
-        st.subheader("ML-shortlist интересных объявлений")
+        st.subheader("ML-shortlist для ручной проверки")
         st.caption(
-            "Классификация использует модельную недооценку, ожидаемую прибыль, глубину сравнимых объявлений, "
-            "ликвидность модели, поведение продавца и риск-факторы. Это рабочий shortlist для быстрого перехода к конкретным лотам."
+            "Это не классификатор “хорошая машина / плохая машина”. "
+            "Он ранжирует рыночные аномалии: недооценку, ожидаемую прибыль, глубину сравнимых объявлений, "
+            "ликвидность и поведение продавца. Поля, извлечённые из описания, остаются только обогащением карточки объявления."
         )
         portfolio_for_model = get_portfolio()
-        interesting = score_interest_candidates(active, deals, portfolio_for_model)
-        shortlist = interesting[interesting["interest_class"] != "Low priority"].copy()
+        feedback_for_model = get_listing_feedback()
+        interesting = score_interest_candidates(
+            active,
+            deals,
+            portfolio_for_model,
+            feedback_for_model,
+            min_positive_labels=2,
+        )
+        interesting["feedback_status"] = interesting["feedback_label"].map(FEEDBACK_LABELS_RU)
+        shortlist = interesting[
+            interesting["interest_class"].ne("Low priority")
+            & ~interesting["feedback_label"].isin(["skipped", "bought"])
+        ].copy()
         if shortlist.empty:
-            st.info("Сейчас нет объявлений, которые классификатор считает достаточно интересными.")
+            st.info("Сейчас нет объявлений, которые модель считает приоритетными для ручной проверки.")
         else:
             shortlist["interest_match_pct"] = (shortlist["interest_probability"] * 100).round(0)
             if "model_source" in shortlist.columns:
                 source_label = shortlist["model_source"].iloc[0]
-                positive_count = int(shortlist["portfolio_positive_count"].iloc[0]) if "portfolio_positive_count" in shortlist.columns else 0
-                if source_label == "portfolio-trained":
-                    st.caption(f"Модель дообучена на сделках из портфеля: {positive_count} примеров.")
-                else:
-                    st.caption("Пока мало подтверждённых сделок в портфеле, поэтому используется базовая модель-приор.")
+                portfolio_positive = int(shortlist["portfolio_positive_count"].iloc[0]) if "portfolio_positive_count" in shortlist.columns else 0
+                feedback_positive = int(shortlist["feedback_positive_count"].iloc[0]) if "feedback_positive_count" in shortlist.columns else 0
+                feedback_negative = int(shortlist["feedback_negative_count"].iloc[0]) if "feedback_negative_count" in shortlist.columns else 0
+                source_caption = MODEL_SOURCE_LABELS.get(source_label, MODEL_SOURCE_LABELS["prior"])
+                st.caption(
+                    f"{source_caption} "
+                    f"Позитивов из портфеля: {portfolio_positive}, ручных +: {feedback_positive}, ручных -: {feedback_negative}."
+                )
             quick_hits = shortlist.head(4)
             hit_cols = st.columns(len(quick_hits))
             for idx, (_, listing) in enumerate(quick_hits.iterrows()):
@@ -440,7 +484,7 @@ with tab_deals:
                     )
                     st.markdown(
                         f"**{listing['interest_class']}** · "
-                        f"{listing['interest_probability'] * 100:.0f}% match"
+                        f"{listing['interest_probability'] * 100:.0f}% shortlist match"
                     )
                     if pd.notna(listing.get("price_eur")):
                         st.markdown(f"Цена: **{int(listing['price_eur']):,} EUR**")
@@ -482,6 +526,7 @@ with tab_deals:
 
             ml_cols = [
                 "interest_class",
+                "feedback_status",
                 "interest_match_pct",
                 "brand",
                 "model",
@@ -496,6 +541,7 @@ with tab_deals:
             st.dataframe(
                 shortlist[[c for c in ml_cols if c in shortlist.columns]].head(40).rename(columns={
                     "interest_class": "Class",
+                    "feedback_status": "Your label",
                     "interest_match_pct": "Match",
                     "brand": "Brand",
                     "model": "Model",
@@ -504,7 +550,7 @@ with tab_deals:
                     "est_profit_eur": "Profit",
                     "est_roi_pct": "ROI %",
                     "sample_size": "Comps",
-                    "interest_reason": "Why interesting",
+                    "interest_reason": "Why shortlisted",
                     "url": "Link",
                 }),
                 hide_index=True,
@@ -515,6 +561,154 @@ with tab_deals:
                     "Profit": st.column_config.NumberColumn(format="%+d EUR"),
                     "ROI %": st.column_config.NumberColumn(format="%+.1f%%"),
                     "Comps": st.column_config.NumberColumn(format="%d"),
+                    "Link": st.column_config.LinkColumn("Link", display_text="Open"),
+                },
+            )
+
+        st.subheader("Обучение модели на ваших решениях")
+        st.caption(
+            "Помечайте shortlist как `Интересно`, `Пропустить` или `Куплено`. "
+            "Явные метки сразу влияют на выдачу, а при накоплении примеров модель начинает подстраиваться под ваш стиль отбора. "
+            "Она учит именно ваш паттерн shortlist, а не пытается доказать, что машина объективно хорошая."
+        )
+
+        feedback_pool = interesting.head(200).copy()
+        if feedback_pool.empty:
+            st.info("Пока нет кандидатов для ручной разметки.")
+        else:
+            feedback_pool["interest_match_pct"] = (feedback_pool["interest_probability"] * 100).round(0)
+            feedback_pool["feedback_status"] = feedback_pool["feedback_status"].fillna("Без метки")
+            feedback_pool["candidate_label"] = feedback_pool.apply(
+                lambda row: (
+                    f"{row['brand']} {row['model']} "
+                    f"{int(row['year']) if pd.notna(row.get('year')) else '?'}"
+                    f" · {int(row['price_eur']):,} EUR"
+                    f" · {row['interest_class']}"
+                    f" · {int(row['interest_match_pct'])}%"
+                    f" · {row['feedback_status']}"
+                ),
+                axis=1,
+            )
+            candidate_labels = feedback_pool["candidate_label"].tolist()
+            default_option = feedback_pool.sort_values(
+                ["feedback_label", "interest_probability"],
+                ascending=[True, False],
+                na_position="first",
+            )["candidate_label"].iloc[0]
+
+            with st.form("listing_feedback_form"):
+                selected_candidate = st.selectbox(
+                    "Объявление для разметки",
+                    options=candidate_labels,
+                    index=candidate_labels.index(default_option),
+                )
+                selected_row = feedback_pool.loc[
+                    feedback_pool["candidate_label"].eq(selected_candidate)
+                ].iloc[0]
+                current_label = selected_row.get("feedback_label")
+                selected_label = st.radio(
+                    "Ваше решение",
+                    options=["interesting", "skipped", "bought"],
+                    index=["interesting", "skipped", "bought"].index(current_label)
+                    if current_label in {"interesting", "skipped", "bought"}
+                    else 0,
+                    format_func=lambda value: FEEDBACK_LABELS_RU[value],
+                    horizontal=True,
+                )
+                feedback_note = st.text_input(
+                    "Короткая заметка",
+                    value="" if pd.isna(selected_row.get("feedback_notes")) else str(selected_row.get("feedback_notes")),
+                    placeholder="Например: слишком рискованно / хорош для звонка / уже куплен",
+                )
+                save_col, delete_col = st.columns(2)
+                save_feedback = save_col.form_submit_button("Сохранить метку", type="primary")
+                delete_feedback = delete_col.form_submit_button("Убрать метку")
+
+            selected_row = feedback_pool.loc[
+                feedback_pool["candidate_label"].eq(selected_candidate)
+            ].iloc[0]
+            st.caption(selected_row["interest_reason"])
+            if selected_row.get("url"):
+                label = "Open on StandVirtual" if "standvirtual.com" in selected_row["url"] else "Open on OLX"
+                st.link_button(label, selected_row["url"])
+
+            if save_feedback:
+                from src.storage.database import init_db, get_session
+                from src.storage.repository import upsert_listing_feedback
+
+                db_path = _Path(__file__).resolve().parent.parent.parent / "data" / "olx_cars.db"
+                init_db(str(db_path))
+                sess = get_session()
+                upsert_listing_feedback(
+                    sess,
+                    {
+                        "olx_id": selected_row["olx_id"],
+                        "url": selected_row.get("url"),
+                        "title": selected_row.get("title"),
+                        "brand": selected_row.get("brand"),
+                        "model": selected_row.get("model"),
+                        "year": None if pd.isna(selected_row.get("year")) else int(selected_row["year"]),
+                        "price_eur": None if pd.isna(selected_row.get("price_eur")) else float(selected_row["price_eur"]),
+                        "label": selected_label,
+                        "notes": feedback_note.strip() or None,
+                    },
+                )
+                st.success("Метка сохранена, shortlist обновлён.")
+                st.rerun()
+
+            if delete_feedback and pd.notna(selected_row.get("feedback_label")):
+                from src.storage.database import init_db, get_session
+                from src.storage.repository import delete_listing_feedback
+
+                db_path = _Path(__file__).resolve().parent.parent.parent / "data" / "olx_cars.db"
+                init_db(str(db_path))
+                sess = get_session()
+                delete_listing_feedback(sess, selected_row["olx_id"])
+                st.success("Метка удалена.")
+                st.rerun()
+
+        if feedback_for_model.empty:
+            st.caption("Ручных меток пока нет.")
+        else:
+            feedback_summary = (
+                feedback_for_model["feedback_label"]
+                .map(FEEDBACK_LABELS_RU)
+                .value_counts()
+                .rename_axis("Label")
+                .reset_index(name="Count")
+            )
+            summary_cols = st.columns(max(len(feedback_summary), 1))
+            for idx, (_, row) in enumerate(feedback_summary.iterrows()):
+                summary_cols[idx].metric(row["Label"], int(row["Count"]))
+
+            recent_feedback = feedback_for_model.copy()
+            if "feedback_label" in recent_feedback.columns:
+                recent_feedback["feedback_label"] = recent_feedback["feedback_label"].map(FEEDBACK_LABELS_RU)
+            recent_cols = [
+                "feedback_label",
+                "brand",
+                "model",
+                "year",
+                "price_eur",
+                "feedback_notes",
+                "feedback_updated_at",
+                "url",
+            ]
+            st.dataframe(
+                recent_feedback[[c for c in recent_cols if c in recent_feedback.columns]].head(20).rename(columns={
+                    "feedback_label": "Label",
+                    "brand": "Brand",
+                    "model": "Model",
+                    "year": "Year",
+                    "price_eur": "Price",
+                    "feedback_notes": "Notes",
+                    "feedback_updated_at": "Updated",
+                    "url": "Link",
+                }),
+                hide_index=True,
+                width="stretch",
+                column_config={
+                    "Price": st.column_config.NumberColumn(format="%d EUR"),
                     "Link": st.column_config.LinkColumn("Link", display_text="Open"),
                 },
             )
@@ -530,7 +724,14 @@ with tab_deals:
         if "sample_size" in deals.columns:
             signal_cols += ["sample_size", "confidence"]
         signal_cols += ["mileage_km", "engine_cc", "fuel_type", "segment_group", "district", "city"]
-        for extra_col in ["had_accident", "needs_repair", "estimated_repair_cost_eur", "num_owners", "customs_cleared"]:
+        for extra_col in [
+            "desc_mentions_accident",
+            "desc_mentions_repair",
+            "desc_estimated_repair_cost_eur",
+            "desc_mentions_num_owners",
+            "desc_mentions_customs_cleared",
+            "right_hand_drive",
+        ]:
             if extra_col in deals.columns and deals[extra_col].notna().any():
                 signal_cols.append(extra_col)
         if "days_listed" in deals.columns:
@@ -555,9 +756,12 @@ with tab_deals:
                 "avg_days_to_sell": "Days to Sell", "sample_size": "Sample",
                 "confidence": "Conf", "mileage_km": "Mileage", "engine_cc": "CC",
                 "fuel_type": "Fuel", "segment_group": "Segment", "district": "District", "city": "City",
-                "had_accident": "Accident", "needs_repair": "Repair",
-                "estimated_repair_cost_eur": "Repair Cost",
-                "num_owners": "Owners", "customs_cleared": "Customs",
+                "desc_mentions_accident": "Desc: accident",
+                "desc_mentions_repair": "Desc: repair",
+                "desc_estimated_repair_cost_eur": "Desc repair est.",
+                "desc_mentions_num_owners": "Desc owners",
+                "desc_mentions_customs_cleared": "Desc customs",
+                "right_hand_drive": "RHD",
                 "days_listed": "Listed", "price_change_eur": "Price Drop",
                 "price_drop_per_day": "Drop/day",
                 "url": "Link",
@@ -947,13 +1151,13 @@ with tab_analytics:
                 np.where(score_data["transmission"] == "Manual", 0.5, 0.5),
             )
 
-            # Condition: no accident + no repair = best; penalty for issues
+            # Description mention penalty: textual mentions of issues lower the score
             score_data["condition_norm"] = 1.0
-            if "had_accident" in score_data.columns:
-                score_data.loc[score_data["had_accident"] == True, "condition_norm"] = 0.2
-            if "needs_repair" in score_data.columns:
+            if "desc_mentions_accident" in score_data.columns:
+                score_data.loc[score_data["desc_mentions_accident"] == True, "condition_norm"] = 0.2
+            if "desc_mentions_repair" in score_data.columns:
                 score_data.loc[
-                    (score_data["needs_repair"] == True) & (score_data["condition_norm"] > 0.2),
+                    (score_data["desc_mentions_repair"] == True) & (score_data["condition_norm"] > 0.2),
                     "condition_norm",
                 ] = 0.5
 
@@ -1327,8 +1531,8 @@ with tab_listings:
         "price_change_eur", "price_change_pct", "eur_per_km",
         "mileage_km", "engine_cc",
         "fuel_type", "horsepower", "transmission", "segment",
-        "had_accident", "needs_repair", "estimated_repair_cost_eur",
-        "num_owners", "customs_cleared",
+        "desc_mentions_accident", "desc_mentions_repair", "desc_estimated_repair_cost_eur",
+        "desc_mentions_num_owners", "desc_mentions_customs_cleared", "right_hand_drive",
         "city", "district", "seller_type", "is_active", "url",
     ] if c in filtered_listings.columns]
 
@@ -1344,11 +1548,12 @@ with tab_listings:
             "mileage_km": st.column_config.NumberColumn("Mileage", format="%d km"),
             "engine_cc": st.column_config.NumberColumn("Engine (cc)", format="%d"),
             "horsepower": st.column_config.NumberColumn("HP", format="%d"),
-            "had_accident": st.column_config.CheckboxColumn("Accident"),
-            "needs_repair": st.column_config.CheckboxColumn("Repair"),
-            "estimated_repair_cost_eur": st.column_config.NumberColumn("Repair Cost", format="%d EUR"),
-            "num_owners": st.column_config.NumberColumn("Owners", format="%d"),
-            "customs_cleared": st.column_config.CheckboxColumn("Customs"),
+            "desc_mentions_accident": st.column_config.CheckboxColumn("Desc: accident"),
+            "desc_mentions_repair": st.column_config.CheckboxColumn("Desc: repair"),
+            "desc_estimated_repair_cost_eur": st.column_config.NumberColumn("Desc repair est.", format="%d EUR"),
+            "desc_mentions_num_owners": st.column_config.NumberColumn("Desc owners", format="%d"),
+            "desc_mentions_customs_cleared": st.column_config.CheckboxColumn("Desc customs"),
+            "right_hand_drive": st.column_config.CheckboxColumn("RHD"),
             "is_active": st.column_config.CheckboxColumn("Active"),
             "url": st.column_config.LinkColumn("Link", display_text="Open"),
         },
@@ -2034,7 +2239,10 @@ with tab_lifespan:
                     })
 
                 # Condition comparison
-                for col, label in [("had_accident", "Доля с ДТП"), ("needs_repair", "Доля с ремонтом")]:
+                for col, label in [
+                    ("desc_mentions_accident", "Доля с упоминанием ДТП в описании"),
+                    ("desc_mentions_repair", "Доля с упоминанием ремонта в описании"),
+                ]:
                     if col in quick.columns and quick[col].notna().any():
                         q_pct = (quick[col] == True).mean()
                         s_pct = (slow[col] == True).mean() if not slow.empty and col in slow.columns else None

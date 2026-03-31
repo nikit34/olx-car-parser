@@ -17,13 +17,13 @@ from src.cli import _llm_worker, _llm_to_db, _db_worker, _desc_hash
 # ---------------------------------------------------------------------------
 
 VALID_LLM_RESULT = {
-    "num_owners": 2,
+    "desc_mentions_num_owners": 2,
     "accident_free": True,
-    "had_accident": False,
-    "needs_repair": False,
+    "desc_mentions_accident": False,
+    "desc_mentions_repair": False,
     "mileage_in_description_km": 120000,
-    "estimated_repair_cost_eur": None,
-    "customs_cleared": None,
+    "desc_estimated_repair_cost_eur": None,
+    "desc_mentions_customs_cleared": None,
 }
 
 
@@ -153,7 +153,7 @@ class TestDbWorker:
         # Verify llm_extras in data dict
         call_data = mock_upsert.call_args[0][1]
         assert call_data["llm_extras"] is not None
-        assert json.loads(call_data["llm_extras"])["num_owners"] == 2
+        assert json.loads(call_data["llm_extras"])["desc_mentions_num_owners"] == 2
 
     @patch("src.cli.get_generation", return_value="Mk7")
     @patch("src.cli.add_price_snapshot")

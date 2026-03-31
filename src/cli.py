@@ -163,12 +163,13 @@ def _db_worker(db_queue: Queue, result: dict):
             "seller_type": raw.seller_type, "description": raw.description,
             "llm_extras": json.dumps(llm_data, ensure_ascii=False) if llm_data else None,
             "llm_description_hash": _desc_hash(raw.description) if llm_data and raw.description else None,
-            "needs_repair": corrections.get("needs_repair"),
-            "had_accident": corrections.get("had_accident"),
+            "desc_mentions_repair": corrections.get("desc_mentions_repair"),
+            "desc_mentions_accident": corrections.get("desc_mentions_accident"),
             "real_mileage_km": corrections.get("real_mileage_km"),
-            "num_owners": corrections.get("num_owners"),
-            "customs_cleared": corrections.get("customs_cleared"),
-            "estimated_repair_cost_eur": corrections.get("estimated_repair_cost_eur"),
+            "desc_mentions_num_owners": corrections.get("desc_mentions_num_owners"),
+            "desc_mentions_customs_cleared": corrections.get("desc_mentions_customs_cleared"),
+            "desc_estimated_repair_cost_eur": corrections.get("desc_estimated_repair_cost_eur"),
+            "right_hand_drive": corrections.get("right_hand_drive"),
             "source": getattr(raw, "source", "olx"),
             "posted_at": getattr(raw, "_posted_at", None),
         }
@@ -528,7 +529,7 @@ def export_training_data(
         console.print("[yellow]No data. Run 'scrape' first.[/yellow]")
         raise typer.Exit()
 
-    from src.parser.llm_enrichment import EXTRACTION_PROMPT
+    from src.parser.llm_enrichment import EXTRACTION_PROMPT, normalize_llm_extras
 
     out_path = Path(output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -544,9 +545,10 @@ def export_training_data(
                 extras = json.loads(extras_raw) if isinstance(extras_raw, str) else extras_raw
             except (json.JSONDecodeError, TypeError):
                 continue
+            extras = normalize_llm_extras(extras)
 
-            for col in ("needs_repair", "had_accident", "num_owners",
-                        "customs_cleared", "real_mileage_km", "estimated_repair_cost_eur"):
+            for col in ("desc_mentions_repair", "desc_mentions_accident", "desc_mentions_num_owners",
+                        "desc_mentions_customs_cleared", "real_mileage_km", "desc_estimated_repair_cost_eur"):
                 val = row.get(col)
                 if val is not None and not (isinstance(val, float) and pd.isna(val)):
                     extras[col] = val

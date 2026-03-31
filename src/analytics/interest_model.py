@@ -1,10 +1,13 @@
-"""Ranking model for interesting listings."""
+"""Ranking model for shortlist candidates."""
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 
+
+FEEDBACK_POSITIVE_LABELS = {"interesting", "bought"}
+FEEDBACK_NEGATIVE_LABELS = {"skipped"}
 
 INTEREST_FEATURE_COLUMNS = [
     "signal_strength",
@@ -35,7 +38,7 @@ def _sigmoid(values: np.ndarray) -> np.ndarray:
 
 
 def build_interest_reason(row: pd.Series) -> str:
-    """Return short, human-readable explanation for ranking."""
+    """Return short, human-readable explanation for shortlist ranking."""
     reasons = []
     undervaluation = row.get("undervaluation_pct")
     est_profit = row.get("est_profit_eur")
@@ -54,12 +57,7 @@ def build_interest_reason(row: pd.Series) -> str:
     if pd.notna(drop_per_day) and drop_per_day < -20:
         reasons.append("seller is reducing price")
 
-    if row.get("needs_repair"):
-        reasons.append("needs repair check")
-    elif row.get("had_accident"):
-        reasons.append("accident history")
-
-    return ", ".join(reasons[:3]) if reasons else "worth a manual look"
+    return ", ".join(reasons[:3]) if reasons else "market anomaly, manual review needed"
 
 
 def build_interest_features(active_df: pd.DataFrame, deals_df: pd.DataFrame) -> pd.DataFrame:
@@ -141,16 +139,10 @@ def build_interest_features(active_df: pd.DataFrame, deals_df: pd.DataFrame) -> 
     else:
         merged["staleness_score"] = 0.0
 
-    risk_penalty = pd.Series(0.0, index=merged.index)
-    if "needs_repair" in merged.columns:
-        risk_penalty += np.where(merged["needs_repair"] == True, 0.45, 0.0)
-    if "had_accident" in merged.columns:
-        risk_penalty += np.where(merged["had_accident"] == True, 0.35, 0.0)
-    if "customs_cleared" in merged.columns:
-        risk_penalty += np.where(merged["customs_cleared"] == False, 0.25, 0.0)
-    if "num_owners" in merged.columns:
-        risk_penalty += np.where(merged["num_owners"].fillna(0) >= 4, 0.15, 0.0)
-    merged["risk_penalty"] = risk_penalty.clip(upper=1.0)
+    # Do not let LLM-interpreted condition fields decide whether a car is "good".
+    # Quality/condition flags stay in the UI as review hints, but shortlist scoring
+    # is driven only by market behaviour and explicit user feedback.
+    merged["risk_penalty"] = 0.0
 
     prior_logit = np.full(len(merged), DEFAULT_INTEREST_WEIGHTS["bias"], dtype=float)
     for feature in INTEREST_FEATURE_COLUMNS:
@@ -193,79 +185,62 @@ def _fit_logistic_weights(
     return fitted
 
 
-def _build_training_frame(
-    feature_df: pd.DataFrame,
-    portfolio_df: pd.DataFrame | None,
-    min_positive_labels: int = 3,
-) -> tuple[pd.DataFrame, int]:
-    """Prepare pseudo-labeled training data from portfolio outcomes."""
-    if portfolio_df is None or portfolio_df.empty or "olx_listing_id" not in portfolio_df.columns:
-        return pd.DataFrame(), 0
-
-    positive_ids = {
-        str(value)
-        for value in portfolio_df["olx_listing_id"].dropna().astype(str)
-        if value.strip()
-    }
-    if not positive_ids:
-        return pd.DataFrame(), 0
-
-    labeled = feature_df.copy()
-    labeled["portfolio_positive"] = labeled["olx_id"].astype(str).isin(positive_ids)
-    positive_count = int(labeled["portfolio_positive"].sum())
-    if positive_count < min_positive_labels:
-        return pd.DataFrame(), positive_count
-
-    positives = labeled[labeled["portfolio_positive"]].copy()
-    negatives_pool = labeled[~labeled["portfolio_positive"]].copy()
-    if negatives_pool.empty:
-        return pd.DataFrame(), positive_count
-
-    negative_limit = min(max(positive_count * 3, 12), len(negatives_pool))
-    negatives = negatives_pool.sort_values(
-        ["prior_probability", "risk_penalty", "signal_strength"],
-        ascending=[True, False, True],
-    ).head(negative_limit)
-
-    train_df = pd.concat([positives, negatives], ignore_index=True)
-    train_df["training_label"] = np.where(train_df["portfolio_positive"], 1.0, 0.0)
-    return train_df, positive_count
-
-
-def score_interest_candidates(
-    active_df: pd.DataFrame,
-    deals_df: pd.DataFrame,
-    portfolio_df: pd.DataFrame | None = None,
-    min_positive_labels: int = 3,
-) -> pd.DataFrame:
-    """Score listings and optionally fine-tune from portfolio examples."""
-    feature_df = build_interest_features(active_df, deals_df)
-    if feature_df.empty:
+def _prepare_feedback_frame(feedback_df: pd.DataFrame | None) -> pd.DataFrame:
+    """Normalize explicit user feedback to a stable schema."""
+    if feedback_df is None or feedback_df.empty or "olx_id" not in feedback_df.columns:
         return pd.DataFrame()
 
-    train_df, positive_count = _build_training_frame(
-        feature_df, portfolio_df, min_positive_labels=min_positive_labels
-    )
-    if not train_df.empty:
-        weights = _fit_logistic_weights(
-            train_df,
-            INTEREST_FEATURE_COLUMNS,
-            initial_weights=DEFAULT_INTEREST_WEIGHTS,
-        )
-        model_source = "portfolio-trained"
-    else:
-        weights = dict(DEFAULT_INTEREST_WEIGHTS)
-        model_source = "prior"
+    label_col = "feedback_label" if "feedback_label" in feedback_df.columns else "label"
+    if label_col not in feedback_df.columns:
+        return pd.DataFrame()
 
-    logits = np.full(len(feature_df), weights["bias"], dtype=float)
-    for feature in INTEREST_FEATURE_COLUMNS:
-        logits += feature_df[feature].fillna(0).to_numpy(dtype=float) * weights[feature]
+    out = feedback_df.copy()
+    out["olx_id"] = out["olx_id"].astype(str).str.strip()
+    out["feedback_label"] = out[label_col].astype(str).str.strip().str.lower()
+    out = out[
+        out["olx_id"].ne("")
+        & out["feedback_label"].isin(FEEDBACK_POSITIVE_LABELS | FEEDBACK_NEGATIVE_LABELS)
+    ].copy()
+    if out.empty:
+        return pd.DataFrame()
 
-    scored = feature_df.copy()
-    scored["interest_probability"] = _sigmoid(logits)
-    scored["model_source"] = model_source
-    scored["portfolio_positive_count"] = positive_count
-    scored["portfolio_positive"] = False
+    rename_map = {}
+    if "notes" in out.columns and "feedback_notes" not in out.columns:
+        rename_map["notes"] = "feedback_notes"
+    if "updated_at" in out.columns and "feedback_updated_at" not in out.columns:
+        rename_map["updated_at"] = "feedback_updated_at"
+    if rename_map:
+        out = out.rename(columns=rename_map)
+
+    keep_cols = ["olx_id", "feedback_label"]
+    for column in [
+        "feedback_notes",
+        "feedback_updated_at",
+        "url",
+        "title",
+        "brand",
+        "model",
+        "year",
+        "price_eur",
+    ]:
+        if column in out.columns:
+            keep_cols.append(column)
+
+    sort_columns = ["feedback_updated_at"] if "feedback_updated_at" in out.columns else None
+    if sort_columns:
+        out = out.sort_values(sort_columns, ascending=False, na_position="last")
+
+    return out[keep_cols].drop_duplicates(subset=["olx_id"], keep="first")
+
+
+def _attach_training_sources(
+    feature_df: pd.DataFrame,
+    portfolio_df: pd.DataFrame | None,
+    feedback_df: pd.DataFrame | None,
+) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Attach portfolio and explicit feedback labels to scored candidates."""
+    labeled = feature_df.copy()
+    labeled["portfolio_positive"] = False
 
     if portfolio_df is not None and not portfolio_df.empty and "olx_listing_id" in portfolio_df.columns:
         positive_ids = {
@@ -273,7 +248,159 @@ def score_interest_candidates(
             for value in portfolio_df["olx_listing_id"].dropna().astype(str)
             if value.strip()
         }
-        scored["portfolio_positive"] = scored["olx_id"].astype(str).isin(positive_ids)
+        if positive_ids:
+            labeled["portfolio_positive"] = labeled["olx_id"].astype(str).isin(positive_ids)
+
+    normalized_feedback = _prepare_feedback_frame(feedback_df)
+    if normalized_feedback.empty:
+        labeled["feedback_label"] = pd.NA
+        labeled["feedback_notes"] = pd.NA
+        labeled["feedback_updated_at"] = pd.NaT
+    else:
+        labeled = labeled.merge(normalized_feedback, on="olx_id", how="left", suffixes=("", "_feedback"))
+
+    labeled["feedback_positive"] = labeled["feedback_label"].isin(FEEDBACK_POSITIVE_LABELS)
+    labeled["feedback_negative"] = labeled["feedback_label"].isin(FEEDBACK_NEGATIVE_LABELS)
+
+    stats = {
+        "portfolio_positive_count": int(labeled["portfolio_positive"].sum()),
+        "feedback_positive_count": int(labeled["feedback_positive"].sum()),
+        "feedback_negative_count": int(labeled["feedback_negative"].sum()),
+    }
+    return labeled, stats
+
+
+def _build_training_frame(
+    labeled_df: pd.DataFrame,
+    min_positive_labels: int = 3,
+) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Prepare pseudo-labeled training data from portfolio and explicit feedback."""
+    if labeled_df.empty:
+        return pd.DataFrame(), {
+            "training_positive_count": 0,
+            "training_negative_count": 0,
+            "feedback_label_count": 0,
+        }
+
+    labeled = labeled_df.copy()
+    labeled["training_label"] = np.nan
+    labeled.loc[labeled["portfolio_positive"], "training_label"] = 1.0
+    labeled.loc[labeled["feedback_positive"], "training_label"] = 1.0
+    labeled.loc[labeled["feedback_negative"], "training_label"] = 0.0
+
+    positive_count = int((labeled["training_label"] == 1.0).sum())
+    negative_count = int((labeled["training_label"] == 0.0).sum())
+    feedback_label_count = int(labeled["feedback_label"].notna().sum())
+
+    min_required_positives = (
+        1 if feedback_label_count >= 2 and positive_count >= 1 and negative_count >= 1 else min_positive_labels
+    )
+    if positive_count < min_required_positives:
+        return pd.DataFrame(), {
+            "training_positive_count": positive_count,
+            "training_negative_count": negative_count,
+            "feedback_label_count": feedback_label_count,
+        }
+
+    train_df = labeled[labeled["training_label"].notna()].copy()
+
+    negatives_pool = labeled[labeled["training_label"].isna()].copy()
+    target_negative_count = max(positive_count * 3, 12)
+    if not negatives_pool.empty and negative_count < target_negative_count:
+        negative_limit = min(target_negative_count - negative_count, len(negatives_pool))
+        pseudo_negatives = negatives_pool.sort_values(
+            ["prior_probability", "risk_penalty", "signal_strength"],
+            ascending=[True, False, True],
+        ).head(negative_limit)
+        pseudo_negatives["training_label"] = 0.0
+        train_df = pd.concat([train_df, pseudo_negatives], ignore_index=True)
+
+    negative_count = int((train_df["training_label"] == 0.0).sum())
+    if negative_count == 0:
+        return pd.DataFrame(), {
+            "training_positive_count": positive_count,
+            "training_negative_count": negative_count,
+            "feedback_label_count": feedback_label_count,
+        }
+
+    return train_df, {
+        "training_positive_count": positive_count,
+        "training_negative_count": negative_count,
+        "feedback_label_count": feedback_label_count,
+    }
+
+
+def _apply_feedback_overrides(scored: pd.DataFrame) -> pd.DataFrame:
+    """Make explicit user feedback immediately affect ranking output."""
+    if "feedback_label" not in scored.columns:
+        return scored
+
+    overridden = scored.copy()
+    label_series = overridden["feedback_label"].fillna("")
+
+    interesting_mask = label_series.eq("interesting")
+    bought_mask = label_series.eq("bought")
+    skipped_mask = label_series.eq("skipped")
+
+    overridden.loc[interesting_mask, "interest_probability"] = np.maximum(
+        overridden.loc[interesting_mask, "interest_probability"],
+        0.72,
+    )
+    overridden.loc[bought_mask, "interest_probability"] = np.maximum(
+        overridden.loc[bought_mask, "interest_probability"],
+        0.95,
+    )
+    overridden.loc[skipped_mask, "interest_probability"] = np.minimum(
+        overridden.loc[skipped_mask, "interest_probability"],
+        0.08,
+    )
+    return overridden
+
+
+def score_interest_candidates(
+    active_df: pd.DataFrame,
+    deals_df: pd.DataFrame,
+    portfolio_df: pd.DataFrame | None = None,
+    feedback_df: pd.DataFrame | None = None,
+    min_positive_labels: int = 3,
+) -> pd.DataFrame:
+    """Score listings and optionally fine-tune from portfolio examples."""
+    feature_df = build_interest_features(active_df, deals_df)
+    if feature_df.empty:
+        return pd.DataFrame()
+
+    scored, source_stats = _attach_training_sources(feature_df, portfolio_df, feedback_df)
+    train_df, training_stats = _build_training_frame(scored, min_positive_labels=min_positive_labels)
+
+    if not train_df.empty:
+        weights = _fit_logistic_weights(
+            train_df,
+            INTEREST_FEATURE_COLUMNS,
+            initial_weights=DEFAULT_INTEREST_WEIGHTS,
+        )
+        has_feedback = source_stats["feedback_positive_count"] + source_stats["feedback_negative_count"] > 0
+        has_portfolio = source_stats["portfolio_positive_count"] > 0
+        if has_feedback and has_portfolio:
+            model_source = "feedback+portfolio-trained"
+        elif has_feedback:
+            model_source = "feedback-trained"
+        else:
+            model_source = "portfolio-trained"
+    else:
+        weights = dict(DEFAULT_INTEREST_WEIGHTS)
+        model_source = "prior"
+
+    logits = np.full(len(scored), weights["bias"], dtype=float)
+    for feature in INTEREST_FEATURE_COLUMNS:
+        logits += scored[feature].fillna(0).to_numpy(dtype=float) * weights[feature]
+
+    scored["interest_probability"] = _sigmoid(logits)
+    scored = _apply_feedback_overrides(scored)
+    scored["model_source"] = model_source
+    for key, value in source_stats.items():
+        scored[key] = value
+    for key, value in training_stats.items():
+        scored[key] = value
 
     scored["interest_class"] = np.select(
         [
@@ -286,7 +413,35 @@ def score_interest_candidates(
         ["Hot now", "Review", "Watchlist"],
         default="Low priority",
     )
+    scored.loc[scored["feedback_label"].eq("bought"), "interest_class"] = "Bought"
+    scored.loc[scored["feedback_label"].eq("skipped"), "interest_class"] = "Skipped"
+    scored.loc[
+        scored["feedback_label"].eq("interesting") & scored["interest_class"].eq("Low priority"),
+        "interest_class",
+    ] = "Review"
     scored["interest_reason"] = scored.apply(build_interest_reason, axis=1)
+    reason_prefix = np.select(
+        [
+            scored["feedback_label"].eq("interesting"),
+            scored["feedback_label"].eq("bought"),
+            scored["feedback_label"].eq("skipped"),
+        ],
+        [
+            "you marked it as interesting",
+            "already bought",
+            "you skipped this listing",
+        ],
+        default="",
+    )
+    scored["interest_reason"] = np.where(
+        reason_prefix != "",
+        np.where(
+            scored["interest_reason"].ne(""),
+            reason_prefix + "; " + scored["interest_reason"],
+            reason_prefix,
+        ),
+        scored["interest_reason"],
+    )
     scored = scored.sort_values(
         by=["interest_probability", "est_profit_eur", "sample_size", "price_eur"],
         ascending=[False, False, False, True],
