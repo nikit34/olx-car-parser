@@ -10,7 +10,10 @@ import pandas as pd
 
 import sys as _sys
 from pathlib import Path as _Path
-_sys.path.insert(0, str(_Path(__file__).resolve().parent))
+_dashboard_dir = _Path(__file__).resolve().parent
+_project_root = _dashboard_dir.parent.parent
+_sys.path.insert(0, str(_dashboard_dir))
+_sys.path.insert(0, str(_project_root))
 
 from data_loader import load_all, load_listing_feedback, load_portfolio, _force_next_check
 from src.analytics.interest_model import score_interest_candidates
