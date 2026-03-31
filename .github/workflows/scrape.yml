@@ -54,16 +54,19 @@ jobs:
         run: .venv/bin/python -m src.cli scrape
 
       - name: Send Telegram alerts
+        if: ${{ !cancelled() }}
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: .venv/bin/python -m src.cli alerts
 
       - name: Checkpoint WAL
+        if: always()
         run: |
           sqlite3 data/olx_cars.db "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null || \
             .venv/bin/python -c "import sqlite3; sqlite3.connect('data/olx_cars.db').execute('PRAGMA wal_checkpoint(TRUNCATE)')"
 
       - name: Upload DB to GitHub Releases
+        if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
