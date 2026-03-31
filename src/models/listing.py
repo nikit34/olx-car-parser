@@ -45,6 +45,8 @@ class Listing(Base):
     first_seen_at = Column(DateTime, default=datetime.utcnow)
     last_seen_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     is_active = Column(Boolean, default=True)
+    deactivated_at = Column(DateTime)          # When listing went inactive (sold/removed)
+    deactivation_reason = Column(String)       # "sold", "expired", "removed", "unknown"
 
     generation = Column(String)               # Car generation (e.g. "Golf VII", "E90")
 

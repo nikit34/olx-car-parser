@@ -25,6 +25,8 @@ def upsert_listing(session: Session, data: dict) -> Listing:
                 setattr(listing, key, value)
         listing.last_seen_at = seen_at
         listing.is_active = True
+        listing.deactivated_at = None
+        listing.deactivation_reason = None
     else:
         listing = Listing(**data, first_seen_at=seen_at, last_seen_at=seen_at, is_active=True)
         session.add(listing)
@@ -99,11 +101,33 @@ def mark_inactive(session: Session, active_olx_ids: set[str]):
     """Mark listings not seen in this scrape as inactive."""
     import logging
     log = logging.getLogger(__name__)
+    now = datetime.utcnow()
     count = session.query(Listing).filter(
         Listing.is_active == True,
         ~Listing.olx_id.in_(active_olx_ids),
-    ).update({"is_active": False}, synchronize_session="evaluate")
+    ).update({
+        "is_active": False,
+        "deactivated_at": now,
+        "deactivation_reason": "sold",
+    }, synchronize_session="evaluate")
     log.info("Marked %d listings as inactive", count)
+
+
+def backfill_deactivated_at(session: Session) -> int:
+    """Backfill deactivated_at from last_seen_at for old inactive listings."""
+    import logging
+    log = logging.getLogger(__name__)
+    rows = session.query(Listing).filter(
+        Listing.is_active == False,
+        Listing.deactivated_at.is_(None),
+    ).all()
+    for listing in rows:
+        listing.deactivated_at = listing.last_seen_at
+        listing.deactivation_reason = "sold"
+    if rows:
+        session.commit()
+    log.info("Backfilled deactivated_at for %d listings", len(rows))
+    return len(rows)
 
 
 _MERGE_FIELDS = [
@@ -335,6 +359,8 @@ def get_listings_df(session: Session) -> pd.DataFrame:
             "right_hand_drive": l.right_hand_drive,
             "source": l.source or "olx",
             "duplicate_of": l.duplicate_of,
+            "deactivated_at": l.deactivated_at,
+            "deactivation_reason": l.deactivation_reason,
         })
     return pd.DataFrame(rows)
 

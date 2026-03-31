@@ -73,6 +73,8 @@ def init_db(db_path: str | None = None):
         ("source", "TEXT DEFAULT 'olx'"),
         ("duplicate_of", "TEXT"),
         ("right_hand_drive", "BOOLEAN"),
+        ("deactivated_at", "DATETIME"),
+        ("deactivation_reason", "TEXT"),
     ]
     _migrate_unmatched_columns = [
         ("source", "TEXT DEFAULT 'olx'"),

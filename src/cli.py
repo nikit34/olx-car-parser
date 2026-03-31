@@ -567,5 +567,162 @@ def export_training_data(
         console.print(f"[yellow]Tip: need ~500+ examples for good fine-tuning. Keep scraping![/yellow]")
 
 
+@app.command()
+def train_tos(
+    target_days: int = typer.Option(30, help="Target sale window in days"),
+):
+    """Train time-to-sale model and show weights."""
+    from src.analytics.time_to_sale import build_tos_dataset, fit_tos_model, compute_tos_stats
+    from src.storage.repository import backfill_deactivated_at
+
+    init_db()
+    session = get_session()
+
+    # Backfill deactivated_at for old listings
+    backfilled = backfill_deactivated_at(session)
+    if backfilled:
+        console.print(f"[yellow]Backfilled deactivated_at for {backfilled} listings[/yellow]")
+
+    df = get_listings_df(session)
+    session.close()
+
+    if df.empty:
+        console.print("[yellow]No data. Run 'scrape' first.[/yellow]")
+        raise typer.Exit()
+
+    dataset = build_tos_dataset(df)
+    sold_count = (~dataset["censored"]).sum() if not dataset.empty else 0
+    console.print(f"Dataset: {len(dataset)} listings ({sold_count} sold, {len(dataset) - sold_count} active)")
+
+    if dataset.empty:
+        console.print("[yellow]No training data available.[/yellow]")
+        raise typer.Exit()
+
+    weights = fit_tos_model(dataset, target_days=target_days)
+
+    table = Table(title=f"Time-to-Sale Weights (target: {target_days}d)")
+    table.add_column("Feature")
+    table.add_column("Weight", justify="right")
+    for k, v in weights.items():
+        table.add_row(k, f"{v:.3f}")
+    console.print(table)
+
+    # Show per-model stats
+    tos_stats = compute_tos_stats(df)
+    if not tos_stats.empty:
+        stats_table = Table(title="Time-to-Sale by Model (top 20)")
+        stats_table.add_column("Brand")
+        stats_table.add_column("Model")
+        stats_table.add_column("Sold", justify="right")
+        stats_table.add_column("Median days", justify="right")
+        stats_table.add_column("% under 30d", justify="right")
+        stats_table.add_column("Sale rate", justify="right")
+
+        for _, row in tos_stats.head(20).iterrows():
+            stats_table.add_row(
+                row["brand"], row["model"],
+                str(int(row["sold_count"])),
+                f"{row['median_days']:.0f}",
+                f"{row['pct_under_30d']:.0f}%",
+                f"{row['sale_rate_pct']:.0f}%",
+            )
+        console.print(stats_table)
+
+    # Save weights
+    import yaml
+    weights_path = Path(__file__).resolve().parent.parent / "data" / "tos_weights.yaml"
+    weights_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(weights_path, "w") as f:
+        yaml.dump({"target_days": target_days, "weights": weights}, f)
+    console.print(f"[green]Weights saved to {weights_path}[/green]")
+
+
+@app.command()
+def optimize_price_cmd(
+    brand: str = typer.Argument(..., help="Car brand"),
+    model: str = typer.Argument(..., help="Car model"),
+    price: float = typer.Argument(..., help="Current asking price"),
+    year: int = typer.Option(2015, help="Car year"),
+    mileage: int = typer.Option(150000, help="Mileage in km"),
+    fuel: str = typer.Option("Gasolina", help="Fuel type"),
+    target_days: int = typer.Option(30, help="Target sale window in days"),
+    min_price: float = typer.Option(None, help="Minimum acceptable price"),
+):
+    """Optimize price for fastest sale within margin target."""
+    import yaml
+    from src.analytics.time_to_sale import (
+        build_tos_dataset, optimize_price,
+        DEFAULT_TOS_WEIGHTS, TOS_FEATURE_COLUMNS,
+    )
+
+    init_db()
+    session = get_session()
+    df = get_listings_df(session)
+    session.close()
+
+    # Load trained weights if available
+    weights_path = Path(__file__).resolve().parent.parent / "data" / "tos_weights.yaml"
+    if weights_path.exists():
+        with open(weights_path) as f:
+            saved = yaml.safe_load(f) or {}
+        weights = saved.get("weights", DEFAULT_TOS_WEIGHTS)
+        console.print(f"[dim]Using trained weights from {weights_path}[/dim]")
+    else:
+        weights = DEFAULT_TOS_WEIGHTS
+        console.print("[dim]Using default weights (run 'train-tos' first for better results)[/dim]")
+
+    # Get market median for this brand+model
+    matching = df[(df["brand"].str.lower() == brand.lower()) &
+                  (df["model"].str.lower() == model.lower()) &
+                  df["price_eur"].notna()]
+    if matching.empty:
+        console.print(f"[red]No listings found for {brand} {model}[/red]")
+        raise typer.Exit(1)
+
+    market_median = float(matching["price_eur"].median())
+    console.print(f"Market median for {brand} {model}: {market_median:,.0f} EUR ({len(matching)} listings)")
+
+    # Build feature dict
+    features = {
+        "price_ratio": price / market_median,
+        "mileage_norm": min(mileage, 500000) / 500000,
+        "year_norm": (year - 2000) / 25,
+        "is_diesel": 1.0 if "diesel" in fuel.lower() else 0.0,
+        "is_professional": 0.0,
+        "price_drop_rate": 0.0,
+        "has_accident": 0.0,
+        "has_repair": 0.0,
+    }
+
+    result = optimize_price(
+        features, market_median, weights,
+        target_days=target_days,
+        min_acceptable_price=min_price,
+    )
+
+    console.print()
+    console.print(f"[bold]Current price:[/bold] {price:,.0f} EUR (ratio: {price/market_median:.2f})")
+    console.print(f"[bold green]Optimal price:[/bold green] {result['optimal_price']:,.0f} EUR "
+                  f"(ratio: {result['optimal_ratio']:.2f})")
+    console.print(f"[bold]P(sold in {target_days}d):[/bold] {result['sale_probability']:.0%}")
+    console.print(f"[bold]Expected value:[/bold] {result['expected_value']:,.0f} EUR")
+
+    # Show price curve
+    table = Table(title="Price vs Sale Probability")
+    table.add_column("Price", justify="right")
+    table.add_column("P(sale)", justify="right")
+    table.add_column("Expected €", justify="right")
+    table.add_column("", justify="left")
+    for point in result["price_curve"][::5]:  # every 5th point
+        marker = " ← optimal" if point["price"] == result["optimal_price"] else ""
+        table.add_row(
+            f"{point['price']:,}",
+            f"{point['probability']:.0%}",
+            f"{point['expected_value']:,}",
+            marker,
+        )
+    console.print(table)
+
+
 if __name__ == "__main__":
     app()
