@@ -34,6 +34,208 @@ def plotly_chart_with_click(fig, df, key, **kwargs):
             st.link_button(label, url)
 
 
+DISPLAY_LABELS = {
+    "segment_group": "Кузов / сегмент",
+    "fuel_group": "Топливо",
+    "transmission_group": "КПП",
+    "brand": "Марка",
+    "district_group": "Район",
+}
+
+
+def normalize_category(series: pd.Series, unknown_label: str = "Не указано") -> pd.Series:
+    values = series.fillna(unknown_label).astype(str).str.strip()
+    return values.replace({"": unknown_label, "nan": unknown_label, "None": unknown_label})
+
+
+def format_group_label(group_key: str) -> str:
+    return DISPLAY_LABELS.get(group_key, group_key)
+
+
+def prepare_market_segments(df: pd.DataFrame) -> pd.DataFrame:
+    """Add cleaner categorical buckets for high-volume visualizations."""
+    if df.empty:
+        return df
+
+    out = df.copy()
+
+    if "segment" in out.columns:
+        out["segment_group"] = normalize_category(out["segment"]).replace({"SUV/TT": "SUV / TT"})
+    if "fuel_type" in out.columns:
+        out["fuel_group"] = normalize_category(out["fuel_type"]).replace(
+            {
+                "Híbrido (Gasolina)": "Híbrido",
+                "Híbrido (Diesel)": "Híbrido",
+                "Híbrido Plug-In": "Híbrido Plug-in",
+            }
+        )
+    if "transmission" in out.columns:
+        out["transmission_group"] = normalize_category(out["transmission"])
+    if "district" in out.columns:
+        out["district_group"] = normalize_category(out["district"])
+    if "city" in out.columns:
+        out["city_group"] = normalize_category(out["city"])
+
+    if "year" in out.columns:
+        out["age"] = (date.today().year - out["year"]).clip(lower=0)
+        out["age_bucket"] = pd.cut(
+            out["age"],
+            bins=[-1, 3, 6, 10, 15, 20, 99],
+            labels=["0-3y", "4-6y", "7-10y", "11-15y", "16-20y", "20y+"],
+            include_lowest=True,
+        )
+        out["year_bucket"] = pd.cut(
+            out["year"],
+            bins=[1980, 2005, 2010, 2015, 2020, 2023, 2100],
+            labels=["<=2005", "2006-2010", "2011-2015", "2016-2020", "2021-2023", "2024+"],
+            include_lowest=True,
+        )
+
+    if "mileage_km" in out.columns:
+        out["mileage_bucket"] = pd.cut(
+            out["mileage_km"],
+            bins=[0, 50_000, 100_000, 150_000, 200_000, 250_000, 300_000, 1_000_000],
+            labels=["0-50k", "50-100k", "100-150k", "150-200k", "200-250k", "250-300k", "300k+"],
+            include_lowest=True,
+        )
+
+    if "price_eur" in out.columns:
+        out["price_bucket"] = pd.cut(
+            out["price_eur"],
+            bins=[0, 5_000, 8_000, 12_000, 18_000, 25_000, 40_000, 1_000_000],
+            labels=["<5k", "5-8k", "8-12k", "12-18k", "18-25k", "25-40k", "40k+"],
+            include_lowest=True,
+        )
+
+    return out
+
+
+def build_interest_reason(row: pd.Series) -> str:
+    reasons = []
+    undervaluation = row.get("undervaluation_pct")
+    est_profit = row.get("est_profit_eur")
+    sample_size = row.get("sample_size")
+    avg_days = row.get("avg_days_to_sell")
+    drop_per_day = row.get("price_drop_per_day")
+
+    if pd.notna(undervaluation) and undervaluation >= 12:
+        reasons.append(f"below model by {undervaluation:.0f}%")
+    if pd.notna(est_profit) and est_profit >= 1000:
+        reasons.append(f"profit ~{int(est_profit):,} EUR")
+    if pd.notna(sample_size) and sample_size >= 8:
+        reasons.append(f"{int(sample_size)} comparable listings")
+    if pd.notna(avg_days) and avg_days <= 30:
+        reasons.append("liquid market")
+    if pd.notna(drop_per_day) and drop_per_day < -20:
+        reasons.append("seller is reducing price")
+
+    if row.get("needs_repair"):
+        reasons.append("needs repair check")
+    elif row.get("had_accident"):
+        reasons.append("accident history")
+
+    return ", ".join(reasons[:3]) if reasons else "worth a manual look"
+
+
+def prepare_interesting_listings(active_df: pd.DataFrame, deals_df: pd.DataFrame) -> pd.DataFrame:
+    """ML-assisted ranking for listings worth immediate review."""
+    if active_df.empty:
+        return pd.DataFrame()
+
+    base_cols = [
+        "olx_id",
+        "predicted_price",
+        "undervaluation_pct",
+        "flip_score",
+        "sample_size",
+        "avg_days_to_sell",
+        "price_drop_per_day",
+        "est_profit_eur",
+        "est_roi_pct",
+        "deal_profile",
+        "confidence",
+    ]
+    deal_features = deals_df[[c for c in base_cols if c in deals_df.columns]].copy() if not deals_df.empty else pd.DataFrame()
+
+    merged = active_df.copy()
+    if not deal_features.empty and "olx_id" in merged.columns and "olx_id" in deal_features.columns:
+        merged = merged.merge(deal_features, on="olx_id", how="left")
+
+    merged = merged[merged["price_eur"].notna()].copy()
+    if "url" in merged.columns:
+        merged = merged[merged["url"].notna() & (merged["url"].astype(str).str.startswith("http"))].copy()
+
+    if merged.empty:
+        return pd.DataFrame()
+
+    merged["signal_strength"] = merged.get("undervaluation_pct", pd.Series(index=merged.index, dtype=float)).fillna(0).clip(lower=0, upper=35) / 35
+    merged["profit_score"] = merged.get("est_profit_eur", pd.Series(index=merged.index, dtype=float)).fillna(0).clip(lower=0, upper=4000) / 4000
+    merged["roi_score"] = merged.get("est_roi_pct", pd.Series(index=merged.index, dtype=float)).fillna(0).clip(lower=0, upper=35) / 35
+    merged["confidence_score"] = merged.get("sample_size", pd.Series(index=merged.index, dtype=float)).fillna(0).clip(lower=0, upper=15) / 15
+
+    if "avg_days_to_sell" in merged.columns:
+        merged["liquidity_score"] = (
+            (45 - merged["avg_days_to_sell"].fillna(45).clip(lower=7, upper=90)) / 38
+        ).clip(lower=0, upper=1)
+    else:
+        merged["liquidity_score"] = 0.25
+
+    if "price_drop_per_day" in merged.columns:
+        merged["seller_pressure_score"] = (
+            (-merged["price_drop_per_day"].fillna(0)).clip(lower=0, upper=150) / 150
+        )
+    else:
+        merged["seller_pressure_score"] = 0.0
+
+    if "days_listed" in merged.columns:
+        merged["staleness_score"] = merged["days_listed"].fillna(0).clip(lower=0, upper=60) / 60
+    else:
+        merged["staleness_score"] = 0.0
+
+    risk_penalty = pd.Series(0.0, index=merged.index)
+    if "needs_repair" in merged.columns:
+        risk_penalty += np.where(merged["needs_repair"] == True, 0.45, 0.0)
+    if "had_accident" in merged.columns:
+        risk_penalty += np.where(merged["had_accident"] == True, 0.35, 0.0)
+    if "customs_cleared" in merged.columns:
+        risk_penalty += np.where(merged["customs_cleared"] == False, 0.25, 0.0)
+    if "num_owners" in merged.columns:
+        risk_penalty += np.where(merged["num_owners"].fillna(0) >= 4, 0.15, 0.0)
+    merged["risk_penalty"] = risk_penalty.clip(upper=1.0)
+
+    raw_score = (
+        -1.1
+        + merged["signal_strength"] * 3.2
+        + merged["profit_score"] * 1.6
+        + merged["roi_score"] * 1.1
+        + merged["confidence_score"] * 1.1
+        + merged["liquidity_score"] * 0.9
+        + merged["seller_pressure_score"] * 0.8
+        + merged["staleness_score"] * 0.3
+        - merged["risk_penalty"] * 2.1
+    )
+    merged["interest_probability"] = 1 / (1 + np.exp(-raw_score))
+
+    merged["interest_class"] = np.select(
+        [
+            (merged["interest_probability"] >= 0.80) & (merged["risk_penalty"] < 0.45) & (merged["signal_strength"] > 0.15),
+            merged["interest_probability"] >= 0.62,
+            merged["interest_probability"] >= 0.45,
+        ],
+        ["Hot now", "Review", "Watchlist"],
+        default="Low priority",
+    )
+    merged["interest_reason"] = merged.apply(build_interest_reason, axis=1)
+
+    sort_cols = ["interest_probability", "est_profit_eur", "sample_size", "price_eur"]
+    merged = merged.sort_values(
+        by=sort_cols,
+        ascending=[False, False, False, True],
+        na_position="last",
+    )
+    return merged
+
+
 # ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
@@ -95,17 +297,29 @@ selected_models = st.sidebar.multiselect(
     placeholder="All models",
 )
 
-all_districts = sorted(listings_df["district"].dropna().unique()) if "district" in listings_df.columns else []
+if "district" in listings_df.columns:
+    district_values = listings_df["district"].dropna().astype(str).str.strip()
+    all_districts = sorted(v for v in district_values.unique() if v)
+else:
+    all_districts = []
 selected_districts = st.sidebar.multiselect(
     "District", options=all_districts, default=[], placeholder="All districts",
 )
 
 if selected_districts and "city" in listings_df.columns:
-    available_cities = sorted(
-        listings_df[listings_df["district"].isin(selected_districts)]["city"].dropna().unique()
+    city_values = (
+        listings_df[listings_df["district"].isin(selected_districts)]["city"]
+        .dropna()
+        .astype(str)
+        .str.strip()
     )
+    available_cities = sorted(v for v in city_values.unique() if v)
 else:
-    available_cities = sorted(listings_df["city"].dropna().unique()) if "city" in listings_df.columns else []
+    if "city" in listings_df.columns:
+        city_values = listings_df["city"].dropna().astype(str).str.strip()
+        available_cities = sorted(v for v in city_values.unique() if v)
+    else:
+        available_cities = []
 
 selected_cities = st.sidebar.multiselect(
     "City", options=available_cities, default=[], placeholder="All cities",
@@ -121,6 +335,9 @@ price_range = st.sidebar.slider("Price (EUR)", min_value=0, max_value=price_max_
 only_private = st.sidebar.checkbox("Particular only", value=False)
 hide_needs_repair = st.sidebar.checkbox("Hide needs repair", value=False)
 only_customs_cleared = st.sidebar.checkbox("Only customs cleared", value=False)
+st.sidebar.markdown("### Display")
+cohort_min_size = st.sidebar.slider("Минимум объявлений в группе", min_value=3, max_value=20, value=6)
+chart_top_n = st.sidebar.slider("Сколько групп показывать", min_value=5, max_value=25, value=12)
 
 # ---------------------------------------------------------------------------
 # Apply filters
@@ -149,8 +366,26 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
     return f
 
 
-filtered_listings = apply_filters(listings_df)
-filtered_signals = apply_filters(signals_df)
+filtered_listings = prepare_market_segments(apply_filters(listings_df))
+filtered_signals = prepare_market_segments(apply_filters(signals_df))
+
+if (
+    not filtered_signals.empty
+    and "olx_id" in filtered_signals.columns
+    and "olx_id" in filtered_listings.columns
+    and "segment_group" in filtered_listings.columns
+):
+    signal_segments = (
+        filtered_listings[["olx_id", "segment_group"]]
+        .dropna(subset=["olx_id"])
+        .drop_duplicates(subset=["olx_id"])
+    )
+    filtered_signals = filtered_signals.drop(columns=["segment_group"], errors="ignore").merge(
+        signal_segments,
+        on="olx_id",
+        how="left",
+    )
+    filtered_signals["segment_group"] = filtered_signals["segment_group"].fillna("Не указано")
 
 active = filtered_listings[filtered_listings["is_active"]] if "is_active" in filtered_listings.columns else filtered_listings
 
@@ -234,6 +469,25 @@ with tab_deals:
                 lambda n: "High" if n >= 10 else ("Medium" if n >= 5 else "Low")
             )
 
+        profit_day_threshold = deals["profit_per_day"].dropna().quantile(0.75)
+        roi_threshold = deals["est_roi_pct"].dropna().quantile(0.7)
+
+        def classify_deal(row: pd.Series) -> str:
+            risky = bool(row.get("needs_repair")) or bool(row.get("had_accident")) or row.get("customs_cleared") is False
+            motivated = pd.notna(row.get("price_drop_per_day")) and row.get("price_drop_per_day") < 0
+            sample_size = row.get("sample_size") if pd.notna(row.get("sample_size")) else 0
+            if risky:
+                return "Risky upside"
+            if pd.notna(row.get("profit_per_day")) and row.get("profit_per_day") >= profit_day_threshold:
+                return "Quick flip"
+            if sample_size >= max(cohort_min_size, 8) and row.get("est_roi_pct", 0) >= roi_threshold:
+                return "Reliable edge"
+            if motivated:
+                return "Negotiation play"
+            return "Longer hold"
+
+        deals["deal_profile"] = deals.apply(classify_deal, axis=1)
+
         # --- Top deals cards ---
         top3 = deals.head(3)
         cols = st.columns(3)
@@ -282,15 +536,117 @@ with tab_deals:
 
         st.divider()
 
+        st.subheader("ML-shortlist интересных объявлений")
+        st.caption(
+            "Классификация использует модельную недооценку, ожидаемую прибыль, глубину сравнимых объявлений, "
+            "ликвидность модели, поведение продавца и риск-факторы. Это рабочий shortlist для быстрого перехода к конкретным лотам."
+        )
+        interesting = prepare_interesting_listings(active, deals)
+        shortlist = interesting[interesting["interest_class"] != "Low priority"].copy()
+        if shortlist.empty:
+            st.info("Сейчас нет объявлений, которые классификатор считает достаточно интересными.")
+        else:
+            shortlist["interest_match_pct"] = (shortlist["interest_probability"] * 100).round(0)
+            quick_hits = shortlist.head(4)
+            hit_cols = st.columns(len(quick_hits))
+            for idx, (_, listing) in enumerate(quick_hits.iterrows()):
+                with hit_cols[idx]:
+                    st.markdown(
+                        f"### {listing['brand']} {listing['model']} "
+                        f"{int(listing['year']) if pd.notna(listing.get('year')) else '?'}"
+                    )
+                    st.markdown(
+                        f"**{listing['interest_class']}** · "
+                        f"{listing['interest_probability'] * 100:.0f}% match"
+                    )
+                    if pd.notna(listing.get("price_eur")):
+                        st.markdown(f"Цена: **{int(listing['price_eur']):,} EUR**")
+                    if pd.notna(listing.get("est_profit_eur")):
+                        st.markdown(f"Потенциал: **{int(listing['est_profit_eur']):+,} EUR**")
+                    st.caption(listing["interest_reason"])
+                    if listing.get("url"):
+                        label = "Open on StandVirtual" if "standvirtual.com" in listing["url"] else "Open on OLX"
+                        st.link_button(label, listing["url"])
+
+            ml_view = shortlist.head(150).copy()
+            ml_view["_size"] = ml_view.get("sample_size", pd.Series(index=ml_view.index, dtype=float)).fillna(2).clip(lower=2)
+            fig_ml = px.scatter(
+                ml_view,
+                x="interest_probability",
+                y="est_profit_eur",
+                color="interest_class",
+                size="_size",
+                hover_data=[
+                    "brand",
+                    "model",
+                    "year",
+                    "price_eur",
+                    "interest_reason",
+                    "sample_size",
+                    "url",
+                ],
+                labels={
+                    "interest_probability": "Interest probability",
+                    "est_profit_eur": "Estimated profit (EUR)",
+                    "interest_class": "Class",
+                    "_size": "Comparable listings",
+                },
+                height=460,
+                opacity=0.75,
+                render_mode="webgl",
+            )
+            plotly_chart_with_click(fig_ml, ml_view, key="ml_shortlist_scatter", width="stretch")
+
+            ml_cols = [
+                "interest_class",
+                "interest_match_pct",
+                "brand",
+                "model",
+                "year",
+                "price_eur",
+                "est_profit_eur",
+                "est_roi_pct",
+                "sample_size",
+                "interest_reason",
+                "url",
+            ]
+            st.dataframe(
+                shortlist[[c for c in ml_cols if c in shortlist.columns]].head(40).rename(columns={
+                    "interest_class": "Class",
+                    "interest_match_pct": "Match",
+                    "brand": "Brand",
+                    "model": "Model",
+                    "year": "Year",
+                    "price_eur": "Price",
+                    "est_profit_eur": "Profit",
+                    "est_roi_pct": "ROI %",
+                    "sample_size": "Comps",
+                    "interest_reason": "Why interesting",
+                    "url": "Link",
+                }),
+                hide_index=True,
+                width="stretch",
+                column_config={
+                    "Match": st.column_config.NumberColumn(format="%.0f%%"),
+                    "Price": st.column_config.NumberColumn(format="%d EUR"),
+                    "Profit": st.column_config.NumberColumn(format="%+d EUR"),
+                    "ROI %": st.column_config.NumberColumn(format="%+.1f%%"),
+                    "Comps": st.column_config.NumberColumn(format="%d"),
+                    "Link": st.column_config.LinkColumn("Link", display_text="Open"),
+                },
+            )
+
+        st.divider()
+
         # --- Full deals table ---
-        signal_cols = ["deal", "brand", "model", "generation", "year",
+        signal_cols = ["deal", "deal_profile", "brand", "model", "generation", "year",
                        "price_eur", "predicted_price", "est_profit_eur", "est_roi_pct",
                        "profit_per_day", "undervaluation_pct", "flip_score"]
         if "avg_days_to_sell" in deals.columns:
             signal_cols.append("avg_days_to_sell")
         if "sample_size" in deals.columns:
             signal_cols += ["sample_size", "confidence"]
-        signal_cols += ["mileage_km", "engine_cc", "fuel_type", "district", "city"]
+        signal_cols += ["mileage_km", "engine_cc", "fuel_type", "segment_group", "district", "city"]
         for extra_col in ["had_accident", "needs_repair", "estimated_repair_cost_eur", "num_owners", "customs_cleared"]:
             if extra_col in deals.columns and deals[extra_col].notna().any():
                 signal_cols.append(extra_col)
@@ -307,6 +663,7 @@ with tab_deals:
         st.dataframe(
             deals[avail_cols].rename(columns={
                 "deal": "Deal", "brand": "Brand", "model": "Model",
+                "deal_profile": "Profile",
                 "generation": "Gen", "year": "Year",
                 "price_eur": "Price", "predicted_price": "Fair Price",
                 "est_profit_eur": "Profit", "est_roi_pct": "ROI %",
@@ -314,7 +671,7 @@ with tab_deals:
                 "undervaluation_pct": "Below Market %", "flip_score": "Score",
                 "avg_days_to_sell": "Days to Sell", "sample_size": "Sample",
                 "confidence": "Conf", "mileage_km": "Mileage", "engine_cc": "CC",
-                "fuel_type": "Fuel", "district": "District", "city": "City",
+                "fuel_type": "Fuel", "segment_group": "Segment", "district": "District", "city": "City",
                 "had_accident": "Accident", "needs_repair": "Repair",
                 "estimated_repair_cost_eur": "Repair Cost",
                 "num_owners": "Owners", "customs_cleared": "Customs",
@@ -359,45 +716,123 @@ with tab_deals:
             st.plotly_chart(fig_profit, width="stretch")
 
         with col_chart2:
-            # Deals by brand — where are the opportunities?
-            brand_deals = deals.groupby("brand").agg(
-                count=("brand", "size"),
-                avg_profit=("est_profit_eur", "mean"),
-            ).reset_index().sort_values("count", ascending=False).head(10)
-
-            fig_brands = px.bar(
-                brand_deals, x="count", y="brand", orientation="h",
-                color="avg_profit", color_continuous_scale="Greens",
-                labels={"count": "Deals", "brand": "Brand", "avg_profit": "Avg Profit"},
-                title="Сделки по маркам", height=350,
+            profile_stats = (
+                deals.groupby("deal_profile")
+                .agg(
+                    count=("deal_profile", "size"),
+                    median_profit=("est_profit_eur", "median"),
+                    median_roi=("est_roi_pct", "median"),
+                )
+                .reset_index()
+                .sort_values(["median_profit", "count"], ascending=[False, False])
             )
-            fig_brands.update_layout(yaxis=dict(autorange="reversed"))
-            st.plotly_chart(fig_brands, width="stretch")
+            fig_profiles = px.bar(
+                profile_stats,
+                x="count",
+                y="deal_profile",
+                orientation="h",
+                color="median_roi",
+                color_continuous_scale="YlGn",
+                labels={"count": "Deals", "deal_profile": "Profile", "median_roi": "Median ROI %"},
+                title="Архетипы сделок",
+                height=350,
+            )
+            fig_profiles.update_layout(yaxis=dict(autorange="reversed"))
+            st.plotly_chart(fig_profiles, width="stretch")
 
-        # --- Price vs Fair Price scatter ---
-        deals["_scatter_size"] = deals["flip_score"].clip(lower=1)
-        fig_scatter = px.scatter(
-            deals, x="predicted_price", y="price_eur",
-            color="est_profit_eur", size="_scatter_size",
-            color_continuous_scale="RdYlGn_r",
-            hover_data=["brand", "model", "year", "mileage_km", "url"],
-            labels={
-                "predicted_price": "Fair Price (EUR)",
-                "price_eur": "Asking Price (EUR)",
-                "est_profit_eur": "Profit (EUR)",
-                "flip_score": "Score",
-            },
-            title="Запрашиваемая цена vs Справедливая цена (ниже диагонали = выгода)",
-            height=500,
+        st.subheader("Где рынок отдаёт лучшие сделки")
+        st.caption(
+            "Тепловая карта агрегирует ROI по сегменту и ценовому диапазону. "
+            "Внутри ячейки — число найденных сделок, так что легко видеть не только доходность, но и глубину рынка."
         )
-        # Add diagonal line (price = fair price)
-        max_price = max(deals["predicted_price"].max(), deals["price_eur"].max())
-        fig_scatter.add_trace(go.Scatter(
-            x=[0, max_price], y=[0, max_price],
-            mode="lines", line=dict(dash="dash", color="gray", width=1),
-            name="Break Even", showlegend=False,
-        ))
-        plotly_chart_with_click(fig_scatter, deals, key="deals_scatter", width="stretch")
+        hotspot_data = (
+            deals[deals["segment_group"].notna() & deals["price_bucket"].notna()]
+            .groupby(["segment_group", "price_bucket"], observed=True)
+            .agg(median_roi=("est_roi_pct", "median"), count=("est_roi_pct", "size"))
+            .reset_index()
+        )
+        hotspot_data = hotspot_data[hotspot_data["count"] >= cohort_min_size]
+        if not hotspot_data.empty:
+            segment_order = (
+                hotspot_data.groupby("segment_group")["count"]
+                .sum()
+                .sort_values(ascending=False)
+                .head(chart_top_n)
+                .index
+            )
+            hotspot_data = hotspot_data[hotspot_data["segment_group"].isin(segment_order)]
+            roi_pivot = hotspot_data.pivot(index="segment_group", columns="price_bucket", values="median_roi")
+            count_pivot = hotspot_data.pivot(index="segment_group", columns="price_bucket", values="count")
+            roi_pivot = roi_pivot.loc[segment_order]
+            count_pivot = count_pivot.reindex(index=roi_pivot.index, columns=roi_pivot.columns)
+            fig_hot = px.imshow(
+                roi_pivot.values,
+                x=[str(c) for c in roi_pivot.columns],
+                y=roi_pivot.index.tolist(),
+                labels=dict(color="Median ROI %"),
+                aspect="auto",
+                color_continuous_scale="YlGn",
+                height=max(320, len(roi_pivot) * 40 + 80),
+            )
+            fig_hot.update_traces(
+                text=[
+                    [
+                        f"{int(count_pivot.iloc[r, c])}" if pd.notna(count_pivot.iloc[r, c]) else ""
+                        for c in range(len(count_pivot.columns))
+                    ]
+                    for r in range(len(count_pivot.index))
+                ],
+                texttemplate="%{text}",
+            )
+            st.plotly_chart(fig_hot, width="stretch")
+
+        priority_data = deals[deals["avg_days_to_sell"].notna()].copy()
+        if not priority_data.empty:
+            st.subheader("Карта приоритета: прибыль vs ликвидность")
+            st.caption(
+                "Каждая точка — конкретное объявление. Верхний левый квадрат — сделки, "
+                "где рынок обычно продаётся быстрее, а потенциальная прибыль выше медианы."
+            )
+            priority_data["_bubble_size"] = priority_data["sample_size"].fillna(1).clip(lower=1)
+            fig_priority = px.scatter(
+                priority_data,
+                x="avg_days_to_sell",
+                y="est_profit_eur",
+                color="deal_profile",
+                size="_bubble_size",
+                hover_data=[
+                    "brand",
+                    "model",
+                    "year",
+                    "price_eur",
+                    "predicted_price",
+                    "est_roi_pct",
+                    "sample_size",
+                    "url",
+                ],
+                labels={
+                    "avg_days_to_sell": "Typical days to sell",
+                    "est_profit_eur": "Estimated profit (EUR)",
+                    "deal_profile": "Profile",
+                    "_bubble_size": "Sample size",
+                },
+                height=500,
+                opacity=0.75,
+                render_mode="webgl",
+            )
+            fig_priority.add_vline(
+                x=priority_data["avg_days_to_sell"].median(),
+                line_dash="dot",
+                line_color="gray",
+                opacity=0.5,
+            )
+            fig_priority.add_hline(
+                y=priority_data["est_profit_eur"].median(),
+                line_dash="dot",
+                line_color="gray",
+                opacity=0.5,
+            )
+            plotly_chart_with_click(fig_priority, priority_data, key="deals_priority", width="stretch")
 
         # --- Motivated sellers: biggest price drops ---
         if "price_drop_per_day" in deals.columns and deals["price_drop_per_day"].notna().any():
@@ -488,66 +923,91 @@ with tab_analytics:
         if "year" in ana.columns:
             ana["label_year"] = ana["label"] + " " + ana["year"].astype(int).astype(str)
 
-        # ---- 1. Year vs Price colored by Transmission ----
-        st.subheader("Год vs Цена по типу КПП")
-        st.caption("АКПП стоит в среднем в 2.4 раза дороже МКПП. "
-                   "Ищите молодые машины с МКПП ниже линии тренда — это потенциальные выгоды.")
-        yr_data = ana[ana["year"].notna()].copy()
+        # ---- 1. Year vs Price aggregated by Transmission ----
+        st.subheader("Годовые корзины vs цена")
+        st.caption(
+            "Вместо сырого scatter здесь показана медианная цена по годовым корзинам. "
+            "На больших выборках такой вид быстрее показывает, где автомат или механика реально расходятся по рынку."
+        )
+        yr_data = ana[ana["year_bucket"].notna() & ana["transmission_group"].notna()].copy()
         if not yr_data.empty:
-            fig_yr = px.scatter(
-                yr_data, x="year", y="price_eur",
-                color="transmission",
-                symbol="transmission",
-                hover_data=["brand", "model", "mileage_km", "fuel_type", "district", "url"],
-                labels={"year": "Year", "price_eur": "Price (EUR)", "transmission": "Transmission"},
-                height=500, opacity=0.75,
-                color_discrete_map={"Automática": "#e63946", "Manual": "#457b9d"},
+            year_summary = (
+                yr_data.groupby(["year_bucket", "transmission_group"], observed=True)
+                .agg(median_price=("price_eur", "median"), count=("price_eur", "size"))
+                .reset_index()
             )
-            # trend lines per transmission
-            for trans in yr_data["transmission"].dropna().unique():
-                sub = yr_data[yr_data["transmission"] == trans].dropna(subset=["year", "price_eur"])
-                if len(sub) >= 5:
-                    z = np.polyfit(sub["year"], sub["price_eur"], 1)
-                    xs = np.linspace(sub["year"].min(), sub["year"].max(), 50)
-                    fig_yr.add_trace(go.Scatter(
-                        x=xs, y=np.polyval(z, xs), mode="lines",
-                        line=dict(dash="dash", width=2),
-                        name=f"{trans} trend", showlegend=True,
-                    ))
-            fig_yr.update_layout(hovermode="closest")
-            plotly_chart_with_click(fig_yr, yr_data, key="yr_scatter", use_container_width=True)
+            year_summary = year_summary[year_summary["count"] >= cohort_min_size]
+            if not year_summary.empty:
+                fig_yr = px.line(
+                    year_summary,
+                    x="year_bucket",
+                    y="median_price",
+                    color="transmission_group",
+                    markers=True,
+                    hover_data=["count"],
+                    labels={
+                        "year_bucket": "Year bucket",
+                        "median_price": "Median price (EUR)",
+                        "transmission_group": "Transmission",
+                    },
+                    height=460,
+                )
+                fig_yr.update_layout(hovermode="x unified")
+                st.plotly_chart(fig_yr, use_container_width=True)
 
         # ---- 2. Mileage vs Price colored by Fuel ----
         col_a, col_b = st.columns(2)
 
         with col_a:
-            st.subheader("Пробег vs Цена по типу топлива")
-            st.caption("Дизель дольше держит цену при большом пробеге. "
-                       "Ищите бензиновые авто с низким пробегом — они недооценены рынком.")
-            mil_data = ana[ana["mileage_km"].notna()].copy()
+            st.subheader("Пробег vs цена по типу топлива")
+            st.caption(
+                "График агрегирован по корзинам пробега. "
+                "Так проще увидеть, в каких диапазонах дизель, бензин и гибриды действительно расходятся по цене."
+            )
+            mil_data = ana[ana["mileage_bucket"].notna() & ana["fuel_group"].notna()].copy()
             if not mil_data.empty:
-                fig_mil = px.scatter(
-                    mil_data, x="mileage_km", y="price_eur",
-                    color="fuel_type",
-                    hover_data=["brand", "model", "year", "transmission", "url"],
-                    labels={"mileage_km": "Mileage (km)", "price_eur": "Price (EUR)", "fuel_type": "Fuel"},
-                    height=450, opacity=0.7,
+                mileage_summary = (
+                    mil_data.groupby(["mileage_bucket", "fuel_group"], observed=True)
+                    .agg(median_price=("price_eur", "median"), count=("price_eur", "size"))
+                    .reset_index()
                 )
-                fig_mil.update_layout(hovermode="closest")
-                plotly_chart_with_click(fig_mil, mil_data, key="mil_scatter", use_container_width=True)
+                mileage_summary = mileage_summary[mileage_summary["count"] >= cohort_min_size]
+                if not mileage_summary.empty:
+                    fig_mil = px.line(
+                        mileage_summary,
+                        x="mileage_bucket",
+                        y="median_price",
+                        color="fuel_group",
+                        markers=True,
+                        hover_data=["count"],
+                        labels={
+                            "mileage_bucket": "Mileage bucket",
+                            "median_price": "Median price (EUR)",
+                            "fuel_group": "Fuel",
+                        },
+                        height=450,
+                    )
+                    fig_mil.update_layout(hovermode="x unified")
+                    st.plotly_chart(fig_mil, use_container_width=True)
 
         with col_b:
             st.subheader("Импорт vs Национальный по маркам")
-            st.caption("Импортные авто стоят дороже. Национальные машины премиум-марок — скрытая выгода.")
+            st.caption(
+                "Показывает медиану цены по происхождению. Это хороший срез для поиска брендов, "
+                "где локальный рынок заметно дешевле импортного."
+            )
             origin_data = ana[ana["origin"].notna() & ana["brand"].notna()].copy()
             if not origin_data.empty:
                 brand_origin = (
                     origin_data.groupby(["brand", "origin"])["price_eur"]
-                    .median().reset_index()
+                    .median()
+                    .reset_index()
                 )
                 # Only brands with both origins
                 both = brand_origin.groupby("brand").filter(lambda g: len(g) >= 2)
                 if not both.empty:
+                    brand_order = origin_data["brand"].value_counts().head(chart_top_n).index
+                    both = both[both["brand"].isin(brand_order)]
                     fig_orig = px.bar(
                         both.sort_values(["brand", "origin"]),
                         x="brand", y="price_eur", color="origin", barmode="group",
@@ -624,25 +1084,78 @@ with tab_analytics:
                 + score_data["condition_norm"] * 10
             )
 
+            st.subheader("Карта сегментов рынка")
+            split_field = st.selectbox(
+                "Сегментировать рынок по",
+                ["segment_group", "fuel_group", "transmission_group", "brand"],
+                format_func=format_group_label,
+                key="analytics_market_split",
+            )
+            market_summary = (
+                score_data.groupby(split_field)
+                .agg(
+                    listings=("price_eur", "size"),
+                    median_price=("price_eur", "median"),
+                    median_mileage=("mileage_km", "median"),
+                    median_age=("age", "median"),
+                    median_value_score=("value_score", "median"),
+                )
+                .reset_index()
+            )
+            market_summary = market_summary[
+                (market_summary["listings"] >= cohort_min_size)
+                & (market_summary[split_field] != "Не указано")
+            ]
+            if split_field == "brand":
+                market_summary = market_summary.sort_values("listings", ascending=False).head(chart_top_n)
+            if not market_summary.empty:
+                fig_market = px.scatter(
+                    market_summary,
+                    x="median_age",
+                    y="median_price",
+                    size="listings",
+                    color="median_value_score",
+                    text=split_field,
+                    color_continuous_scale="YlGn",
+                    hover_data=["median_mileage"],
+                    labels={
+                        "median_age": "Median age (years)",
+                        "median_price": "Median price (EUR)",
+                        "median_value_score": "Median value score",
+                        "listings": "Listings",
+                    },
+                    height=500,
+                )
+                fig_market.update_traces(textposition="top center")
+                st.plotly_chart(fig_market, use_container_width=True)
+
             fig_val = px.scatter(
                 score_data, x="price_eur", y="value_score",
-                color="brand", size="age",
+                color="segment_group",
                 hover_data=["model", "year", "mileage_km", "transmission", "fuel_type", "horsepower", "district", "url"],
-                labels={"price_eur": "Price (EUR)", "value_score": "Value Score", "brand": "Brand", "age": "Age (years)"},
-                title="Value Score vs Price — top right = optimal zone",
-                height=550, opacity=0.8,
+                labels={"price_eur": "Price (EUR)", "value_score": "Value Score", "segment_group": "Segment"},
+                title="Value Score vs Price — левый верхний сектор = лучшие сочетания",
+                height=550,
+                opacity=0.55,
+                render_mode="webgl",
             )
             # Highlight optimal zone (top-left quadrant)
             med_price = score_data["price_eur"].median()
             med_score = score_data["value_score"].median()
             fig_val.add_shape(
-                type="rect", x0=0, x1=med_price, y0=med_score, y1=100,
+                type="rect",
+                x0=score_data["price_eur"].min(),
+                x1=med_price,
+                y0=med_score,
+                y1=score_data["value_score"].max(),
                 line=dict(color="green", width=2, dash="dot"),
                 fillcolor="rgba(42,157,143,0.08)",
             )
             fig_val.add_annotation(
-                x=med_price * 0.3, y=med_score + (100 - med_score) * 0.85,
-                text="OPTIMAL ZONE", showarrow=False,
+                x=med_price * 0.35,
+                y=med_score + (score_data["value_score"].max() - med_score) * 0.8,
+                text="Sweet spot",
+                showarrow=False,
                 font=dict(color="green", size=14, family="Arial Black"),
             )
             fig_val.update_layout(hovermode="closest")
@@ -672,37 +1185,41 @@ with tab_analytics:
                 },
             )
 
-        # ---- 4. Depreciation Heatmap: Brand x Age ----
-        st.subheader("Карта амортизации: Марка × Возраст")
-        st.caption("Медиана цены по марке и возрастной группе. "
-                   "Тёплые цвета = дорогие, холодные = дешёвые. Показывает какие марки лучше сохраняют стоимость.")
-        dep_heat = ana[ana["year"].notna()].copy()
+        # ---- 4. Market heatmap: Age x Mileage ----
+        st.subheader("Карта рынка: возраст × пробег")
+        st.caption(
+            "В ячейках медианная цена, подпись показывает число объявлений. "
+            "Это даёт базовую «норму рынка» по состоянию машины и помогает сразу увидеть аномально дорогие или дешёвые зоны."
+        )
+        dep_heat = ana[ana["age_bucket"].notna() & ana["mileage_bucket"].notna()].copy()
         if not dep_heat.empty:
-            dep_heat["age_bucket"] = pd.cut(
-                dep_heat["age"], bins=[0, 5, 8, 11, 14, 17, 20, 50],
-                labels=["0-5y", "6-8y", "9-11y", "12-14y", "15-17y", "18-20y", "20y+"],
-                right=True,
+            heat_data = (
+                dep_heat.groupby(["age_bucket", "mileage_bucket"], observed=True)
+                .agg(median_price=("price_eur", "median"), count=("price_eur", "size"))
+                .reset_index()
             )
-            pivot_dep = dep_heat.pivot_table(
-                values="price_eur", index="brand", columns="age_bucket",
-                aggfunc="median",
-            )
-            # Keep brands with >= 3 listings
-            brand_counts = dep_heat["brand"].value_counts()
-            keep_brands = brand_counts[brand_counts >= 3].index
-            pivot_dep = pivot_dep.loc[pivot_dep.index.isin(keep_brands)]
-            if not pivot_dep.empty:
+            heat_data = heat_data[heat_data["count"] >= cohort_min_size]
+            if not heat_data.empty:
+                pivot_dep = heat_data.pivot(index="age_bucket", columns="mileage_bucket", values="median_price")
+                pivot_counts = heat_data.pivot(index="age_bucket", columns="mileage_bucket", values="count")
+                pivot_counts = pivot_counts.reindex(index=pivot_dep.index, columns=pivot_dep.columns)
                 fig_dep_h = px.imshow(
                     pivot_dep.values,
                     x=[str(c) for c in pivot_dep.columns],
-                    y=pivot_dep.index.tolist(),
+                    y=[str(i) for i in pivot_dep.index],
                     labels=dict(color="Median Price (EUR)"),
                     aspect="auto",
                     color_continuous_scale="YlOrRd",
-                    height=max(300, len(pivot_dep) * 50),
+                    height=max(320, len(pivot_dep) * 55),
                 )
                 fig_dep_h.update_traces(
-                    text=[[f"{v:,.0f}" if pd.notna(v) else "" for v in row] for row in pivot_dep.values],
+                    text=[
+                        [
+                            f"{int(pivot_counts.iloc[r, c])}" if pd.notna(pivot_counts.iloc[r, c]) else ""
+                            for c in range(len(pivot_counts.columns))
+                        ]
+                        for r in range(len(pivot_counts.index))
+                    ],
                     texttemplate="%{text}",
                 )
                 st.plotly_chart(fig_dep_h, use_container_width=True)
@@ -717,7 +1234,7 @@ with tab_analytics:
             if not tf_data.empty:
                 pivot_tf = tf_data.pivot_table(
                     values="price_eur", index="fuel_type", columns="transmission",
-                    aggfunc="median",
+                    aggfunc="median", observed=True,
                 )
                 if not pivot_tf.empty:
                     fig_tf = px.imshow(
@@ -787,11 +1304,13 @@ with tab_analytics:
 
             fig_sweet = px.scatter(
                 sweet, x="mileage_km", y="price_eur",
-                color="brand", size="age",
+                color="segment_group",
                 hover_data=["model", "year", "transmission", "fuel_type", "horsepower", "district", "url"],
-                labels={"mileage_km": "Mileage (km)", "price_eur": "Price (EUR)", "brand": "Brand", "age": "Age"},
+                labels={"mileage_km": "Mileage (km)", "price_eur": "Price (EUR)", "segment_group": "Segment"},
                 title=f"Cars under {max_budget:,} EUR, max {max_age_ss}y, max {max_mileage_ss//1000}k km",
-                height=500, opacity=0.8,
+                height=500,
+                opacity=0.7,
+                render_mode="webgl",
             )
             fig_sweet.update_layout(hovermode="closest")
             plotly_chart_with_click(fig_sweet, sweet, key="sweet_scatter", use_container_width=True)
@@ -861,7 +1380,7 @@ with tab_trends:
         season_data = compute_seasonality(history_df, listings_df)
         if season_data is not None and not season_data.empty:
             pivot_season = season_data.pivot_table(
-                values="price_index", index="segment", columns="month_name",
+                values="price_index", index="segment", columns="month_name", observed=True,
             )
             month_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
                            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
@@ -957,7 +1476,10 @@ with tab_listings:
 # ---- TAB 4: Compare Models ---------------------------------------------------
 with tab_compare:
     st.subheader("Сравнение моделей")
-    st.caption("Боксплот и скаттер по моделям. Помогает сравнить ценовые диапазоны и ликвидность разных моделей.")
+    st.caption(
+        "На больших выборках важнее агрегированные метрики модели: глубина рынка, ликвидность и ширина ценового коридора. "
+        "Поэтому здесь фокус смещён с boxplot по сотням моделей на cohort-view."
+    )
     if filtered_listings.empty or not active["price_eur"].notna().any():
         st.info("Нет данных для сравнения с текущими фильтрами.")
     else:
@@ -971,26 +1493,6 @@ with tab_compare:
         )
         comparison["label"] = comparison["brand"] + " " + comparison["model"]
 
-        col_left, col_right = st.columns(2)
-        with col_left:
-            pd_box = active[active["price_eur"].notna()].copy()
-            pd_box["label"] = pd_box["brand"] + " " + pd_box["model"]
-            fig_box = px.box(pd_box, x="label", y="price_eur",
-                             labels={"label": "Model", "price_eur": "Price (EUR)"},
-                             title="Price Distribution", height=500)
-            fig_box.update_xaxes(tickangle=45)
-            st.plotly_chart(fig_box, width="stretch")
-
-        with col_right:
-            sd = active[active["price_eur"].notna() & active["mileage_km"].notna()].copy()
-            if not sd.empty:
-                sd["label"] = sd["brand"] + " " + sd["model"]
-                fig_sc = px.scatter(sd, x="mileage_km", y="price_eur", color="label",
-                                    hover_data=["year", "fuel_type", "url"],
-                                    labels={"mileage_km": "Mileage (km)", "price_eur": "Price (EUR)", "label": "Model"},
-                                    title="Price vs Mileage", height=500, opacity=0.7)
-                plotly_chart_with_click(fig_sc, sd, key="compare_scatter", width="stretch")
-
         if not turnover_df.empty:
             comparison_full = comparison.merge(turnover_df, on=["brand", "model"], how="left")
         else:
@@ -1003,17 +1505,90 @@ with tab_compare:
             comparison_full["capital_turns"] = (365 / comparison_full["avg_days_to_sell"].replace(0, np.nan)).round(1)
         else:
             comparison_full["capital_turns"] = pd.NA
+        comparison_full["price_spread_pct"] = (
+            (comparison_full["max_price"] - comparison_full["min_price"])
+            / comparison_full["median_price"].replace(0, np.nan)
+            * 100
+        ).round(1)
+
+        comparison_view = comparison_full[comparison_full["count"] >= max(3, cohort_min_size)].copy()
+
+        col_left, col_right = st.columns(2)
+        with col_left:
+            st.markdown("#### Карта моделей: цена vs ликвидность")
+            st.caption(
+                "Каждый пузырь — модель. Левее = ниже порог входа, ниже = быстрее обычно продаётся. "
+                "Цвет показывает, насколько широкий у модели ценовой коридор."
+            )
+            liquid_view = comparison_view[comparison_view["avg_days_to_sell"].notna()].copy()
+            if not liquid_view.empty:
+                fig_market = px.scatter(
+                    liquid_view,
+                    x="median_price",
+                    y="avg_days_to_sell",
+                    size="count",
+                    color="price_spread_pct",
+                    color_continuous_scale="Turbo",
+                    hover_data=["label", "min_price", "max_price", "capital_turns", "avg_mileage"],
+                    labels={
+                        "median_price": "Median price (EUR)",
+                        "avg_days_to_sell": "Avg days to sell",
+                        "count": "Listings",
+                        "price_spread_pct": "Price spread %",
+                    },
+                    height=500,
+                )
+                fig_market.add_vline(
+                    x=liquid_view["median_price"].median(),
+                    line_dash="dot",
+                    line_color="gray",
+                    opacity=0.5,
+                )
+                fig_market.add_hline(
+                    y=liquid_view["avg_days_to_sell"].median(),
+                    line_dash="dot",
+                    line_color="gray",
+                    opacity=0.5,
+                )
+                st.plotly_chart(fig_market, width="stretch")
+
+        with col_right:
+            st.markdown("#### Модели с самым широким ценовым коридором")
+            st.caption(
+                "Широкий коридор означает большой разброс цен внутри одной модели. "
+                "Это полезный сигнал для торга и поиска неэффективностей рынка."
+            )
+            spread_view = comparison_view.sort_values(
+                ["price_spread_pct", "count"], ascending=[False, False]
+            ).head(chart_top_n)
+            if not spread_view.empty:
+                fig_gap = px.bar(
+                    spread_view,
+                    x="price_spread_pct",
+                    y="label",
+                    orientation="h",
+                    color="capital_turns" if spread_view["capital_turns"].notna().any() else "count",
+                    labels={
+                        "price_spread_pct": "Price spread %",
+                        "label": "Model",
+                        "capital_turns": "Turns / year",
+                        "count": "Listings",
+                    },
+                    height=max(320, len(spread_view) * 30 + 80),
+                )
+                fig_gap.update_layout(yaxis=dict(autorange="reversed"))
+                st.plotly_chart(fig_gap, width="stretch")
 
         comp_cols = ["label", "count", "median_price", "min_price", "max_price", "avg_mileage"]
         if "avg_days_to_sell" in comparison_full.columns:
-            comp_cols += ["avg_days_to_sell", "weekly_turnover", "capital_turns"]
+            comp_cols += ["avg_days_to_sell", "weekly_turnover", "capital_turns", "price_spread_pct"]
 
         st.dataframe(
             comparison_full[comp_cols].rename(columns={
                 "label": "Model", "count": "Listings", "median_price": "Median (EUR)",
                 "min_price": "Min (EUR)", "max_price": "Max (EUR)", "avg_mileage": "Avg Mileage",
                 "avg_days_to_sell": "Avg Days to Sell", "weekly_turnover": "Weekly Turnover %",
-                "capital_turns": "Turns/Year",
+                "capital_turns": "Turns/Year", "price_spread_pct": "Price Spread %",
             }),
             width="stretch", hide_index=True,
             column_config={
@@ -1024,6 +1599,7 @@ with tab_compare:
                 "Avg Days to Sell": st.column_config.NumberColumn(format="%.0f days"),
                 "Weekly Turnover %": st.column_config.NumberColumn(format="%.1f%%"),
                 "Turns/Year": st.column_config.NumberColumn(format="%.1f"),
+                "Price Spread %": st.column_config.NumberColumn(format="%.1f%%"),
             },
         )
 
@@ -1075,7 +1651,7 @@ with tab_compare:
             spread_data["label"] = spread_data["brand"] + " " + spread_data["model"]
             spread_agg = spread_data.pivot_table(
                 values="price_eur", index="label", columns="seller_type",
-                aggfunc="median",
+                aggfunc="median", observed=True,
             )
             if "Particular" in spread_agg.columns and "Profissional" in spread_agg.columns:
                 spread_agg = spread_agg.dropna(subset=["Particular", "Profissional"])
@@ -1234,34 +1810,36 @@ with tab_geo:
     if active.empty or "district" not in active.columns:
         st.info("Нет данных о расположении.")
     else:
+        geo_base = active[active["district_group"] != "Не указано"].copy()
         col_g1, col_g2 = st.columns(2)
         with col_g1:
-            district_counts = active["district"].value_counts().reset_index()
+            district_counts = geo_base["district_group"].value_counts().reset_index()
             district_counts.columns = ["District", "Count"]
             fig_bar = px.bar(district_counts.head(15), x="Count", y="District", orientation="h",
                              title="Listings by District", height=450)
             fig_bar.update_layout(yaxis=dict(autorange="reversed"))
             st.plotly_chart(fig_bar, width="stretch")
         with col_g2:
-            if active["price_eur"].notna().any():
+            if geo_base["price_eur"].notna().any():
                 district_prices = (
-                    active[active["price_eur"].notna()].groupby("district")["price_eur"]
+                    geo_base[geo_base["price_eur"].notna()].groupby("district_group")["price_eur"]
                     .median().reset_index().rename(columns={"price_eur": "Median Price (EUR)"})
                     .sort_values("Median Price (EUR)", ascending=False)
                 )
-                fig_price = px.bar(district_prices.head(15), x="Median Price (EUR)", y="district",
+                fig_price = px.bar(district_prices.head(15), x="Median Price (EUR)", y="district_group",
                                    orientation="h", title="Median Price by District", height=450)
                 fig_price.update_layout(yaxis=dict(autorange="reversed"))
                 st.plotly_chart(fig_price, width="stretch")
 
         if "city" in active.columns and active["city"].notna().any():
             city_stats = (
-                active[active["price_eur"].notna()].groupby(["district", "city"])
+                geo_base[(geo_base["price_eur"].notna()) & (geo_base["city_group"] != "Не указано")]
+                .groupby(["district_group", "city_group"])
                 .agg(count=("price_eur", "size"), median=("price_eur", "median"))
                 .reset_index().sort_values("count", ascending=False)
             )
             st.dataframe(
-                city_stats.head(30).rename(columns={"district": "District", "city": "City",
+                city_stats.head(30).rename(columns={"district_group": "District", "city_group": "City",
                                                      "count": "Listings", "median": "Median (EUR)"}),
                 width="stretch", hide_index=True,
                 column_config={"Median (EUR)": st.column_config.NumberColumn(format="%d EUR")},
@@ -1270,10 +1848,10 @@ with tab_geo:
         # --- Regional Price Differences ---
         st.subheader("Региональные различия в ценах")
         st.caption("Цены на одну и ту же модель в разных районах. Арбитраж = купить дёшево в одном районе, продать дороже в другом.")
-        geo_active = active[active["price_eur"].notna() & active["district"].notna()].copy()
+        geo_active = geo_base[geo_base["price_eur"].notna()].copy()
         if not geo_active.empty:
             geo_active["label"] = geo_active["brand"] + " " + geo_active["model"]
-            model_district_counts = geo_active.groupby("label")["district"].nunique()
+            model_district_counts = geo_active.groupby("label")["district_group"].nunique()
             geo_candidates = sorted(model_district_counts[model_district_counts >= 2].index.tolist())
 
             if geo_candidates:
@@ -1282,7 +1860,9 @@ with tab_geo:
                                                key="geo_models")
                 if selected_geo:
                     geo_subset = geo_active[geo_active["label"].isin(selected_geo)]
-                    pivot = geo_subset.pivot_table(values="price_eur", index="label", columns="district", aggfunc="median")
+                    pivot = geo_subset.pivot_table(
+                        values="price_eur", index="label", columns="district_group", aggfunc="median", observed=True
+                    )
                     if not pivot.empty:
                         fig_heat = px.imshow(pivot.values, x=pivot.columns.tolist(), y=pivot.index.tolist(),
                                              labels=dict(color="Median Price (EUR)"),
