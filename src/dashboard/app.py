@@ -13,6 +13,7 @@ from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).resolve().parent))
 
 from data_loader import load_all, load_portfolio, _force_next_check
+from src.analytics.interest_model import score_interest_candidates
 
 
 def plotly_chart_with_click(fig, df, key, **kwargs):
@@ -108,132 +109,6 @@ def prepare_market_segments(df: pd.DataFrame) -> pd.DataFrame:
         )
 
     return out
-
-
-def build_interest_reason(row: pd.Series) -> str:
-    reasons = []
-    undervaluation = row.get("undervaluation_pct")
-    est_profit = row.get("est_profit_eur")
-    sample_size = row.get("sample_size")
-    avg_days = row.get("avg_days_to_sell")
-    drop_per_day = row.get("price_drop_per_day")
-
-    if pd.notna(undervaluation) and undervaluation >= 12:
-        reasons.append(f"below model by {undervaluation:.0f}%")
-    if pd.notna(est_profit) and est_profit >= 1000:
-        reasons.append(f"profit ~{int(est_profit):,} EUR")
-    if pd.notna(sample_size) and sample_size >= 8:
-        reasons.append(f"{int(sample_size)} comparable listings")
-    if pd.notna(avg_days) and avg_days <= 30:
-        reasons.append("liquid market")
-    if pd.notna(drop_per_day) and drop_per_day < -20:
-        reasons.append("seller is reducing price")
-
-    if row.get("needs_repair"):
-        reasons.append("needs repair check")
-    elif row.get("had_accident"):
-        reasons.append("accident history")
-
-    return ", ".join(reasons[:3]) if reasons else "worth a manual look"
-
-
-def prepare_interesting_listings(active_df: pd.DataFrame, deals_df: pd.DataFrame) -> pd.DataFrame:
-    """ML-assisted ranking for listings worth immediate review."""
-    if active_df.empty:
-        return pd.DataFrame()
-
-    base_cols = [
-        "olx_id",
-        "predicted_price",
-        "undervaluation_pct",
-        "flip_score",
-        "sample_size",
-        "avg_days_to_sell",
-        "price_drop_per_day",
-        "est_profit_eur",
-        "est_roi_pct",
-        "deal_profile",
-        "confidence",
-    ]
-    deal_features = deals_df[[c for c in base_cols if c in deals_df.columns]].copy() if not deals_df.empty else pd.DataFrame()
-
-    merged = active_df.copy()
-    if not deal_features.empty and "olx_id" in merged.columns and "olx_id" in deal_features.columns:
-        merged = merged.merge(deal_features, on="olx_id", how="left")
-
-    merged = merged[merged["price_eur"].notna()].copy()
-    if "url" in merged.columns:
-        merged = merged[merged["url"].notna() & (merged["url"].astype(str).str.startswith("http"))].copy()
-
-    if merged.empty:
-        return pd.DataFrame()
-
-    merged["signal_strength"] = merged.get("undervaluation_pct", pd.Series(index=merged.index, dtype=float)).fillna(0).clip(lower=0, upper=35) / 35
-    merged["profit_score"] = merged.get("est_profit_eur", pd.Series(index=merged.index, dtype=float)).fillna(0).clip(lower=0, upper=4000) / 4000
-    merged["roi_score"] = merged.get("est_roi_pct", pd.Series(index=merged.index, dtype=float)).fillna(0).clip(lower=0, upper=35) / 35
-    merged["confidence_score"] = merged.get("sample_size", pd.Series(index=merged.index, dtype=float)).fillna(0).clip(lower=0, upper=15) / 15
-
-    if "avg_days_to_sell" in merged.columns:
-        merged["liquidity_score"] = (
-            (45 - merged["avg_days_to_sell"].fillna(45).clip(lower=7, upper=90)) / 38
-        ).clip(lower=0, upper=1)
-    else:
-        merged["liquidity_score"] = 0.25
-
-    if "price_drop_per_day" in merged.columns:
-        merged["seller_pressure_score"] = (
-            (-merged["price_drop_per_day"].fillna(0)).clip(lower=0, upper=150) / 150
-        )
-    else:
-        merged["seller_pressure_score"] = 0.0
-
-    if "days_listed" in merged.columns:
-        merged["staleness_score"] = merged["days_listed"].fillna(0).clip(lower=0, upper=60) / 60
-    else:
-        merged["staleness_score"] = 0.0
-
-    risk_penalty = pd.Series(0.0, index=merged.index)
-    if "needs_repair" in merged.columns:
-        risk_penalty += np.where(merged["needs_repair"] == True, 0.45, 0.0)
-    if "had_accident" in merged.columns:
-        risk_penalty += np.where(merged["had_accident"] == True, 0.35, 0.0)
-    if "customs_cleared" in merged.columns:
-        risk_penalty += np.where(merged["customs_cleared"] == False, 0.25, 0.0)
-    if "num_owners" in merged.columns:
-        risk_penalty += np.where(merged["num_owners"].fillna(0) >= 4, 0.15, 0.0)
-    merged["risk_penalty"] = risk_penalty.clip(upper=1.0)
-
-    raw_score = (
-        -1.1
-        + merged["signal_strength"] * 3.2
-        + merged["profit_score"] * 1.6
-        + merged["roi_score"] * 1.1
-        + merged["confidence_score"] * 1.1
-        + merged["liquidity_score"] * 0.9
-        + merged["seller_pressure_score"] * 0.8
-        + merged["staleness_score"] * 0.3
-        - merged["risk_penalty"] * 2.1
-    )
-    merged["interest_probability"] = 1 / (1 + np.exp(-raw_score))
-
-    merged["interest_class"] = np.select(
-        [
-            (merged["interest_probability"] >= 0.80) & (merged["risk_penalty"] < 0.45) & (merged["signal_strength"] > 0.15),
-            merged["interest_probability"] >= 0.62,
-            merged["interest_probability"] >= 0.45,
-        ],
-        ["Hot now", "Review", "Watchlist"],
-        default="Low priority",
-    )
-    merged["interest_reason"] = merged.apply(build_interest_reason, axis=1)
-
-    sort_cols = ["interest_probability", "est_profit_eur", "sample_size", "price_eur"]
-    merged = merged.sort_values(
-        by=sort_cols,
-        ascending=[False, False, False, True],
-        na_position="last",
-    )
-    return merged
 
 
 # ---------------------------------------------------------------------------
@@ -541,12 +416,20 @@ with tab_deals:
             "Классификация использует модельную недооценку, ожидаемую прибыль, глубину сравнимых объявлений, "
             "ликвидность модели, поведение продавца и риск-факторы. Это рабочий shortlist для быстрого перехода к конкретным лотам."
         )
-        interesting = prepare_interesting_listings(active, deals)
+        portfolio_for_model = get_portfolio()
+        interesting = score_interest_candidates(active, deals, portfolio_for_model)
         shortlist = interesting[interesting["interest_class"] != "Low priority"].copy()
         if shortlist.empty:
             st.info("Сейчас нет объявлений, которые классификатор считает достаточно интересными.")
         else:
             shortlist["interest_match_pct"] = (shortlist["interest_probability"] * 100).round(0)
+            if "model_source" in shortlist.columns:
+                source_label = shortlist["model_source"].iloc[0]
+                positive_count = int(shortlist["portfolio_positive_count"].iloc[0]) if "portfolio_positive_count" in shortlist.columns else 0
+                if source_label == "portfolio-trained":
+                    st.caption(f"Модель дообучена на сделках из портфеля: {positive_count} примеров.")
+                else:
+                    st.caption("Пока мало подтверждённых сделок в портфеле, поэтому используется базовая модель-приор.")
             quick_hits = shortlist.head(4)
             hit_cols = st.columns(len(quick_hits))
             for idx, (_, listing) in enumerate(quick_hits.iterrows()):
