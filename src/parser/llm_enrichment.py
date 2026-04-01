@@ -63,6 +63,7 @@ def _get_config() -> dict:
     return {
         "ollama_model": cfg.get("ollama_model", "qwen2.5:3b"),
         "ollama_url": cfg.get("ollama_url", OLLAMA_URL),
+        "llm_workers": cfg.get("llm_workers", 1),
     }
 
 

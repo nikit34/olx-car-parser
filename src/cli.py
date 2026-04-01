@@ -235,6 +235,7 @@ def scrape(
     delay_max: float = typer.Option(None, help="Max delay between requests (sec)"),
     private_only: bool = typer.Option(None, help="Only private sellers (Particular)"),
     concurrency: int = typer.Option(None, help="Parallel detail page workers (default 8)"),
+    llm_workers: int = typer.Option(None, help="Parallel LLM enrichment workers (default from config, or 1)"),
 ):
     """Scrape OLX.pt car listings, enrich with LLM, save to database.
 
@@ -281,7 +282,9 @@ def scrape(
 
     # LLM workers (separate processes — no GIL contention)
     llm_shutdown = multiprocessing.Event()
-    num_workers = 2
+    from src.parser.llm_enrichment import _get_config as _get_llm_config
+    llm_cfg = _get_llm_config()
+    num_workers = llm_workers if llm_workers is not None else llm_cfg.get("llm_workers", 1)
     llm_procs = []
     for _ in range(num_workers):
         p = multiprocessing.Process(target=_llm_worker, args=(llm_in, llm_out, llm_shutdown), daemon=True)
