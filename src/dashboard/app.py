@@ -315,8 +315,11 @@ if not filtered_signals.empty:
     avg_discount = filtered_signals["undervaluation_pct"].mean()
     col3.metric("Avg Discount", f"{avg_discount:.0f}%")
     best = filtered_signals.iloc[0]
-    best_profit = int(best["predicted_price"] - best["price_eur"])
-    col4.metric("Best Deal Profit", f"{best_profit:+,} EUR")
+    if pd.notna(best.get("predicted_price")):
+        best_profit = int(best["predicted_price"] - best["price_eur"])
+        col4.metric("Best Deal Profit", f"{best_profit:+,} EUR")
+    else:
+        col4.metric("Best Deal Profit", "—")
 else:
     col3.metric("Avg Discount", "—")
     col4.metric("Best Deal Profit", "—")
@@ -334,15 +337,15 @@ tab_deals, tab_analytics, tab_trends, tab_listings, tab_compare, tab_geo, tab_li
 with tab_deals:
     st.subheader("Недооценённые автомобили")
     st.caption("Flip-скор = недооценка % × год × пробег × ресурс двигателя × состояние × растаможка × мотивация продавца × владельцы × ликвидность × тренд. "
-               "Прибыль = справедливая цена − запрашиваемая цена − стоимость ремонта.")
+               "Прибыль = справедливая цена (регрессия по поколению) − запрашиваемая цена.")
 
     if filtered_signals.empty:
         st.info("Сделок не найдено. Попробуйте расширить фильтры.")
     else:
         deals = filtered_signals.copy()
 
-        # Add estimated profit and ROI columns
-        deals["est_profit_eur"] = (deals["predicted_price"] - deals["price_eur"]).round(0).astype(int)
+        # Add estimated profit and ROI columns (only where regression-based predicted_price exists)
+        deals["est_profit_eur"] = (deals["predicted_price"] - deals["price_eur"]).round(0)
         deals["est_roi_pct"] = ((deals["predicted_price"] - deals["price_eur"]) / deals["price_eur"] * 100).round(1)
 
         # Profit per day — capital efficiency metric
@@ -399,12 +402,16 @@ with tab_deals:
         cols = st.columns(3)
         for i, (_, deal) in enumerate(top3.iterrows()):
             with cols[i]:
-                profit = int(deal["est_profit_eur"])
                 st.markdown(f"### {deal['brand']} {deal['model']} {int(deal['year']) if pd.notna(deal['year']) else '?'}")
-                st.markdown(f"**{int(deal['price_eur']):,} EUR** → fair price **{int(deal['predicted_price']):,} EUR**")
-                profit_day = deal.get("profit_per_day")
-                profit_day_str = f" · **{profit_day:.0f} EUR/day**" if pd.notna(profit_day) else ""
-                st.markdown(f"Profit: **{profit:+,} EUR** ({deal['est_roi_pct']:+.0f}% ROI){profit_day_str}")
+                if pd.notna(deal.get("predicted_price")):
+                    profit = int(deal["est_profit_eur"])
+                    st.markdown(f"**{int(deal['price_eur']):,} EUR** → fair price **{int(deal['predicted_price']):,} EUR**")
+                    profit_day = deal.get("profit_per_day")
+                    profit_day_str = f" · **{profit_day:.0f} EUR/day**" if pd.notna(profit_day) else ""
+                    st.markdown(f"Profit: **{profit:+,} EUR** ({deal['est_roi_pct']:+.0f}% ROI){profit_day_str}")
+                else:
+                    st.markdown(f"**{int(deal['price_eur']):,} EUR** · discount **{deal['discount_pct']:.0f}%** от медианы")
+                    st.markdown("_Нет регрессии по поколению — прибыль не рассчитана_")
                 details = []
                 if pd.notna(deal.get("mileage_km")):
                     details.append(f"{int(deal['mileage_km']):,} km")

@@ -4,6 +4,7 @@ import fcntl
 import json
 import logging
 import multiprocessing
+import signal
 import sys
 import threading
 from hashlib import md5
@@ -130,6 +131,7 @@ def _db_worker(db_queue: Queue, result: dict):
     unmatched = 0
     active_ids: set[str] = set()
     processed = 0
+    last_maintenance_at = 0  # saved count at last dedup/stats run
 
     while True:
         item = db_queue.get()
@@ -193,6 +195,19 @@ def _db_worker(db_queue: Queue, result: dict):
             session.commit()
             log.info("DB save progress: %d saved, %d enriched, %d unmatched",
                      saved, enriched, unmatched)
+
+        # Periodic dedup + market stats every 500 saves
+        if saved - last_maintenance_at >= 500:
+            session.commit()
+            try:
+                deduplicate_cross_platform(session)
+                compute_market_stats(session)
+                session.commit()
+                log.info("Periodic maintenance done at %d saved", saved)
+            except Exception as e:
+                log.warning("Periodic maintenance failed: %s", e)
+                session.rollback()
+            last_maintenance_at = saved
 
     session.commit()
     session.close()
@@ -315,6 +330,47 @@ def scrape(
         sv_listings = sv_scraper.scrape_all(on_batch_ready=_on_batch)
     raw_listings.extend(sv_listings)
 
+    # --- Scraping complete: run mark_inactive immediately ---
+    # We know all IDs currently on the sites; don't wait for LLM.
+    scraped_ids = set(raw_by_id.keys())
+    if scraped_ids:
+        post_session = get_session()
+        log.info("Marking inactive listings (%d scraped IDs)...", len(scraped_ids))
+        mark_inactive(post_session, scraped_ids)
+        post_session.commit()
+        post_session.close()
+
+    # --- SIGTERM handler: graceful shutdown on timeout ---
+    def _sigterm_handler(signum, frame):
+        log.warning("SIGTERM received — initiating graceful shutdown...")
+        llm_shutdown.set()
+        # Drain LLM input queue: save remaining listings without enrichment
+        drained = 0
+        while True:
+            try:
+                item = llm_in.get_nowait()
+            except Empty:
+                break
+            if item is not None:
+                olx_id, _ = item
+                raw = raw_by_id.get(olx_id)
+                if raw:
+                    db_queue.put((raw, None))
+                    drained += 1
+        if drained:
+            log.warning("SIGTERM drain: %d listings saved without enrichment", drained)
+        # Stop merger and DB worker
+        llm_out.put(None)
+        merger.join(timeout=10)
+        db_queue.put(None)
+        db_thread.join(timeout=30)
+        log.info("Graceful shutdown complete: %d saved, %d enriched, %d unmatched",
+                 db_result.get("saved", 0), db_result.get("enriched", 0),
+                 db_result.get("unmatched", 0))
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _sigterm_handler)
+
     # --- Shutdown: drain pipeline in order ---
 
     # 1. Stop LLM workers
@@ -354,15 +410,13 @@ def scrape(
         log.error("No listings scraped.")
         raise typer.Exit(1)
 
-    # 5. Final: mark inactive, dedup, & market stats (need full picture)
+    # 5. Final dedup & market stats
     final_session = get_session()
-    log.info("Marking inactive listings...")
-    mark_inactive(final_session, db_result.get("active_ids", set()))
-    log.info("Deduplicating cross-platform...")
+    log.info("Final deduplication...")
     dedup_count = deduplicate_cross_platform(final_session)
     if dedup_count:
         log.info("Marked %d cross-platform duplicates", dedup_count)
-    log.info("Computing market stats...")
+    log.info("Final market stats...")
     compute_market_stats(final_session)
     final_session.commit()
     final_session.close()

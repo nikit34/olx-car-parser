@@ -205,34 +205,6 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         except Exception:
             pass
 
-    # --- Regression per model (fallback for cars without generation) ---
-    model_regressions = {}
-    for (brand, model), group in priced_all.groupby(["brand", "model"]):
-        subset = group[group["mileage_km"].notna() & group["year"].notna()]
-        if len(subset) < 5:
-            continue
-        has_cc = "engine_cc" in subset.columns and subset["engine_cc"].notna().sum() >= len(subset) * 0.5
-        if has_cc:
-            cc_vals = subset["engine_cc"].fillna(subset["engine_cc"].median()).values.astype(float)
-            X = np.column_stack([
-                subset["year"].values.astype(float),
-                subset["mileage_km"].values.astype(float),
-                cc_vals,
-                np.ones(len(subset)),
-            ])
-        else:
-            X = np.column_stack([
-                subset["year"].values.astype(float),
-                subset["mileage_km"].values.astype(float),
-                np.ones(len(subset)),
-            ])
-        y = subset["price_eur"].values.astype(float)
-        try:
-            coeffs, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
-            model_regressions[(brand, model)] = (coeffs, has_cc)
-        except Exception:
-            pass
-
     # --- Liquidity: avg days to sell per brand+model ---
     liquidity_map: dict[tuple, float] = {}
     turnover = compute_turnover_stats(listings_df)
@@ -301,7 +273,7 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         if not median or price >= median * 0.85:
             continue
 
-        # 1. Undervaluation (regression: generation → model fallback → median)
+        # 1. Undervaluation (generation-level regression only — no fallbacks)
         predicted = None
         engine_cc = listing.get("engine_cc")
         fuel_type = listing.get("fuel_type")
@@ -313,16 +285,11 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
                 predicted = max(coeffs[0] * float(year) + coeffs[1] * float(mileage) + coeffs[2] * cc_float + coeffs[3], 0)
             elif not has_cc:
                 predicted = max(coeffs[0] * float(year) + coeffs[1] * float(mileage) + coeffs[2], 0)
-        if (predicted is None or predicted <= 0) and (brand, model) in model_regressions and pd.notna(year) and pd.notna(mileage):
-            coeffs, has_cc = model_regressions[(brand, model)]
-            if has_cc and cc_float:
-                predicted = max(coeffs[0] * float(year) + coeffs[1] * float(mileage) + coeffs[2] * cc_float + coeffs[3], 0)
-            elif not has_cc:
-                predicted = max(coeffs[0] * float(year) + coeffs[1] * float(mileage) + coeffs[2], 0)
-        if predicted is None or predicted <= 0:
-            predicted = median
 
-        undervaluation_pct = round((1 - price / predicted) * 100, 1)
+        if predicted and predicted > 0:
+            undervaluation_pct = round((1 - price / predicted) * 100, 1)
+        else:
+            undervaluation_pct = 0.0
         discount_pct = round((1 - price / median) * 100, 1)
 
         # 2. Year multiplier — newer cars hold value better (15% per year above group median)
@@ -366,22 +333,12 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         # 5. Description-mention multiplier — extracted from listing text
         desc_mentions_accident = listing.get("desc_mentions_accident")
         desc_mentions_repair = listing.get("desc_mentions_repair")
-        desc_estimated_repair_cost_eur = listing.get("desc_estimated_repair_cost_eur")
         if pd.notna(desc_mentions_accident) and desc_mentions_accident:
             condition_mult = 0.3
         elif pd.notna(desc_mentions_repair) and desc_mentions_repair:
             condition_mult = 0.5
         else:
             condition_mult = 1.0
-
-        # 5b. Repair cost deduction — subtract estimated repair from predicted profit
-        repair_deduction = 0
-        if (
-            pd.notna(desc_estimated_repair_cost_eur)
-            and desc_estimated_repair_cost_eur
-            and desc_estimated_repair_cost_eur > 0
-        ):
-            repair_deduction = float(desc_estimated_repair_cost_eur)
 
         # 6. Customs multiplier — based on description mention only
         desc_mentions_customs_cleared = listing.get("desc_mentions_customs_cleared")
@@ -430,18 +387,15 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
             * motivated_mult * owners_mult * rhd_mult, 1
         )
 
-        # Adjust predicted profit for repair costs
-        adjusted_predicted = predicted - repair_deduction
-
         sig = {
             "olx_id": listing.get("olx_id", ""),
             "url": listing.get("url", ""),
             "brand": brand,
             "model": model,
             "year": year,
-            "generation": generation or "",
+            "generation": "" if pd.isna(generation) else (generation or ""),
             "price_eur": price,
-            "predicted_price": round(adjusted_predicted),
+            "predicted_price": round(predicted) if predicted and predicted > 0 else None,
             "median_price_eur": round(median),
             "discount_pct": discount_pct,
             "undervaluation_pct": undervaluation_pct,
@@ -463,11 +417,6 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
             "fuel_type": listing.get("fuel_type", ""),
             "desc_mentions_accident": bool(desc_mentions_accident) if pd.notna(desc_mentions_accident) else None,
             "desc_mentions_repair": bool(desc_mentions_repair) if pd.notna(desc_mentions_repair) else None,
-            "desc_estimated_repair_cost_eur": (
-                int(desc_estimated_repair_cost_eur)
-                if pd.notna(desc_estimated_repair_cost_eur) and desc_estimated_repair_cost_eur
-                else None
-            ),
             "desc_mentions_num_owners": (
                 int(desc_mentions_num_owners)
                 if pd.notna(desc_mentions_num_owners) and desc_mentions_num_owners
