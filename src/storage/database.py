@@ -21,7 +21,6 @@ _LISTING_COLUMN_ALIASES = {
     "had_accident": "desc_mentions_accident",
     "num_owners": "desc_mentions_num_owners",
     "customs_cleared": "desc_mentions_customs_cleared",
-    "estimated_repair_cost_eur": "desc_estimated_repair_cost_eur",
 }
 
 
@@ -68,7 +67,6 @@ def init_db(db_path: str | None = None):
         ("real_mileage_km", "INTEGER"),
         ("desc_mentions_num_owners", "INTEGER"),
         ("desc_mentions_customs_cleared", "BOOLEAN"),
-        ("desc_estimated_repair_cost_eur", "INTEGER"),
         ("llm_description_hash", "TEXT"),
         ("source", "TEXT DEFAULT 'olx'"),
         ("duplicate_of", "TEXT"),

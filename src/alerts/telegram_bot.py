@@ -71,11 +71,7 @@ def _format_deal(deal: dict) -> str:
     if deal.get("desc_mentions_accident"):
         warnings.append("упоминание ДТП")
     if deal.get("desc_mentions_repair"):
-        repair_cost = deal.get("desc_estimated_repair_cost_eur")
-        if repair_cost and not (isinstance(repair_cost, float) and repair_cost != repair_cost):
-            warnings.append(f"упоминание ремонта ~{int(repair_cost):,} EUR")
-        else:
-            warnings.append("упоминание ремонта")
+        warnings.append("упоминание ремонта")
     if deal.get("desc_mentions_customs_cleared") is False:
         warnings.append("нет упоминания о растаможке")
     num_owners = deal.get("desc_mentions_num_owners")

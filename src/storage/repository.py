@@ -136,7 +136,7 @@ _MERGE_FIELDS = [
     "registration_month", "registration_plate", "city", "district",
     "seller_type", "description", "llm_extras", "llm_description_hash",
     "desc_mentions_repair", "desc_mentions_accident", "real_mileage_km", "desc_mentions_num_owners",
-    "desc_mentions_customs_cleared", "desc_estimated_repair_cost_eur", "right_hand_drive", "generation",
+    "desc_mentions_customs_cleared", "right_hand_drive", "generation",
 ]
 
 
@@ -375,7 +375,6 @@ def get_listings_df(session: Session) -> pd.DataFrame:
             "real_mileage_km": l.real_mileage_km,
             "desc_mentions_num_owners": l.desc_mentions_num_owners,
             "desc_mentions_customs_cleared": l.desc_mentions_customs_cleared,
-            "desc_estimated_repair_cost_eur": l.desc_estimated_repair_cost_eur,
             "right_hand_drive": l.right_hand_drive,
             "source": l.source or "olx",
             "duplicate_of": l.duplicate_of,

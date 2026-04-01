@@ -1710,7 +1710,6 @@ with tab_compare:
                     key="dep_models",
                 )
                 if selected_dep:
-                    from src.analytics.regression import depreciation_curve
                     fig_dep = go.Figure()
                     dep_all_subs = []
                     for label in selected_dep:
@@ -1722,12 +1721,18 @@ with tab_compare:
                             customdata=sub["url"].values if "url" in sub.columns else None,
                             hovertemplate="%{x}, %{y:,.0f} EUR<extra>%{fullData.name}</extra>",
                         ))
-                        result = depreciation_curve(active, sub.iloc[0]["brand"], sub.iloc[0]["model"])
-                        if result:
-                            years = np.linspace(sub["year"].min(), sub["year"].max(), 50)
-                            prices = result["slope"] * years + result["intercept"]
+                        x_vals = sub["year"].values.astype(float)
+                        y_vals = sub["price_eur"].values.astype(float)
+                        if len(x_vals) >= 3:
+                            coeffs = np.polyfit(x_vals, y_vals, deg=1)
+                            predicted = np.polyval(coeffs, x_vals)
+                            ss_res = np.sum((y_vals - predicted) ** 2)
+                            ss_tot = np.sum((y_vals - y_vals.mean()) ** 2)
+                            r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0
+                            years = np.linspace(x_vals.min(), x_vals.max(), 50)
+                            prices = coeffs[0] * years + coeffs[1]
                             fig_dep.add_trace(go.Scatter(x=years, y=prices, mode="lines",
-                                                          name=f"{label} (R²={result['r_squared']:.2f})",
+                                                          name=f"{label} (R²={r2:.2f})",
                                                           line=dict(dash="dash")))
                     dep_combined = pd.concat(dep_all_subs) if dep_all_subs else pd.DataFrame()
                     fig_dep.update_layout(xaxis_title="Year", yaxis_title="Price (EUR)", height=500, hovermode="closest")

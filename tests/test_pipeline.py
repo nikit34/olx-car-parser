@@ -22,7 +22,6 @@ VALID_LLM_RESULT = {
     "desc_mentions_accident": False,
     "desc_mentions_repair": False,
     "mileage_in_description_km": 120000,
-    "desc_estimated_repair_cost_eur": None,
     "desc_mentions_customs_cleared": None,
 }
 

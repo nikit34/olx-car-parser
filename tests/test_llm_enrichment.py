@@ -40,7 +40,6 @@ VALID_LLM_JSON = {
     "service_history": True,
     "desc_mentions_repair": True,
     "repair_details": "precisa de embraiagem",
-    "desc_estimated_repair_cost_eur": 800,
     "mileage_in_description_km": 180000,
     "desc_mentions_customs_cleared": None,
     "imported": None,
@@ -226,12 +225,6 @@ class TestCorrectListingData:
         listing._llm_extras = {"desc_mentions_customs_cleared": True}
         corrections = correct_listing_data(listing)
         assert corrections["desc_mentions_customs_cleared"] is True
-
-    def test_repair_cost(self):
-        listing = FakeListing()
-        listing._llm_extras = {"desc_estimated_repair_cost_eur": 1500}
-        corrections = correct_listing_data(listing)
-        assert corrections["desc_estimated_repair_cost_eur"] == 1500
 
     def test_no_extras_returns_empty(self):
         listing = FakeListing()

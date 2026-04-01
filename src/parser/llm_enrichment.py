@@ -22,7 +22,7 @@ OLLAMA_URL = "http://localhost:11434"
 EXTRACTION_PROMPT = """\
 Extract structured data from this Portuguese car listing. JSON fields (null if unknown):
 desc_mentions_num_owners(int), desc_mentions_accident(bool), accident_details(str), service_history(bool), \
-desc_mentions_repair(bool), repair_details(str), desc_estimated_repair_cost_eur(int), \
+desc_mentions_repair(bool), repair_details(str), \
 mileage_in_description_km(int), desc_mentions_customs_cleared(bool), imported(bool), \
 right_hand_drive(bool), \
 mechanical_condition("excellent"/"good"/"fair"/"poor"), paint_condition(same), \
@@ -34,7 +34,6 @@ Rules: mileage_in_description_km=exact km as integer ("4300 km"→4300, "150 mil
 "89.500km"→89500, "4.300km"→4300). "mil"=thousand ONLY when written as a separate word. \
 desc_mentions_repair=true if ANY repair/damage mentioned. desc_mentions_accident=true if collision mentioned. \
 desc_mentions_customs_cleared=look for "desalfandegado","legalizado","por legalizar". \
-desc_estimated_repair_cost_eur=estimate from issues (e.g. embraiagem→800). \
 right_hand_drive=true if right-hand drive/UK/Japan import/"mão inglesa"/"volante à direita"/"condução à direita". \
 urgency=high if "urgente","preciso vender rápido","emigração","preço para despachar"; medium if "aceito propostas","negociável","oportunidade"; low otherwise. \
 warranty=true if "garantia" mentioned (not "sem garantia"). \
@@ -51,7 +50,6 @@ _EXTRAS_KEY_ALIASES = {
     "desc_mentions_num_owners": "num_owners",
     "desc_mentions_accident": "had_accident",
     "desc_mentions_repair": "needs_repair",
-    "desc_estimated_repair_cost_eur": "estimated_repair_cost_eur",
     "desc_mentions_customs_cleared": "customs_cleared",
 }
 
@@ -63,7 +61,7 @@ def _get_config() -> dict:
             data = yaml.safe_load(f) or {}
         cfg = data.get("llm", {})
     return {
-        "ollama_model": cfg.get("ollama_model", "qwen2.5:1.5b"),
+        "ollama_model": cfg.get("ollama_model", "qwen2.5:3b"),
         "ollama_url": cfg.get("ollama_url", OLLAMA_URL),
     }
 
@@ -118,8 +116,8 @@ def _call_ollama(description: str, cfg: dict) -> dict | None:
                 "stream": False,
                 "options": {
                     "temperature": 0.0,
-                    "num_predict": 256,
-                    "num_ctx": 1024,
+                    "num_predict": 512,
+                    "num_ctx": 1536,
                 },
             },
         )
@@ -276,11 +274,6 @@ def correct_listing_data(listing) -> dict:
     elif listing.origin and "import" in (listing.origin or "").lower():
         # Imported car with no customs info → flag as unknown (None stays)
         pass
-
-    # --- Description-estimated repair cost ---
-    repair_cost = _get_extra(extras, "desc_estimated_repair_cost_eur")
-    if repair_cost and isinstance(repair_cost, (int, float)) and repair_cost > 0:
-        corrections["desc_estimated_repair_cost_eur"] = int(repair_cost)
 
     # --- Right-hand drive ---
     rhd = extras.get("right_hand_drive")

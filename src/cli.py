@@ -171,7 +171,6 @@ def _db_worker(db_queue: Queue, result: dict):
             "real_mileage_km": corrections.get("real_mileage_km"),
             "desc_mentions_num_owners": corrections.get("desc_mentions_num_owners"),
             "desc_mentions_customs_cleared": corrections.get("desc_mentions_customs_cleared"),
-            "desc_estimated_repair_cost_eur": corrections.get("desc_estimated_repair_cost_eur"),
             "right_hand_drive": corrections.get("right_hand_drive"),
             "urgency": corrections.get("urgency"),
             "warranty": corrections.get("warranty"),
@@ -612,7 +611,7 @@ def export_training_data(
             extras = normalize_llm_extras(extras)
 
             for col in ("desc_mentions_repair", "desc_mentions_accident", "desc_mentions_num_owners",
-                        "desc_mentions_customs_cleared", "real_mileage_km", "desc_estimated_repair_cost_eur",
+                        "desc_mentions_customs_cleared", "real_mileage_km",
                         "urgency", "warranty", "taxi_fleet_rental", "tires_condition", "first_owner_selling"):
                 val = row.get(col)
                 if val is not None and not (isinstance(val, float) and pd.isna(val)):

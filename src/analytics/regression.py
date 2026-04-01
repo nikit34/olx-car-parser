@@ -4,37 +4,6 @@ import numpy as np
 import pandas as pd
 
 
-def depreciation_curve(df: pd.DataFrame, brand: str, model: str) -> dict | None:
-    """Fit price ~ year (linear) for a given brand+model.
-
-    Returns dict with slope, intercept, r_squared, and filtered data subset,
-    or None if fewer than 3 data points.
-    """
-    subset = df[
-        (df["brand"] == brand)
-        & (df["model"] == model)
-        & df["price_eur"].notna()
-        & df["year"].notna()
-    ].copy()
-    if len(subset) < 3:
-        return None
-
-    x = subset["year"].values.astype(float)
-    y = subset["price_eur"].values.astype(float)
-    coeffs = np.polyfit(x, y, deg=1)
-    predicted = np.polyval(coeffs, x)
-    ss_res = np.sum((y - predicted) ** 2)
-    ss_tot = np.sum((y - y.mean()) ** 2)
-    r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0
-
-    return {
-        "slope": coeffs[0],
-        "intercept": coeffs[1],
-        "r_squared": round(r2, 3),
-        "data": subset,
-    }
-
-
 def estimate_price(
     df: pd.DataFrame,
     brand: str,

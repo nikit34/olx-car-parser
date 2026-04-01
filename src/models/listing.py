@@ -56,7 +56,6 @@ class Listing(Base):
     real_mileage_km = Column(Integer)           # Mileage from description (may differ from attribute)
     desc_mentions_num_owners = Column(Integer)
     desc_mentions_customs_cleared = Column(Boolean)
-    desc_estimated_repair_cost_eur = Column(Integer)
     right_hand_drive = Column(Boolean)
     urgency = Column(String)                   # "high", "medium", "low"
     warranty = Column(Boolean)

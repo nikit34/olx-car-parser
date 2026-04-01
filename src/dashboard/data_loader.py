@@ -129,6 +129,36 @@ def _expected_lifespan_km(engine_cc: int | None, fuel_type: str | None) -> float
     return base * 1.4 if is_diesel else float(base)
 
 
+def _sub_segment(fuel_type, engine_cc) -> str:
+    """Market sub-segment from fuel type and engine displacement.
+
+    E.g. "diesel_mid", "petrol_small", "electric".
+    """
+    import pandas as _pd
+    fuel = "unk"
+    if _pd.notna(fuel_type) and fuel_type:
+        fl = str(fuel_type).lower()
+        if "diesel" in fl:
+            fuel = "diesel"
+        elif "eléctrico" in fl or "electr" in fl:
+            fuel = "electric"
+        elif "híbrido" in fl or "hybrid" in fl:
+            fuel = "hybrid"
+        elif "gpl" in fl:
+            fuel = "gpl"
+        else:
+            fuel = "petrol"
+    if fuel == "electric":
+        return "electric"
+    if not _pd.notna(engine_cc) or not engine_cc or engine_cc <= 0:
+        return fuel
+    if engine_cc < 1400:
+        return f"{fuel}_small"
+    if engine_cc <= 2000:
+        return f"{fuel}_mid"
+    return f"{fuel}_large"
+
+
 def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.DataFrame:
     """Find undervalued listings and rank by flip potential.
 
@@ -155,7 +185,9 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
     active["generation"] = active.apply(
         lambda r: get_generation(r["brand"], r["model"], r.get("year")), axis=1
     )
-
+    active["sub_segment"] = active.apply(
+        lambda r: _sub_segment(r.get("fuel_type"), r.get("engine_cc")), axis=1
+    )
 
     # --- Generation-level stats ---
     priced_gen = active[active["price_eur"].notna() & active["generation"].notna()]
@@ -174,6 +206,15 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         .groupby(["brand", "model"])
         .agg(model_median=("price_eur", "median"), model_count=("price_eur", "count"),
              model_year_median=("year", "median"), model_mileage_median=("mileage_km", "median"))
+        .reset_index()
+    )
+
+    # --- Sub-segment stats (fuel + engine size within generation) ---
+    sub_stats = (
+        priced_gen
+        .groupby(["brand", "model", "generation", "sub_segment"])
+        .agg(sub_median=("price_eur", "median"), sub_count=("price_eur", "count"),
+             sub_year_median=("year", "median"), sub_mileage_median=("mileage_km", "median"))
         .reset_index()
     )
 
@@ -197,6 +238,27 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         try:
             coeffs, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
             gen_regressions[(brand, model, gen)] = (coeffs, has_cc)
+        except Exception:
+            pass
+
+    # --- Regression per sub-segment (finer than generation) ---
+    sub_regressions = {}
+    for (brand, model, gen, sub_seg), group in priced_gen.groupby(["brand", "model", "generation", "sub_segment"]):
+        subset = group[group["mileage_km"].notna() & group["year"].notna()]
+        if len(subset) < 5:
+            continue
+        year_vals = subset["year"].values.astype(float)
+        log_mileage = np.log1p(subset["mileage_km"].values.astype(float))
+        has_cc = "engine_cc" in subset.columns and subset["engine_cc"].notna().sum() >= len(subset) * 0.5
+        if has_cc:
+            cc_vals = subset["engine_cc"].fillna(subset["engine_cc"].median()).values.astype(float)
+            X = np.column_stack([year_vals, year_vals ** 2, log_mileage, cc_vals, np.ones(len(subset))])
+        else:
+            X = np.column_stack([year_vals, year_vals ** 2, log_mileage, np.ones(len(subset))])
+        y = subset["price_eur"].values.astype(float)
+        try:
+            coeffs, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
+            sub_regressions[(brand, model, gen, sub_seg)] = (coeffs, has_cc)
         except Exception:
             pass
 
@@ -237,12 +299,27 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         model = listing["model"]
         generation = listing.get("generation")
 
-        # Resolve comparison group: generation-level if available, else model-level
+        # Resolve comparison group: sub-segment → generation → model
         median = None
         sample = 0
         group_year_median = None
         group_mileage_median = None
-        if generation:
+        sub_seg = listing.get("sub_segment")
+
+        if generation and sub_seg:
+            ss = sub_stats[
+                (sub_stats["brand"] == brand)
+                & (sub_stats["model"] == model)
+                & (sub_stats["generation"] == generation)
+                & (sub_stats["sub_segment"] == sub_seg)
+            ]
+            if not ss.empty and int(ss.iloc[0]["sub_count"]) >= 5:
+                median = ss.iloc[0]["sub_median"]
+                sample = int(ss.iloc[0]["sub_count"])
+                group_year_median = ss.iloc[0]["sub_year_median"]
+                group_mileage_median = ss.iloc[0]["sub_mileage_median"]
+
+        if median is None and generation:
             gs = gen_stats[
                 (gen_stats["brand"] == brand)
                 & (gen_stats["model"] == model)
@@ -268,14 +345,20 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         if not median or price >= median * 0.85:
             continue
 
-        # 1. Undervaluation (generation-level regression only — no fallbacks)
+        # 1. Undervaluation: sub-segment regression → generation regression
         predicted = None
         engine_cc = listing.get("engine_cc")
         fuel_type = listing.get("fuel_type")
         cc_float = float(engine_cc) if pd.notna(engine_cc) and engine_cc else None
 
-        if generation and (brand, model, generation) in gen_regressions and pd.notna(year) and pd.notna(mileage):
-            coeffs, has_cc = gen_regressions[(brand, model, generation)]
+        coeffs = has_cc = None
+        if pd.notna(year) and pd.notna(mileage):
+            if generation and sub_seg and (brand, model, generation, sub_seg) in sub_regressions:
+                coeffs, has_cc = sub_regressions[(brand, model, generation, sub_seg)]
+            elif generation and (brand, model, generation) in gen_regressions:
+                coeffs, has_cc = gen_regressions[(brand, model, generation)]
+
+        if coeffs is not None:
             y_val = float(year)
             lm_val = np.log1p(float(mileage))
             if has_cc and cc_float:
@@ -392,6 +475,7 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
             "model": model,
             "year": year,
             "generation": "" if pd.isna(generation) else (generation or ""),
+            "sub_segment": sub_seg or "",
             "price_eur": price,
             "predicted_price": round(predicted) if predicted and predicted > 0 else None,
             "median_price_eur": round(median),
