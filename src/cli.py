@@ -130,6 +130,7 @@ def _db_worker(db_queue: Queue, result: dict):
     enriched = 0
     unmatched = 0
     active_ids: set[str] = set()
+    changed_pairs: set[tuple[str, str]] = set()  # (brand, model) pairs touched since last stats
     processed = 0
     last_maintenance_at = 0  # saved count at last dedup/stats run
 
@@ -172,6 +173,12 @@ def _db_worker(db_queue: Queue, result: dict):
             "desc_mentions_customs_cleared": corrections.get("desc_mentions_customs_cleared"),
             "desc_estimated_repair_cost_eur": corrections.get("desc_estimated_repair_cost_eur"),
             "right_hand_drive": corrections.get("right_hand_drive"),
+            "urgency": corrections.get("urgency"),
+            "warranty": corrections.get("warranty"),
+            "tuning_or_mods": json.dumps(corrections["tuning_or_mods"], ensure_ascii=False) if corrections.get("tuning_or_mods") else None,
+            "taxi_fleet_rental": corrections.get("taxi_fleet_rental"),
+            "tires_condition": corrections.get("tires_condition"),
+            "first_owner_selling": corrections.get("first_owner_selling"),
             "source": getattr(raw, "source", "olx"),
             "posted_at": getattr(raw, "_posted_at", None),
         }
@@ -183,6 +190,7 @@ def _db_worker(db_queue: Queue, result: dict):
             if raw.price_eur is not None:
                 add_price_snapshot(session, listing.id, raw.price_eur, raw.negotiable)
             active_ids.add(raw.olx_id)
+            changed_pairs.add((raw.brand, raw.model or ""))
             saved += 1
         else:
             reason = "no_year" if not raw.year else "no_generation_match"
@@ -196,17 +204,19 @@ def _db_worker(db_queue: Queue, result: dict):
             log.info("DB save progress: %d saved, %d enriched, %d unmatched",
                      saved, enriched, unmatched)
 
-        # Periodic dedup + market stats every 500 saves
+        # Periodic dedup + market stats every 500 saves (incremental)
         if saved - last_maintenance_at >= 500:
             session.commit()
             try:
                 deduplicate_cross_platform(session)
-                compute_market_stats(session)
+                compute_market_stats(session, changed_pairs=changed_pairs)
                 session.commit()
-                log.info("Periodic maintenance done at %d saved", saved)
+                log.info("Periodic maintenance done at %d saved (%d pairs updated)",
+                         saved, len(changed_pairs))
             except Exception as e:
                 log.warning("Periodic maintenance failed: %s", e)
                 session.rollback()
+            changed_pairs.clear()
             last_maintenance_at = saved
 
     session.commit()
@@ -602,7 +612,8 @@ def export_training_data(
             extras = normalize_llm_extras(extras)
 
             for col in ("desc_mentions_repair", "desc_mentions_accident", "desc_mentions_num_owners",
-                        "desc_mentions_customs_cleared", "real_mileage_km", "desc_estimated_repair_cost_eur"):
+                        "desc_mentions_customs_cleared", "real_mileage_km", "desc_estimated_repair_cost_eur",
+                        "urgency", "warranty", "taxi_fleet_rental", "tires_condition", "first_owner_selling"):
                 val = row.get(col)
                 if val is not None and not (isinstance(val, float) and pd.isna(val)):
                     extras[col] = val

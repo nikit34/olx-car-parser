@@ -138,7 +138,7 @@ class OlxScraper:
                     with self._lock_403:
                         self._consecutive_403 += 1
                         if self._consecutive_403 >= 5:
-                            logger.error("Too many 403s. IP blocked. Set OLX_PROXY env var or wait 15min.")
+                            logger.error("Too many 403s. IP blocked. Wait 15min.")
                             self._stop_event.set()
                             return None
                     wait = min(30 * (2 ** attempt), 120) + random.uniform(5, 15)

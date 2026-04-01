@@ -15,7 +15,7 @@ _project_root = _dashboard_dir.parent.parent
 _sys.path.insert(0, str(_dashboard_dir))
 _sys.path.insert(0, str(_project_root))
 
-from data_loader import load_all, load_listing_feedback, load_portfolio, _force_next_check
+from data_loader import load_all, load_listing_feedback, load_portfolio, _force_next_check, compute_model_metrics
 from src.analytics.interest_model import score_interest_candidates
 
 
@@ -329,8 +329,8 @@ st.divider()
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
-tab_deals, tab_analytics, tab_trends, tab_listings, tab_compare, tab_geo, tab_lifespan, tab_tos, tab_portfolio, tab_unmatched = st.tabs([
-    "Сделки", "Аналитика", "Тренды цен", "Объявления", "Сравнение", "География", "Срок жизни", "Скорость продажи", "Портфель", "Без поколения",
+tab_deals, tab_analytics, tab_trends, tab_listings, tab_compare, tab_geo, tab_lifespan, tab_tos, tab_portfolio, tab_pipeline, tab_unmatched, tab_model_quality = st.tabs([
+    "Сделки", "Аналитика", "Тренды цен", "Объявления", "Сравнение", "География", "Срок жизни", "Скорость продажи", "Портфель", "Воронка", "Без поколения", "Качество моделей",
 ])
 
 # ---- TAB 1: Deals (Buy Signals) --------------------------------------------
@@ -430,11 +430,7 @@ with tab_deals:
                 if deal.get("desc_mentions_accident"):
                     description_mentions.append("упоминание ДТП")
                 if deal.get("desc_mentions_repair"):
-                    rc = deal.get("desc_estimated_repair_cost_eur")
-                    if pd.notna(rc) and rc:
-                        description_mentions.append(f"упоминание ремонта ~{int(rc):,} EUR")
-                    else:
-                        description_mentions.append("упоминание ремонта")
+                    description_mentions.append("упоминание ремонта")
                 if deal.get("desc_mentions_customs_cleared") is False:
                     description_mentions.append("нет упоминания о растаможке")
                 if deal.get("right_hand_drive"):
@@ -737,7 +733,6 @@ with tab_deals:
         for extra_col in [
             "desc_mentions_accident",
             "desc_mentions_repair",
-            "desc_estimated_repair_cost_eur",
             "desc_mentions_num_owners",
             "desc_mentions_customs_cleared",
             "right_hand_drive",
@@ -768,7 +763,6 @@ with tab_deals:
                 "fuel_type": "Fuel", "segment_group": "Segment", "district": "District", "city": "City",
                 "desc_mentions_accident": "Desc: accident",
                 "desc_mentions_repair": "Desc: repair",
-                "desc_estimated_repair_cost_eur": "Desc repair est.",
                 "desc_mentions_num_owners": "Desc owners",
                 "desc_mentions_customs_cleared": "Desc customs",
                 "right_hand_drive": "RHD",
@@ -1541,7 +1535,7 @@ with tab_listings:
         "price_change_eur", "price_change_pct", "eur_per_km",
         "mileage_km", "engine_cc",
         "fuel_type", "horsepower", "transmission", "segment",
-        "desc_mentions_accident", "desc_mentions_repair", "desc_estimated_repair_cost_eur",
+        "desc_mentions_accident", "desc_mentions_repair",
         "desc_mentions_num_owners", "desc_mentions_customs_cleared", "right_hand_drive",
         "city", "district", "seller_type", "is_active", "url",
     ] if c in filtered_listings.columns]
@@ -1560,7 +1554,6 @@ with tab_listings:
             "horsepower": st.column_config.NumberColumn("HP", format="%d"),
             "desc_mentions_accident": st.column_config.CheckboxColumn("Desc: accident"),
             "desc_mentions_repair": st.column_config.CheckboxColumn("Desc: repair"),
-            "desc_estimated_repair_cost_eur": st.column_config.NumberColumn("Desc repair est.", format="%d EUR"),
             "desc_mentions_num_owners": st.column_config.NumberColumn("Desc owners", format="%d"),
             "desc_mentions_customs_cleared": st.column_config.CheckboxColumn("Desc customs"),
             "right_hand_drive": st.column_config.CheckboxColumn("RHD"),
@@ -2652,7 +2645,101 @@ with tab_portfolio:
                     st.success("Sale recorded!")
                     st.rerun()
 
-# ---- TAB 8: Unmatched Listings -----------------------------------------------
+# ---- TAB: Deal Pipeline (Funnel) ---------------------------------------------
+with tab_pipeline:
+    st.subheader("Воронка сделок")
+    st.caption("Shortlist → Interesting → Bought → Sold. Конверсия между этапами.")
+
+    _pipeline_fb = get_listing_feedback()
+    _pipeline_pf = get_portfolio()
+
+    # Count each stage
+    n_shortlist = len(filtered_signals) if not filtered_signals.empty else 0
+
+    n_interesting = 0
+    n_feedback_bought = 0
+    n_skipped = 0
+    if not _pipeline_fb.empty:
+        label_col = "feedback_label" if "feedback_label" in _pipeline_fb.columns else "label"
+        if label_col in _pipeline_fb.columns:
+            labels = _pipeline_fb[label_col].astype(str).str.strip().str.lower()
+            n_interesting = int((labels == "interesting").sum())
+            n_feedback_bought = int((labels == "bought").sum())
+            n_skipped = int((labels == "skipped").sum())
+
+    n_portfolio = len(_pipeline_pf) if not _pipeline_pf.empty else 0
+    n_sold = 0
+    total_profit = 0
+    avg_roi = 0.0
+    if not _pipeline_pf.empty and "sell_price_eur" in _pipeline_pf.columns:
+        sold_pf = _pipeline_pf[_pipeline_pf["sell_price_eur"].notna()]
+        n_sold = len(sold_pf)
+        if not sold_pf.empty and "gross_profit_eur" in sold_pf.columns:
+            total_profit = sold_pf["gross_profit_eur"].sum()
+            avg_roi = sold_pf["roi_pct"].mean() if "roi_pct" in sold_pf.columns else 0.0
+
+    # Funnel metrics
+    stages = [
+        ("Shortlist (сигналы)", n_shortlist),
+        ("Interesting", n_interesting),
+        ("Bought (feedback)", n_feedback_bought),
+        ("В портфеле", n_portfolio),
+        ("Продано", n_sold),
+    ]
+
+    cols = st.columns(len(stages))
+    for i, (label, count) in enumerate(stages):
+        cols[i].metric(label, count)
+
+    # Conversion rates
+    st.markdown("### Конверсия между этапами")
+    conversions = []
+    if n_shortlist > 0 and (n_interesting + n_feedback_bought) > 0:
+        rate = (n_interesting + n_feedback_bought) / n_shortlist * 100
+        conversions.append({"Этап": "Shortlist → Interesting/Bought", "Конверсия": f"{rate:.1f}%", "Из": n_shortlist, "В": n_interesting + n_feedback_bought})
+    if n_interesting > 0 and n_portfolio > 0:
+        rate = n_portfolio / n_interesting * 100
+        conversions.append({"Этап": "Interesting → Портфель", "Конверсия": f"{rate:.1f}%", "Из": n_interesting, "В": n_portfolio})
+    if n_portfolio > 0 and n_sold > 0:
+        rate = n_sold / n_portfolio * 100
+        conversions.append({"Этап": "Портфель → Продано", "Конверсия": f"{rate:.1f}%", "Из": n_portfolio, "В": n_sold})
+
+    if conversions:
+        st.dataframe(pd.DataFrame(conversions), hide_index=True)
+    else:
+        st.info("Пока недостаточно данных для расчёта конверсий. Размечайте объявления и добавляйте сделки.")
+
+    # Funnel chart
+    if n_shortlist > 0:
+        import plotly.graph_objects as go
+        funnel_labels = [s[0] for s in stages if s[1] > 0]
+        funnel_values = [s[1] for s in stages if s[1] > 0]
+        fig = go.Figure(go.Funnel(
+            y=funnel_labels,
+            x=funnel_values,
+            textinfo="value+percent initial",
+        ))
+        fig.update_layout(height=350, margin=dict(t=20, b=20))
+        st.plotly_chart(fig, use_container_width=True)
+
+    # Skip rate
+    if n_skipped > 0 or n_interesting > 0:
+        st.markdown("### Решения по фидбэку")
+        total_decisions = n_interesting + n_skipped + n_feedback_bought
+        if total_decisions > 0:
+            fc1, fc2, fc3 = st.columns(3)
+            fc1.metric("Interesting", n_interesting, delta=f"{n_interesting / total_decisions * 100:.0f}%")
+            fc2.metric("Skipped", n_skipped, delta=f"{n_skipped / total_decisions * 100:.0f}%")
+            fc3.metric("Bought", n_feedback_bought, delta=f"{n_feedback_bought / total_decisions * 100:.0f}%")
+
+    # Sold summary
+    if n_sold > 0:
+        st.markdown("### Результаты продаж")
+        sc1, sc2 = st.columns(2)
+        sc1.metric("Общая прибыль", f"{total_profit:+,.0f} EUR")
+        sc2.metric("Средний ROI", f"{avg_roi:+.1f}%")
+
+# ---- TAB: Unmatched Listings ------------------------------------------------
 with tab_unmatched:
     st.subheader("Объявления без поколения")
     st.caption("Объявления, для которых не удалось определить поколение автомобиля. "
@@ -2693,6 +2780,98 @@ with tab_unmatched:
             hide_index=True,
             column_config={"Link": st.column_config.LinkColumn("Link", display_text="Open")} if "url" in avail else {},
         )
+
+# ---- TAB 11: Model Quality Metrics ------------------------------------------
+with tab_model_quality:
+    st.subheader("Качество моделей")
+    st.caption("Leave-one-out кросс-валидация регрессии цен, точность interest-модели по фидбэку, калибровка time-to-sale.")
+
+    _fb = get_listing_feedback()
+    _pf = get_portfolio()
+    model_metrics = compute_model_metrics(listings_df, history_df, _fb, _pf)
+
+    # --- Price regression ---
+    st.markdown("### Регрессия цен (по поколениям)")
+    pr = model_metrics.get("price_regression", {})
+    if pr:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Медианная MAE", f"{pr['overall_mae']:,} EUR")
+        c2.metric("Медианная MAPE", f"{pr['overall_mape']}%")
+        c3.metric("Поколений оценено", pr["generations_evaluated"])
+
+        gen_quality = pr["per_generation"].sort_values("mape_pct")
+        st.dataframe(
+            gen_quality.rename(columns={
+                "brand": "Brand", "model": "Model", "generation": "Generation",
+                "sample_size": "N", "mae_eur": "MAE (EUR)", "mape_pct": "MAPE %",
+            }),
+            hide_index=True,
+            column_config={
+                "MAE (EUR)": st.column_config.NumberColumn(format="%d EUR"),
+                "MAPE %": st.column_config.NumberColumn(format="%.1f%%"),
+            },
+        )
+
+        # Highlight worst predictions
+        worst = gen_quality[gen_quality["mape_pct"] > 25]
+        if not worst.empty:
+            st.warning(f"{len(worst)} поколений с MAPE > 25% — регрессия ненадёжна, мало данных или высокий разброс цен.")
+    else:
+        st.info("Недостаточно данных для оценки регрессии (нужно ≥6 объявлений на поколение).")
+
+    st.divider()
+
+    # --- Interest model ---
+    st.markdown("### Interest-модель (shortlist)")
+    im = model_metrics.get("interest_model", {})
+    if im:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Размечено всего", im["total_labeled"])
+        c2.metric("Positive (interesting+bought)", im["positive_count"])
+        c3.metric("Negative (skipped)", im["negative_count"])
+        st.metric("Positive rate", f"{im['positive_rate']}%")
+        if im["total_labeled"] < 20:
+            st.warning("Мало фидбэка (<20 меток) — модель опирается в основном на prior-веса, а не на ваши предпочтения.")
+    else:
+        st.info("Нет фидбэка. Используйте кнопки interesting/skip/bought в шортлисте для обучения модели.")
+
+    st.divider()
+
+    # --- Time-to-sale ---
+    st.markdown("### Time-to-sale (скорость продажи)")
+    tos = model_metrics.get("time_to_sale", {})
+    if tos:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Accuracy", f"{tos['accuracy_pct']}%")
+        c2.metric("Всего продано", tos["total_sold"])
+        c3.metric("Продано за ≤30д", tos["sold_within_30d"])
+
+        cal = tos.get("calibration")
+        if cal is not None and not cal.empty:
+            st.markdown("**Калибровка** — предсказанная P(продажа) vs реальная доля продаж:")
+            import plotly.graph_objects as go
+            fig = go.Figure()
+            fig.add_trace(go.Bar(
+                x=cal["prob_bucket"], y=cal["actual_mean"],
+                name="Реальная доля", marker_color="#636EFA",
+            ))
+            fig.add_trace(go.Scatter(
+                x=cal["prob_bucket"], y=cal["predicted_mean"],
+                name="Предсказанная P", mode="lines+markers",
+                line=dict(color="#EF553B", dash="dash"),
+            ))
+            fig.update_layout(
+                yaxis_title="Доля продаж за 30 дней",
+                xaxis_title="Бакет вероятности",
+                height=350, legend=dict(orientation="h"),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            st.dataframe(cal.rename(columns={
+                "prob_bucket": "Bucket", "predicted_mean": "Predicted P",
+                "actual_mean": "Actual rate", "count": "N",
+            }), hide_index=True)
+    else:
+        st.info("Недостаточно проданных объявлений (нужно ≥10) для оценки time-to-sale.")
 
 # ---------------------------------------------------------------------------
 # Footer

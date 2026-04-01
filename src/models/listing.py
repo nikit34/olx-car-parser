@@ -58,6 +58,12 @@ class Listing(Base):
     desc_mentions_customs_cleared = Column(Boolean)
     desc_estimated_repair_cost_eur = Column(Integer)
     right_hand_drive = Column(Boolean)
+    urgency = Column(String)                   # "high", "medium", "low"
+    warranty = Column(Boolean)
+    tuning_or_mods = Column(Text)              # JSON list of aftermarket modifications
+    taxi_fleet_rental = Column(Boolean)
+    tires_condition = Column(String)           # "new", "good", "fair", "poor"
+    first_owner_selling = Column(Boolean)
 
     source = Column(String, default="olx")     # "olx" or "standvirtual"
     duplicate_of = Column(String)              # olx_id of the canonical listing (fuzzy dedup)

@@ -26,13 +26,23 @@ desc_mentions_repair(bool), repair_details(str), desc_estimated_repair_cost_eur(
 mileage_in_description_km(int), desc_mentions_customs_cleared(bool), imported(bool), \
 right_hand_drive(bool), \
 mechanical_condition("excellent"/"good"/"fair"/"poor"), paint_condition(same), \
-suspicious_signs(list), extras(list), issues(list), reason_for_sale(str).
+suspicious_signs(list), extras(list), issues(list), reason_for_sale(str), \
+urgency("high"/"medium"/"low"), warranty(bool), tuning_or_mods(list), \
+taxi_fleet_rental(bool), recent_maintenance(list), tires_condition("new"/"good"/"fair"/"poor"), \
+first_owner_selling(bool).
 Rules: mileage_in_description_km=exact km as integer ("4300 km"→4300, "150 mil km"→150000, \
 "89.500km"→89500, "4.300km"→4300). "mil"=thousand ONLY when written as a separate word. \
 desc_mentions_repair=true if ANY repair/damage mentioned. desc_mentions_accident=true if collision mentioned. \
 desc_mentions_customs_cleared=look for "desalfandegado","legalizado","por legalizar". \
 desc_estimated_repair_cost_eur=estimate from issues (e.g. embraiagem→800). \
-right_hand_drive=true if right-hand drive/UK/Japan import/"mão inglesa"/"volante à direita"/"condução à direita".
+right_hand_drive=true if right-hand drive/UK/Japan import/"mão inglesa"/"volante à direita"/"condução à direita". \
+urgency=high if "urgente","preciso vender rápido","emigração","preço para despachar"; medium if "aceito propostas","negociável","oportunidade"; low otherwise. \
+warranty=true if "garantia" mentioned (not "sem garantia"). \
+tuning_or_mods=list of aftermarket modifications: "reprogramação","stage 1/2","remap","chip tuning","suspensão rebaixada","coilovers","escape desportivo","downpipe","wrap","bodykit". \
+taxi_fleet_rental=true if "ex-táxi","TVDE","Uber","Bolt","rent-a-car","frota","carro de empresa". \
+recent_maintenance=list of specific completed maintenance: "correia distribuição","embreagem nova","travões novos","revisão feita", with km/date if mentioned. \
+tires_condition="new" if "pneus novos"; "good" if "bom estado"/"80% piso"; "fair" if "razoável"/"50%"; "poor" if "gastos"/"precisa pneus". \
+first_owner_selling=true if "1 dono desde novo","único dono","comprado novo por mim","vendo o meu".
 
 """
 
@@ -276,6 +286,36 @@ def correct_listing_data(listing) -> dict:
     rhd = extras.get("right_hand_drive")
     if rhd is not None:
         corrections["right_hand_drive"] = bool(rhd)
+
+    # --- Urgency ---
+    urgency = extras.get("urgency")
+    if urgency in ("high", "medium", "low"):
+        corrections["urgency"] = urgency
+
+    # --- Warranty ---
+    warranty = extras.get("warranty")
+    if warranty is not None:
+        corrections["warranty"] = bool(warranty)
+
+    # --- Tuning or modifications ---
+    tuning = extras.get("tuning_or_mods")
+    if tuning and isinstance(tuning, list) and len(tuning) > 0:
+        corrections["tuning_or_mods"] = tuning
+
+    # --- Taxi / fleet / rental ---
+    taxi = extras.get("taxi_fleet_rental")
+    if taxi is not None:
+        corrections["taxi_fleet_rental"] = bool(taxi)
+
+    # --- Tires condition ---
+    tires = extras.get("tires_condition")
+    if tires in ("new", "good", "fair", "poor"):
+        corrections["tires_condition"] = tires
+
+    # --- First owner selling ---
+    first_owner = extras.get("first_owner_selling")
+    if first_owner is not None:
+        corrections["first_owner_selling"] = bool(first_owner)
 
     return corrections
 

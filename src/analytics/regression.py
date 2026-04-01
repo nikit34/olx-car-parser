@@ -44,7 +44,10 @@ def estimate_price(
     fuel_type: str | None = None,
     engine_cc: int | None = None,
 ) -> dict | None:
-    """Multivariate regression: price ~ year + mileage [+ engine_cc].
+    """Multivariate regression: price ~ year + year² + log(mileage) [+ engine_cc].
+
+    year² captures accelerated depreciation in first years;
+    log(mileage) captures diminishing impact at high km.
 
     Returns dict with predicted, p25, median, p75, sample_size,
     or None if fewer than 5 data points.
@@ -65,6 +68,9 @@ def estimate_price(
     if len(subset) < 5:
         return None
 
+    year_vals = subset["year"].values.astype(float)
+    log_mileage = np.log1p(subset["mileage_km"].values.astype(float))
+
     has_cc = (
         engine_cc is not None
         and "engine_cc" in subset.columns
@@ -72,26 +78,19 @@ def estimate_price(
     )
     if has_cc:
         cc_vals = subset["engine_cc"].fillna(subset["engine_cc"].median()).values.astype(float)
-        X = np.column_stack([
-            subset["year"].values.astype(float),
-            subset["mileage_km"].values.astype(float),
-            cc_vals,
-            np.ones(len(subset)),
-        ])
+        X = np.column_stack([year_vals, year_vals ** 2, log_mileage, cc_vals, np.ones(len(subset))])
     else:
-        X = np.column_stack([
-            subset["year"].values.astype(float),
-            subset["mileage_km"].values.astype(float),
-            np.ones(len(subset)),
-        ])
+        X = np.column_stack([year_vals, year_vals ** 2, log_mileage, np.ones(len(subset))])
 
     y = subset["price_eur"].values.astype(float)
     coeffs, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
 
+    y_val = float(year)
+    lm_val = np.log1p(float(mileage_km))
     if has_cc:
-        predicted = coeffs[0] * year + coeffs[1] * mileage_km + coeffs[2] * engine_cc + coeffs[3]
+        predicted = coeffs[0] * y_val + coeffs[1] * y_val ** 2 + coeffs[2] * lm_val + coeffs[3] * engine_cc + coeffs[4]
     else:
-        predicted = coeffs[0] * year + coeffs[1] * mileage_km + coeffs[2]
+        predicted = coeffs[0] * y_val + coeffs[1] * y_val ** 2 + coeffs[2] * lm_val + coeffs[3]
     residuals = y - X @ coeffs
 
     return {

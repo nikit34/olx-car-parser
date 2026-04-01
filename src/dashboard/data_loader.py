@@ -177,27 +177,22 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         .reset_index()
     )
 
-    # --- Regression per generation: price ~ year + mileage + engine_cc ---
+    # --- Regression per generation: price ~ year + year² + log(mileage) [+ engine_cc] ---
+    # year² captures accelerated depreciation in first years;
+    # log(mileage) captures diminishing impact at high km (200k→250k matters less than 20k→70k)
     gen_regressions = {}
     for (brand, model, gen), group in priced_gen.groupby(["brand", "model", "generation"]):
         subset = group[group["mileage_km"].notna() & group["year"].notna()]
         if len(subset) < 5:
             continue
+        year_vals = subset["year"].values.astype(float)
+        log_mileage = np.log1p(subset["mileage_km"].values.astype(float))
         has_cc = "engine_cc" in subset.columns and subset["engine_cc"].notna().sum() >= len(subset) * 0.5
         if has_cc:
             cc_vals = subset["engine_cc"].fillna(subset["engine_cc"].median()).values.astype(float)
-            X = np.column_stack([
-                subset["year"].values.astype(float),
-                subset["mileage_km"].values.astype(float),
-                cc_vals,
-                np.ones(len(subset)),
-            ])
+            X = np.column_stack([year_vals, year_vals ** 2, log_mileage, cc_vals, np.ones(len(subset))])
         else:
-            X = np.column_stack([
-                subset["year"].values.astype(float),
-                subset["mileage_km"].values.astype(float),
-                np.ones(len(subset)),
-            ])
+            X = np.column_stack([year_vals, year_vals ** 2, log_mileage, np.ones(len(subset))])
         y = subset["price_eur"].values.astype(float)
         try:
             coeffs, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
@@ -281,10 +276,12 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
 
         if generation and (brand, model, generation) in gen_regressions and pd.notna(year) and pd.notna(mileage):
             coeffs, has_cc = gen_regressions[(brand, model, generation)]
+            y_val = float(year)
+            lm_val = np.log1p(float(mileage))
             if has_cc and cc_float:
-                predicted = max(coeffs[0] * float(year) + coeffs[1] * float(mileage) + coeffs[2] * cc_float + coeffs[3], 0)
+                predicted = max(coeffs[0] * y_val + coeffs[1] * y_val ** 2 + coeffs[2] * lm_val + coeffs[3] * cc_float + coeffs[4], 0)
             elif not has_cc:
-                predicted = max(coeffs[0] * float(year) + coeffs[1] * float(mileage) + coeffs[2], 0)
+                predicted = max(coeffs[0] * y_val + coeffs[1] * y_val ** 2 + coeffs[2] * lm_val + coeffs[3], 0)
 
         if predicted and predicted > 0:
             undervaluation_pct = round((1 - price / predicted) * 100, 1)
@@ -444,6 +441,133 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
     if not df.empty:
         df = df.sort_values("flip_score", ascending=False)
     return df
+
+
+def compute_model_metrics(listings_df: pd.DataFrame, history_df: pd.DataFrame,
+                          feedback_df: pd.DataFrame, portfolio_df: pd.DataFrame) -> dict:
+    """Compute quality metrics for all models.
+
+    Returns dict with keys: price_regression, interest_model, time_to_sale.
+    """
+    import numpy as np
+    from src.models.generations import get_generation
+
+    metrics: dict = {"price_regression": {}, "interest_model": {}, "time_to_sale": {}}
+
+    if listings_df.empty:
+        return metrics
+
+    active = listings_df[listings_df["is_active"]].copy() if "is_active" in listings_df.columns else listings_df.copy()
+    if "duplicate_of" in active.columns:
+        active = active[active["duplicate_of"].isna()].copy()
+    active["generation"] = active.apply(
+        lambda r: get_generation(r["brand"], r["model"], r.get("year")), axis=1
+    )
+
+    # === 1. Price regression: per-generation leave-one-out MAE/MAPE ===
+    priced = active[
+        active["price_eur"].notna() & active["generation"].notna()
+        & active["year"].notna() & active["mileage_km"].notna()
+    ].copy()
+
+    gen_metrics = []
+    for (brand, model, gen), group in priced.groupby(["brand", "model", "generation"]):
+        if len(group) < 6:  # need >=6 for meaningful LOO
+            continue
+        year_vals = group["year"].values.astype(float)
+        log_mileage = np.log1p(group["mileage_km"].values.astype(float))
+        prices = group["price_eur"].values.astype(float)
+
+        has_cc = "engine_cc" in group.columns and group["engine_cc"].notna().sum() >= len(group) * 0.5
+        if has_cc:
+            cc_vals = group["engine_cc"].fillna(group["engine_cc"].median()).values.astype(float)
+            X = np.column_stack([year_vals, year_vals ** 2, log_mileage, cc_vals, np.ones(len(group))])
+        else:
+            X = np.column_stack([year_vals, year_vals ** 2, log_mileage, np.ones(len(group))])
+
+        # Leave-one-out cross-validation
+        errors = []
+        for i in range(len(group)):
+            X_train = np.delete(X, i, axis=0)
+            y_train = np.delete(prices, i)
+            try:
+                coeffs, _, _, _ = np.linalg.lstsq(X_train, y_train, rcond=None)
+                pred = float(X[i] @ coeffs)
+                errors.append(abs(pred - prices[i]))
+            except Exception:
+                continue
+
+        if errors:
+            mae = np.mean(errors)
+            mape = np.mean([e / p * 100 for e, p in zip(errors, prices) if p > 0])
+            gen_metrics.append({
+                "brand": brand, "model": model, "generation": gen,
+                "sample_size": len(group), "mae_eur": round(mae),
+                "mape_pct": round(mape, 1),
+            })
+
+    if gen_metrics:
+        gen_df = pd.DataFrame(gen_metrics)
+        metrics["price_regression"] = {
+            "per_generation": gen_df,
+            "overall_mae": round(gen_df["mae_eur"].median()),
+            "overall_mape": round(gen_df["mape_pct"].median(), 1),
+            "generations_evaluated": len(gen_df),
+        }
+
+    # === 2. Interest model: precision from feedback ===
+    if not feedback_df.empty and "olx_id" in feedback_df.columns:
+        label_col = "feedback_label" if "feedback_label" in feedback_df.columns else "label"
+        if label_col in feedback_df.columns:
+            fb = feedback_df.copy()
+            fb["_label"] = fb[label_col].astype(str).str.strip().str.lower()
+            positive = set(fb[fb["_label"].isin({"interesting", "bought"})]["olx_id"].astype(str))
+            negative = set(fb[fb["_label"] == "skipped"]["olx_id"].astype(str))
+            total_labeled = len(positive) + len(negative)
+            if total_labeled > 0:
+                metrics["interest_model"] = {
+                    "total_labeled": total_labeled,
+                    "positive_count": len(positive),
+                    "negative_count": len(negative),
+                    "positive_rate": round(len(positive) / total_labeled * 100, 1),
+                }
+
+    # === 3. Time-to-sale: accuracy on sold listings ===
+    from src.analytics.time_to_sale import build_tos_dataset, predict_sale_probability
+    tos_data = build_tos_dataset(listings_df)
+    if not tos_data.empty:
+        sold = tos_data[~tos_data["censored"]].copy()
+        if len(sold) >= 10:
+            probs = predict_sale_probability(sold)
+            sold = sold.copy()
+            sold["pred_prob"] = probs.values
+            sold["actual_sold_30d"] = (sold["days_to_sale"] <= 30).astype(int)
+            sold["pred_sold_30d"] = (sold["pred_prob"] >= 0.5).astype(int)
+
+            correct = (sold["actual_sold_30d"] == sold["pred_sold_30d"]).sum()
+            accuracy = correct / len(sold) * 100
+
+            # Calibration: group by probability buckets
+            sold["prob_bucket"] = pd.cut(sold["pred_prob"], bins=[0, 0.2, 0.4, 0.6, 0.8, 1.0])
+            calibration = (
+                sold.groupby("prob_bucket", observed=True)
+                .agg(
+                    predicted_mean=("pred_prob", "mean"),
+                    actual_mean=("actual_sold_30d", "mean"),
+                    count=("actual_sold_30d", "size"),
+                )
+                .reset_index()
+            )
+            calibration["prob_bucket"] = calibration["prob_bucket"].astype(str)
+
+            metrics["time_to_sale"] = {
+                "accuracy_pct": round(accuracy, 1),
+                "total_sold": len(sold),
+                "sold_within_30d": int(sold["actual_sold_30d"].sum()),
+                "calibration": calibration,
+            }
+
+    return metrics
 
 
 def load_unmatched() -> pd.DataFrame:

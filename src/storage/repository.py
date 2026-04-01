@@ -244,24 +244,39 @@ def deduplicate_cross_platform(session: Session) -> int:
     return marked
 
 
-def compute_market_stats(session: Session, target_date: date | None = None):
-    """Compute and store daily aggregate stats per brand+model."""
+def compute_market_stats(
+    session: Session,
+    target_date: date | None = None,
+    changed_pairs: set[tuple[str, str]] | None = None,
+):
+    """Compute and store daily aggregate stats per brand+model.
+
+    If *changed_pairs* is provided, only recompute stats for those
+    (brand, model) pairs — much faster during incremental scraping.
+    Pass None (or omit) for a full recompute.
+    """
     import logging
     from statistics import median as _median
     log = logging.getLogger(__name__)
 
     target_date = target_date or date.today()
 
-    # Single query: all (brand, model, year, price) for active listings
-    rows = (
+    query = (
         session.query(
             Listing.brand, Listing.model, Listing.year, PriceSnapshot.price_eur,
         )
         .join(PriceSnapshot, PriceSnapshot.listing_id == Listing.id)
         .filter(Listing.is_active == True, PriceSnapshot.price_eur.isnot(None))
-        .all()
     )
-    log.info("Market stats: fetched %d price rows", len(rows))
+    if changed_pairs:
+        from sqlalchemy import tuple_
+        query = query.filter(
+            tuple_(Listing.brand, Listing.model).in_(changed_pairs)
+        )
+
+    rows = query.all()
+    log.info("Market stats: fetched %d price rows%s", len(rows),
+             f" for {len(changed_pairs)} pairs" if changed_pairs else " (full)")
 
     # Aggregate in Python — no N+1 queries
     groups: dict[tuple[str, str], dict] = {}
@@ -273,14 +288,19 @@ def compute_market_stats(session: Session, target_date: date | None = None):
         if year is not None:
             groups[key]["years"].append(year)
 
-    # Pre-fetch existing MarketStats for target_date (avoid N queries in loop)
+    # Pre-fetch existing MarketStats for target_date (only relevant pairs)
+    existing_query = session.query(MarketStats).filter_by(date=target_date)
+    if changed_pairs:
+        existing_query = existing_query.filter(
+            tuple_(MarketStats.brand, MarketStats.model).in_(changed_pairs)
+        )
     existing_map: dict[tuple, MarketStats] = {}
-    for ms in session.query(MarketStats).filter_by(date=target_date).all():
+    for ms in existing_query.all():
         existing_map[(ms.brand, ms.model, ms.year_from, ms.year_to)] = ms
 
     log.info("Market stats: computing for %d brand+model groups...", len(groups))
 
-    for i, ((brand, model), data) in enumerate(groups.items()):
+    for (brand, model), data in groups.items():
         prices = data["prices"]
         years = data["years"]
 
