@@ -1,0 +1,33 @@
+# MLX LoRA fine-tuning config for M1 8GB (low heat)
+# Model: Qwen2.5-3B-Instruct (4-bit quantized)
+
+# LoRA parameters — reduced for less memory/heat
+lora_layers: 8
+lora_parameters:
+  rank: 8
+  alpha: 16
+  dropout: 0.0
+  scale: 2.0
+  keys: ["self_attn.q_proj", "self_attn.v_proj"]
+
+# Training — conservative for thermals
+batch_size: 1
+iters: 600
+val_batches: 5
+steps_per_report: 25
+steps_per_eval: 100
+save_every: 200
+adapter_path: "adapters"
+
+# Optimizer
+learning_rate: 1e-4
+lr_schedule:
+  name: "cosine_decay"
+  warmup: 50
+  arguments: [1.0e-4, 600]
+
+# Sequence
+max_seq_length: 1536
+
+# Seed
+seed: 42

@@ -61,7 +61,7 @@ def _get_config() -> dict:
             data = yaml.safe_load(f) or {}
         cfg = data.get("llm", {})
     return {
-        "ollama_model": cfg.get("ollama_model", "qwen2.5:3b"),
+        "ollama_model": cfg.get("ollama_model", "car-parser-3b"),
         "ollama_url": cfg.get("ollama_url", OLLAMA_URL),
         "llm_workers": cfg.get("llm_workers", 1),
     }
