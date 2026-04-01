@@ -278,8 +278,13 @@ def annotate_example(messages: list[dict]) -> list[dict]:
 
 
 def main():
-    input_path = DATA_DIR / "training_data.jsonl"
-    output_path = DATA_DIR / "training_data_v2.jsonl"
+    import argparse as _ap
+    _p = _ap.ArgumentParser()
+    _p.add_argument("--input", default=str(DATA_DIR / "training_data.jsonl"))
+    _p.add_argument("--output", default=str(DATA_DIR / "training_data_v2.jsonl"))
+    _args = _p.parse_args()
+    input_path = Path(_args.input)
+    output_path = Path(_args.output)
 
     with open(input_path) as f:
         examples = [json.loads(line) for line in f]
