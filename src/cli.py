@@ -342,15 +342,9 @@ def scrape(
         sv_listings = sv_scraper.scrape_all(on_batch_ready=_on_batch)
     raw_listings.extend(sv_listings)
 
-    # --- Scraping complete: run mark_inactive immediately ---
-    # We know all IDs currently on the sites; don't wait for LLM.
+    # Collect scraped IDs now; mark_inactive runs after DB worker finishes
+    # to avoid "database is locked" from concurrent SQLite writers.
     scraped_ids = set(raw_by_id.keys())
-    if scraped_ids:
-        post_session = get_session()
-        log.info("Marking inactive listings (%d scraped IDs)...", len(scraped_ids))
-        mark_inactive(post_session, scraped_ids)
-        post_session.commit()
-        post_session.close()
 
     # --- SIGTERM handler: graceful shutdown on timeout ---
     def _sigterm_handler(signum, frame):
@@ -376,6 +370,15 @@ def scrape(
         merger.join(timeout=10)
         db_queue.put(None)
         db_thread.join(timeout=30)
+        # Safe to write now — db_worker is done
+        if scraped_ids:
+            try:
+                s = get_session()
+                mark_inactive(s, scraped_ids)
+                s.commit()
+                s.close()
+            except Exception as e:
+                log.warning("mark_inactive failed on SIGTERM: %s", e)
         log.info("Graceful shutdown complete: %d saved, %d enriched, %d unmatched",
                  db_result.get("saved", 0), db_result.get("enriched", 0),
                  db_result.get("unmatched", 0))
@@ -422,8 +425,12 @@ def scrape(
         log.error("No listings scraped.")
         raise typer.Exit(1)
 
-    # 5. Final dedup & market stats
+    # 5. Mark inactive, dedup & market stats (single session, no contention)
     final_session = get_session()
+    if scraped_ids:
+        log.info("Marking inactive listings (%d scraped IDs)...", len(scraped_ids))
+        mark_inactive(final_session, scraped_ids)
+        final_session.commit()
     log.info("Final deduplication...")
     dedup_count = deduplicate_cross_platform(final_session)
     if dedup_count:

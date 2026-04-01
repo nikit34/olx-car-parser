@@ -37,9 +37,10 @@ def get_engine(db_path: str | None = None):
         _engine = create_engine(f"sqlite:///{path}", echo=False)
         # Enable WAL mode — allows reads while writing (no lock conflicts)
         @event.listens_for(_engine, "connect")
-        def _set_sqlite_wal(dbapi_conn, connection_record):
+        def _set_sqlite_pragmas(dbapi_conn, connection_record):
             cursor = dbapi_conn.cursor()
             cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=30000")  # wait up to 30s instead of failing immediately
             cursor.close()
     return _engine
 
