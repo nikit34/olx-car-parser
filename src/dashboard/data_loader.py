@@ -381,8 +381,9 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         else:
             owners_mult = 1.0
 
+        base_pct = undervaluation_pct if undervaluation_pct > 0 else discount_pct
         flip_score = round(
-            undervaluation_pct * year_mult * mileage_mult * engine_life_mult
+            base_pct * year_mult * mileage_mult * engine_life_mult
             * liquidity_mult * trend_mult * condition_mult * customs_mult
             * motivated_mult * owners_mult * rhd_mult, 1
         )
