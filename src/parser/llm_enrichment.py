@@ -33,8 +33,8 @@ first_owner_selling(bool).
 Rules: mileage_in_description_km=exact km as integer ("4300 km"→4300, "150 mil km"→150000, \
 "89.500km"→89500, "4.300km"→4300). "mil"=thousand ONLY when written as a separate word. \
 desc_mentions_repair=true if ANY repair/damage mentioned. desc_mentions_accident=true if collision mentioned. \
-desc_mentions_customs_cleared=look for "desalfandegado","legalizado","por legalizar". \
-right_hand_drive=true if right-hand drive/UK/Japan import/"mão inglesa"/"volante à direita"/"condução à direita". \
+desc_mentions_customs_cleared=look for "desalfandegado","legalizado","por legalizar","documentação em dia","documentos em ordem". \
+right_hand_drive=true if right-hand drive/UK/Japan import/"mão inglesa"/"volante à direita"/"condução à direita"/"matrícula inglesa". \
 urgency=high if "urgente","preciso vender rápido","emigração","preço para despachar"; medium if "aceito propostas","negociável","oportunidade"; low otherwise. \
 warranty=true if "garantia" mentioned (not "sem garantia"). \
 tuning_or_mods=list of aftermarket modifications: "reprogramação","stage 1/2","remap","chip tuning","suspensão rebaixada","coilovers","escape desportivo","downpipe","wrap","bodykit". \
