@@ -96,11 +96,24 @@ def _ollama_available(base_url: str) -> bool:
 
 
 def _parse_llm_json(content: str) -> dict | None:
-    """Extract JSON from LLM response, handling markdown code blocks."""
+    """Extract JSON from LLM response, handling markdown code blocks and surrounding text."""
+    # Try markdown code blocks first
     if "```" in content:
         content = content.split("```")[1]
         if content.startswith("json"):
             content = content[4:]
+        return json.loads(content.strip())
+    # Extract first {...} object from response
+    start = content.find("{")
+    if start >= 0:
+        depth = 0
+        for i in range(start, len(content)):
+            if content[i] == "{":
+                depth += 1
+            elif content[i] == "}":
+                depth -= 1
+            if depth == 0:
+                return json.loads(content[start : i + 1])
     return json.loads(content.strip())
 
 
@@ -109,16 +122,16 @@ def _call_ollama(description: str, cfg: dict) -> dict | None:
     try:
         client = _get_client(cfg["ollama_url"])
         resp = client.post(
-            "/api/generate",
+            "/api/chat",
             json={
                 "model": cfg["ollama_model"],
-                "prompt": EXTRACTION_PROMPT + description[:1200],
-                "format": "json",
+                "messages": [
+                    {"role": "user", "content": EXTRACTION_PROMPT + description[:1200]},
+                ],
                 "stream": False,
                 "options": {
-                    "temperature": 0.0,
+                    "temperature": 0.1,
                     "num_predict": 512,
-                    "num_ctx": 1536,
                 },
             },
         )
@@ -126,7 +139,7 @@ def _call_ollama(description: str, cfg: dict) -> dict | None:
             logger.warning("Ollama API error: %s", resp.status_code)
             return None
 
-        content = resp.json()["response"]
+        content = resp.json()["message"]["content"]
         return _parse_llm_json(content)
 
     except httpx.TimeoutException:
