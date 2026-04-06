@@ -163,7 +163,7 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
     """Find undervalued listings and rank by flip potential.
 
     Scoring factors:
-    - Undervaluation: regression-based fair price vs actual (fallback to median)
+    - Undervaluation: gradient boosting fair price vs actual (fallback to median)
     - Liquidity: how fast this model sells (avg_days_to_sell)
     - Trend: is the market price rising or falling
     - Engine life: remaining engine lifespan based on mileage, displacement and fuel
@@ -220,49 +220,18 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         .reset_index()
     )
 
-    # --- Regression per generation: price ~ year + year² + log(mileage) [+ engine_cc] ---
-    # year² captures accelerated depreciation in first years;
-    # log(mileage) captures diminishing impact at high km (200k→250k matters less than 20k→70k)
-    gen_regressions = {}
-    for (brand, model, gen), group in priced_gen.groupby(["brand", "model", "generation"]):
-        subset = group[group["mileage_km"].notna() & group["year"].notna()]
-        if len(subset) < 5:
-            continue
-        year_vals = subset["year"].values.astype(float)
-        log_mileage = np.log1p(subset["mileage_km"].values.astype(float))
-        has_cc = "engine_cc" in subset.columns and subset["engine_cc"].notna().sum() >= len(subset) * 0.5
-        if has_cc:
-            cc_vals = subset["engine_cc"].fillna(subset["engine_cc"].median()).values.astype(float)
-            X = np.column_stack([year_vals, year_vals ** 2, log_mileage, cc_vals, np.ones(len(subset))])
-        else:
-            X = np.column_stack([year_vals, year_vals ** 2, log_mileage, np.ones(len(subset))])
-        y = subset["price_eur"].values.astype(float)
-        try:
-            coeffs, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
-            gen_regressions[(brand, model, gen)] = (coeffs, has_cc)
-        except Exception:
-            pass
+    # --- Gradient boosting price model (replaces per-generation linear regressions) ---
+    from src.analytics.price_model import train_price_model, predict_prices
 
-    # --- Regression per sub-segment (finer than generation) ---
-    sub_regressions = {}
-    for (brand, model, gen, sub_seg), group in priced_gen.groupby(["brand", "model", "generation", "sub_segment"]):
-        subset = group[group["mileage_km"].notna() & group["year"].notna()]
-        if len(subset) < 5:
-            continue
-        year_vals = subset["year"].values.astype(float)
-        log_mileage = np.log1p(subset["mileage_km"].values.astype(float))
-        has_cc = "engine_cc" in subset.columns and subset["engine_cc"].notna().sum() >= len(subset) * 0.5
-        if has_cc:
-            cc_vals = subset["engine_cc"].fillna(subset["engine_cc"].median()).values.astype(float)
-            X = np.column_stack([year_vals, year_vals ** 2, log_mileage, cc_vals, np.ones(len(subset))])
-        else:
-            X = np.column_stack([year_vals, year_vals ** 2, log_mileage, np.ones(len(subset))])
-        y = subset["price_eur"].values.astype(float)
-        try:
-            coeffs, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
-            sub_regressions[(brand, model, gen, sub_seg)] = (coeffs, has_cc)
-        except Exception:
-            pass
+    gb_result = train_price_model(active)
+    gb_predictions: dict[str, float] = {}
+    if gb_result is not None:
+        gb_model, gb_cat_maps = gb_result
+        preds = predict_prices(gb_model, gb_cat_maps, active)
+        for idx, pred in preds.items():
+            olx_id = active.loc[idx, "olx_id"] if "olx_id" in active.columns else None
+            if olx_id and pred > 0:
+                gb_predictions[olx_id] = float(pred)
 
     # --- Liquidity: avg days to sell per brand+model ---
     liquidity_map: dict[tuple, float] = {}
@@ -362,26 +331,11 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         if not median or price >= median * 0.85:
             continue
 
-        # 1. Undervaluation: sub-segment regression → generation regression
-        predicted = None
+        # 1. Undervaluation: gradient boosting predicted price
         engine_cc = listing.get("engine_cc")
         fuel_type = listing.get("fuel_type")
-        cc_float = float(engine_cc) if pd.notna(engine_cc) and engine_cc else None
-
-        coeffs = has_cc = None
-        if pd.notna(year) and pd.notna(mileage):
-            if generation and sub_seg and (brand, model, generation, sub_seg) in sub_regressions:
-                coeffs, has_cc = sub_regressions[(brand, model, generation, sub_seg)]
-            elif generation and (brand, model, generation) in gen_regressions:
-                coeffs, has_cc = gen_regressions[(brand, model, generation)]
-
-        if coeffs is not None:
-            y_val = float(year)
-            lm_val = np.log1p(float(mileage))
-            if has_cc and cc_float:
-                predicted = max(coeffs[0] * y_val + coeffs[1] * y_val ** 2 + coeffs[2] * lm_val + coeffs[3] * cc_float + coeffs[4], 0)
-            elif not has_cc:
-                predicted = max(coeffs[0] * y_val + coeffs[1] * y_val ** 2 + coeffs[2] * lm_val + coeffs[3], 0)
+        olx_id = listing.get("olx_id", "")
+        predicted = gb_predictions.get(olx_id)
 
         if predicted and predicted > 0:
             undervaluation_pct = round((1 - price / predicted) * 100, 1)

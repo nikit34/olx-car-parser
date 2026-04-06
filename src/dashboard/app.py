@@ -321,7 +321,7 @@ tab_deals, tab_analytics, tab_trends, tab_listings, tab_compare, tab_geo, tab_li
 with tab_deals:
     st.subheader("Недооценённые автомобили")
     st.caption("Flip-скор = недооценка % × год × пробег × ресурс двигателя × состояние × растаможка × мотивация продавца × владельцы × ликвидность × тренд × скорость продаж сегмента × уверенность оценки. "
-               "Прибыль = справедливая цена (регрессия по поколению) − запрашиваемая цена.")
+               "Прибыль = справедливая цена (gradient boosting) − запрашиваемая цена.")
 
     if filtered_signals.empty:
         st.info("Сделок не найдено. Попробуйте расширить фильтры.")
@@ -395,7 +395,7 @@ with tab_deals:
                     st.markdown(f"Profit: **{profit:+,} EUR** ({deal['est_roi_pct']:+.0f}% ROI){profit_day_str}")
                 else:
                     st.markdown(f"**{int(deal['price_eur']):,} EUR** · discount **{deal['discount_pct']:.0f}%** от медианы")
-                    st.markdown("_Нет регрессии по поколению — прибыль не рассчитана_")
+                    st.markdown("_Нет предсказания цены — прибыль не рассчитана_")
                 details = []
                 if pd.notna(deal.get("mileage_km")):
                     details.append(f"{int(deal['mileage_km']):,} km")
