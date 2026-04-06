@@ -1,4 +1,4 @@
-FROM ./car-parser-3b-q4_k_m.gguf
+FROM ./car-parser-3b-q4km.gguf
 
 PARAMETER temperature 0.1
 PARAMETER num_predict 512

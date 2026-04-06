@@ -1,34 +1,36 @@
 {
     "adapter_path": "adapters",
-    "batch_size": 1,
+    "batch_size": 2,
     "config": "config/mlx_lora.yaml",
     "data": "data/mlx_train",
     "fine_tune_type": "lora",
     "grad_accumulation_steps": 1,
     "grad_checkpoint": false,
-    "iters": 600,
-    "learning_rate": 0.0001,
-    "lora_layers": 8,
+    "iters": 2600,
+    "learning_rate": 0.00015,
+    "lora_layers": 16,
     "lora_parameters": {
-        "rank": 8,
-        "alpha": 16,
+        "rank": 32,
+        "alpha": 32,
         "dropout": 0.0,
-        "scale": 2.0,
+        "scale": 1.0,
         "keys": [
             "self_attn.q_proj",
-            "self_attn.v_proj"
+            "self_attn.k_proj",
+            "self_attn.v_proj",
+            "self_attn.o_proj"
         ]
     },
     "lr_schedule": {
         "name": "cosine_decay",
         "warmup": 50,
         "arguments": [
-            0.0001,
-            600
+            0.00015,
+            2600
         ]
     },
-    "mask_prompt": false,
-    "max_seq_length": 1536,
+    "mask_prompt": true,
+    "max_seq_length": 2048,
     "model": "Qwen/Qwen2.5-3B-Instruct",
     "num_layers": 16,
     "optimizer": "adam",
@@ -42,9 +44,9 @@
     "project_name": null,
     "report_to": null,
     "resume_adapter_file": null,
-    "save_every": 200,
+    "save_every": 500,
     "seed": 42,
-    "steps_per_eval": 100,
+    "steps_per_eval": 200,
     "steps_per_report": 25,
     "test": false,
     "test_batches": 500,

@@ -1,33 +1,35 @@
-# MLX LoRA fine-tuning config for M1 8GB (low heat)
-# Model: Qwen2.5-3B-Instruct (4-bit quantized)
+# MLX LoRA fine-tuning config for M1 Max 32GB
+# Model: Qwen2.5-3B-Instruct — full-capacity LoRA
+# Target deployment: M1 Air 8GB (Ollama Q4_K_M)
 
-# LoRA parameters — reduced for less memory/heat
-lora_layers: 8
+# LoRA — Colab-grade capacity, fits easily in 32GB
+lora_layers: 16
 lora_parameters:
-  rank: 8
-  alpha: 16
+  rank: 32
+  alpha: 32
   dropout: 0.0
-  scale: 2.0
-  keys: ["self_attn.q_proj", "self_attn.v_proj"]
+  scale: 1.0
+  keys: ["self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj", "self_attn.o_proj"]
 
-# Training — conservative for thermals
-batch_size: 1
-iters: 600
+# Training
+batch_size: 2             # 32GB can handle batch=2
+iters: 2600              # ~3 epochs (1710 * 3 / 2)
 val_batches: 5
 steps_per_report: 25
-steps_per_eval: 100
-save_every: 200
+steps_per_eval: 200
+save_every: 500
 adapter_path: "adapters"
+mask_prompt: true         # train only on JSON output
 
 # Optimizer
-learning_rate: 1e-4
+learning_rate: 1.5e-4
 lr_schedule:
   name: "cosine_decay"
   warmup: 50
-  arguments: [1.0e-4, 600]
+  arguments: [1.5e-4, 2600]
 
-# Sequence
-max_seq_length: 1536
+# Sequence — full length, 32GB has plenty of room
+max_seq_length: 2048
 
 # Seed
 seed: 42
