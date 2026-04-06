@@ -307,7 +307,7 @@ def correct_listing_data(listing) -> dict:
     # --- Tuning or modifications ---
     tuning = extras.get("tuning_or_mods")
     if tuning and isinstance(tuning, list) and len(tuning) > 0:
-        corrections["tuning_or_mods"] = tuning
+        corrections["tuning_or_mods"] = json.dumps(tuning, ensure_ascii=False)
 
     # --- Taxi / fleet / rental ---
     taxi = extras.get("taxi_fleet_rental")
