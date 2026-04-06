@@ -167,6 +167,8 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
     - Liquidity: how fast this model sells (avg_days_to_sell)
     - Trend: is the market price rising or falling
     - Engine life: remaining engine lifespan based on mileage, displacement and fuel
+    - Sale velocity: fraction of segment sold within 21 days
+    - Confidence: number of comparable listings backing the estimate
     """
     if listings_df.empty:
         return pd.DataFrame()
@@ -286,6 +288,21 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
             new_med = sorted_g.iloc[-1]["median_price_eur"]
             if old_med and old_med > 0:
                 trend_map[(brand, model)] = round((new_med - old_med) / old_med * 100, 1)
+
+    # --- Sale velocity: fraction of recently deactivated listings sold within 21 days ---
+    velocity_map: dict[tuple, float] = {}
+    inactive = listings_df[~listings_df["is_active"]].copy() if "is_active" in listings_df.columns else pd.DataFrame()
+    if not inactive.empty and {"deactivated_at", "first_seen_at", "brand", "model"}.issubset(inactive.columns):
+        sold = inactive[inactive["deactivated_at"].notna() & inactive["first_seen_at"].notna()].copy()
+        if not sold.empty:
+            sold["_lifespan"] = (
+                pd.to_datetime(sold["deactivated_at"]) - pd.to_datetime(sold["first_seen_at"])
+            ).dt.days
+            sold = sold[sold["_lifespan"] > 0]
+            for (brand, model), group in sold.groupby(["brand", "model"]):
+                if len(group) < 3:
+                    continue
+                velocity_map[(brand, model)] = float((group["_lifespan"] <= 21).mean())
 
     # --- Score each listing ---
     for _, listing in active.iterrows():
@@ -461,11 +478,30 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         else:
             owners_mult = 1.0
 
+        # 10. Sale velocity — segments where cars sell fast are better for flipping
+        velocity = velocity_map.get((brand, model))
+        if velocity is not None:
+            # velocity=0.0 → 0.7x, velocity=0.5 → 1.1x, velocity=1.0 → 1.5x
+            velocity_mult = min(max(0.7 + velocity * 0.8, 0.7), 1.5)
+        else:
+            velocity_mult = 1.0
+
+        # 11. Confidence — more comparable listings = more reliable estimate
+        if sample >= 10:
+            confidence_mult = 1.2
+        elif sample >= 7:
+            confidence_mult = 1.1
+        elif sample >= 5:
+            confidence_mult = 1.0
+        else:
+            confidence_mult = 0.7
+
         base_pct = undervaluation_pct if undervaluation_pct > 0 else discount_pct
         flip_score = round(
             base_pct * year_mult * mileage_mult * engine_life_mult
             * liquidity_mult * trend_mult * condition_mult * customs_mult
-            * motivated_mult * owners_mult * rhd_mult, 1
+            * motivated_mult * owners_mult * rhd_mult
+            * velocity_mult * confidence_mult, 1
         )
 
         sig = {
@@ -489,6 +525,8 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
             "motivated_mult": round(motivated_mult, 2),
             "owners_mult": round(owners_mult, 2),
             "rhd_mult": round(rhd_mult, 2),
+            "velocity_mult": round(velocity_mult, 2),
+            "confidence_mult": round(confidence_mult, 2),
             "avg_days_to_sell": days_to_sell,
             "price_trend_pct": trend_pct,
             "flip_score": flip_score,

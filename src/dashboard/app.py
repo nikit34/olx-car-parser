@@ -16,7 +16,6 @@ _sys.path.insert(0, str(_dashboard_dir))
 _sys.path.insert(0, str(_project_root))
 
 from data_loader import load_all, load_portfolio, _force_next_check, compute_model_metrics
-from src.analytics.interest_model import score_interest_candidates
 
 
 def plotly_chart_with_click(fig, df, key, **kwargs):
@@ -44,11 +43,6 @@ DISPLAY_LABELS = {
     "transmission_group": "КПП",
     "brand": "Марка",
     "district_group": "Район",
-}
-
-MODEL_SOURCE_LABELS = {
-    "portfolio-trained": "Модель подстроена под сделки из портфеля.",
-    "sale-velocity": "Ранжирование по скорости продаж в сегменте и рыночным сигналам.",
 }
 
 
@@ -326,7 +320,7 @@ tab_deals, tab_analytics, tab_trends, tab_listings, tab_compare, tab_geo, tab_li
 # ---- TAB 1: Deals (Buy Signals) --------------------------------------------
 with tab_deals:
     st.subheader("Недооценённые автомобили")
-    st.caption("Flip-скор = недооценка % × год × пробег × ресурс двигателя × состояние × растаможка × мотивация продавца × владельцы × ликвидность × тренд. "
+    st.caption("Flip-скор = недооценка % × год × пробег × ресурс двигателя × состояние × растаможка × мотивация продавца × владельцы × ликвидность × тренд × скорость продаж сегмента × уверенность оценки. "
                "Прибыль = справедливая цена (регрессия по поколению) − запрашиваемая цена.")
 
     if filtered_signals.empty:
@@ -433,124 +427,6 @@ with tab_deals:
                 if deal.get("url"):
                     link_label = "Open on StandVirtual" if "standvirtual.com" in deal["url"] else "Open on OLX"
                     st.markdown(f"[{link_label}]({deal['url']})")
-
-        st.divider()
-
-        st.subheader("ML-shortlist для ручной проверки")
-        st.caption(
-            "Это не классификатор “хорошая машина / плохая машина”. "
-            "Он ранжирует рыночные аномалии: недооценку, ожидаемую прибыль, глубину сравнимых объявлений, "
-            "ликвидность и поведение продавца. Поля, извлечённые из описания, остаются только обогащением карточки объявления."
-        )
-        portfolio_for_model = get_portfolio()
-        inactive = listings_df[~listings_df["is_active"]].copy() if "is_active" in listings_df.columns else pd.DataFrame()
-        interesting = score_interest_candidates(
-            active,
-            deals,
-            inactive,
-            portfolio_for_model,
-            min_positive_labels=2,
-        )
-        shortlist = interesting[
-            interesting["interest_class"].ne("Low priority")
-        ].copy()
-        if shortlist.empty:
-            st.info("Сейчас нет объявлений, которые модель считает приоритетными для ручной проверки.")
-        else:
-            shortlist["interest_match_pct"] = (shortlist["interest_probability"] * 100).round(0)
-            if "model_source" in shortlist.columns:
-                source_label = shortlist["model_source"].iloc[0]
-                portfolio_positive = int(shortlist["portfolio_positive_count"].iloc[0]) if "portfolio_positive_count" in shortlist.columns else 0
-                source_caption = MODEL_SOURCE_LABELS.get(source_label, MODEL_SOURCE_LABELS["sale-velocity"])
-                st.caption(f"{source_caption} Позитивов из портфеля: {portfolio_positive}.")
-            quick_hits = shortlist.head(4)
-            hit_cols = st.columns(len(quick_hits))
-            for idx, (_, listing) in enumerate(quick_hits.iterrows()):
-                with hit_cols[idx]:
-                    st.markdown(
-                        f"### {listing['brand']} {listing['model']} "
-                        f"{int(listing['year']) if pd.notna(listing.get('year')) else '?'}"
-                    )
-                    st.markdown(
-                        f"**{listing['interest_class']}** · "
-                        f"{listing['interest_probability'] * 100:.0f}% shortlist match"
-                    )
-                    if pd.notna(listing.get("price_eur")):
-                        st.markdown(f"Цена: **{int(listing['price_eur']):,} EUR**")
-                    if pd.notna(listing.get("est_profit_eur")):
-                        st.markdown(f"Потенциал: **{int(listing['est_profit_eur']):+,} EUR**")
-                    st.caption(listing["interest_reason"])
-                    if listing.get("url"):
-                        label = "Open on StandVirtual" if "standvirtual.com" in listing["url"] else "Open on OLX"
-                        st.link_button(label, listing["url"])
-
-            ml_view = shortlist.head(150).copy()
-            ml_view["_size"] = ml_view.get("sample_size", pd.Series(index=ml_view.index, dtype=float)).fillna(2).clip(lower=2)
-            fig_ml = px.scatter(
-                ml_view,
-                x="interest_probability",
-                y="est_profit_eur",
-                color="interest_class",
-                size="_size",
-                hover_data=[
-                    "brand",
-                    "model",
-                    "year",
-                    "price_eur",
-                    "interest_reason",
-                    "sample_size",
-                    "url",
-                ],
-                labels={
-                    "interest_probability": "Interest probability",
-                    "est_profit_eur": "Estimated profit (EUR)",
-                    "interest_class": "Class",
-                    "_size": "Comparable listings",
-                },
-                height=460,
-                opacity=0.75,
-                render_mode="webgl",
-            )
-            plotly_chart_with_click(fig_ml, ml_view, key="ml_shortlist_scatter", width="stretch")
-
-            ml_cols = [
-                "interest_class",
-                "interest_match_pct",
-                "brand",
-                "model",
-                "year",
-                "price_eur",
-                "est_profit_eur",
-                "est_roi_pct",
-                "sample_size",
-                "interest_reason",
-                "url",
-            ]
-            st.dataframe(
-                shortlist[[c for c in ml_cols if c in shortlist.columns]].head(40).rename(columns={
-                    "interest_class": "Class",
-                    "interest_match_pct": "Match",
-                    "brand": "Brand",
-                    "model": "Model",
-                    "year": "Year",
-                    "price_eur": "Price",
-                    "est_profit_eur": "Profit",
-                    "est_roi_pct": "ROI %",
-                    "sample_size": "Comps",
-                    "interest_reason": "Why shortlisted",
-                    "url": "Link",
-                }),
-                hide_index=True,
-                width="stretch",
-                column_config={
-                    "Match": st.column_config.NumberColumn(format="%.0f%%"),
-                    "Price": st.column_config.NumberColumn(format="%d EUR"),
-                    "Profit": st.column_config.NumberColumn(format="%+d EUR"),
-                    "ROI %": st.column_config.NumberColumn(format="%+.1f%%"),
-                    "Comps": st.column_config.NumberColumn(format="%d"),
-                    "Link": st.column_config.LinkColumn("Link", display_text="Open"),
-                },
-            )
 
         st.divider()
 

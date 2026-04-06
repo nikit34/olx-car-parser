@@ -41,5 +41,6 @@ class TestComputeSignals:
                 required = {"olx_id", "brand", "model", "generation", "year",
                             "price_eur", "predicted_price", "median_price_eur",
                             "discount_pct", "undervaluation_pct", "year_mult",
+                            "velocity_mult", "confidence_mult",
                             "flip_score", "sample_size"}
                 assert required.issubset(set(signals.columns))

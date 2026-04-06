@@ -1,0 +1,2025 @@
+[
+  {
+    "idx": 350,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 165000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "caixa automática 8 velocidades",
+        "faróis automáticos",
+        "bancos aquecidos",
+        "vidros eléctricos",
+        "mala elétrica",
+        "modo sport+/sport/confort/eco",
+        "rádio com GPS",
+        "USB/AUX",
+        "Bluetooth"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 351,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 135000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 352,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": null,
+      "desc_mentions_customs_cleared": null,
+      "imported": true,
+      "right_hand_drive": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 353,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 380000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "medium",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 354,
+    "annotation": {
+      "desc_mentions_num_owners": 1,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 367000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": "good",
+      "suspicious_signs": [],
+      "extras": [
+        "pneus novos"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": "new",
+      "first_owner_selling": true,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 355,
+    "annotation": {
+      "desc_mentions_num_owners": 2,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": null,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "diesel",
+        "caixa automática",
+        "patilhas de comando"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": false,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": false,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 356,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 180000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "vidros elétricos",
+        "fecho centralizado com comando",
+        "jantes especiais",
+        "cruise control",
+        "ar condicionado automático",
+        "estofos 1/2 pele desportivos",
+        "volante multifunções",
+        "faróis de nevoeiro",
+        "start/stop",
+        "entrada AUX e USB",
+        "controlo de tração",
+        "retrovisores elétricos",
+        "modos de condução",
+        "luzes interiores configuráveis",
+        "sensor de luz"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 357,
+    "annotation": {
+      "desc_mentions_num_owners": 2,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 161000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "cruise control",
+        "câmara marcha atrás",
+        "bancos em pele aquecidos elétricos",
+        "mala elétrica",
+        "gancho de reboque",
+        "2 chaves"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": true,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": false,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 358,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 57000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "turbo",
+        "cruise control",
+        "modo turbo",
+        "modo económico",
+        "2 chaves cartão"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "medium",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 359,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 300000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "bancos em couro com ajuste elétrico e aquecimento",
+        "cruise control",
+        "comandos por voz",
+        "computador de bordo",
+        "tela central"
+      ],
+      "issues": [
+        "multimédia LED um pouco apagado",
+        "painel com LED um pouco apagado"
+      ],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": "good",
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": 200
+    }
+  },
+  {
+    "idx": 360,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": null,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "versão GT Line",
+        "caixa manual 6 velocidades",
+        "faróis full LED",
+        "2 chaves",
+        "câmara traseira",
+        "sensores de estacionamento frontais e traseiros",
+        "sensores de chuva",
+        "reconhecimento de sinais de trânsito",
+        "start & stop",
+        "Peugeot i-Cockpit",
+        "bancos em pele",
+        "bancos dianteiros aquecidos",
+        "cruise control",
+        "aviso colisão",
+        "correção de faixa",
+        "vidros traseiros escurecidos",
+        "sistema de navegação",
+        "iluminação ambiente",
+        "ar condicionado automático",
+        "retrovisores rebatíveis eletricamente",
+        "travão de estacionamento elétrico",
+        "modo sport",
+        "jantes 18",
+        "mala com abertura elétrica e automática",
+        "teto panorâmico"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [
+        {
+          "item": "distribuição",
+          "km": 75000,
+          "date": "10/2023"
+        },
+        {
+          "item": "revisão com troca de calços de travão",
+          "km": 88000,
+          "date": "10/2025"
+        }
+      ],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 361,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 150000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": "excellent",
+      "suspicious_signs": [],
+      "extras": [
+        "caixa automática com patilhas no volante",
+        "teto estrelado estilo Rolls-Royce",
+        "farolins traseiros atualizados 2020",
+        "consola AC atualizada 2020",
+        "sistema de som Meridian",
+        "iluminação ambiente LED",
+        "sensores de estacionamento dianteiros e traseiros",
+        "lane assist",
+        "bancos aquecidos com memória",
+        "volante aquecido",
+        "keyless entry",
+        "mala elétrica",
+        "jantes em preto brilhante",
+        "sistema multimédia com navegação e Bluetooth",
+        "vidros escurecidos",
+        "Terrain Response",
+        "backets originais em pele vermelha"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [
+        "farolins traseiros atualizados para modelo 2020",
+        "consola AC atualizada para versão 2020",
+        "teto estrelado estilo Rolls-Royce"
+      ],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [
+        {
+          "item": "revisão completa",
+          "km": null,
+          "date": "há 1 semana, 700€"
+        }
+      ],
+      "tires_condition": "new",
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 362,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 90000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": "excellent",
+      "suspicious_signs": [],
+      "extras": [
+        "jantes 18 originais BMW",
+        "pneus Bridgestone Potenza run flat",
+        "capota descapotável",
+        "livros de origem"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 363,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": false,
+      "accident_details": null,
+      "service_history": true,
+      "desc_mentions_repair": true,
+      "repair_details": "embraiagem substituída recentemente, bomba injetora, discos e calços de travão substituídos",
+      "mileage_in_description_km": null,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": "excellent",
+      "suspicious_signs": [],
+      "extras": [
+        "pele natural",
+        "suspensão convencional (não pneumática)",
+        "3 chaves de origem"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [
+        {
+          "item": "embraiagem substituída",
+          "km": null,
+          "date": "recentemente"
+        },
+        {
+          "item": "bomba injetora substituída",
+          "km": null,
+          "date": "recentemente"
+        },
+        {
+          "item": "discos e calços de travão substituídos",
+          "km": null,
+          "date": "recentemente"
+        },
+        {
+          "item": "4 pneus novos",
+          "km": null,
+          "date": null
+        }
+      ],
+      "tires_condition": "new",
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 364,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 170000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": "excellent",
+      "suspicious_signs": [],
+      "extras": [
+        "versão S Line"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "medium",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 365,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": null,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": "good",
+      "suspicious_signs": [],
+      "extras": [
+        "ar condicionado automático",
+        "ecrã tátil com navegação GPS (Android)",
+        "Bluetooth/USB/AUX",
+        "computador de bordo",
+        "volante multifunções",
+        "vidros elétricos",
+        "retrovisores elétricos",
+        "jantes liga leve",
+        "ISOFIX",
+        "ABS",
+        "ESP",
+        "airbags frontais e laterais",
+        "fecho centralizado com comando"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [
+        "reprogramação focada na redução de consumos"
+      ],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 366,
+    "annotation": {
+      "desc_mentions_num_owners": 1,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": null,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": true,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 367,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 89809,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "computador de bordo",
+        "ar condicionado",
+        "sensores estacionamento",
+        "ISOFIX",
+        "2 chaves"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 368,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": true,
+      "accident_details": "longarina lado esquerdo ligeiramente afectada; danos estruturais visíveis",
+      "service_history": false,
+      "desc_mentions_repair": true,
+      "repair_details": "longarina lado esquerdo ligeiramente afectada, algum material danificado",
+      "mileage_in_description_km": 44000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": "fair",
+      "suspicious_signs": [
+        "structural damage to left side rail",
+        "selling with damage photos suggesting prior collision"
+      ],
+      "extras": [
+        "2 chaves de origem",
+        "manuais do veículo"
+      ],
+      "issues": [
+        "longarina lado esquerdo ligeiramente afectada",
+        "danos exteriores visíveis"
+      ],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": 1500
+    }
+  },
+  {
+    "idx": 369,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": null,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": "fair",
+      "suspicious_signs": [],
+      "extras": [
+        "jantes de liga leve",
+        "sensores de estacionamento traseiros",
+        "ar condicionado automático",
+        "cruise control",
+        "vidros e espelhos retrovisores eléctricos",
+        "teto panorâmico",
+        "rádio Bluetooth"
+      ],
+      "issues": [
+        "marcas exteriores de uso"
+      ],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [
+        {
+          "item": "correia de distribuição mudada",
+          "km": 99885,
+          "date": "10/2023"
+        }
+      ],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 370,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": null,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "AC",
+        "cruise control",
+        "Bluetooth",
+        "rádio CD",
+        "jantes especiais",
+        "2 chaves"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [
+        {
+          "item": "revisão em dia com fatura",
+          "km": null,
+          "date": null
+        }
+      ],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 371,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": true,
+      "repair_details": "vários afazeres de chapa/pintura necessários",
+      "mileage_in_description_km": null,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": "poor",
+      "suspicious_signs": [],
+      "extras": [
+        "ar condicionado",
+        "fecho central",
+        "vidros elétricos"
+      ],
+      "issues": [
+        "vários afazeres de chapa/pintura"
+      ],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [
+        {
+          "item": "distribuição mudada",
+          "km": null,
+          "date": null
+        }
+      ],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": 1000
+    }
+  },
+  {
+    "idx": 372,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 84000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": "excellent",
+      "suspicious_signs": [],
+      "extras": [
+        "jantes OZ Italia 150",
+        "Pack AMG Driver",
+        "escape AMG Performance",
+        "travagem AMG alta performance",
+        "bancos AMG Performance em pele com aquecimento e ajuste lombar",
+        "sistema de som Harman Kardon",
+        "navegação",
+        "câmara de marcha-atrás",
+        "sensores de estacionamento frente e atrás",
+        "teto panorâmico de abrir",
+        "iluminação ambiente",
+        "apoio de braço traseiro",
+        "App Mercedes me",
+        "4MATIC tração integral"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [
+        "downpipe instalado",
+        "limitador de velocidade removido de fábrica (Pack AMG Driver)"
+      ],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 373,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": true,
+      "repair_details": "esteticamente precisa de atenção",
+      "mileage_in_description_km": null,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": "poor",
+      "suspicious_signs": [
+        "proveniente de retoma"
+      ],
+      "extras": [
+        "ar condicionado automático",
+        "bancos com memória",
+        "faróis bi-xénon",
+        "bancos aquecidos",
+        "retrovisores elétricos",
+        "computador de bordo",
+        "ecrã multimédia frente e trás",
+        "bancos elétricos",
+        "sensores de estacionamento",
+        "sensores de luz",
+        "jantes especiais",
+        "caixa automática"
+      ],
+      "issues": [
+        "esteticamente precisa de atenção"
+      ],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": 800
+    }
+  },
+  {
+    "idx": 374,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "desc_mentions_repair": true,
+      "repair_details": "algumas marcas a nível de chapa",
+      "mileage_in_description_km": 211000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": "fair",
+      "suspicious_signs": [],
+      "extras": [
+        "espelhos elétricos rebatíveis",
+        "volante sport",
+        "som Bang & Olufsen",
+        "2 chaves de origem",
+        "faróis LED xenon"
+      ],
+      "issues": [
+        "marcas na chapa"
+      ],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [
+        {
+          "item": "kit de distribuição mudado",
+          "km": 200000,
+          "date": null
+        }
+      ],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": 500
+    }
+  },
+  {
+    "idx": 375,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 305000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "Apple CarPlay",
+        "Bluetooth",
+        "sistema mãos livres",
+        "rádio e sistema de navegação",
+        "ecrã tátil",
+        "xDrive tração integral"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "medium",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 376,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": true,
+      "repair_details": "possível avaria na válvula EGR ou turbo; necessita amortecedores à frente; AC e ventilação do habitáculo não funcionam",
+      "mileage_in_description_km": null,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "poor",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [],
+      "issues": [
+        "falta de força principalmente a subir (possível avaria EGR ou turbo)",
+        "faz fumo branco principalmente a frio",
+        "necessita amortecedores à frente",
+        "ventilação do habitáculo e AC não funcionam"
+      ],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": 2000
+    }
+  },
+  {
+    "idx": 377,
+    "annotation": {
+      "desc_mentions_num_owners": 2,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "desc_mentions_repair": true,
+      "repair_details": "vidro partido e capa de retrovisor em falta (peças encomendadas); segundo banco ausente",
+      "mileage_in_description_km": null,
+      "desc_mentions_customs_cleared": false,
+      "imported": true,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [
+        "second row seats removed",
+        "car not legalized in Portugal"
+      ],
+      "extras": [],
+      "issues": [
+        "vidro partido",
+        "capa do retrovisor em falta",
+        "segundo banco ausente (em Barcelona)"
+      ],
+      "reason_for_sale": "não quer tratar do processo de legalização",
+      "urgency": "high",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [
+        {
+          "item": "lavagem a seco do interior",
+          "km": null,
+          "date": null
+        },
+        {
+          "item": "troca de lâmpadas dos faróis",
+          "km": null,
+          "date": null
+        },
+        {
+          "item": "polimento dos faróis",
+          "km": null,
+          "date": null
+        }
+      ],
+      "tires_condition": null,
+      "first_owner_selling": false,
+      "desc_estimated_repair_cost_eur": 300
+    }
+  },
+  {
+    "idx": 378,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 297000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [
+        {
+          "item": "revisão feita com mudança da correia de distribuição e amortecedores",
+          "km": null,
+          "date": null
+        }
+      ],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 379,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 28000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": "excellent",
+      "suspicious_signs": [],
+      "extras": [
+        "câmara de marcha-atrás",
+        "sensores de estacionamento",
+        "sensor de aproximação",
+        "sensor de luz",
+        "sensor de chuva",
+        "GPS/sistema de navegação",
+        "Apple CarPlay",
+        "Android Auto",
+        "cruise control",
+        "limitador de velocidade",
+        "ar condicionado automático",
+        "banco condutor com regulação em altura",
+        "estofos em meia pele",
+        "sistema multimédia",
+        "carregador público + carregador doméstico"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 380,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": null,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "2 cabos de carregamento"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": "new",
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 381,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": null,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 382,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": null,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "airbag condutor",
+        "airbag passageiros",
+        "ar condicionado",
+        "CD player",
+        "comandos do rádio no volante",
+        "entrada AUX",
+        "rádio",
+        "vidros elétricos dianteiros",
+        "start and stop",
+        "2 chaves"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [
+        {
+          "item": "revisão feita",
+          "km": null,
+          "date": "outubro"
+        }
+      ],
+      "tires_condition": "good",
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 383,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 206000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "versão FR",
+        "keyless access",
+        "teto de abrir",
+        "sistema de som Beats Audio",
+        "Full Link (Android Auto/Apple CarPlay)",
+        "ecrã multimédia",
+        "ar condicionado",
+        "volante multifunções",
+        "jantes FR",
+        "sensores de estacionamento",
+        "vidros elétricos",
+        "fecho central com comando"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [
+        {
+          "item": "revisão feita com 2 pneus novos",
+          "km": null,
+          "date": null
+        }
+      ],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 384,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 150000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "sistema híbrido Toyota",
+        "extensão garantia bateria até 2029",
+        "sistema de som JBL Premium",
+        "teto de abrir",
+        "bancos aquecidos",
+        "cruise control adaptativo com radar",
+        "assistente de manutenção na faixa",
+        "travagem automática de emergência",
+        "sensores de estacionamento",
+        "câmaras 360",
+        "Bluetooth/multimédia",
+        "barras de tejadilho Toyota",
+        "luzes internas LED"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": true,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [
+        {
+          "item": "4 pneus Michelin novos",
+          "km": null,
+          "date": null
+        },
+        {
+          "item": "luzes internas trocadas por LEDs",
+          "km": null,
+          "date": null
+        }
+      ],
+      "tires_condition": "new",
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 385,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": null,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": "good",
+      "suspicious_signs": [],
+      "extras": [
+        "direção assistida",
+        "vidros eléctricos",
+        "ar condicionado",
+        "fecho central com comando",
+        "faróis de nevoeiro",
+        "jantes especiais",
+        "auto-rádio",
+        "computador de bordo",
+        "airbags",
+        "2 chaves e manuais"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": "good",
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 386,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": null,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "computador de bordo",
+        "volante em pele",
+        "jantes especiais",
+        "retrovisores elétricos rebatíveis"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 387,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": null,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "7 lugares",
+        "ar condicionado",
+        "2 chaves",
+        "bagageira ampla e modular",
+        "bancos traseiros rebatíveis individualmente",
+        "para-brisas panorâmico"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [
+        {
+          "item": "revisão completa recente (óleos e filtros substituídos)",
+          "km": null,
+          "date": "há cerca de 1000 km"
+        },
+        {
+          "item": "distribuição feita",
+          "km": null,
+          "date": null
+        }
+      ],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 388,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 68250,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": "excellent",
+      "suspicious_signs": [],
+      "extras": [
+        "ecrã tátil central com Bluetooth",
+        "ar condicionado",
+        "vidros elétricos",
+        "retrovisores com regulação elétrica",
+        "lane assist",
+        "cruise control",
+        "limitador de velocidade",
+        "luzes LED diurnas",
+        "sensores de estacionamento traseiros",
+        "jantes 17 especiais",
+        "bancos ergonómicos em tecido premium",
+        "proteções laterais Airbump"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": "good",
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 389,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 379000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": "good",
+      "suspicious_signs": [],
+      "extras": [],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [
+        {
+          "item": "turbo novo",
+          "km": null,
+          "date": "novembro"
+        },
+        {
+          "item": "kit de embraiagem bi massa",
+          "km": null,
+          "date": "novembro"
+        },
+        {
+          "item": "filtro de partículas novo",
+          "km": null,
+          "date": "novembro"
+        },
+        {
+          "item": "suspensão completa nova",
+          "km": null,
+          "date": "novembro"
+        }
+      ],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 390,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 185000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": "good",
+      "suspicious_signs": [],
+      "extras": [
+        "cruise control",
+        "computador de bordo",
+        "Bluetooth",
+        "ar condicionado automático",
+        "sensores de estacionamento frente e atrás",
+        "sensor de chuva",
+        "sensor de luz",
+        "sistema de navegação"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 391,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": null,
+      "desc_mentions_customs_cleared": null,
+      "imported": true,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": "good",
+      "suspicious_signs": [],
+      "extras": [
+        "manuais do carro"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [
+        {
+          "item": "revisão óleos e filtros",
+          "km": null,
+          "date": "para 10 mil km"
+        },
+        {
+          "item": "kit correia distribuição e bomba de água",
+          "km": null,
+          "date": null
+        },
+        {
+          "item": "alinhamento de direção",
+          "km": null,
+          "date": null
+        }
+      ],
+      "tires_condition": "good",
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 392,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 245000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 393,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": null,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 394,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 58000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "transmissão automática 7G-DCT",
+        "teto de abrir elétrico",
+        "painel digital",
+        "câmara de ré",
+        "retrovisores rebatimento elétrico",
+        "Bluetooth",
+        "bancos confortáveis",
+        "ar condicionado automático",
+        "sensor de luminosidade",
+        "stop & go",
+        "sistema de navegação",
+        "cruise control",
+        "ecrã tátil",
+        "monitorização pressão pneus",
+        "controlo por voz",
+        "sensores estacionamento dianteiro e traseiro",
+        "jantes liga leve 18",
+        "luzes diurnas",
+        "sensor de chuva",
+        "estofos couro e tecido",
+        "volante em pele com patilhas",
+        "volante multifunções",
+        "vidros elétricos"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 395,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": true,
+      "repair_details": "jantes pintadas de novo e duas portas pintadas (2500 EUR)",
+      "mileage_in_description_km": null,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": "good",
+      "suspicious_signs": [
+        "recently repainted two doors - possible prior damage"
+      ],
+      "extras": [
+        "ar condicionado",
+        "jantes liga leve 19",
+        "tração traseira"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [
+        {
+          "item": "jantes pintadas de novo",
+          "km": null,
+          "date": "recentemente"
+        },
+        {
+          "item": "duas portas pintadas",
+          "km": null,
+          "date": "recentemente"
+        }
+      ],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 396,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 142000,
+      "desc_mentions_customs_cleared": null,
+      "imported": true,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "start/stop",
+        "ar condicionado automático bi-zona",
+        "cruise control",
+        "jantes liga leve",
+        "rádio ecrã tátil Bluetooth USB",
+        "ISOFIX",
+        "ABS",
+        "ESP",
+        "assistência à travagem",
+        "controlo de tração",
+        "Hill Holder",
+        "airbags",
+        "faróis de nevoeiro",
+        "luzes de curva",
+        "vidros elétricos"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [
+        {
+          "item": "correia de distribuição e bomba de água substituídas",
+          "km": null,
+          "date": "2025"
+        },
+        {
+          "item": "inspeção no concessionário Seat",
+          "km": null,
+          "date": "março 2026"
+        }
+      ],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 397,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": true,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": null,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "excellent",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "FSD (condução autónoma total)",
+        "pack de clima frio (bancos e volante aquecidos, descongeladores limpa-para-brisas)",
+        "sistema de som Ultra High Fidelity",
+        "interior Cream Premium",
+        "suspensão pneumática inteligente",
+        "teto panorâmico em vidro"
+      ],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": true,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [
+        {
+          "item": "4 pneus novos",
+          "km": null,
+          "date": "há 4 meses"
+        }
+      ],
+      "tires_condition": "new",
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 398,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": null,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [
+        "caixa automática",
+        "bancos em couro com regulação elétrica",
+        "comandos no volante",
+        "controlo de velocidade"
+      ],
+      "issues": [],
+      "reason_for_sale": "reformado, comprou carro mais pequeno, não precisa de carro familiar",
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  },
+  {
+    "idx": 399,
+    "annotation": {
+      "desc_mentions_num_owners": null,
+      "desc_mentions_accident": null,
+      "accident_details": null,
+      "service_history": false,
+      "desc_mentions_repair": false,
+      "repair_details": null,
+      "mileage_in_description_km": 250000,
+      "desc_mentions_customs_cleared": null,
+      "imported": null,
+      "right_hand_drive": null,
+      "mechanical_condition": "good",
+      "paint_condition": null,
+      "suspicious_signs": [],
+      "extras": [],
+      "issues": [],
+      "reason_for_sale": null,
+      "urgency": "low",
+      "warranty": null,
+      "tuning_or_mods": [],
+      "taxi_fleet_rental": null,
+      "recent_maintenance": [],
+      "tires_condition": null,
+      "first_owner_selling": null,
+      "desc_estimated_repair_cost_eur": null
+    }
+  }
+]
