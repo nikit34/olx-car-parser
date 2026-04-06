@@ -78,11 +78,11 @@ def train_price_model(
     cat_indices = [_ALL_FEATURES.index(c) for c in CATEGORICAL_FEATURES]
 
     model = HistGradientBoostingRegressor(
-        max_iter=300,
-        max_depth=6,
-        learning_rate=0.08,
-        min_samples_leaf=5,
-        l2_regularization=1.0,
+        max_iter=400,
+        max_depth=5,
+        learning_rate=0.05,
+        min_samples_leaf=8,
+        l2_regularization=1.5,
         categorical_features=cat_indices,
         random_state=42,
     )
