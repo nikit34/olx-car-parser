@@ -15,7 +15,7 @@ _project_root = _dashboard_dir.parent.parent
 _sys.path.insert(0, str(_dashboard_dir))
 _sys.path.insert(0, str(_project_root))
 
-from data_loader import load_all, load_listing_feedback, load_portfolio, _force_next_check, compute_model_metrics
+from data_loader import load_all, load_portfolio, _force_next_check, compute_model_metrics
 from src.analytics.interest_model import score_interest_candidates
 
 
@@ -46,17 +46,9 @@ DISPLAY_LABELS = {
     "district_group": "Район",
 }
 
-FEEDBACK_LABELS_RU = {
-    "interesting": "Интересно",
-    "skipped": "Пропустить",
-    "bought": "Куплено",
-}
-
 MODEL_SOURCE_LABELS = {
-    "feedback+portfolio-trained": "Модель подстроена под ваш shortlist по ручной разметке и сделкам из портфеля.",
-    "feedback-trained": "Модель подстроена под ваш shortlist по ручной разметке.",
     "portfolio-trained": "Модель подстроена под сделки из портфеля.",
-    "prior": "Пока мало подтверждённых решений, поэтому используется базовая эвристика shortlist.",
+    "sale-velocity": "Ранжирование по скорости продаж в сегменте и рыночным сигналам.",
 }
 
 
@@ -153,8 +145,6 @@ def get_portfolio():
     return load_portfolio()
 
 
-def get_listing_feedback():
-    return load_listing_feedback()
 
 # ---------------------------------------------------------------------------
 # Sidebar — filters
@@ -453,18 +443,16 @@ with tab_deals:
             "ликвидность и поведение продавца. Поля, извлечённые из описания, остаются только обогащением карточки объявления."
         )
         portfolio_for_model = get_portfolio()
-        feedback_for_model = get_listing_feedback()
+        inactive = listings_df[~listings_df["is_active"]].copy() if "is_active" in listings_df.columns else pd.DataFrame()
         interesting = score_interest_candidates(
             active,
             deals,
+            inactive,
             portfolio_for_model,
-            feedback_for_model,
             min_positive_labels=2,
         )
-        interesting["feedback_status"] = interesting["feedback_label"].map(FEEDBACK_LABELS_RU)
         shortlist = interesting[
             interesting["interest_class"].ne("Low priority")
-            & ~interesting["feedback_label"].isin(["skipped", "bought"])
         ].copy()
         if shortlist.empty:
             st.info("Сейчас нет объявлений, которые модель считает приоритетными для ручной проверки.")
@@ -473,13 +461,8 @@ with tab_deals:
             if "model_source" in shortlist.columns:
                 source_label = shortlist["model_source"].iloc[0]
                 portfolio_positive = int(shortlist["portfolio_positive_count"].iloc[0]) if "portfolio_positive_count" in shortlist.columns else 0
-                feedback_positive = int(shortlist["feedback_positive_count"].iloc[0]) if "feedback_positive_count" in shortlist.columns else 0
-                feedback_negative = int(shortlist["feedback_negative_count"].iloc[0]) if "feedback_negative_count" in shortlist.columns else 0
-                source_caption = MODEL_SOURCE_LABELS.get(source_label, MODEL_SOURCE_LABELS["prior"])
-                st.caption(
-                    f"{source_caption} "
-                    f"Позитивов из портфеля: {portfolio_positive}, ручных +: {feedback_positive}, ручных -: {feedback_negative}."
-                )
+                source_caption = MODEL_SOURCE_LABELS.get(source_label, MODEL_SOURCE_LABELS["sale-velocity"])
+                st.caption(f"{source_caption} Позитивов из портфеля: {portfolio_positive}.")
             quick_hits = shortlist.head(4)
             hit_cols = st.columns(len(quick_hits))
             for idx, (_, listing) in enumerate(quick_hits.iterrows()):
@@ -532,7 +515,6 @@ with tab_deals:
 
             ml_cols = [
                 "interest_class",
-                "feedback_status",
                 "interest_match_pct",
                 "brand",
                 "model",
@@ -547,7 +529,6 @@ with tab_deals:
             st.dataframe(
                 shortlist[[c for c in ml_cols if c in shortlist.columns]].head(40).rename(columns={
                     "interest_class": "Class",
-                    "feedback_status": "Your label",
                     "interest_match_pct": "Match",
                     "brand": "Brand",
                     "model": "Model",
@@ -567,154 +548,6 @@ with tab_deals:
                     "Profit": st.column_config.NumberColumn(format="%+d EUR"),
                     "ROI %": st.column_config.NumberColumn(format="%+.1f%%"),
                     "Comps": st.column_config.NumberColumn(format="%d"),
-                    "Link": st.column_config.LinkColumn("Link", display_text="Open"),
-                },
-            )
-
-        st.subheader("Обучение модели на ваших решениях")
-        st.caption(
-            "Помечайте shortlist как `Интересно`, `Пропустить` или `Куплено`. "
-            "Явные метки сразу влияют на выдачу, а при накоплении примеров модель начинает подстраиваться под ваш стиль отбора. "
-            "Она учит именно ваш паттерн shortlist, а не пытается доказать, что машина объективно хорошая."
-        )
-
-        feedback_pool = interesting.head(200).copy()
-        if feedback_pool.empty:
-            st.info("Пока нет кандидатов для ручной разметки.")
-        else:
-            feedback_pool["interest_match_pct"] = (feedback_pool["interest_probability"] * 100).round(0)
-            feedback_pool["feedback_status"] = feedback_pool["feedback_status"].fillna("Без метки")
-            feedback_pool["candidate_label"] = feedback_pool.apply(
-                lambda row: (
-                    f"{row['brand']} {row['model']} "
-                    f"{int(row['year']) if pd.notna(row.get('year')) else '?'}"
-                    f" · {int(row['price_eur']):,} EUR"
-                    f" · {row['interest_class']}"
-                    f" · {int(row['interest_match_pct'])}%"
-                    f" · {row['feedback_status']}"
-                ),
-                axis=1,
-            )
-            candidate_labels = feedback_pool["candidate_label"].tolist()
-            default_option = feedback_pool.sort_values(
-                ["feedback_label", "interest_probability"],
-                ascending=[True, False],
-                na_position="first",
-            )["candidate_label"].iloc[0]
-
-            with st.form("listing_feedback_form"):
-                selected_candidate = st.selectbox(
-                    "Объявление для разметки",
-                    options=candidate_labels,
-                    index=candidate_labels.index(default_option),
-                )
-                selected_row = feedback_pool.loc[
-                    feedback_pool["candidate_label"].eq(selected_candidate)
-                ].iloc[0]
-                current_label = selected_row.get("feedback_label")
-                selected_label = st.radio(
-                    "Ваше решение",
-                    options=["interesting", "skipped", "bought"],
-                    index=["interesting", "skipped", "bought"].index(current_label)
-                    if current_label in {"interesting", "skipped", "bought"}
-                    else 0,
-                    format_func=lambda value: FEEDBACK_LABELS_RU[value],
-                    horizontal=True,
-                )
-                feedback_note = st.text_input(
-                    "Короткая заметка",
-                    value="" if pd.isna(selected_row.get("feedback_notes")) else str(selected_row.get("feedback_notes")),
-                    placeholder="Например: слишком рискованно / хорош для звонка / уже куплен",
-                )
-                save_col, delete_col = st.columns(2)
-                save_feedback = save_col.form_submit_button("Сохранить метку", type="primary")
-                delete_feedback = delete_col.form_submit_button("Убрать метку")
-
-            selected_row = feedback_pool.loc[
-                feedback_pool["candidate_label"].eq(selected_candidate)
-            ].iloc[0]
-            st.caption(selected_row["interest_reason"])
-            if selected_row.get("url"):
-                label = "Open on StandVirtual" if "standvirtual.com" in selected_row["url"] else "Open on OLX"
-                st.link_button(label, selected_row["url"])
-
-            if save_feedback:
-                from src.storage.database import init_db, get_session
-                from src.storage.repository import upsert_listing_feedback
-
-                db_path = _Path(__file__).resolve().parent.parent.parent / "data" / "olx_cars.db"
-                init_db(str(db_path))
-                sess = get_session()
-                upsert_listing_feedback(
-                    sess,
-                    {
-                        "olx_id": selected_row["olx_id"],
-                        "url": selected_row.get("url"),
-                        "title": selected_row.get("title"),
-                        "brand": selected_row.get("brand"),
-                        "model": selected_row.get("model"),
-                        "year": None if pd.isna(selected_row.get("year")) else int(selected_row["year"]),
-                        "price_eur": None if pd.isna(selected_row.get("price_eur")) else float(selected_row["price_eur"]),
-                        "label": selected_label,
-                        "notes": feedback_note.strip() or None,
-                    },
-                )
-                st.success("Метка сохранена, shortlist обновлён.")
-                st.rerun()
-
-            if delete_feedback and pd.notna(selected_row.get("feedback_label")):
-                from src.storage.database import init_db, get_session
-                from src.storage.repository import delete_listing_feedback
-
-                db_path = _Path(__file__).resolve().parent.parent.parent / "data" / "olx_cars.db"
-                init_db(str(db_path))
-                sess = get_session()
-                delete_listing_feedback(sess, selected_row["olx_id"])
-                st.success("Метка удалена.")
-                st.rerun()
-
-        if feedback_for_model.empty:
-            st.caption("Ручных меток пока нет.")
-        else:
-            feedback_summary = (
-                feedback_for_model["feedback_label"]
-                .map(FEEDBACK_LABELS_RU)
-                .value_counts()
-                .rename_axis("Label")
-                .reset_index(name="Count")
-            )
-            summary_cols = st.columns(max(len(feedback_summary), 1))
-            for idx, (_, row) in enumerate(feedback_summary.iterrows()):
-                summary_cols[idx].metric(row["Label"], int(row["Count"]))
-
-            recent_feedback = feedback_for_model.copy()
-            if "feedback_label" in recent_feedback.columns:
-                recent_feedback["feedback_label"] = recent_feedback["feedback_label"].map(FEEDBACK_LABELS_RU)
-            recent_cols = [
-                "feedback_label",
-                "brand",
-                "model",
-                "year",
-                "price_eur",
-                "feedback_notes",
-                "feedback_updated_at",
-                "url",
-            ]
-            st.dataframe(
-                recent_feedback[[c for c in recent_cols if c in recent_feedback.columns]].head(20).rename(columns={
-                    "feedback_label": "Label",
-                    "brand": "Brand",
-                    "model": "Model",
-                    "year": "Year",
-                    "price_eur": "Price",
-                    "feedback_notes": "Notes",
-                    "feedback_updated_at": "Updated",
-                    "url": "Link",
-                }),
-                hide_index=True,
-                width="stretch",
-                column_config={
-                    "Price": st.column_config.NumberColumn(format="%d EUR"),
                     "Link": st.column_config.LinkColumn("Link", display_text="Open"),
                 },
             )
@@ -2653,25 +2486,11 @@ with tab_portfolio:
 # ---- TAB: Deal Pipeline (Funnel) ---------------------------------------------
 with tab_pipeline:
     st.subheader("Воронка сделок")
-    st.caption("Shortlist → Interesting → Bought → Sold. Конверсия между этапами.")
+    st.caption("Shortlist → Портфель → Продано. Конверсия между этапами.")
 
-    _pipeline_fb = get_listing_feedback()
     _pipeline_pf = get_portfolio()
 
-    # Count each stage
     n_shortlist = len(filtered_signals) if not filtered_signals.empty else 0
-
-    n_interesting = 0
-    n_feedback_bought = 0
-    n_skipped = 0
-    if not _pipeline_fb.empty:
-        label_col = "feedback_label" if "feedback_label" in _pipeline_fb.columns else "label"
-        if label_col in _pipeline_fb.columns:
-            labels = _pipeline_fb[label_col].astype(str).str.strip().str.lower()
-            n_interesting = int((labels == "interesting").sum())
-            n_feedback_bought = int((labels == "bought").sum())
-            n_skipped = int((labels == "skipped").sum())
-
     n_portfolio = len(_pipeline_pf) if not _pipeline_pf.empty else 0
     n_sold = 0
     total_profit = 0
@@ -2683,11 +2502,8 @@ with tab_pipeline:
             total_profit = sold_pf["gross_profit_eur"].sum()
             avg_roi = sold_pf["roi_pct"].mean() if "roi_pct" in sold_pf.columns else 0.0
 
-    # Funnel metrics
     stages = [
         ("Shortlist (сигналы)", n_shortlist),
-        ("Interesting", n_interesting),
-        ("Bought (feedback)", n_feedback_bought),
         ("В портфеле", n_portfolio),
         ("Продано", n_sold),
     ]
@@ -2696,15 +2512,11 @@ with tab_pipeline:
     for i, (label, count) in enumerate(stages):
         cols[i].metric(label, count)
 
-    # Conversion rates
     st.markdown("### Конверсия между этапами")
     conversions = []
-    if n_shortlist > 0 and (n_interesting + n_feedback_bought) > 0:
-        rate = (n_interesting + n_feedback_bought) / n_shortlist * 100
-        conversions.append({"Этап": "Shortlist → Interesting/Bought", "Конверсия": f"{rate:.1f}%", "Из": n_shortlist, "В": n_interesting + n_feedback_bought})
-    if n_interesting > 0 and n_portfolio > 0:
-        rate = n_portfolio / n_interesting * 100
-        conversions.append({"Этап": "Interesting → Портфель", "Конверсия": f"{rate:.1f}%", "Из": n_interesting, "В": n_portfolio})
+    if n_shortlist > 0 and n_portfolio > 0:
+        rate = n_portfolio / n_shortlist * 100
+        conversions.append({"Этап": "Shortlist → Портфель", "Конверсия": f"{rate:.1f}%", "Из": n_shortlist, "В": n_portfolio})
     if n_portfolio > 0 and n_sold > 0:
         rate = n_sold / n_portfolio * 100
         conversions.append({"Этап": "Портфель → Продано", "Конверсия": f"{rate:.1f}%", "Из": n_portfolio, "В": n_sold})
@@ -2712,9 +2524,8 @@ with tab_pipeline:
     if conversions:
         st.dataframe(pd.DataFrame(conversions), hide_index=True)
     else:
-        st.info("Пока недостаточно данных для расчёта конверсий. Размечайте объявления и добавляйте сделки.")
+        st.info("Пока недостаточно данных для расчёта конверсий. Добавляйте сделки в портфель.")
 
-    # Funnel chart
     if n_shortlist > 0:
         import plotly.graph_objects as go
         funnel_labels = [s[0] for s in stages if s[1] > 0]
@@ -2726,16 +2537,6 @@ with tab_pipeline:
         ))
         fig.update_layout(height=350, margin=dict(t=20, b=20))
         st.plotly_chart(fig, use_container_width=True)
-
-    # Skip rate
-    if n_skipped > 0 or n_interesting > 0:
-        st.markdown("### Решения по фидбэку")
-        total_decisions = n_interesting + n_skipped + n_feedback_bought
-        if total_decisions > 0:
-            fc1, fc2, fc3 = st.columns(3)
-            fc1.metric("Interesting", n_interesting, delta=f"{n_interesting / total_decisions * 100:.0f}%")
-            fc2.metric("Skipped", n_skipped, delta=f"{n_skipped / total_decisions * 100:.0f}%")
-            fc3.metric("Bought", n_feedback_bought, delta=f"{n_feedback_bought / total_decisions * 100:.0f}%")
 
     # Sold summary
     if n_sold > 0:
@@ -2789,11 +2590,10 @@ with tab_unmatched:
 # ---- TAB 11: Model Quality Metrics ------------------------------------------
 with tab_model_quality:
     st.subheader("Качество моделей")
-    st.caption("Leave-one-out кросс-валидация регрессии цен, точность interest-модели по фидбэку, калибровка time-to-sale.")
+    st.caption("Leave-one-out кросс-валидация регрессии цен, скорость продаж по сегментам, калибровка time-to-sale.")
 
-    _fb = get_listing_feedback()
     _pf = get_portfolio()
-    model_metrics = compute_model_metrics(listings_df, history_df, _fb, _pf)
+    model_metrics = compute_model_metrics(listings_df, history_df, _pf)
 
     # --- Price regression ---
     st.markdown("### Регрессия цен (по поколениям)")
@@ -2826,19 +2626,16 @@ with tab_model_quality:
 
     st.divider()
 
-    # --- Interest model ---
-    st.markdown("### Interest-модель (shortlist)")
-    im = model_metrics.get("interest_model", {})
-    if im:
+    # --- Sale velocity ---
+    st.markdown("### Скорость продаж (sale velocity)")
+    sv = model_metrics.get("sale_velocity", {})
+    if sv:
         c1, c2, c3 = st.columns(3)
-        c1.metric("Размечено всего", im["total_labeled"])
-        c2.metric("Positive (interesting+bought)", im["positive_count"])
-        c3.metric("Negative (skipped)", im["negative_count"])
-        st.metric("Positive rate", f"{im['positive_rate']}%")
-        if im["total_labeled"] < 20:
-            st.warning("Мало фидбэка (<20 меток) — модель опирается в основном на prior-веса, а не на ваши предпочтения.")
+        c1.metric("Сегментов с данными", sv["segments_with_data"])
+        c2.metric("Медиана дней до продажи", f"{sv['median_days']:.0f}")
+        c3.metric("Быстрых продаж (≤21д)", f"{sv['fast_sale_pct']:.0f}%")
     else:
-        st.info("Нет фидбэка. Используйте кнопки interesting/skip/bought в шортлисте для обучения модели.")
+        st.info("Нет деактивированных объявлений для расчёта скорости продаж.")
 
     st.divider()
 

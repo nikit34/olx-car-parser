@@ -528,15 +528,15 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
 
 
 def compute_model_metrics(listings_df: pd.DataFrame, history_df: pd.DataFrame,
-                          feedback_df: pd.DataFrame, portfolio_df: pd.DataFrame) -> dict:
+                          portfolio_df: pd.DataFrame) -> dict:
     """Compute quality metrics for all models.
 
-    Returns dict with keys: price_regression, interest_model, time_to_sale.
+    Returns dict with keys: price_regression, sale_velocity, time_to_sale.
     """
     import numpy as np
     from src.models.generations import get_generation
 
-    metrics: dict = {"price_regression": {}, "interest_model": {}, "time_to_sale": {}}
+    metrics: dict = {"price_regression": {}, "sale_velocity": {}, "time_to_sale": {}}
 
     if listings_df.empty:
         return metrics
@@ -599,22 +599,24 @@ def compute_model_metrics(listings_df: pd.DataFrame, history_df: pd.DataFrame,
             "generations_evaluated": len(gen_df),
         }
 
-    # === 2. Interest model: precision from feedback ===
-    if not feedback_df.empty and "olx_id" in feedback_df.columns:
-        label_col = "feedback_label" if "feedback_label" in feedback_df.columns else "label"
-        if label_col in feedback_df.columns:
-            fb = feedback_df.copy()
-            fb["_label"] = fb[label_col].astype(str).str.strip().str.lower()
-            positive = set(fb[fb["_label"].isin({"interesting", "bought"})]["olx_id"].astype(str))
-            negative = set(fb[fb["_label"] == "skipped"]["olx_id"].astype(str))
-            total_labeled = len(positive) + len(negative)
-            if total_labeled > 0:
-                metrics["interest_model"] = {
-                    "total_labeled": total_labeled,
-                    "positive_count": len(positive),
-                    "negative_count": len(negative),
-                    "positive_rate": round(len(positive) / total_labeled * 100, 1),
-                }
+    # === 2. Sale velocity: how fast cars sell per segment ===
+    if "is_active" in listings_df.columns:
+        inactive = listings_df[~listings_df["is_active"]].copy()
+        if not inactive.empty and "deactivated_at" in inactive.columns and "first_seen_at" in inactive.columns:
+            sold = inactive[inactive["deactivated_at"].notna() & inactive["first_seen_at"].notna()].copy()
+            if not sold.empty:
+                sold["_lifespan"] = (
+                    pd.to_datetime(sold["deactivated_at"]) - pd.to_datetime(sold["first_seen_at"])
+                ).dt.days
+                sold = sold[sold["_lifespan"] > 0]
+                if not sold.empty:
+                    seg_counts = sold.groupby(["brand", "model"]).size()
+                    segments_with_data = int((seg_counts >= 3).sum())
+                    metrics["sale_velocity"] = {
+                        "segments_with_data": segments_with_data,
+                        "median_days": round(sold["_lifespan"].median(), 1),
+                        "fast_sale_pct": round((sold["_lifespan"] <= 21).mean() * 100, 1),
+                    }
 
     # === 3. Time-to-sale: accuracy on sold listings ===
     from src.analytics.time_to_sale import build_tos_dataset, predict_sale_probability
@@ -683,21 +685,6 @@ def load_portfolio() -> pd.DataFrame:
         print(f"Warning: could not load portfolio: {e}")
         return pd.DataFrame()
 
-
-def load_listing_feedback() -> pd.DataFrame:
-    """Load manual shortlist feedback from database."""
-    if not _ensure_db():
-        return pd.DataFrame()
-    try:
-        from src.storage.database import init_db, get_session
-        from src.storage.repository import get_listing_feedback_df
-
-        init_db(str(DB_PATH))
-        session = get_session()
-        return get_listing_feedback_df(session)
-    except Exception as e:
-        print(f"Warning: could not load listing feedback: {e}")
-        return pd.DataFrame()
 
 
 def load_all():

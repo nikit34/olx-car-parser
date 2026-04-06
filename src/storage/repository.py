@@ -6,7 +6,6 @@ import pandas as pd
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.models.interest_feedback import ListingFeedback
 from src.models.listing import Listing, PriceSnapshot, MarketStats, UnmatchedListing
 from src.models.portfolio import PortfolioDeal
 
@@ -410,70 +409,6 @@ def get_unmatched_df(session: Session) -> pd.DataFrame:
         "reason": u.reason, "source": u.source or "olx",
         "first_seen_at": u.first_seen_at,
     } for u in q])
-
-
-# ---------------------------------------------------------------------------
-# Listing feedback CRUD
-# ---------------------------------------------------------------------------
-
-def upsert_listing_feedback(session: Session, data: dict) -> ListingFeedback:
-    olx_id = str(data["olx_id"]).strip()
-    row = session.query(ListingFeedback).filter_by(olx_id=olx_id).first()
-
-    payload = {
-        "url": data.get("url"),
-        "title": data.get("title"),
-        "brand": data.get("brand"),
-        "model": data.get("model"),
-        "year": data.get("year"),
-        "price_eur": data.get("price_eur"),
-        "label": data["label"],
-        "notes": data.get("notes"),
-    }
-
-    if row:
-        for key, value in payload.items():
-            setattr(row, key, value)
-    else:
-        row = ListingFeedback(olx_id=olx_id, **payload)
-        session.add(row)
-
-    session.commit()
-    return row
-
-
-def delete_listing_feedback(session: Session, olx_id: str) -> bool:
-    row = session.query(ListingFeedback).filter_by(olx_id=str(olx_id).strip()).first()
-    if not row:
-        return False
-    session.delete(row)
-    session.commit()
-    return True
-
-
-def get_listing_feedback_df(session: Session) -> pd.DataFrame:
-    q = session.query(ListingFeedback).order_by(ListingFeedback.updated_at.desc()).all()
-    if not q:
-        return pd.DataFrame()
-    return pd.DataFrame(
-        [
-            {
-                "id": row.id,
-                "olx_id": row.olx_id,
-                "url": row.url,
-                "title": row.title,
-                "brand": row.brand,
-                "model": row.model,
-                "year": row.year,
-                "price_eur": row.price_eur,
-                "feedback_label": row.label,
-                "feedback_notes": row.notes,
-                "feedback_created_at": row.created_at,
-                "feedback_updated_at": row.updated_at,
-            }
-            for row in q
-        ]
-    )
 
 
 # ---------------------------------------------------------------------------

@@ -9,7 +9,6 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
 
 from src.models.listing import Base
-import src.models.interest_feedback  # noqa: F401 — register ListingFeedback with Base
 import src.models.portfolio  # noqa: F401 — register PortfolioDeal with Base
 
 _engine = None

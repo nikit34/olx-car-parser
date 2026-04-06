@@ -119,14 +119,29 @@ def _deal_signals() -> pd.DataFrame:
     )
 
 
+def _inactive_listings() -> pd.DataFrame:
+    """Deactivated listings for sale velocity computation."""
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    return pd.DataFrame([
+        {"brand": "Volkswagen", "model": "Golf", "first_seen_at": now - timedelta(days=10), "deactivated_at": now - timedelta(days=1)},
+        {"brand": "Volkswagen", "model": "Golf", "first_seen_at": now - timedelta(days=15), "deactivated_at": now - timedelta(days=2)},
+        {"brand": "Volkswagen", "model": "Golf", "first_seen_at": now - timedelta(days=20), "deactivated_at": now - timedelta(days=5)},
+        {"brand": "Volkswagen", "model": "Golf", "first_seen_at": now - timedelta(days=60), "deactivated_at": now - timedelta(days=10)},
+        {"brand": "BMW", "model": "320d", "first_seen_at": now - timedelta(days=90), "deactivated_at": now - timedelta(days=5)},
+        {"brand": "BMW", "model": "320d", "first_seen_at": now - timedelta(days=60), "deactivated_at": now - timedelta(days=3)},
+        {"brand": "BMW", "model": "320d", "first_seen_at": now - timedelta(days=45), "deactivated_at": now - timedelta(days=2)},
+    ])
+
+
 def test_interest_scoring_works_without_portfolio_labels():
-    scored = score_interest_candidates(_active_listings(), _deal_signals(), pd.DataFrame())
+    scored = score_interest_candidates(_active_listings(), _deal_signals())
 
     assert not scored.empty
     assert {"interest_probability", "interest_class", "interest_reason", "model_source"}.issubset(
         scored.columns
     )
-    assert set(scored["model_source"]) == {"prior"}
+    assert set(scored["model_source"]) == {"sale-velocity"}
     assert scored.iloc[0]["olx_id"] == "a1"
 
 
@@ -141,7 +156,7 @@ def test_interest_scoring_can_learn_from_portfolio_examples():
     scored = score_interest_candidates(
         _active_listings(),
         _deal_signals(),
-        portfolio_df,
+        portfolio_df=portfolio_df,
         min_positive_labels=2,
     )
 
@@ -154,30 +169,24 @@ def test_interest_scoring_can_learn_from_portfolio_examples():
     assert positive_probs.min() > negative_probs.median()
 
 
-def test_interest_scoring_uses_explicit_feedback_labels():
-    feedback_df = pd.DataFrame(
-        [
-            {"olx_id": "a1", "feedback_label": "skipped", "feedback_notes": "too risky"},
-            {"olx_id": "a3", "feedback_label": "interesting", "feedback_notes": "call seller"},
-        ]
+def test_sale_velocity_boosts_fast_selling_segments():
+    """Listings in segments with fast historical sales get higher scores."""
+    inactive = _inactive_listings()
+
+    scored_with = score_interest_candidates(
+        _active_listings(), _deal_signals(), inactive_df=inactive,
+    )
+    scored_without = score_interest_candidates(
+        _active_listings(), _deal_signals(),
     )
 
-    scored = score_interest_candidates(
-        _active_listings(),
-        _deal_signals(),
-        pd.DataFrame(),
-        feedback_df,
-        min_positive_labels=2,
-    )
+    assert not scored_with.empty
+    assert not scored_without.empty
 
-    assert not scored.empty
-    assert set(scored["model_source"]) == {"feedback-trained"}
+    # VW Golf has fast velocity (all sold within 21 days) — should score higher
+    golf_with = scored_with[scored_with["olx_id"] == "a1"].iloc[0]
+    golf_without = scored_without[scored_without["olx_id"] == "a1"].iloc[0]
 
-    skipped_row = scored.loc[scored["olx_id"] == "a1"].iloc[0]
-    interesting_row = scored.loc[scored["olx_id"] == "a3"].iloc[0]
-
-    assert skipped_row["interest_class"] == "Skipped"
-    assert skipped_row["interest_probability"] <= 0.08
-    assert interesting_row["feedback_label"] == "interesting"
-    assert interesting_row["interest_class"] in {"Review", "Hot now", "Watchlist"}
-    assert "you marked it as interesting" in interesting_row["interest_reason"]
+    assert golf_with["sale_velocity_score"] > 0
+    assert golf_without["sale_velocity_score"] == 0
+    assert golf_with["interest_probability"] > golf_without["interest_probability"]
