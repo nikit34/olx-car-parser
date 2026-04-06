@@ -131,7 +131,7 @@ def _call_ollama(description: str, cfg: dict) -> dict | None:
                 "stream": False,
                 "options": {
                     "temperature": 0.1,
-                    "num_predict": 512,
+                    "num_predict": 1024,
                 },
             },
         )
