@@ -64,7 +64,7 @@ def _get_config() -> dict:
             data = yaml.safe_load(f) or {}
         cfg = data.get("llm", {})
     return {
-        "ollama_model": cfg.get("ollama_model", "car-parser-3b"),
+        "ollama_model": cfg.get("ollama_model", "qwen3:4b-instruct"),
         "ollama_url": cfg.get("ollama_url", OLLAMA_URL),
         "llm_workers": cfg.get("llm_workers", 1),
     }
@@ -132,7 +132,6 @@ def _call_ollama(description: str, cfg: dict) -> dict | None:
                 "model": cfg["ollama_model"],
                 "prompt": EXTRACTION_PROMPT + description[:1200],
                 "stream": False,
-                "raw": True,
                 "options": {
                     "temperature": 0.1,
                     "num_predict": 512,
