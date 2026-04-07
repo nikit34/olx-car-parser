@@ -81,7 +81,7 @@ def _get_client(base_url: str) -> httpx.Client:
     """Return a thread-local persistent httpx.Client."""
     client = getattr(_thread_local, "http_client", None)
     if client is None:
-        client = httpx.Client(base_url=base_url, timeout=120)
+        client = httpx.Client(base_url=base_url, timeout=httpx.Timeout(60, connect=10))
         _thread_local.http_client = client
     return client
 
@@ -123,35 +123,36 @@ def _parse_llm_json(content: str) -> dict | None:
 
 
 def _call_ollama(description: str, cfg: dict) -> dict | None:
-    """Call local Ollama model for extraction."""
-    try:
-        client = _get_client(cfg["ollama_url"])
-        resp = client.post(
-            "/api/generate",
-            json={
-                "model": cfg["ollama_model"],
-                "prompt": EXTRACTION_PROMPT + description[:1200],
-                "stream": False,
-                "options": {
-                    "temperature": 0.1,
-                    "num_predict": 512,
-                    "stop": ["} {", "}\n{"],
+    """Call local Ollama model for extraction with retry."""
+    for attempt in range(2):
+        try:
+            client = _get_client(cfg["ollama_url"])
+            resp = client.post(
+                "/api/generate",
+                json={
+                    "model": cfg["ollama_model"],
+                    "prompt": EXTRACTION_PROMPT + description[:1200],
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.1,
+                        "num_predict": 512,
+                        "stop": ["} {", "}\n{"],
+                    },
                 },
-            },
-        )
-        if resp.status_code != 200:
-            logger.warning("Ollama API error: %s", resp.status_code)
+            )
+            if resp.status_code != 200:
+                logger.warning("Ollama API error: %s", resp.status_code)
+                return None
+
+            content = resp.json()["response"]
+            return _parse_llm_json(content)
+
+        except httpx.TimeoutException:
+            logger.warning("Ollama request timed out (attempt %d)", attempt + 1)
+        except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as e:
+            logger.debug("Ollama enrichment failed: %s", e)
             return None
-
-        content = resp.json()["response"]
-        return _parse_llm_json(content)
-
-    except httpx.TimeoutException:
-        logger.warning("Ollama request timed out")
-        return None
-    except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as e:
-        logger.debug("Ollama enrichment failed: %s", e)
-        return None
+    return None
 
 
 def enrich_from_description(description: str) -> dict | None:
