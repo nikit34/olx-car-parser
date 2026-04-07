@@ -236,6 +236,7 @@ def scrape(
     private_only: bool = typer.Option(None, help="Only private sellers (Particular)"),
     concurrency: int = typer.Option(None, help="Parallel detail page workers (default 8)"),
     llm_workers: int = typer.Option(None, help="Parallel LLM enrichment workers (default from config, or 1)"),
+    skip_llm: bool = typer.Option(True, help="Skip LLM during scrape, use 'enrich' command after"),
 ):
     """Scrape OLX.pt car listings, enrich with LLM, save to database.
 
@@ -273,28 +274,33 @@ def scrape(
     log.info("Already enriched: %d listings, %d duplicates in DB",
              len(enriched_hashes), len(duplicate_ids))
 
-    # --- Streaming pipeline: Scraper -> LLM -> DB (all run in parallel) ---
+    # --- Streaming pipeline: Scraper -> [LLM] -> DB ---
 
-    # Queues
-    llm_in: multiprocessing.Queue = multiprocessing.Queue()
-    llm_out: multiprocessing.Queue = multiprocessing.Queue()
     db_queue: Queue = Queue()
-
-    # LLM workers (separate processes — no GIL contention)
-    llm_shutdown = multiprocessing.Event()
-    from src.parser.llm_enrichment import _get_config as _get_llm_config
-    llm_cfg = _get_llm_config()
-    num_workers = llm_workers if llm_workers is not None else llm_cfg.get("llm_workers", 1)
-    llm_procs = []
-    for _ in range(num_workers):
-        p = multiprocessing.Process(target=_llm_worker, args=(llm_in, llm_out, llm_shutdown), daemon=True)
-        p.start()
-        llm_procs.append(p)
-
-    # Merger thread: pairs LLM results with raw listings -> db_queue
     raw_by_id: dict = {}
-    merger = threading.Thread(target=_llm_to_db, args=(llm_out, raw_by_id, db_queue), daemon=True)
-    merger.start()
+
+    # LLM pipeline (optional — skipped by default for speed)
+    llm_in: multiprocessing.Queue | None = None
+    llm_out: multiprocessing.Queue | None = None
+    llm_shutdown = None
+    llm_procs = []
+    merger = None
+
+    if not skip_llm:
+        llm_in = multiprocessing.Queue()
+        llm_out = multiprocessing.Queue()
+        llm_shutdown = multiprocessing.Event()
+        from src.parser.llm_enrichment import _get_config as _get_llm_config
+        llm_cfg = _get_llm_config()
+        num_workers = llm_workers if llm_workers is not None else llm_cfg.get("llm_workers", 1)
+        for _ in range(num_workers):
+            p = multiprocessing.Process(target=_llm_worker, args=(llm_in, llm_out, llm_shutdown), daemon=True)
+            p.start()
+            llm_procs.append(p)
+        merger = threading.Thread(target=_llm_to_db, args=(llm_out, raw_by_id, db_queue), daemon=True)
+        merger.start()
+    else:
+        log.info("LLM skipped during scrape (use 'enrich' command after)")
 
     # DB worker thread: saves listings as they arrive
     db_result: dict = {}
@@ -309,6 +315,9 @@ def scrape(
         nonlocal sent_to_llm, skipped_llm
         for listing in batch:
             raw_by_id[listing.olx_id] = listing
+            if skip_llm:
+                db_queue.put((listing, None))
+                continue
             if not listing.description or len(listing.description.strip()) < 20:
                 db_queue.put((listing, None))
                 continue
@@ -349,28 +358,29 @@ def scrape(
     # --- SIGTERM handler: graceful shutdown on timeout ---
     def _sigterm_handler(signum, frame):
         log.warning("SIGTERM received — initiating graceful shutdown...")
-        llm_shutdown.set()
-        # Drain LLM input queue: save remaining listings without enrichment
-        drained = 0
-        while True:
-            try:
-                item = llm_in.get_nowait()
-            except Empty:
-                break
-            if item is not None:
-                olx_id, _ = item
-                raw = raw_by_id.get(olx_id)
-                if raw:
-                    db_queue.put((raw, None))
-                    drained += 1
-        if drained:
-            log.warning("SIGTERM drain: %d listings saved without enrichment", drained)
-        # Stop merger and DB worker
-        llm_out.put(None)
-        merger.join(timeout=10)
+        if llm_shutdown:
+            llm_shutdown.set()
+        if llm_in:
+            drained = 0
+            while True:
+                try:
+                    item = llm_in.get_nowait()
+                except Empty:
+                    break
+                if item is not None:
+                    olx_id, _ = item
+                    raw = raw_by_id.get(olx_id)
+                    if raw:
+                        db_queue.put((raw, None))
+                        drained += 1
+            if drained:
+                log.warning("SIGTERM drain: %d listings saved without enrichment", drained)
+        if llm_out:
+            llm_out.put(None)
+        if merger:
+            merger.join(timeout=10)
         db_queue.put(None)
         db_thread.join(timeout=30)
-        # Safe to write now — db_worker is done
         if scraped_ids:
             try:
                 s = get_session()
@@ -387,37 +397,38 @@ def scrape(
     signal.signal(signal.SIGTERM, _sigterm_handler)
 
     # --- Shutdown: drain pipeline in order ---
-
-    # 1. Stop LLM workers
-    for _ in llm_procs:
-        llm_in.put(None)
     log.info("Scraping done (%d OLX + %d SV = %d total). Waiting for pipeline to drain...",
              len(raw_listings) - len(sv_listings), len(sv_listings), len(raw_listings))
-    llm_shutdown.set()
-    for p in llm_procs:
-        p.join()
 
-    # 2. Drain leftover llm_in (workers may have exited early on failures)
-    drained = 0
-    while True:
-        try:
-            item = llm_in.get_nowait()
-        except Empty:
-            break
-        if item is not None:
-            olx_id, _ = item
-            raw = raw_by_id.get(olx_id)
-            if raw:
-                db_queue.put((raw, None))
-                drained += 1
-    if drained:
-        log.warning("LLM workers exited early: %d listings saved without enrichment", drained)
+    if not skip_llm:
+        # 1. Stop LLM workers
+        for _ in llm_procs:
+            llm_in.put(None)
+        llm_shutdown.set()
+        for p in llm_procs:
+            p.join()
 
-    # 3. Stop merger (all LLM results flushed)
-    llm_out.put(None)
-    merger.join()
+        # 2. Drain leftover llm_in
+        drained = 0
+        while True:
+            try:
+                item = llm_in.get_nowait()
+            except Empty:
+                break
+            if item is not None:
+                olx_id, _ = item
+                raw = raw_by_id.get(olx_id)
+                if raw:
+                    db_queue.put((raw, None))
+                    drained += 1
+        if drained:
+            log.warning("LLM workers exited early: %d listings saved without enrichment", drained)
 
-    # 4. Stop DB worker (all items queued)
+        # 3. Stop merger
+        llm_out.put(None)
+        merger.join()
+
+    # 4. Stop DB worker
     db_queue.put(None)
     db_thread.join()
 
@@ -447,12 +458,16 @@ def scrape(
 
 
 @app.command()
-def enrich():
-    """Enrich unenriched listings already in DB with LLM.
+def enrich(
+    workers: int = typer.Option(2, help="Parallel LLM workers (default 2)"),
+    cheap_first: bool = typer.Option(True, help="Prioritize cheaper listings"),
+):
+    """Enrich unenriched listings with LLM (parallel).
 
-    Processes only listings that don't have llm_extras yet.
-    Use this to backfill listings scraped before LLM was set up.
+    Processes listings that don't have llm_extras yet.
+    Uses ThreadPoolExecutor for parallel Ollama requests.
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     from src.parser.llm_enrichment import (
         enrich_from_description, correct_listing_data,
         _ollama_available, _get_config,
@@ -477,36 +492,57 @@ def enrich():
         log.info("All listings already enriched.")
         return
 
-    log.info("Enriching %d listings with Ollama (%s)...", len(pending), cfg['ollama_model'])
+    if cheap_first:
+        pending.sort(key=lambda l: l.price_snapshots.first().price_eur
+                     if l.price_snapshots.first() else float("inf"))
+
+    log.info("Enriching %d listings with %d workers (%s)...",
+             len(pending), workers, cfg['ollama_model'])
 
     enriched = 0
-    failures = 0
-    for listing in pending:
-        if not listing.description or len(listing.description.strip()) < 20:
-            listing.llm_extras = "{}"
-            continue
+    failed = 0
+    consecutive_failures = 0
+    batch_size = 25
 
+    def _enrich_one(listing):
+        if not listing.description or len(listing.description.strip()) < 20:
+            return listing, {}
         result = enrich_from_description(listing.description)
-        if result:
-            listing.llm_extras = json.dumps(result, ensure_ascii=False)
-            listing._llm_extras = result
-            corrections = correct_listing_data(listing)
-            for field, value in corrections.items():
-                if hasattr(listing, field):
-                    setattr(listing, field, value)
-            enriched += 1
-            failures = 0
-            if enriched % 25 == 0:
-                session.commit()
-                log.info("Enrich progress: %d / %d", enriched, len(pending))
-        else:
-            failures += 1
-            if failures >= 5:
-                log.error("5 consecutive LLM failures, stopping.")
-                break
+        return listing, result
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {}
+        for listing in pending:
+            futures[pool.submit(_enrich_one, listing)] = listing
+
+        for fut in as_completed(futures):
+            listing, result = fut.result()
+            if result == {}:
+                listing.llm_extras = "{}"
+                continue
+            if result:
+                listing.llm_extras = json.dumps(result, ensure_ascii=False)
+                listing._llm_extras = result
+                corrections = correct_listing_data(listing)
+                for field, value in corrections.items():
+                    if hasattr(listing, field):
+                        setattr(listing, field, value)
+                enriched += 1
+                consecutive_failures = 0
+                if enriched % batch_size == 0:
+                    session.commit()
+                    log.info("Enrich progress: %d / %d (failed: %d)",
+                             enriched, len(pending), failed)
+            else:
+                failed += 1
+                consecutive_failures += 1
+                if consecutive_failures >= 10:
+                    log.error("10 consecutive LLM failures, stopping.")
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    break
 
     session.commit()
-    log.info("Enriched %d listings.", enriched)
+    log.info("Enriched %d listings (%d failed).", enriched, failed)
 
 
 @app.command()

@@ -56,7 +56,7 @@ cat > "$PLIST_PATH" <<EOF
     <key>EnvironmentVariables</key>
     <dict>
         <key>OLLAMA_NUM_PARALLEL</key>
-        <string>2</string>
+        <string>3</string>
         <key>OLLAMA_FLASH_ATTENTION</key>
         <string>1</string>
     </dict>

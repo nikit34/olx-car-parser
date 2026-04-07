@@ -69,16 +69,18 @@ def _get_config() -> dict:
 
 _ollama_status: bool | None = None
 
-# Persistent HTTP client — reuses TCP connection across all LLM calls
-_http_client: httpx.Client | None = None
+# Thread-local HTTP clients — one per thread for thread safety
+import threading
+_thread_local = threading.local()
 
 
 def _get_client(base_url: str) -> httpx.Client:
-    """Return a persistent httpx.Client, creating one if needed."""
-    global _http_client
-    if _http_client is None:
-        _http_client = httpx.Client(base_url=base_url, timeout=60)
-    return _http_client
+    """Return a thread-local persistent httpx.Client."""
+    client = getattr(_thread_local, "http_client", None)
+    if client is None:
+        client = httpx.Client(base_url=base_url, timeout=120)
+        _thread_local.http_client = client
+    return client
 
 
 def _ollama_available(base_url: str) -> bool:

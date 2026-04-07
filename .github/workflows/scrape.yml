@@ -23,15 +23,15 @@ jobs:
 
       - name: Set up Python venv
         run: |
-          /opt/homebrew/bin/python3.11 -m venv .venv 2>/dev/null || true
-          .venv/bin/pip install -q -r requirements.txt
+          /opt/homebrew/bin/python3.14 -m venv .venv 2>/dev/null || true
+          .venv/bin/pip install -q -e .
 
       - name: Ensure Ollama is running
         run: |
           if ! curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
             pkill -9 -f "Ollama" 2>/dev/null || true
             sleep 2
-            OLLAMA_NUM_PARALLEL=2 OLLAMA_FLASH_ATTENTION=1 \
+            OLLAMA_NUM_PARALLEL=3 OLLAMA_FLASH_ATTENTION=1 \
               nohup /Applications/Ollama.app/Contents/Resources/ollama serve \
               > /tmp/ollama.out.log 2>/tmp/ollama.err.log &
             for i in $(seq 1 30); do
@@ -48,10 +48,15 @@ jobs:
             exit 1
           fi
 
-      - name: Scrape + Enrich
+      - name: Scrape
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: .venv/bin/python -m src.cli scrape
+
+      - name: Enrich with LLM
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: .venv/bin/python -m src.cli enrich --workers 3
 
       - name: Send Telegram alerts
         if: ${{ !cancelled() }}
