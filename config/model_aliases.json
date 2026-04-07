@@ -46,6 +46,7 @@
     "Série 7": "7 Series",
     "Série 8": "8 Series",
     "Série X": "X3",
+    "Série Z": "Z4",
     "Série i": "i3",
     "320d": "3 Series"
   },
@@ -96,6 +97,7 @@
     "Classe GLA": "GLA-Class",
     "Classe GLB": "GLB-Class",
     "Classe GLC": "GLC-Class",
+    "Classe GLE": "GLE-Class",
     "Classe GLS": "GLS",
     "Classe GL": "GL-Class",
     "Classe SL": "SL-Class",
@@ -107,13 +109,19 @@
     "A3 Sportback": "A3",
     "A4 Avant": "A4",
     "A5 Cabrio": "A5",
+    "A5 Sportback": "A5",
+    "A6 Avant": "A6",
+    "TT Coupé": "TT",
+    "TT Roadster": "TT",
     "S3 Limousine": "S3",
     "Q4 Sportback e-tron": "Q4 e-tron"
   },
   "Opel": {
     "Astra Sports Tourer": "Astra",
     "Astra Caravan": "Astra",
-    "Corsa-e": "Corsa"
+    "Astra GTC": "Astra",
+    "Corsa-e": "Corsa",
+    "Insignia Sports Tourer": "Insignia"
   },
   "Renault": {
     "Clio Sport Tourer": "Clio",
@@ -126,6 +134,7 @@
   },
   "Peugeot": {
     "e-208": "208",
+    "e-2008": "2008",
     "307 SW": "307",
     "308 SW": "308",
     "407 SW": "407",
@@ -133,30 +142,68 @@
   },
   "Volkswagen": {
     "Golf Variant": "Golf",
+    "Passat Variant": "Passat",
     "ID.7": "ID.7"
   },
   "VW": {
     "Golf": "Golf"
   },
   "Seat": {
-    "Ibiza ST": "Ibiza"
+    "Ibiza ST": "Ibiza",
+    "Leon ST": "Leon"
   },
   "Citroen": {
     "C5 Break": "C5",
     "DS4": "DS4",
     "e-Mehari": "e-Mehari",
     "C4 Picasso": "C4",
+    "C4 Grand Picasso": "C4",
     "Grand C4 Picasso": "C4"
   },
   "Porsche": {
     "Panamera Sport Turismo": "Panamera",
-    "718 Boxster": "Boxster"
+    "718 Boxster": "Boxster",
+    "911 (Todos)": "911"
   },
   "Volvo": {
-    "XC 90": "XC90"
+    "XC 90": "XC90",
+    "XC 60": "XC60",
+    "XC 40": "XC40"
   },
   "Land Rover": {
-    "Evoque": "Range Rover Evoque"
+    "Evoque": "Range Rover Evoque",
+    "Range Rover Sport": "Range Rover Sport"
+  },
+  "Mini": {
+    "3 Portas": "Cooper",
+    "5 Portas": "Cooper",
+    "Cabrio": "Cooper",
+    "Coupé": "Cooper",
+    "One": "Cooper"
+  },
+  "Smart": {
+    "ForTwo Coupé": "ForTwo",
+    "Fortwo Cabrio": "ForTwo",
+    "ForFour": "ForTwo"
+  },
+  "Ford": {
+    "Focus SW": "Focus",
+    "Focus ST-Line": "Focus",
+    "Mondeo SW": "Mondeo"
+  },
+  "Fiat": {
+    "500C": "500",
+    "500X": "500X",
+    "500L": "500",
+    "Grande Punto": "Punto",
+    "Punto Evo": "Punto",
+    "Tipo Station Wagon": "Tipo"
+  },
+  "Hyundai": {
+    "Kauai": "Kona"
+  },
+  "DS": {
+    "Golf": "DS 3"
   },
   "Toyota": {
     "107": "Aygo"

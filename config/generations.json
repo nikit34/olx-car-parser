@@ -183,6 +183,23 @@
         "year_to": 2024
       }
     ],
+    "TT": [
+      {
+        "name": "8N",
+        "year_from": 1998,
+        "year_to": 2006
+      },
+      {
+        "name": "8J",
+        "year_from": 2006,
+        "year_to": 2014
+      },
+      {
+        "name": "8S",
+        "year_from": 2014,
+        "year_to": 2024
+      }
+    ],
     "S3": [
       {
         "name": "8L",
@@ -504,6 +521,11 @@
         "year_to": 2008
       },
       {
+        "name": "E89",
+        "year_from": 2009,
+        "year_to": 2016
+      },
+      {
         "name": "G29",
         "year_from": 2018,
         "year_to": 2026
@@ -563,6 +585,18 @@
         "name": "Mk3",
         "year_from": 2016,
         "year_to": 2024
+      }
+    ],
+    "C1": [
+      {
+        "name": "Mk1",
+        "year_from": 2005,
+        "year_to": 2014
+      },
+      {
+        "name": "Mk2",
+        "year_from": 2014,
+        "year_to": 2022
       }
     ],
     "C4": [
@@ -644,6 +678,42 @@
     "Formentor": [
       {
         "name": "Gen1",
+        "year_from": 2020,
+        "year_to": 2026
+      }
+    ]
+  },
+  "Dacia": {
+    "Duster": [
+      {
+        "name": "Mk1",
+        "year_from": 2010,
+        "year_to": 2017
+      },
+      {
+        "name": "Mk2",
+        "year_from": 2017,
+        "year_to": 2024
+      },
+      {
+        "name": "Mk3",
+        "year_from": 2024,
+        "year_to": 2026
+      }
+    ],
+    "Sandero": [
+      {
+        "name": "Mk1",
+        "year_from": 2008,
+        "year_to": 2012
+      },
+      {
+        "name": "Mk2",
+        "year_from": 2012,
+        "year_to": 2020
+      },
+      {
+        "name": "Mk3",
         "year_from": 2020,
         "year_to": 2026
       }
@@ -735,6 +805,18 @@
     ]
   },
   "Ford": {
+    "C-Max": [
+      {
+        "name": "Mk1",
+        "year_from": 2003,
+        "year_to": 2010
+      },
+      {
+        "name": "Mk2",
+        "year_from": 2010,
+        "year_to": 2019
+      }
+    ],
     "Escort": [
       {
         "name": "Europe",
@@ -950,6 +1032,18 @@
         "name": "crossover",
         "year_from": 2019,
         "year_to": 2026
+      }
+    ],
+    "S-Max": [
+      {
+        "name": "Mk1",
+        "year_from": 2006,
+        "year_to": 2015
+      },
+      {
+        "name": "Mk2",
+        "year_from": 2015,
+        "year_to": 2023
       }
     ],
     "Ranger": [
@@ -1258,6 +1352,18 @@
         "year_to": 2026
       }
     ],
+    "Kona": [
+      {
+        "name": "Mk1",
+        "year_from": 2017,
+        "year_to": 2023
+      },
+      {
+        "name": "Mk2",
+        "year_from": 2023,
+        "year_to": 2026
+      }
+    ],
     "i20": [
       {
         "name": "Mk1",
@@ -1339,6 +1445,13 @@
         "name": "1999",
         "year_from": 1998,
         "year_to": 2026
+      }
+    ],
+    "XE": [
+      {
+        "name": "X760",
+        "year_from": 2015,
+        "year_to": 2024
       }
     ],
     "XF": [
@@ -1503,6 +1616,28 @@
         "year_to": 2020
       }
     ],
+    "Rio": [
+      {
+        "name": "Mk1",
+        "year_from": 2000,
+        "year_to": 2005
+      },
+      {
+        "name": "Mk2",
+        "year_from": 2005,
+        "year_to": 2011
+      },
+      {
+        "name": "Mk3",
+        "year_from": 2011,
+        "year_to": 2017
+      },
+      {
+        "name": "Mk4",
+        "year_from": 2017,
+        "year_to": 2026
+      }
+    ],
     "Ray": [
       {
         "name": "2010 concept vehicle",
@@ -1519,6 +1654,30 @@
     ]
   },
   "Land Rover": {
+    "Discovery": [
+      {
+        "name": "L319",
+        "year_from": 2004,
+        "year_to": 2009
+      },
+      {
+        "name": "L319 facelift",
+        "year_from": 2009,
+        "year_to": 2017
+      },
+      {
+        "name": "L462",
+        "year_from": 2017,
+        "year_to": 2026
+      }
+    ],
+    "Discovery Sport": [
+      {
+        "name": "L550",
+        "year_from": 2014,
+        "year_to": 2026
+      }
+    ],
     "Defender": [
       {
         "name": "Mk1",
@@ -1549,6 +1708,23 @@
       },
       {
         "name": "L460",
+        "year_from": 2022,
+        "year_to": 2026
+      }
+    ],
+    "Range Rover Sport": [
+      {
+        "name": "L320",
+        "year_from": 2005,
+        "year_to": 2013
+      },
+      {
+        "name": "L494",
+        "year_from": 2013,
+        "year_to": 2022
+      },
+      {
+        "name": "L461",
         "year_from": 2022,
         "year_to": 2026
       }
@@ -1651,7 +1827,17 @@
     ],
     "Mazda6": [
       {
-        "name": "III",
+        "name": "GG",
+        "year_from": 2002,
+        "year_to": 2008
+      },
+      {
+        "name": "GH",
+        "year_from": 2008,
+        "year_to": 2012
+      },
+      {
+        "name": "GJ",
         "year_from": 2012,
         "year_to": 2024
       }
@@ -1783,6 +1969,18 @@
         "year_to": 2019
       }
     ],
+    "GLE-Class": [
+      {
+        "name": "W166",
+        "year_from": 2015,
+        "year_to": 2019
+      },
+      {
+        "name": "V167",
+        "year_from": 2019,
+        "year_to": 2026
+      }
+    ],
     "GLA-Class": [
       {
         "name": "X156",
@@ -1896,6 +2094,18 @@
         "year_to": 2026
       }
     ],
+    "Clubman": [
+      {
+        "name": "R55",
+        "year_from": 2007,
+        "year_to": 2014
+      },
+      {
+        "name": "F54",
+        "year_from": 2015,
+        "year_to": 2026
+      }
+    ],
     "Countryman": [
       {
         "name": "R60",
@@ -1971,6 +2181,35 @@
       {
         "name": "North America",
         "year_from": 1997,
+        "year_to": 2026
+      }
+    ],
+    "Leaf": [
+      {
+        "name": "ZE0",
+        "year_from": 2010,
+        "year_to": 2017
+      },
+      {
+        "name": "ZE1",
+        "year_from": 2017,
+        "year_to": 2026
+      }
+    ],
+    "Micra": [
+      {
+        "name": "K12",
+        "year_from": 2003,
+        "year_to": 2010
+      },
+      {
+        "name": "K13",
+        "year_from": 2010,
+        "year_to": 2017
+      },
+      {
+        "name": "K14",
+        "year_from": 2017,
         "year_to": 2026
       }
     ],
@@ -2097,6 +2336,18 @@
         "year_to": 2026
       }
     ],
+    "Insignia": [
+      {
+        "name": "A",
+        "year_from": 2008,
+        "year_to": 2017
+      },
+      {
+        "name": "B",
+        "year_from": 2017,
+        "year_to": 2024
+      }
+    ],
     "Frontera": [
       {
         "name": "2024",
@@ -2127,6 +2378,32 @@
       {
         "name": "Gen1",
         "year_from": 2005,
+        "year_to": 2014
+      }
+    ],
+    "2008": [
+      {
+        "name": "Mk1",
+        "year_from": 2013,
+        "year_to": 2019
+      },
+      {
+        "name": "Mk2",
+        "year_from": 2019,
+        "year_to": 2026
+      }
+    ],
+    "206": [
+      {
+        "name": "Gen1",
+        "year_from": 1998,
+        "year_to": 2012
+      }
+    ],
+    "207": [
+      {
+        "name": "Gen1",
+        "year_from": 2006,
         "year_to": 2014
       }
     ],
@@ -2516,6 +2793,13 @@
     ]
   },
   "Seat": {
+    "Arona": [
+      {
+        "name": "Gen1",
+        "year_from": 2017,
+        "year_to": 2026
+      }
+    ],
     "Ibiza": [
       {
         "name": "Mk2",
@@ -2727,6 +3011,18 @@
     ]
   },
   "Toyota": {
+    "Auris": [
+      {
+        "name": "E150",
+        "year_from": 2006,
+        "year_to": 2012
+      },
+      {
+        "name": "E180",
+        "year_from": 2012,
+        "year_to": 2019
+      }
+    ],
     "Aygo": [
       {
         "name": "Mk1",
@@ -3030,6 +3326,23 @@
         "year_to": 2026
       }
     ],
+    "Tiguan": [
+      {
+        "name": "5N",
+        "year_from": 2007,
+        "year_to": 2016
+      },
+      {
+        "name": "AD1",
+        "year_from": 2016,
+        "year_to": 2024
+      },
+      {
+        "name": "Mk3",
+        "year_from": 2024,
+        "year_to": 2026
+      }
+    ],
     "Transporter": [
       {
         "name": "T4",
@@ -3082,6 +3395,13 @@
         "year_to": 2019
       }
     ],
+    "V50": [
+      {
+        "name": "Gen1",
+        "year_from": 2004,
+        "year_to": 2012
+      }
+    ],
     "V60": [
       {
         "name": "Mk1",
@@ -3098,6 +3418,13 @@
       {
         "name": "Mk2",
         "year_from": 2016,
+        "year_to": 2026
+      }
+    ],
+    "XC40": [
+      {
+        "name": "Gen1",
+        "year_from": 2017,
         "year_to": 2026
       }
     ],
