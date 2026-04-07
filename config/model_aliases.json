@@ -36,7 +36,18 @@
     "650": "6 Series",
     "730": "7 Series",
     "740": "7 Series",
-    "750": "7 Series"
+    "750": "7 Series",
+    "Série 1": "1 Series",
+    "Série 2": "2 Series",
+    "Série 3": "3 Series",
+    "Série 4": "4 Series",
+    "Série 5": "5 Series",
+    "Série 6": "6 Series",
+    "Série 7": "7 Series",
+    "Série 8": "8 Series",
+    "Série X": "X3",
+    "Série i": "i3",
+    "320d": "3 Series"
   },
   "Mercedes-Benz": {
     "180": "C-Class",
@@ -73,7 +84,23 @@
     "GLB 200": "GLB-Class",
     "GLC 220": "GLC-Class",
     "GLC 250": "GLC-Class",
-    "GLC 300": "GLC-Class"
+    "GLC 300": "GLC-Class",
+    "Classe A": "A-Class",
+    "Classe B": "B-Class",
+    "Classe C": "C-Class",
+    "Classe E": "E-Class",
+    "Classe S": "S-Class",
+    "Classe CLA": "CLA-Class",
+    "Classe CLC": "CLC-Class",
+    "Classe CLS": "CLS-Class",
+    "Classe GLA": "GLA-Class",
+    "Classe GLB": "GLB-Class",
+    "Classe GLC": "GLC-Class",
+    "Classe GLS": "GLS",
+    "Classe GL": "GL-Class",
+    "Classe SL": "SL-Class",
+    "Classe SLK": "SLK-Class",
+    "Classe CLK": "CLK-Class"
   },
   "Audi": {
     "A1 Sportback": "A1",
@@ -84,18 +111,23 @@
     "Q4 Sportback e-tron": "Q4 e-tron"
   },
   "Opel": {
-    "Astra Sports Tourer": "Astra"
+    "Astra Sports Tourer": "Astra",
+    "Astra Caravan": "Astra",
+    "Corsa-e": "Corsa"
   },
   "Renault": {
     "Clio Sport Tourer": "Clio",
     "Mégane Break": "Mégane",
     "Mégane E-Tech": "Mégane",
+    "Mégane Sport Tourer": "Mégane",
+    "Megane Sport Tourer": "Mégane",
     "Grand Scénic": "Scénic",
     "Grand Modus": "Modus"
   },
   "Peugeot": {
     "e-208": "208",
     "307 SW": "307",
+    "308 SW": "308",
     "407 SW": "407",
     "508 SW": "508"
   },
@@ -112,7 +144,9 @@
   "Citroen": {
     "C5 Break": "C5",
     "DS4": "DS4",
-    "e-Mehari": "e-Mehari"
+    "e-Mehari": "e-Mehari",
+    "C4 Picasso": "C4",
+    "Grand C4 Picasso": "C4"
   },
   "Porsche": {
     "Panamera Sport Turismo": "Panamera",
@@ -123,9 +157,6 @@
   },
   "Land Rover": {
     "Evoque": "Range Rover Evoque"
-  },
-  "Smart": {
-    "ForTwo Coupé": "ForTwo"
   },
   "Toyota": {
     "107": "Aygo"
