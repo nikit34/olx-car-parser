@@ -41,7 +41,10 @@ tuning_or_mods=list of aftermarket modifications: "reprogramação","stage 1/2",
 taxi_fleet_rental=true if "ex-táxi","TVDE","Uber","Bolt","rent-a-car","frota","carro de empresa". \
 recent_maintenance=list of specific completed maintenance: "correia distribuição","embreagem nova","travões novos","revisão feita", with km/date if mentioned. \
 tires_condition="new" if "pneus novos"; "good" if "bom estado"/"80% piso"; "fair" if "razoável"/"50%"; "poor" if "gastos"/"precisa pneus". \
-first_owner_selling=true if "1 dono desde novo","único dono","comprado novo por mim","vendo o meu".
+first_owner_selling=true if "1 dono desde novo","único dono","comprado novo por mim","vendo o meu". \
+If "para peças","vender as peças","venda de peças","para desmanchar","só peças": \
+mechanical_condition="poor", suspicious_signs must include "selling for parts", \
+desc_mentions_accident=true (likely total loss), reason_for_sale="para peças (total loss or registration issue)".
 
 """
 
@@ -133,6 +136,7 @@ def _call_ollama(description: str, cfg: dict) -> dict | None:
                 "options": {
                     "temperature": 0.1,
                     "num_predict": 512,
+                    "stop": ["} {", "}\n{"],
                 },
             },
         )
