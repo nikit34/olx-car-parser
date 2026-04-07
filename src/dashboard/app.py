@@ -400,20 +400,34 @@ with tab_deals:
                     details.append(f"seller dropping {drop_day:.0f} EUR/day")
                 if details:
                     st.caption(" · ".join(details))
-                description_mentions = []
+                warnings = []
                 if deal.get("desc_mentions_accident"):
-                    description_mentions.append("упоминание ДТП")
+                    warnings.append("ДТП")
                 if deal.get("desc_mentions_repair"):
-                    description_mentions.append("упоминание ремонта")
+                    warnings.append("ремонт")
                 if deal.get("desc_mentions_customs_cleared") is False:
-                    description_mentions.append("нет упоминания о растаможке")
+                    warnings.append("не растаможен")
                 if deal.get("right_hand_drive"):
-                    description_mentions.append("правый руль")
+                    warnings.append("правый руль")
+                if deal.get("taxi_fleet_rental"):
+                    warnings.append("такси/прокат")
                 n_own = deal.get("desc_mentions_num_owners")
                 if pd.notna(n_own) and n_own and int(n_own) >= 3:
-                    description_mentions.append(f"упоминание: {int(n_own)} владельцев")
-                if description_mentions:
-                    st.caption("Из описания: " + ", ".join(description_mentions))
+                    warnings.append(f"{int(n_own)} владельца")
+                if warnings:
+                    st.caption("Риски: " + ", ".join(warnings))
+                positives = []
+                if deal.get("warranty"):
+                    positives.append("гарантия")
+                if deal.get("first_owner_selling"):
+                    positives.append("первый владелец")
+                tires = deal.get("tires_condition")
+                if tires and tires in ("new", "good"):
+                    positives.append(f"шины: {tires}")
+                if deal.get("urgency") == "high":
+                    positives.append("срочная продажа")
+                if positives:
+                    st.caption("Плюсы: " + ", ".join(positives))
                 if deal.get("url"):
                     link_label = "Open on StandVirtual" if "standvirtual.com" in deal["url"] else "Open on OLX"
                     st.markdown(f"[{link_label}]({deal['url']})")
@@ -435,6 +449,11 @@ with tab_deals:
             "desc_mentions_num_owners",
             "desc_mentions_customs_cleared",
             "right_hand_drive",
+            "urgency",
+            "warranty",
+            "taxi_fleet_rental",
+            "first_owner_selling",
+            "tires_condition",
         ]:
             if extra_col in deals.columns and deals[extra_col].notna().any():
                 signal_cols.append(extra_col)

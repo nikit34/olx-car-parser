@@ -90,7 +90,7 @@ class TestCallOllama:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
-            "response": json.dumps(VALID_LLM_JSON)
+            "message": {"content": json.dumps(VALID_LLM_JSON)}
         }
         mock_client = MagicMock()
         mock_client.post.return_value = mock_resp

@@ -22,13 +22,23 @@ def _sample_listings(n: int = 200) -> pd.DataFrame:
         else:
             models.append("320d")
 
-    # Price = f(year, mileage, engine) + noise
+    accident = rng.choice([True, False, None], size=n, p=[0.05, 0.75, 0.20])
+    repair = rng.choice([True, False, None], size=n, p=[0.10, 0.70, 0.20])
+    rhd = rng.choice([True, False, None], size=n, p=[0.02, 0.78, 0.20])
+
+    # Price = f(year, mileage, engine, condition) + noise
     price = (
         (years - 2000) * 600
         - mileage * 0.02
         + engine_cc * 2
         + rng.normal(0, 1000, size=n)
     ).clip(min=500)
+    # Accident cars are cheaper
+    for i in range(n):
+        if accident[i] is True:
+            price[i] *= 0.7
+        if rhd[i] is True:
+            price[i] *= 0.8
 
     return pd.DataFrame({
         "olx_id": [f"t{i}" for i in range(n)],
@@ -43,6 +53,17 @@ def _sample_listings(n: int = 200) -> pd.DataFrame:
         "segment": "Citadino",
         "horsepower": (engine_cc * 0.07 + rng.normal(0, 10, size=n)).clip(min=50).round(0),
         "is_active": True,
+        # LLM fields
+        "desc_mentions_accident": accident,
+        "desc_mentions_repair": repair,
+        "right_hand_drive": rhd,
+        "desc_mentions_customs_cleared": rng.choice([True, False, None], size=n, p=[0.15, 0.65, 0.20]),
+        "desc_mentions_num_owners": rng.choice([1, 2, 3, None], size=n, p=[0.3, 0.2, 0.1, 0.4]),
+        "taxi_fleet_rental": rng.choice([True, False, None], size=n, p=[0.03, 0.77, 0.20]),
+        "warranty": rng.choice([True, False, None], size=n, p=[0.15, 0.65, 0.20]),
+        "first_owner_selling": rng.choice([True, False, None], size=n, p=[0.20, 0.60, 0.20]),
+        "tires_condition": rng.choice(["new", "good", "fair", "poor", None], size=n, p=[0.1, 0.3, 0.2, 0.1, 0.3]),
+        "urgency": rng.choice(["high", "medium", "low", None], size=n, p=[0.05, 0.15, 0.50, 0.30]),
     })
 
 
@@ -89,6 +110,24 @@ def test_newer_cars_predicted_higher():
     pred_old = predict_prices(model, cat_maps, old_car).iloc[0]
     pred_new = predict_prices(model, cat_maps, new_car).iloc[0]
     assert pred_new > pred_old
+
+
+def test_accident_cars_predicted_lower():
+    df = _sample_listings(500)
+    model, cat_maps = train_price_model(df)
+
+    base = {
+        "year": 2018, "mileage_km": 100000, "engine_cc": 1600,
+        "brand": "Volkswagen", "model": "Golf",
+        "fuel_type": "Diesel", "transmission": "Manual",
+        "segment": "Citadino", "horsepower": 110,
+    }
+    clean = pd.DataFrame([{**base, "desc_mentions_accident": False}])
+    damaged = pd.DataFrame([{**base, "desc_mentions_accident": True}])
+
+    pred_clean = predict_prices(model, cat_maps, clean).iloc[0]
+    pred_damaged = predict_prices(model, cat_maps, damaged).iloc[0]
+    assert pred_clean > pred_damaged
 
 
 def test_handles_missing_features():

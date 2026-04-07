@@ -104,30 +104,6 @@ def load_from_db() -> tuple[pd.DataFrame, pd.DataFrame] | None:
         return None
 
 
-def _expected_lifespan_km(engine_cc: int | None, fuel_type: str | None) -> float:
-    """Estimated km before major engine overhaul, based on displacement and fuel.
-
-    Smaller engines wear faster per km due to higher RPM under load.
-    Diesel engines typically last ~40% longer than petrol.
-    """
-    is_diesel = bool(fuel_type and "diesel" in str(fuel_type).lower())
-
-    if engine_cc is None or engine_cc <= 0:
-        return 350_000 if is_diesel else 250_000
-
-    if engine_cc < 1000:
-        base = 150_000
-    elif engine_cc < 1400:
-        base = 200_000
-    elif engine_cc < 2000:
-        base = 250_000
-    elif engine_cc < 2500:
-        base = 300_000
-    else:
-        base = 350_000
-
-    return base * 1.4 if is_diesel else float(base)
-
 
 def _sub_segment(fuel_type, engine_cc) -> str:
     """Market sub-segment from fuel type and engine displacement.
@@ -162,13 +138,17 @@ def _sub_segment(fuel_type, engine_cc) -> str:
 def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.DataFrame:
     """Find undervalued listings and rank by flip potential.
 
-    Scoring factors:
-    - Undervaluation: gradient boosting fair price vs actual (fallback to median)
-    - Liquidity: how fast this model sells (avg_days_to_sell)
-    - Trend: is the market price rising or falling
-    - Engine life: remaining engine lifespan based on mileage, displacement and fuel
-    - Sale velocity: fraction of segment sold within 21 days
-    - Confidence: number of comparable listings backing the estimate
+    Price model (gradient boosting) uses 20 features including LLM-extracted
+    fields (accident, RHD, condition, etc.) to predict fair market value.
+
+    Flip score = undervaluation % × opportunity multipliers:
+    - Liquidity: how fast this model sells
+    - Trend: market price direction
+    - Motivated seller: long listing + price drops
+    - Urgency: seller desperation signals
+    - Warranty: easier resale with warranty
+    - Velocity: fast-selling segments
+    - Confidence: comparable listing count
     """
     if listings_df.empty:
         return pd.DataFrame()
@@ -220,22 +200,9 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         .reset_index()
     )
 
-    # --- Gradient boosting price model (replaces per-generation linear regressions) ---
-    from src.analytics.price_model import train_price_model, predict_prices
-
-    gb_result = train_price_model(active)
-    gb_predictions: dict[str, float] = {}
-    if gb_result is not None:
-        gb_model, gb_cat_maps = gb_result
-        preds = predict_prices(gb_model, gb_cat_maps, active)
-        for idx, pred in preds.items():
-            olx_id = active.loc[idx, "olx_id"] if "olx_id" in active.columns else None
-            if olx_id and pred > 0:
-                gb_predictions[olx_id] = float(pred)
-
-    # --- Liquidity: avg days to sell per brand+model ---
-    liquidity_map: dict[tuple, float] = {}
+    # --- Turnover stats: avg days to sell per brand+model ---
     turnover = compute_turnover_stats(listings_df)
+    liquidity_map: dict[tuple, float] = {}
     if not turnover.empty:
         for _, row in turnover.iterrows():
             days = row.get("avg_days_to_sell")
@@ -272,6 +239,25 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
                 if len(group) < 3:
                     continue
                 velocity_map[(brand, model)] = float((group["_lifespan"] <= 21).mean())
+
+    # --- Merge avg_days_to_sell into active for price model ---
+    if liquidity_map:
+        active["avg_days_to_sell"] = active.apply(
+            lambda r: liquidity_map.get((r["brand"], r["model"])), axis=1
+        )
+
+    # --- Gradient boosting price model (uses LLM fields + market data) ---
+    from src.analytics.price_model import train_price_model, predict_prices
+
+    gb_result = train_price_model(active)
+    gb_predictions: dict[str, float] = {}
+    if gb_result is not None:
+        gb_model, gb_cat_maps = gb_result
+        preds = predict_prices(gb_model, gb_cat_maps, active)
+        for idx, pred in preds.items():
+            olx_id = active.loc[idx, "olx_id"] if "olx_id" in active.columns else None
+            if olx_id and pred > 0:
+                gb_predictions[olx_id] = float(pred)
 
     # --- Score each listing ---
     for _, listing in active.iterrows():
@@ -331,9 +317,7 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         if not median or price >= median * 0.85:
             continue
 
-        # 1. Undervaluation: gradient boosting predicted price
-        engine_cc = listing.get("engine_cc")
-        fuel_type = listing.get("fuel_type")
+        # 1. Undervaluation: gradient boosting predicted price (now includes LLM features)
         olx_id = listing.get("olx_id", "")
         predicted = gb_predictions.get(olx_id)
 
@@ -343,104 +327,53 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
             undervaluation_pct = 0.0
         discount_pct = round((1 - price / median) * 100, 1)
 
-        # 2. Year multiplier — newer cars hold value better (15% per year above group median)
-        if pd.notna(year) and pd.notna(group_year_median) and group_year_median > 0:
-            year_diff = float(year) - float(group_year_median)
-            year_mult = min(max(1 + year_diff * 0.15, 0.5), 2.0)
-        else:
-            year_mult = 1.0
+        # --- Opportunity multipliers (deal quality, not market value) ---
 
-        # 2b. Mileage multiplier — lower mileage = better flip (30% per median deviation)
-        if pd.notna(mileage) and pd.notna(group_mileage_median) and group_mileage_median > 0:
-            mileage_ratio = (float(group_mileage_median) - float(mileage)) / float(group_mileage_median)
-            mileage_mult = min(max(1 + mileage_ratio * 0.3, 0.5), 2.0)
-        else:
-            mileage_mult = 1.0
-
-        # 2c. Engine life multiplier — penalize cars near end-of-life for their engine size
-        #     Small engines (< 1.2L) wear out faster, so 200k km on a 1.0L is worse than on a 2.0L
-        if pd.notna(mileage) and mileage > 0:
-            lifespan = _expected_lifespan_km(
-                int(engine_cc) if pd.notna(engine_cc) and engine_cc else None,
-                fuel_type if pd.notna(fuel_type) else None,
-            )
-            remaining_pct = max(0, 1 - float(mileage) / lifespan)
-            # 0% remaining → 0.3x, 50% → 1.0x, 80%+ → 1.3x
-            engine_life_mult = min(0.3 + remaining_pct * 1.4, 1.5)
-        else:
-            engine_life_mult = 1.0
-
-        # 3. Liquidity multiplier (30 days = 1.0 baseline)
+        # 2. Liquidity multiplier (30 days = 1.0 baseline)
         days_to_sell = liquidity_map.get((brand, model))
         if days_to_sell and days_to_sell > 0:
             liquidity_mult = min(max(30 / days_to_sell, 0.5), 2.0)
         else:
             liquidity_mult = 1.0
 
-        # 4. Trend multiplier (rising market = bonus)
+        # 3. Trend multiplier (rising market = bonus)
         trend_pct = trend_map.get((brand, model), 0.0)
         trend_mult = min(max(1 + trend_pct / 100, 0.8), 1.2)
 
-        # 5. Description-mention multiplier — extracted from listing text
-        desc_mentions_accident = listing.get("desc_mentions_accident")
-        desc_mentions_repair = listing.get("desc_mentions_repair")
-        if pd.notna(desc_mentions_accident) and desc_mentions_accident:
-            condition_mult = 0.3
-        elif pd.notna(desc_mentions_repair) and desc_mentions_repair:
-            condition_mult = 0.5
-        else:
-            condition_mult = 1.0
-
-        # 6. Customs multiplier — based on description mention only
-        desc_mentions_customs_cleared = listing.get("desc_mentions_customs_cleared")
-        if pd.notna(desc_mentions_customs_cleared) and desc_mentions_customs_cleared is False:
-            customs_mult = 0.7
-        else:
-            customs_mult = 1.0
-
-        # 7. Motivated seller multiplier — long listing + price drops = negotiation room
+        # 4. Motivated seller — long listing + price drops = negotiation room
         days_listed = listing.get("days_listed") if "days_listed" in listing.index else None
         price_change = listing.get("price_change_eur") if "price_change_eur" in listing.index else None
         if pd.notna(days_listed) and days_listed > 30 and pd.notna(price_change) and price_change < 0:
-            # Seller already dropping price — more room to negotiate
             motivated_mult = min(1.0 + abs(float(price_change)) / float(price) * 0.5, 1.3)
         elif pd.notna(days_listed) and days_listed > 60:
-            # Stale listing — some negotiation room even without explicit drops
             motivated_mult = 1.1
         else:
             motivated_mult = 1.0
 
-        # 8. Right-hand drive penalty
-        right_hand_drive = listing.get("right_hand_drive")
-        if pd.notna(right_hand_drive) and right_hand_drive:
-            rhd_mult = 0.6
+        # 5. Urgency — desperate seller = negotiation opportunity
+        urgency = listing.get("urgency")
+        if pd.notna(urgency) and urgency == "high":
+            urgency_mult = 1.3
+        elif pd.notna(urgency) and urgency == "medium":
+            urgency_mult = 1.1
         else:
-            rhd_mult = 1.0
+            urgency_mult = 1.0
 
-        # 9. Owner count mentioned in description
-        desc_mentions_num_owners = listing.get("desc_mentions_num_owners")
-        if pd.notna(desc_mentions_num_owners) and desc_mentions_num_owners and int(desc_mentions_num_owners) > 0:
-            n = int(desc_mentions_num_owners)
-            if n == 1:
-                owners_mult = 1.15
-            elif n == 2:
-                owners_mult = 1.0
-            elif n == 3:
-                owners_mult = 0.9
-            else:
-                owners_mult = 0.75
+        # 6. Warranty — easier to resell with warranty
+        has_warranty = listing.get("warranty")
+        if pd.notna(has_warranty) and has_warranty:
+            warranty_mult = 1.15
         else:
-            owners_mult = 1.0
+            warranty_mult = 1.0
 
-        # 10. Sale velocity — segments where cars sell fast are better for flipping
+        # 7. Sale velocity — fast-selling segments = better for flipping
         velocity = velocity_map.get((brand, model))
         if velocity is not None:
-            # velocity=0.0 → 0.7x, velocity=0.5 → 1.1x, velocity=1.0 → 1.5x
             velocity_mult = min(max(0.7 + velocity * 0.8, 0.7), 1.5)
         else:
             velocity_mult = 1.0
 
-        # 11. Confidence — more comparable listings = more reliable estimate
+        # 8. Confidence — more comparable listings = more reliable estimate
         if sample >= 10:
             confidence_mult = 1.2
         elif sample >= 7:
@@ -452,14 +385,20 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
 
         base_pct = undervaluation_pct if undervaluation_pct > 0 else discount_pct
         flip_score = round(
-            base_pct * year_mult * mileage_mult * engine_life_mult
-            * liquidity_mult * trend_mult * condition_mult * customs_mult
-            * motivated_mult * owners_mult * rhd_mult
-            * velocity_mult * confidence_mult, 1
+            base_pct * liquidity_mult * trend_mult * motivated_mult
+            * urgency_mult * warranty_mult * velocity_mult * confidence_mult, 1
         )
 
+        # --- Build signal dict ---
+        desc_mentions_accident = listing.get("desc_mentions_accident")
+        desc_mentions_repair = listing.get("desc_mentions_repair")
+        desc_mentions_num_owners = listing.get("desc_mentions_num_owners")
+        desc_mentions_customs_cleared = listing.get("desc_mentions_customs_cleared")
+        right_hand_drive = listing.get("right_hand_drive")
+        engine_cc = listing.get("engine_cc")
+
         sig = {
-            "olx_id": listing.get("olx_id", ""),
+            "olx_id": olx_id,
             "url": listing.get("url", ""),
             "brand": brand,
             "model": model,
@@ -472,13 +411,11 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
             "discount_pct": discount_pct,
             "undervaluation_pct": undervaluation_pct,
             "engine_cc": int(engine_cc) if pd.notna(engine_cc) and engine_cc else None,
-            "year_mult": round(year_mult, 2),
-            "engine_life_mult": round(engine_life_mult, 2),
-            "condition_mult": round(condition_mult, 2),
-            "customs_mult": round(customs_mult, 2),
+            "liquidity_mult": round(liquidity_mult, 2),
+            "trend_mult": round(trend_mult, 2),
             "motivated_mult": round(motivated_mult, 2),
-            "owners_mult": round(owners_mult, 2),
-            "rhd_mult": round(rhd_mult, 2),
+            "urgency_mult": round(urgency_mult, 2),
+            "warranty_mult": round(warranty_mult, 2),
             "velocity_mult": round(velocity_mult, 2),
             "confidence_mult": round(confidence_mult, 2),
             "avg_days_to_sell": days_to_sell,
@@ -489,6 +426,7 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
             "district": listing.get("district", ""),
             "mileage_km": mileage,
             "fuel_type": listing.get("fuel_type", ""),
+            # LLM fields for display/warnings
             "desc_mentions_accident": bool(desc_mentions_accident) if pd.notna(desc_mentions_accident) else None,
             "desc_mentions_repair": bool(desc_mentions_repair) if pd.notna(desc_mentions_repair) else None,
             "desc_mentions_num_owners": (
@@ -501,12 +439,12 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
                 if pd.notna(desc_mentions_customs_cleared)
                 else None
             ),
-            "right_hand_drive": (
-                bool(right_hand_drive)
-                if pd.notna(right_hand_drive)
-                else None
-            ),
-            "negotiable": bool(listing.get("negotiable")) if "negotiable" in listing.index and pd.notna(listing.get("negotiable")) else None,
+            "right_hand_drive": bool(right_hand_drive) if pd.notna(right_hand_drive) else None,
+            "urgency": urgency if pd.notna(urgency) else None,
+            "warranty": bool(has_warranty) if pd.notna(has_warranty) else None,
+            "taxi_fleet_rental": bool(listing.get("taxi_fleet_rental")) if pd.notna(listing.get("taxi_fleet_rental")) else None,
+            "first_owner_selling": bool(listing.get("first_owner_selling")) if pd.notna(listing.get("first_owner_selling")) else None,
+            "tires_condition": listing.get("tires_condition") if pd.notna(listing.get("tires_condition")) else None,
         }
         for col in ("days_listed", "price_change_eur", "price_change_pct", "eur_per_km"):
             if col in listing.index:
