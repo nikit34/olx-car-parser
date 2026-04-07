@@ -124,16 +124,15 @@ def _call_ollama(description: str, cfg: dict) -> dict | None:
     try:
         client = _get_client(cfg["ollama_url"])
         resp = client.post(
-            "/api/chat",
+            "/api/generate",
             json={
                 "model": cfg["ollama_model"],
-                "messages": [
-                    {"role": "user", "content": EXTRACTION_PROMPT + description[:1200]},
-                ],
+                "prompt": EXTRACTION_PROMPT + description[:1200],
                 "stream": False,
+                "raw": True,
                 "options": {
                     "temperature": 0.1,
-                    "num_predict": 1024,
+                    "num_predict": 512,
                 },
             },
         )
@@ -141,7 +140,7 @@ def _call_ollama(description: str, cfg: dict) -> dict | None:
             logger.warning("Ollama API error: %s", resp.status_code)
             return None
 
-        content = resp.json()["message"]["content"]
+        content = resp.json()["response"]
         return _parse_llm_json(content)
 
     except httpx.TimeoutException:
