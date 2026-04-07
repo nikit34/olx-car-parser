@@ -17,7 +17,7 @@ analytics:
   buy_signal_threshold: 10
 
 llm:
-  ollama_model: "car-parser-3b"
+  ollama_model: "qwen2.5:7b"
   ollama_url: "http://localhost:11434"
   llm_workers: 1  # parallel LLM processes (1 for M1 8GB, 2 for server)
 

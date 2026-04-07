@@ -624,58 +624,6 @@ def init():
     console.print("[green]Database initialized.[/green]")
 
 
-@app.command()
-def export_training_data(
-    output: str = typer.Option("data/training_data.jsonl", help="Output JSONL path"),
-    min_desc_len: int = typer.Option(50, help="Min description length to include"),
-):
-    """Export enriched listings as JSONL training data for fine-tuning."""
-    init_db()
-    session = get_session()
-    df = get_listings_df(session)
-
-    if df.empty:
-        console.print("[yellow]No data. Run 'scrape' first.[/yellow]")
-        raise typer.Exit()
-
-    from src.parser.llm_enrichment import EXTRACTION_PROMPT, normalize_llm_extras
-
-    out_path = Path(output)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    count = 0
-    with open(out_path, "w") as f:
-        for _, row in df.iterrows():
-            desc = row.get("description") or ""
-            extras_raw = row.get("llm_extras")
-            if len(desc.strip()) < min_desc_len or not extras_raw:
-                continue
-            try:
-                extras = json.loads(extras_raw) if isinstance(extras_raw, str) else extras_raw
-            except (json.JSONDecodeError, TypeError):
-                continue
-            extras = normalize_llm_extras(extras)
-
-            for col in ("desc_mentions_repair", "desc_mentions_accident", "desc_mentions_num_owners",
-                        "desc_mentions_customs_cleared", "real_mileage_km",
-                        "urgency", "warranty", "taxi_fleet_rental", "tires_condition", "first_owner_selling"):
-                val = row.get(col)
-                if val is not None and not (isinstance(val, float) and pd.isna(val)):
-                    extras[col] = val
-
-            entry = {
-                "messages": [
-                    {"role": "user", "content": EXTRACTION_PROMPT + desc[:3000]},
-                    {"role": "assistant", "content": json.dumps(extras, ensure_ascii=False)},
-                ],
-            }
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-            count += 1
-
-    console.print(f"[green]Exported {count} training examples to {out_path}[/green]")
-    if count < 200:
-        console.print(f"[yellow]Tip: need ~500+ examples for good fine-tuning. Keep scraping![/yellow]")
-
 
 
 
