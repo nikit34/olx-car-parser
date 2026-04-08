@@ -1,5 +1,6 @@
 """Load data from SQLite database (local or downloaded from GitHub Releases)."""
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -133,6 +134,62 @@ def _sub_segment(fuel_type, engine_cc) -> str:
     if engine_cc <= 2000:
         return f"{fuel}_mid"
     return f"{fuel}_large"
+
+
+def _load_llm_extras(raw_extras) -> dict:
+    """Best-effort parse of serialized LLM extras stored on a listing row."""
+    if isinstance(raw_extras, dict):
+        return raw_extras
+    if not isinstance(raw_extras, str) or not raw_extras.strip():
+        return {}
+    try:
+        parsed = json.loads(raw_extras)
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _normalized_text_list(value) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip().lower() for item in value if item not in (None, "")]
+
+
+def _blocking_deal_reason(listing: pd.Series) -> str | None:
+    """Return a hard-stop reason for listings that should not be shown as deals.
+
+    We intentionally do not block all ``desc_mentions_repair`` cases because the
+    LLM also marks completed maintenance ("clutch replaced", "new timing belt")
+    with that coarse boolean. Instead, only block obviously problematic cases.
+    """
+    desc_mentions_accident = listing.get("desc_mentions_accident")
+    if pd.notna(desc_mentions_accident) and bool(desc_mentions_accident):
+        return "description mentions accident"
+
+    extras = _load_llm_extras(listing.get("llm_extras"))
+    if not extras:
+        return None
+
+    if str(extras.get("mechanical_condition") or "").strip().lower() == "poor":
+        return "poor mechanical condition"
+
+    suspicious = set(_normalized_text_list(extras.get("suspicious_signs")))
+    if "selling for parts" in suspicious:
+        return "selling for parts"
+
+    reason = str(extras.get("reason_for_sale") or "").strip().lower()
+    if "para peças" in reason or "total loss" in reason:
+        return "selling for parts"
+
+    issue_text = " ".join(
+        _normalized_text_list(extras.get("issues"))
+        + [str(extras.get("repair_details") or "").strip().lower()]
+        + [str(extras.get("accident_details") or "").strip().lower()]
+    )
+    if any(keyword in issue_text for keyword in ("avariado", "imobilizado", "sinistr", "para peças", "total loss")):
+        return "serious unresolved issue"
+
+    return None
 
 
 def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.DataFrame:
@@ -315,6 +372,9 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
             group_mileage_median = ms.iloc[0]["model_mileage_median"]
 
         if not median or price >= median * 0.85:
+            continue
+
+        if _blocking_deal_reason(listing):
             continue
 
         # 1. Undervaluation: gradient boosting predicted price (now includes LLM features)

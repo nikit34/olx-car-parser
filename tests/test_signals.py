@@ -1,5 +1,6 @@
 """Tests for buy signal computation."""
 
+import json
 from unittest.mock import patch
 
 import pandas as pd
@@ -45,3 +46,69 @@ class TestComputeSignals:
                             "velocity_mult", "confidence_mult",
                             "flip_score", "sample_size"}
                 assert required.issubset(set(signals.columns))
+
+    def test_excludes_obvious_total_loss_listings(self, sample_history_df, generations_data):
+        listings = pd.DataFrame([
+            {"olx_id": "risk-1", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2015, "price_eur": 3000, "mileage_km": 150000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True, "desc_mentions_accident": True,
+             "llm_extras": json.dumps({
+                 "mechanical_condition": "poor",
+                 "suspicious_signs": ["selling for parts"],
+                 "reason_for_sale": "para peças (total loss or registration issue)",
+             })},
+            {"olx_id": "comp-1", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2015, "price_eur": 12000, "mileage_km": 160000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-2", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2016, "price_eur": 14000, "mileage_km": 110000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-3", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2017, "price_eur": 15000, "mileage_km": 90000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-4", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2014, "price_eur": 11000, "mileage_km": 175000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-5", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2013, "price_eur": 10000, "mileage_km": 190000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+        ])
+
+        with patch("src.models.generations.load_generations", return_value=generations_data):
+            signals = compute_signals(listings, sample_history_df)
+
+        assert signals.empty or "risk-1" not in signals["olx_id"].values
+
+    def test_keeps_maintenance_mentions_when_condition_is_good(self, sample_history_df, generations_data):
+        listings = pd.DataFrame([
+            {"olx_id": "maint-1", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2015, "price_eur": 8000, "mileage_km": 150000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True, "desc_mentions_repair": True,
+             "desc_mentions_accident": False,
+             "llm_extras": json.dumps({
+                 "mechanical_condition": "good",
+                 "repair_details": "embreagem trocada há 1 mês",
+                 "issues": [],
+                 "suspicious_signs": [],
+             })},
+            {"olx_id": "comp-1", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2015, "price_eur": 12000, "mileage_km": 160000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-2", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2016, "price_eur": 14000, "mileage_km": 110000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-3", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2017, "price_eur": 15000, "mileage_km": 90000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-4", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2014, "price_eur": 11000, "mileage_km": 175000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-5", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2013, "price_eur": 10000, "mileage_km": 190000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+        ])
+
+        with patch("src.models.generations.load_generations", return_value=generations_data):
+            signals = compute_signals(listings, sample_history_df)
+
+        assert "maint-1" in signals["olx_id"].values
