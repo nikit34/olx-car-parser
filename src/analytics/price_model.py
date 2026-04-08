@@ -104,12 +104,17 @@ def train_price_model(
 
     cat_indices = [_ALL_FEATURES.index(c) for c in CATEGORICAL_FEATURES]
 
+    # max_bins must be >= max cardinality of any categorical feature + 1
+    max_cat = max((len(m) for m in cat_maps.values()), default=0)
+    max_bins = max(255, max_cat + 1)
+
     model = HistGradientBoostingRegressor(
         max_iter=700,
         max_depth=4,
         learning_rate=0.05,
         min_samples_leaf=10,
         l2_regularization=1.5,
+        max_bins=max_bins,
         categorical_features=cat_indices,
         random_state=42,
     )
