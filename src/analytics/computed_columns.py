@@ -16,8 +16,9 @@ def add_price_changes(df: pd.DataFrame) -> pd.DataFrame:
     if "first_price_eur" not in df.columns or "price_eur" not in df.columns:
         return df
     df["price_change_eur"] = df["price_eur"] - df["first_price_eur"]
-    df["price_change_pct"] = (
-        df["price_change_eur"] / df["first_price_eur"].replace(0, pd.NA) * 100
+    df["price_change_pct"] = pd.to_numeric(
+        df["price_change_eur"] / df["first_price_eur"].replace(0, pd.NA) * 100,
+        errors="coerce",
     ).round(1)
     return df
 
@@ -25,8 +26,9 @@ def add_price_changes(df: pd.DataFrame) -> pd.DataFrame:
 def add_eur_per_km(df: pd.DataFrame) -> pd.DataFrame:
     if "price_eur" not in df.columns or "mileage_km" not in df.columns:
         return df
-    df["eur_per_km"] = (
-        df["price_eur"] / df["mileage_km"].replace(0, pd.NA)
+    df["eur_per_km"] = pd.to_numeric(
+        df["price_eur"] / df["mileage_km"].replace(0, pd.NA),
+        errors="coerce",
     ).round(3)
     return df
 
