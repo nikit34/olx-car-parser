@@ -14,6 +14,9 @@ import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
 
 
+MAX_HGB_BINS = 255
+_OTHER_CATEGORY = "__other__"
+
 NUMERIC_FEATURES = [
     "year", "mileage_km", "engine_cc", "horsepower",
     "desc_mentions_num_owners", "avg_days_to_sell",
@@ -33,11 +36,29 @@ CATEGORICAL_FEATURES = [
 _ALL_FEATURES = NUMERIC_FEATURES + BOOL_FEATURES + CATEGORICAL_FEATURES
 
 
+def _build_categorical_mapping(vals: pd.Series) -> dict[str, int]:
+    """Build a stable mapping that fits HGBR's categorical bin limit."""
+    non_missing = vals.dropna().astype(str)
+    if non_missing.empty:
+        return {}
+
+    counts = non_missing.value_counts()
+    ordered = sorted(counts.index.tolist(), key=lambda value: (-int(counts[value]), value))
+
+    if len(ordered) > MAX_HGB_BINS:
+        kept = sorted(ordered[: MAX_HGB_BINS - 1])
+        values = [*kept, _OTHER_CATEGORY]
+    else:
+        values = sorted(ordered)
+
+    return {value: i for i, value in enumerate(values)}
+
+
 def _encode_categoricals(
     df: pd.DataFrame,
     cat_maps: dict[str, dict[str, int]] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, dict[str, int]]]:
-    """Ordinal-encode categorical columns. Unknown values become NaN (handled by HGBR)."""
+    """Ordinal-encode categoricals while staying within HGBR's category limit."""
     out = df.copy()
     maps: dict[str, dict[str, int]] = cat_maps or {}
 
@@ -46,14 +67,22 @@ def _encode_categoricals(
             out[col] = np.nan
             continue
 
-        vals = out[col].fillna("__missing__").astype(str)
-
         if col not in maps:
-            uniques = sorted(vals.unique())
-            maps[col] = {v: i for i, v in enumerate(uniques)}
+            maps[col] = _build_categorical_mapping(out[col])
 
         mapping = maps[col]
-        out[col] = vals.map(mapping).astype(float)
+        encoded = pd.Series(np.nan, index=out.index, dtype=float)
+        non_missing = out[col].notna()
+
+        if non_missing.any():
+            vals = out.loc[non_missing, col].astype(str)
+            if _OTHER_CATEGORY in mapping:
+                known = set(mapping)
+                known.discard(_OTHER_CATEGORY)
+                vals = vals.where(vals.isin(known), _OTHER_CATEGORY)
+            encoded.loc[non_missing] = vals.map(mapping).astype(float)
+
+        out[col] = encoded
 
     return out, maps
 
@@ -104,17 +133,13 @@ def train_price_model(
 
     cat_indices = [_ALL_FEATURES.index(c) for c in CATEGORICAL_FEATURES]
 
-    # max_bins must be >= max cardinality of any categorical feature + 1
-    max_cat = max((len(m) for m in cat_maps.values()), default=0)
-    max_bins = max(255, max_cat + 1)
-
     model = HistGradientBoostingRegressor(
         max_iter=700,
         max_depth=4,
         learning_rate=0.05,
         min_samples_leaf=10,
         l2_regularization=1.5,
-        max_bins=max_bins,
+        max_bins=MAX_HGB_BINS,
         categorical_features=cat_indices,
         random_state=42,
     )

@@ -149,3 +149,30 @@ def test_handles_missing_features():
     preds = predict_prices(model, cat_maps, sparse)
     assert len(preds) == 1
     assert preds.iloc[0] > 0
+
+
+def test_caps_high_cardinality_categories():
+    """Rare categories should be grouped so HGBR stays within its 255-bin limit."""
+    df = _sample_listings(600)
+    df["model"] = [f"Model {i}" for i in range(len(df))]
+
+    result = train_price_model(df)
+
+    assert result is not None
+    model, cat_maps = result
+    assert len(cat_maps["model"]) <= 255
+    assert "__other__" in cat_maps["model"]
+
+    unseen = pd.DataFrame([{
+        "year": 2018,
+        "mileage_km": 100000,
+        "engine_cc": 1600,
+        "brand": "Volkswagen",
+        "model": "Future Model",
+        "fuel_type": "Diesel",
+        "transmission": "Manual",
+        "segment": "Citadino",
+        "horsepower": 110,
+    }])
+    pred = predict_prices(model, cat_maps, unseen).iloc[0]
+    assert pred > 0
