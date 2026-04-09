@@ -53,14 +53,25 @@ class Listing(Base):
     # Enrichment columns (extracted from listing description text)
     desc_mentions_repair = Column(Boolean)
     desc_mentions_accident = Column(Boolean)
+    accident_details = Column(String)
     real_mileage_km = Column(Integer)           # Mileage from description (may differ from attribute)
     desc_mentions_num_owners = Column(Integer)
     desc_mentions_customs_cleared = Column(Boolean)
+    imported = Column(Boolean)
     right_hand_drive = Column(Boolean)
+    mechanical_condition = Column(String)       # "excellent", "good", "fair", "poor"
+    paint_condition = Column(String)            # "excellent", "good", "fair", "poor"
+    service_history = Column(Boolean)
+    repair_details = Column(String)
+    suspicious_signs = Column(Text)             # JSON list
+    extras = Column(Text)                       # JSON list
+    issues = Column(Text)                       # JSON list
+    reason_for_sale = Column(String)
     urgency = Column(String)                   # "high", "medium", "low"
     warranty = Column(Boolean)
-    tuning_or_mods = Column(Text)              # JSON list of aftermarket modifications
+    tuning_or_mods = Column(Text)              # JSON list
     taxi_fleet_rental = Column(Boolean)
+    recent_maintenance = Column(Text)           # JSON list
     first_owner_selling = Column(Boolean)
 
     source = Column(String, default="olx")     # "olx" or "standvirtual"

@@ -78,6 +78,17 @@ def init_db(db_path: str | None = None):
         ("tuning_or_mods", "TEXT"),
         ("taxi_fleet_rental", "BOOLEAN"),
         ("first_owner_selling", "BOOLEAN"),
+        ("accident_details", "TEXT"),
+        ("imported", "BOOLEAN"),
+        ("mechanical_condition", "TEXT"),
+        ("paint_condition", "TEXT"),
+        ("service_history", "BOOLEAN"),
+        ("repair_details", "TEXT"),
+        ("suspicious_signs", "TEXT"),
+        ("extras", "TEXT"),
+        ("issues", "TEXT"),
+        ("reason_for_sale", "TEXT"),
+        ("recent_maintenance", "TEXT"),
     ]
     _migrate_unmatched_columns = [
         ("source", "TEXT DEFAULT 'olx'"),

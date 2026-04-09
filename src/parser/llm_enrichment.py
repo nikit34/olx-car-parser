@@ -323,6 +323,47 @@ def correct_listing_data(listing) -> dict:
     if first_owner is not None:
         corrections["first_owner_selling"] = bool(first_owner)
 
+    # --- Accident details ---
+    accident_details = extras.get("accident_details")
+    if accident_details and isinstance(accident_details, str) and accident_details.strip():
+        corrections["accident_details"] = accident_details.strip()
+
+    # --- Imported ---
+    imported = extras.get("imported")
+    if imported is not None:
+        corrections["imported"] = bool(imported)
+
+    # --- Mechanical condition ---
+    mech = extras.get("mechanical_condition")
+    if mech in ("excellent", "good", "fair", "poor"):
+        corrections["mechanical_condition"] = mech
+
+    # --- Paint condition ---
+    paint = extras.get("paint_condition")
+    if paint in ("excellent", "good", "fair", "poor"):
+        corrections["paint_condition"] = paint
+
+    # --- Service history ---
+    service = extras.get("service_history")
+    if service is not None:
+        corrections["service_history"] = bool(service)
+
+    # --- Repair details ---
+    repair_details = extras.get("repair_details")
+    if repair_details and isinstance(repair_details, str) and repair_details.strip():
+        corrections["repair_details"] = repair_details.strip()
+
+    # --- Lists → JSON strings ---
+    for field in ("suspicious_signs", "extras", "issues", "recent_maintenance"):
+        val = extras.get(field)
+        if val and isinstance(val, list) and len(val) > 0:
+            corrections[field] = json.dumps(val, ensure_ascii=False)
+
+    # --- Reason for sale ---
+    reason = extras.get("reason_for_sale")
+    if reason and isinstance(reason, str) and reason.strip():
+        corrections["reason_for_sale"] = reason.strip()
+
     # --- Fix internal LLM contradictions (only tighten, never loosen) ---
     if corrections.get("desc_mentions_accident") and not corrections.get("desc_mentions_repair"):
         corrections["desc_mentions_repair"] = True
