@@ -28,7 +28,7 @@ right_hand_drive(bool), \
 mechanical_condition("excellent"/"good"/"fair"/"poor"), paint_condition(same), \
 suspicious_signs(list), extras(list), issues(list), reason_for_sale(str), \
 urgency("high"/"medium"/"low"), warranty(bool), tuning_or_mods(list), \
-taxi_fleet_rental(bool), recent_maintenance(list), tires_condition("new"/"good"/"fair"/"poor"), \
+taxi_fleet_rental(bool), recent_maintenance(list), \
 first_owner_selling(bool).
 Rules: mileage_in_description_km=exact km as integer ("4300 km"→4300, "150 mil km"→150000, \
 "89.500km"→89500, "4.300km"→4300). "mil"=thousand ONLY when written as a separate word. \
@@ -40,7 +40,6 @@ warranty=true if "garantia" mentioned (not "sem garantia"). \
 tuning_or_mods=list of aftermarket modifications: "reprogramação","stage 1/2","remap","chip tuning","suspensão rebaixada","coilovers","escape desportivo","downpipe","wrap","bodykit". \
 taxi_fleet_rental=true if "ex-táxi","TVDE","Uber","Bolt","rent-a-car","frota","carro de empresa". \
 recent_maintenance=list of specific completed maintenance: "correia distribuição","embreagem nova","travões novos","revisão feita", with km/date if mentioned. \
-tires_condition="new" if "pneus novos"; "good" if "bom estado"/"80% piso"; "fair" if "razoável"/"50%"; "poor" if "gastos"/"precisa pneus". \
 first_owner_selling=true if "1 dono desde novo","único dono","comprado novo por mim","vendo o meu". \
 If "para peças","vender as peças","venda de peças","para desmanchar","só peças": \
 mechanical_condition="poor", suspicious_signs must include "selling for parts", \
@@ -319,11 +318,6 @@ def correct_listing_data(listing) -> dict:
     if taxi is not None:
         corrections["taxi_fleet_rental"] = bool(taxi)
 
-    # --- Tires condition ---
-    tires = extras.get("tires_condition")
-    if tires in ("new", "good", "fair", "poor"):
-        corrections["tires_condition"] = tires
-
     # --- First owner selling ---
     first_owner = extras.get("first_owner_selling")
     if first_owner is not None:
@@ -361,10 +355,6 @@ def _postvalidate(extras: dict, corrections: dict, description: str):
             suspicious.append("accident with structural damage")
             corrections.setdefault("_llm_overrides", {})["suspicious_signs"] = suspicious
 
-    # Null out hallucinated tires_condition if description doesn't mention tires
-    tires_words = ["pneu", "pneus", "tire", "piso", "borracha"]
-    if not any(w in desc_lower for w in tires_words):
-        corrections.pop("tires_condition", None)
 
 
 def apply_corrections(listings: list) -> int:

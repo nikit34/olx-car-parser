@@ -30,7 +30,7 @@ BOOL_FEATURES = [
 
 CATEGORICAL_FEATURES = [
     "brand", "model", "fuel_type", "transmission", "segment",
-    "tires_condition", "urgency",
+    "urgency",
 ]
 
 _ALL_FEATURES = NUMERIC_FEATURES + BOOL_FEATURES + CATEGORICAL_FEATURES

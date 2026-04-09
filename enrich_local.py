@@ -93,15 +93,25 @@ def enrich_one(desc, client):
 
 
 def push_batch(results):
-    """Push all results in one SSH call using a SQL script."""
+    """Push all results in one SSH call via stdin."""
     if not results:
         return
-    stmts = []
+    stmts = ["PRAGMA busy_timeout = 30000;", "BEGIN;"]
     for olx_id, data in results:
         j = json.dumps(data, ensure_ascii=False).replace("'", "''")
         stmts.append(f"UPDATE listings SET llm_extras='{j}' WHERE olx_id='{olx_id}' AND llm_extras IS NULL;")
-    sql = "BEGIN;" + "".join(stmts) + "COMMIT;"
-    ssh_cmd(f'sqlite3 {DB} "{sql}"', timeout=60)
+    stmts.append("COMMIT;")
+    sql = "\n".join(stmts)
+    import time
+    for attempt in range(3):
+        try:
+            r = subprocess.run(SSH + [f"sqlite3 {DB}"], input=sql, capture_output=True, text=True, timeout=120)
+            if r.returncode == 0:
+                return
+            print(f"  Push retry {attempt+1}: {r.stderr[:80]}", flush=True)
+        except subprocess.TimeoutExpired:
+            print(f"  Push timeout (attempt {attempt+1})", flush=True)
+        time.sleep(5)
 
 
 def main():

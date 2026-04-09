@@ -504,7 +504,6 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
             "warranty": bool(has_warranty) if pd.notna(has_warranty) else None,
             "taxi_fleet_rental": bool(listing.get("taxi_fleet_rental")) if pd.notna(listing.get("taxi_fleet_rental")) else None,
             "first_owner_selling": bool(listing.get("first_owner_selling")) if pd.notna(listing.get("first_owner_selling")) else None,
-            "tires_condition": listing.get("tires_condition") if pd.notna(listing.get("tires_condition")) else None,
         }
         for col in ("days_listed", "price_change_eur", "price_change_pct", "eur_per_km"):
             if col in listing.index:

@@ -61,7 +61,6 @@ class Listing(Base):
     warranty = Column(Boolean)
     tuning_or_mods = Column(Text)              # JSON list of aftermarket modifications
     taxi_fleet_rental = Column(Boolean)
-    tires_condition = Column(String)           # "new", "good", "fair", "poor"
     first_owner_selling = Column(Boolean)
 
     source = Column(String, default="olx")     # "olx" or "standvirtual"

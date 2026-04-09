@@ -378,7 +378,6 @@ def get_listings_df(session: Session) -> pd.DataFrame:
             "urgency": l.urgency,
             "warranty": l.warranty,
             "taxi_fleet_rental": l.taxi_fleet_rental,
-            "tires_condition": l.tires_condition,
             "first_owner_selling": l.first_owner_selling,
             "source": l.source or "olx",
             "duplicate_of": l.duplicate_of,

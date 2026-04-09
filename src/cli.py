@@ -176,7 +176,6 @@ def _db_worker(db_queue: Queue, result: dict):
             "warranty": corrections.get("warranty"),
             "tuning_or_mods": json.dumps(corrections["tuning_or_mods"], ensure_ascii=False) if corrections.get("tuning_or_mods") else None,
             "taxi_fleet_rental": corrections.get("taxi_fleet_rental"),
-            "tires_condition": corrections.get("tires_condition"),
             "first_owner_selling": corrections.get("first_owner_selling"),
             "source": getattr(raw, "source", "olx"),
             "posted_at": getattr(raw, "_posted_at", None),

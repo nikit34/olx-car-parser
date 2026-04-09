@@ -421,9 +421,6 @@ with tab_deals:
                     positives.append("гарантия")
                 if deal.get("first_owner_selling"):
                     positives.append("первый владелец")
-                tires = deal.get("tires_condition")
-                if tires and tires in ("new", "good"):
-                    positives.append(f"шины: {tires}")
                 if deal.get("urgency") == "high":
                     positives.append("срочная продажа")
                 if positives:
@@ -453,7 +450,6 @@ with tab_deals:
             "warranty",
             "taxi_fleet_rental",
             "first_owner_selling",
-            "tires_condition",
         ]:
             if extra_col in deals.columns and deals[extra_col].notna().any():
                 signal_cols.append(extra_col)
