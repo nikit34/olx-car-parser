@@ -323,37 +323,9 @@ def correct_listing_data(listing) -> dict:
     if first_owner is not None:
         corrections["first_owner_selling"] = bool(first_owner)
 
-    # --- Post-validation: fix LLM logical contradictions ---
-    description = getattr(listing, "description", "") or ""
-    _postvalidate(extras, corrections, description)
-
-    return corrections
-
-
-def _postvalidate(extras: dict, corrections: dict, description: str):
-    """Fix common LLM contradictions using hard rules."""
-    accident = extras.get("desc_mentions_accident") or corrections.get("desc_mentions_accident")
-    accident_details = extras.get("accident_details") or ""
-    suspicious = list(extras.get("suspicious_signs") or [])
-    desc_lower = description.lower()
-
-    # If accident=true → repair must be true (accident always means damage)
-    if accident:
+    # --- Fix internal LLM contradictions (only tighten, never loosen) ---
+    if corrections.get("desc_mentions_accident") and not corrections.get("desc_mentions_repair"):
         corrections["desc_mentions_repair"] = True
-
-    # If accident with structural keywords → mechanical_condition can't be "excellent"
-    structural_keywords = ["capotamento", "capotou", "sinistro", "perda total",
-                           "total loss", "embateu", "colisão", "abalroamento"]
-    has_structural = any(kw in accident_details.lower() for kw in structural_keywords)
-    if not has_structural:
-        has_structural = any(kw in desc_lower for kw in structural_keywords)
-    if has_structural:
-        mech = extras.get("mechanical_condition")
-        if mech in ("excellent", "good"):
-            corrections.setdefault("_llm_overrides", {})["mechanical_condition"] = "fair"
-        if "accident with structural damage" not in suspicious:
-            suspicious.append("accident with structural damage")
-            corrections.setdefault("_llm_overrides", {})["suspicious_signs"] = suspicious
 
 
 
