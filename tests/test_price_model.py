@@ -71,9 +71,10 @@ def test_train_returns_model():
     df = _sample_listings()
     result = train_price_model(df)
     assert result is not None
-    model, cat_maps = result
+    models, cat_maps = result
     assert "brand" in cat_maps
     assert "model" in cat_maps
+    assert "low" in models and "median" in models and "high" in models
 
 
 def test_train_returns_none_for_small_data():
@@ -84,15 +85,17 @@ def test_train_returns_none_for_small_data():
 
 def test_predictions_are_positive():
     df = _sample_listings()
-    model, cat_maps = train_price_model(df)
-    preds = predict_prices(model, cat_maps, df)
-    assert (preds >= 0).all()
+    models, cat_maps = train_price_model(df)
+    preds = predict_prices(models, cat_maps, df)
+    assert (preds["predicted_price"] >= 0).all()
+    assert (preds["fair_price_low"] >= 0).all()
+    assert (preds["fair_price_high"] >= 0).all()
     assert len(preds) == len(df)
 
 
 def test_newer_cars_predicted_higher():
     df = _sample_listings(500)
-    model, cat_maps = train_price_model(df)
+    models, cat_maps = train_price_model(df)
 
     old_car = pd.DataFrame([{
         "year": 2010, "mileage_km": 150000, "engine_cc": 1600,
@@ -107,14 +110,14 @@ def test_newer_cars_predicted_higher():
         "segment": "Citadino", "horsepower": 110,
     }])
 
-    pred_old = predict_prices(model, cat_maps, old_car).iloc[0]
-    pred_new = predict_prices(model, cat_maps, new_car).iloc[0]
+    pred_old = predict_prices(models, cat_maps, old_car)["predicted_price"].iloc[0]
+    pred_new = predict_prices(models, cat_maps, new_car)["predicted_price"].iloc[0]
     assert pred_new > pred_old
 
 
 def test_accident_cars_predicted_lower():
     df = _sample_listings(500)
-    model, cat_maps = train_price_model(df)
+    models, cat_maps = train_price_model(df)
 
     base = {
         "year": 2018, "mileage_km": 100000, "engine_cc": 1600,
@@ -125,8 +128,8 @@ def test_accident_cars_predicted_lower():
     clean = pd.DataFrame([{**base, "desc_mentions_accident": False}])
     damaged = pd.DataFrame([{**base, "desc_mentions_accident": True}])
 
-    pred_clean = predict_prices(model, cat_maps, clean).iloc[0]
-    pred_damaged = predict_prices(model, cat_maps, damaged).iloc[0]
+    pred_clean = predict_prices(models, cat_maps, clean)["predicted_price"].iloc[0]
+    pred_damaged = predict_prices(models, cat_maps, damaged)["predicted_price"].iloc[0]
     assert pred_clean > pred_damaged
 
 
@@ -139,16 +142,16 @@ def test_handles_missing_features():
 
     result = train_price_model(df)
     assert result is not None
-    model, cat_maps = result
+    models, cat_maps = result
 
     # Predict on row with missing features
     sparse = pd.DataFrame([{
         "year": 2018, "mileage_km": 100000,
         "brand": "Volkswagen", "model": "Golf",
     }])
-    preds = predict_prices(model, cat_maps, sparse)
+    preds = predict_prices(models, cat_maps, sparse)
     assert len(preds) == 1
-    assert preds.iloc[0] > 0
+    assert preds["predicted_price"].iloc[0] > 0
 
 
 def test_caps_high_cardinality_categories():
@@ -159,7 +162,7 @@ def test_caps_high_cardinality_categories():
     result = train_price_model(df)
 
     assert result is not None
-    model, cat_maps = result
+    models, cat_maps = result
     assert len(cat_maps["model"]) <= 255
     assert "__other__" in cat_maps["model"]
 
@@ -174,5 +177,5 @@ def test_caps_high_cardinality_categories():
         "segment": "Citadino",
         "horsepower": 110,
     }])
-    pred = predict_prices(model, cat_maps, unseen).iloc[0]
+    pred = predict_prices(models, cat_maps, unseen)["predicted_price"].iloc[0]
     assert pred > 0

@@ -379,6 +379,8 @@ def correct_listing_data(listing) -> dict:
     if corrections.get("desc_mentions_accident") and not corrections.get("desc_mentions_repair"):
         corrections["desc_mentions_repair"] = True
 
+    return corrections
+
 
 
 def apply_corrections(listings: list) -> int:

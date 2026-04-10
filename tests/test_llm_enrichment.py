@@ -272,7 +272,7 @@ class TestLlmPipeline:
         worker.start()
 
         for i in range(5):
-            in_q.put((f"test-{i}", f"Vendo carro {i} com {i*50000}km muitos detalhes"))
+            in_q.put((f"test-{i}", f"Test Car {i}", f"Vendo carro {i} com {i*50000}km muitos detalhes"))
 
         in_q.put(None)  # poison pill
         worker.join(timeout=10)
@@ -295,7 +295,7 @@ class TestLlmPipeline:
         shutdown = multiprocessing.Event()
 
         for i in range(7):
-            in_q.put((f"fail-{i}", f"Vendo carro numero {i} com muitos quilometros"))
+            in_q.put((f"fail-{i}", f"Car {i}", f"Vendo carro numero {i} com muitos quilometros"))
 
         worker = threading.Thread(target=_llm_worker, args=(in_q, out_q, shutdown))
         worker.start()

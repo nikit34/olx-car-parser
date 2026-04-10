@@ -282,7 +282,7 @@ class TestLlmWorker:
         shutdown = multiprocessing.Event()
 
         for i in range(3):
-            in_q.put((f"item-{i}", f"Vendo carro em bom estado numero {i} com muitos km"))
+            in_q.put((f"item-{i}", f"Car {i}", f"Vendo carro em bom estado numero {i} com muitos km"))
 
         in_q.put(None)  # poison pill
 
@@ -305,7 +305,7 @@ class TestLlmWorker:
         out_q = multiprocessing.Queue()
         shutdown = multiprocessing.Event()
 
-        in_q.put(("fail-1", "Vendo carro com problemas e muitos km percorridos"))
+        in_q.put(("fail-1", "Car", "Vendo carro com problemas e muitos km percorridos"))
         in_q.put(None)
 
         t = threading.Thread(target=_llm_worker, args=(in_q, out_q, shutdown))
@@ -324,7 +324,7 @@ class TestLlmWorker:
         shutdown = multiprocessing.Event()
 
         for i in range(10):
-            in_q.put((f"fail-{i}", f"Vendo carro numero {i} com muitos quilometros reais"))
+            in_q.put((f"fail-{i}", f"Car {i}", f"Vendo carro numero {i} com muitos quilometros reais"))
 
         t = threading.Thread(target=_llm_worker, args=(in_q, out_q, shutdown))
         t.start()
@@ -343,7 +343,7 @@ class TestLlmWorker:
         out_q = multiprocessing.Queue()
         shutdown = multiprocessing.Event()
 
-        in_q.put(("short-1", "too short"))
+        in_q.put(("short-1", "Car", "too short"))
         in_q.put(None)
 
         t = threading.Thread(target=_llm_worker, args=(in_q, out_q, shutdown))
@@ -407,7 +407,7 @@ class TestShutdownDrain:
         for i in range(3):
             raw = _make_raw(olx_id=f"drain-{i}")
             raw_by_id[raw.olx_id] = raw
-            llm_in.put((raw.olx_id, raw.description))
+            llm_in.put((raw.olx_id, raw.title, raw.description))
 
         # Also a leftover poison pill (worker exited early without consuming it)
         llm_in.put(None)
@@ -420,7 +420,7 @@ class TestShutdownDrain:
             except Empty:
                 break
             if item is not None:
-                olx_id, _ = item
+                olx_id, *_ = item
                 raw = raw_by_id.get(olx_id)
                 if raw:
                     db_queue.put((raw, None))
@@ -486,7 +486,7 @@ class TestFullPipeline:
         listings = [_make_raw(olx_id=f"e2e-{i}") for i in range(5)]
         for raw in listings:
             raw_by_id[raw.olx_id] = raw
-            llm_in.put((raw.olx_id, raw.description))
+            llm_in.put((raw.olx_id, raw.title, raw.description))
 
         # Shutdown sequence (same order as scrape())
         llm_in.put(None)  # poison pill for LLM worker
@@ -537,7 +537,7 @@ class TestFullPipeline:
         for i in range(3):
             raw = _make_raw(olx_id=f"llm-{i}")
             raw_by_id[raw.olx_id] = raw
-            llm_in.put((raw.olx_id, raw.description))
+            llm_in.put((raw.olx_id, raw.title, raw.description))
 
         # 2 listings sent directly to DB (skip LLM)
         for i in range(2):
@@ -591,7 +591,7 @@ class TestFullPipeline:
         for i in range(8):
             raw = _make_raw(olx_id=f"drain-{i}")
             raw_by_id[raw.olx_id] = raw
-            llm_in.put((raw.olx_id, raw.description))
+            llm_in.put((raw.olx_id, raw.title, raw.description))
 
         # Wait for LLM worker to exit (5 failures)
         llm_in.put(None)
@@ -606,7 +606,7 @@ class TestFullPipeline:
             except Empty:
                 break
             if item is not None:
-                olx_id, _ = item
+                olx_id, *_ = item
                 raw = raw_by_id.get(olx_id)
                 if raw:
                     db_queue.put((raw, None))
