@@ -121,7 +121,7 @@ for _, deal in deals.iterrows():
             if pd.notna(deal.get("mileage_km")):
                 details.append(f"{int(deal['mileage_km']):,} km")
             if deal.get("fuel_type"):
-                details.append(deal["fuel_type"])
+                details.append(str(deal["fuel_type"]))
             if pd.notna(deal.get("engine_cc")) and deal.get("engine_cc"):
                 details.append(f"{int(deal['engine_cc'])/1000:.1f}L")
             if pd.notna(deal.get("horsepower")) and deal.get("horsepower"):
