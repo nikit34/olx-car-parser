@@ -33,9 +33,8 @@ class Listing(Base):
     seats = Column(Integer)               # Lugares
     color = Column(String)                 # Cor
     condition = Column(String)             # Condição: Usado, Novo
-    origin = Column(String)               # Origem: Nacional, Importado
+
     registration_month = Column(String)    # Mes de Registo
-    registration_plate = Column(String)    # Matricula
     city = Column(String, index=True)      # Cidade/freguesia
     district = Column(String, index=True)  # Distrito (Porto, Lisboa, Faro...)
     seller_type = Column(String)           # Particular / Profissional

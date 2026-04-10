@@ -289,9 +289,6 @@ def correct_listing_data(listing) -> dict:
     customs = _get_extra(extras, "desc_mentions_customs_cleared")
     if customs is not None:
         corrections["desc_mentions_customs_cleared"] = bool(customs)
-    elif listing.origin and "import" in (listing.origin or "").lower():
-        # Imported car with no customs info → flag as unknown (None stays)
-        pass
 
     # --- Right-hand drive ---
     rhd = extras.get("right_hand_drive")

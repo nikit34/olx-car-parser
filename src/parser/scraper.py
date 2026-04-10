@@ -39,7 +39,6 @@ KNOWN_BRANDS = [
 
 PARAM_LABEL_MAP = {
     "Segmento": "segment",
-    "Matrícula": "registration_plate",
     "Ano": "year",
     "Modelo": "model",
     "Mês de Registo": "registration_month",
@@ -51,7 +50,6 @@ PARAM_LABEL_MAP = {
     "Condição": "condition",
     "Portas": "doors",
     "Lugares": "seats",
-    "Origem": "origin",
     "Cor": "color",
     "Tração": "drive_type",
     "Marca": "brand",
@@ -89,9 +87,7 @@ class RawListing:
     seats: int | None = None
     color: str | None = None
     condition: str | None = None
-    origin: str | None = None
     registration_month: str | None = None
-    registration_plate: str | None = None
     city: str = ""
     district: str = ""
     seller_type: str = "Particular"
@@ -362,6 +358,7 @@ class OlxScraper:
             "engine_capacity": ("engine_cc", _safe_int),
             "engine_power": ("horsepower", _safe_int),
             "door_count": ("doors", None),
+            "nr_seats": ("seats", _safe_int),
             "color": ("color", None),
             "body_type": ("segment", None),
             "new_used": ("condition", None),
@@ -380,6 +377,7 @@ class OlxScraper:
             "engine_capacity": "Cilindrada",
             "engine_power": "Potência",
             "door_count": "Nº de portas",
+            "nr_seats": "Lotação",
             "color": "Cor",
             "body_type": "Segmento",
             "new_used": "Condição",
