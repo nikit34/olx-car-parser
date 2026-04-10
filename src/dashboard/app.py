@@ -127,13 +127,13 @@ for _, deal in deals.iterrows():
             if pd.notna(deal.get("horsepower")) and deal.get("horsepower"):
                 details.append(f"{int(deal['horsepower'])} cv")
             if deal.get("transmission"):
-                details.append(deal["transmission"])
+                details.append(str(deal["transmission"]))
             if deal.get("drive_type"):
-                details.append(deal["drive_type"])
+                details.append(str(deal["drive_type"]))
             if deal.get("color"):
-                details.append(deal["color"])
+                details.append(str(deal["color"]))
             if deal.get("district"):
-                details.append(deal["district"])
+                details.append(str(deal["district"]))
             if details:
                 st.caption(" · ".join(details))
 
@@ -147,8 +147,6 @@ for _, deal in deals.iterrows():
                 tags.append("правый руль")
             if deal.get("taxi_fleet_rental"):
                 tags.append("такси/прокат")
-            if deal.get("imported"):
-                tags.append("импорт")
             n_own = deal.get("desc_mentions_num_owners")
             if pd.notna(n_own) and n_own and int(n_own) >= 3:
                 tags.append(f"{int(n_own)} владельца")
@@ -156,8 +154,6 @@ for _, deal in deals.iterrows():
                 tags.append("гарантия")
             if deal.get("first_owner_selling"):
                 tags.append("1-й владелец")
-            if deal.get("service_history"):
-                tags.append("сервисная книжка")
             mech = deal.get("mechanical_condition")
             if pd.notna(mech) and mech and mech != "null":
                 tags.append(f"мех: {mech}")
