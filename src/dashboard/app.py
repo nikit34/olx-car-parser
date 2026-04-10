@@ -379,10 +379,18 @@ with tab_deals:
                 st.markdown(f"### {deal['brand']} {deal['model']} {int(deal['year']) if pd.notna(deal['year']) else '?'}")
                 if pd.notna(deal.get("predicted_price")):
                     profit = int(deal["est_profit_eur"])
-                    st.markdown(f"**{int(deal['price_eur']):,} EUR** → fair price **{int(deal['predicted_price']):,} EUR**")
+                    low = int(deal["fair_price_low"]) if pd.notna(deal.get("fair_price_low")) else None
+                    high = int(deal["fair_price_high"]) if pd.notna(deal.get("fair_price_high")) else None
+                    if low and high:
+                        st.markdown(f"**{int(deal['price_eur']):,} EUR** → fair price **{low:,}–{high:,} EUR**")
+                    else:
+                        st.markdown(f"**{int(deal['price_eur']):,} EUR** → fair price **{int(deal['predicted_price']):,} EUR**")
+                    compl = deal.get("data_completeness", 0)
+                    compl_pct = int(round(compl * 100)) if pd.notna(compl) else 0
                     profit_day = deal.get("profit_per_day")
                     profit_day_str = f" · **{profit_day:.0f} EUR/day**" if pd.notna(profit_day) else ""
                     st.markdown(f"Profit: **{profit:+,} EUR** ({deal['est_roi_pct']:+.0f}% ROI){profit_day_str}")
+                    st.caption(f"Data completeness: {compl_pct}%")
                 else:
                     st.markdown(f"**{int(deal['price_eur']):,} EUR** · discount **{deal['discount_pct']:.0f}%** от медианы")
                     st.markdown("_Нет предсказания цены — прибыль не рассчитана_")
@@ -433,7 +441,8 @@ with tab_deals:
 
         # --- Full deals table ---
         signal_cols = ["deal", "deal_profile", "brand", "model", "generation", "year",
-                       "price_eur", "predicted_price", "est_profit_eur", "est_roi_pct",
+                       "price_eur", "fair_price_low", "fair_price_high", "data_completeness",
+                       "est_profit_eur", "est_roi_pct",
                        "profit_per_day", "undervaluation_pct", "flip_score"]
         if "avg_days_to_sell" in deals.columns:
             signal_cols.append("avg_days_to_sell")
@@ -468,7 +477,9 @@ with tab_deals:
                 "deal": "Deal", "brand": "Brand", "model": "Model",
                 "deal_profile": "Profile",
                 "generation": "Gen", "year": "Year",
-                "price_eur": "Price", "predicted_price": "Fair Price",
+                "price_eur": "Price",
+                "fair_price_low": "Fair Low", "fair_price_high": "Fair High",
+                "data_completeness": "Data %",
                 "est_profit_eur": "Profit", "est_roi_pct": "ROI %",
                 "profit_per_day": "EUR/day",
                 "undervaluation_pct": "Below Market %", "flip_score": "Score",
@@ -487,7 +498,9 @@ with tab_deals:
             width="stretch", hide_index=True,
             column_config={
                 "Price": st.column_config.NumberColumn(format="%d EUR"),
-                "Fair Price": st.column_config.NumberColumn(format="%d EUR"),
+                "Fair Low": st.column_config.NumberColumn(format="%d EUR"),
+                "Fair High": st.column_config.NumberColumn(format="%d EUR"),
+                "Data %": st.column_config.ProgressColumn(min_value=0, max_value=1, format="%.0f%%"),
                 "Profit": st.column_config.NumberColumn(format="%+d EUR"),
                 "ROI %": st.column_config.NumberColumn(format="%+.1f%%"),
                 "EUR/day": st.column_config.NumberColumn(format="%.0f"),

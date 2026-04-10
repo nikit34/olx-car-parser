@@ -82,11 +82,11 @@ def _llm_worker(in_q: multiprocessing.Queue, out_q: multiprocessing.Queue,
             continue
         if item is None:  # poison pill
             break
-        olx_id, description = item
+        olx_id, title, description = item
         if not description or len(description.strip()) < 20:
             out_q.put((olx_id, None))
             continue
-        result = enrich_from_description(description)
+        result = enrich_from_description(description, title)
         out_q.put((olx_id, result))
         if result:
             enriched += 1
@@ -318,7 +318,7 @@ def scrape(
                 skipped_llm += 1
                 db_queue.put((listing, None))
                 continue
-            llm_in.put((listing.olx_id, listing.description))
+            llm_in.put((listing.olx_id, listing.title, listing.description))
             sent_to_llm += 1
         log.info("Page done: %d listings -> %d sent to LLM, %d skipped", len(batch), sent_to_llm, skipped_llm)
 
@@ -495,7 +495,7 @@ def enrich(
     def _enrich_one(listing):
         if not listing.description or len(listing.description.strip()) < 20:
             return listing, {}
-        result = enrich_from_description(listing.description)
+        result = enrich_from_description(listing.description, listing.title or "")
         return listing, result
 
     with ThreadPoolExecutor(max_workers=workers) as pool:

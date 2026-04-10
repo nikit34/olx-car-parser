@@ -154,8 +154,8 @@ def _call_ollama(description: str, cfg: dict) -> dict | None:
     return None
 
 
-def enrich_from_description(description: str) -> dict | None:
-    """Extract structured data from description using local Ollama.
+def enrich_from_description(description: str, title: str = "") -> dict | None:
+    """Extract structured data from title + description using local Ollama.
 
     Returns dict with extracted fields, or None on failure.
     """
@@ -168,7 +168,8 @@ def enrich_from_description(description: str) -> dict | None:
         logger.warning("Ollama not running at %s. Skipping enrichment.", cfg["ollama_url"])
         return None
 
-    result = _call_ollama(description, cfg)
+    text = f"{title}\n{description}" if title else description
+    result = _call_ollama(text, cfg)
     return normalize_llm_extras(result) if result else None
 
 
@@ -213,7 +214,7 @@ def enrich_listings_batch(listings: list, batch_size: int = 50) -> int:
         if not listing.description:
             continue
 
-        result = enrich_from_description(listing.description)
+        result = enrich_from_description(listing.description, getattr(listing, "title", ""))
         if result:
             listing._llm_extras = normalize_llm_extras(result)
             enriched += 1

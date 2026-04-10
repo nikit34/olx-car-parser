@@ -305,10 +305,18 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         )
 
     # --- Gradient boosting price model (uses LLM fields + market data) ---
-    from src.analytics.price_model import train_price_model, predict_prices
+    from src.analytics.price_model import (
+        train_price_model, predict_prices,
+        compute_feature_completeness,
+    )
+
+    feature_fill = compute_feature_completeness(active)
 
     gb_result = train_price_model(active)
     gb_predictions: dict[str, float] = {}
+    gb_completeness: dict[str, float] = {}
+    gb_fair_low: dict[str, float] = {}
+    gb_fair_high: dict[str, float] = {}
     if gb_result is not None:
         gb_model, gb_cat_maps = gb_result
         preds = predict_prices(gb_model, gb_cat_maps, active)
@@ -387,6 +395,18 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         else:
             undervaluation_pct = 0.0
         discount_pct = round((1 - price / median) * 100, 1)
+
+        # Data completeness → price range spread
+        fill_rate = float(feature_fill.loc[listing.name]) if listing.name in feature_fill.index else 0.0
+        sample_conf = min(sample / 20, 1.0)
+        completeness = round(0.6 * fill_rate + 0.4 * sample_conf, 3)
+        if predicted and predicted > 0:
+            spread = 0.05 + 0.25 * (1 - completeness)
+            fair_low = round(predicted * (1 - spread))
+            fair_high = round(predicted * (1 + spread))
+        else:
+            fair_low = None
+            fair_high = None
 
         # --- Opportunity multipliers (deal quality, not market value) ---
 
@@ -468,6 +488,9 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
             "sub_segment": sub_seg or "",
             "price_eur": price,
             "predicted_price": round(predicted) if predicted and predicted > 0 else None,
+            "fair_price_low": fair_low,
+            "fair_price_high": fair_high,
+            "data_completeness": completeness,
             "median_price_eur": round(median),
             "discount_pct": discount_pct,
             "undervaluation_pct": undervaluation_pct,

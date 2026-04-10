@@ -148,6 +148,32 @@ def train_price_model(
     return model, cat_maps
 
 
+def compute_feature_completeness(listings_df: pd.DataFrame) -> pd.Series:
+    """Fraction of model features that are non-null per listing (0–1)."""
+    cols = [c for c in _ALL_FEATURES if c in listings_df.columns]
+    if not cols:
+        return pd.Series(0.0, index=listings_df.index, name="feature_fill_rate")
+    present = listings_df[cols].notna().sum(axis=1)
+    return (present / len(_ALL_FEATURES)).rename("feature_fill_rate")
+
+
+def compute_data_completeness(
+    feature_fill_rate: pd.Series,
+    sample_sizes: pd.Series,
+) -> pd.Series:
+    """Combined data completeness: feature fill (60%) + sample confidence (40%).
+
+    sample_sizes: number of comparable listings per row (from market stats).
+    Returns Series 0–1 aligned with feature_fill_rate index.
+    """
+    sample_conf = (sample_sizes.fillna(0) / 20).clip(upper=1.0)
+    return (0.6 * feature_fill_rate + 0.4 * sample_conf).rename("data_completeness")
+
+
+_MIN_SPREAD = 0.05   # ±5% at full completeness
+_MAX_SPREAD = 0.30   # ±30% at zero completeness
+
+
 def predict_prices(
     model: HistGradientBoostingRegressor,
     cat_maps: dict[str, dict[str, int]],
@@ -157,3 +183,18 @@ def predict_prices(
     X_arr, _ = _prepare_X(listings_df, cat_maps)
     predictions = model.predict(X_arr)
     return pd.Series(np.maximum(predictions, 0), index=listings_df.index, name="predicted_price")
+
+
+def price_range_from_completeness(
+    predicted: pd.Series,
+    data_completeness: pd.Series,
+) -> pd.DataFrame:
+    """Compute fair price range whose width depends on data completeness.
+
+    Returns DataFrame with columns: fair_price_low, fair_price_high.
+    Less data → wider spread around predicted price.
+    """
+    spread = _MIN_SPREAD + (_MAX_SPREAD - _MIN_SPREAD) * (1 - data_completeness.clip(0, 1))
+    low = (predicted * (1 - spread)).clip(lower=0).round(0)
+    high = (predicted * (1 + spread)).round(0)
+    return pd.DataFrame({"fair_price_low": low, "fair_price_high": high}, index=predicted.index)
