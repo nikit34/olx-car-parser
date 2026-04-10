@@ -192,7 +192,7 @@ def _blocking_deal_reason(listing: pd.Series) -> str | None:
     return None
 
 
-def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.DataFrame:
+def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Find undervalued listings and rank by flip potential.
 
     Price model (gradient boosting) uses 20 features including LLM-extracted
@@ -208,7 +208,7 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
     - Confidence: comparable listing count
     """
     if listings_df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame()
 
     import numpy as np
     from src.models.generations import get_generation
@@ -308,6 +308,7 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
     from src.analytics.price_model import (
         train_price_model, predict_prices,
         compute_feature_completeness,
+        compute_permutation_importance,
     )
 
     feature_fill = compute_feature_completeness(active)
@@ -316,8 +317,10 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
     gb_predictions: dict[str, float] = {}
     gb_fair_low: dict[str, float] = {}
     gb_fair_high: dict[str, float] = {}
+    importance_df = pd.DataFrame()
     if gb_result is not None:
         gb_models, gb_cat_maps = gb_result
+        importance_df = compute_permutation_importance(gb_models, gb_cat_maps, active)
         price_df = predict_prices(gb_models, gb_cat_maps, active)
         for idx in price_df.index:
             olx_id = active.loc[idx, "olx_id"] if "olx_id" in active.columns else None
@@ -534,7 +537,7 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
     df = pd.DataFrame(signals)
     if not df.empty:
         df = df.sort_values("flip_score", ascending=False)
-    return df
+    return df, importance_df
 
 
 
@@ -582,12 +585,13 @@ def load_all():
         # Use LLM-corrected mileage everywhere (sellers game filters with fake low values)
         if "real_mileage_km" in listings.columns:
             listings["mileage_km"] = listings["real_mileage_km"].fillna(listings["mileage_km"])
-        signals = compute_signals(listings, history)
+        signals, importance = compute_signals(listings, history)
         turnover = compute_turnover_stats(listings)
     else:
         listings = pd.DataFrame()
         history = pd.DataFrame()
         signals = pd.DataFrame()
+        importance = pd.DataFrame()
         turnover = pd.DataFrame()
 
     portfolio = load_portfolio()
@@ -603,4 +607,4 @@ def load_all():
 
     unmatched = load_unmatched()
 
-    return listings, history, signals, brands_models, turnover, portfolio, unmatched
+    return listings, history, signals, brands_models, turnover, portfolio, unmatched, importance

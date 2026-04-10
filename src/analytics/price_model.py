@@ -13,6 +13,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.inspection import permutation_importance
 
 
 MAX_HGB_BINS = 255
@@ -184,6 +185,39 @@ def compute_data_completeness(
     """
     sample_conf = (sample_sizes.fillna(0) / 20).clip(upper=1.0)
     return (0.6 * feature_fill_rate + 0.4 * sample_conf).rename("data_completeness")
+
+
+def compute_permutation_importance(
+    models: dict[str, HistGradientBoostingRegressor],
+    cat_maps: dict[str, dict[str, int]],
+    listings_df: pd.DataFrame,
+    n_repeats: int = 10,
+) -> pd.DataFrame:
+    """Permutation importance for each feature across all three quantile models.
+
+    Returns DataFrame with columns: feature, median_importance, low_importance,
+    high_importance — sorted by median_importance descending.
+    """
+    df = listings_df[
+        listings_df["price_eur"].notna()
+        & listings_df["year"].notna()
+        & listings_df["mileage_km"].notna()
+    ].copy()
+
+    y = df["price_eur"].values.astype(float)
+    X_arr, _ = _prepare_X(df, cat_maps)
+
+    rows = []
+    for name in ("median", "low", "high"):
+        result = permutation_importance(
+            models[name], X_arr, y,
+            n_repeats=n_repeats, random_state=42, n_jobs=-1,
+        )
+        rows.append(pd.Series(result.importances_mean, index=_ALL_FEATURES, name=f"{name}_importance"))
+
+    imp = pd.concat(rows, axis=1).reset_index()
+    imp.columns = ["feature", "median_importance", "low_importance", "high_importance"]
+    return imp.sort_values("median_importance", ascending=False).reset_index(drop=True)
 
 
 def predict_prices(

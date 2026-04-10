@@ -21,7 +21,7 @@ def load_data():
     return load_all()
 
 
-listings_df, history_df, signals_df, brands_models, turnover_df, _portfolio_init, _unmatched_df = load_data()
+listings_df, history_df, signals_df, brands_models, turnover_df, _portfolio_init, _unmatched_df, importance_df = load_data()
 
 # ---------------------------------------------------------------------------
 # Sidebar — filters
@@ -61,6 +61,13 @@ price_range = st.sidebar.slider("Price (EUR)", min_value=0, max_value=price_max_
 only_private = st.sidebar.checkbox("Private sellers only", value=False)
 hide_accidents = st.sidebar.checkbox("Hide accidents", value=False)
 hide_repair = st.sidebar.checkbox("Hide repair needed", value=False)
+
+if not importance_df.empty:
+    with st.sidebar.expander("Feature importance"):
+        chart_df = importance_df[["feature", "median_importance"]].copy()
+        chart_df = chart_df[chart_df["median_importance"] > 0]
+        chart_df = chart_df.set_index("feature").sort_values("median_importance")
+        st.bar_chart(chart_df)
 
 # ---------------------------------------------------------------------------
 # Apply filters
