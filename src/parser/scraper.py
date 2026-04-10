@@ -87,6 +87,7 @@ class RawListing:
     seats: int | None = None
     color: str | None = None
     condition: str | None = None
+    drive_type: str | None = None
     registration_month: str | None = None
     city: str = ""
     district: str = ""

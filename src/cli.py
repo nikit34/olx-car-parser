@@ -159,7 +159,7 @@ def _db_worker(db_queue: Queue, result: dict):
             "fuel_type": raw.fuel_type, "horsepower": raw.horsepower,
             "transmission": raw.transmission, "segment": raw.segment,
             "doors": raw.doors, "seats": raw.seats, "color": raw.color,
-            "condition": raw.condition,
+            "condition": raw.condition, "drive_type": raw.drive_type,
             "registration_month": raw.registration_month,
             "city": raw.city, "district": raw.district,
             "seller_type": raw.seller_type, "description": raw.description,

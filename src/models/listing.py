@@ -33,6 +33,7 @@ class Listing(Base):
     seats = Column(Integer)               # Lugares
     color = Column(String)                 # Cor
     condition = Column(String)             # Condição: Usado, Novo
+    drive_type = Column(String)            # Tração: Dianteira, Traseira, Integral
 
     registration_month = Column(String)    # Mes de Registo
     city = Column(String, index=True)      # Cidade/freguesia
