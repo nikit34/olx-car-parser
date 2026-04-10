@@ -62,7 +62,6 @@ def _sample_listings(n: int = 200) -> pd.DataFrame:
         "taxi_fleet_rental": rng.choice([True, False, None], size=n, p=[0.03, 0.77, 0.20]),
         "warranty": rng.choice([True, False, None], size=n, p=[0.15, 0.65, 0.20]),
         "first_owner_selling": rng.choice([True, False, None], size=n, p=[0.20, 0.60, 0.20]),
-        "tires_condition": rng.choice(["new", "good", "fair", "poor", None], size=n, p=[0.1, 0.3, 0.2, 0.1, 0.3]),
         "urgency": rng.choice(["high", "medium", "low", None], size=n, p=[0.05, 0.15, 0.50, 0.30]),
     })
 
