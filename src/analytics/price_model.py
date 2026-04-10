@@ -1,8 +1,9 @@
-"""Gradient boosting price model for fair market value estimation.
+"""Gradient boosting price model with quantile regression for fair price range.
 
 Uses all available features including LLM-extracted fields (accident,
 condition, RHD, etc.) and market data (avg_days_to_sell).
 
+Three models: median (predicted price), 10th percentile (low), 90th percentile (high).
 HistGradientBoostingRegressor handles NaN natively — ideal for LLM fields
 which are null for ~20% of listings.
 """
@@ -113,13 +114,24 @@ def _prepare_X(
     return X_arr, maps
 
 
+_HGB_PARAMS = dict(
+    max_iter=700,
+    max_depth=4,
+    learning_rate=0.05,
+    min_samples_leaf=10,
+    l2_regularization=1.5,
+    max_bins=MAX_HGB_BINS,
+    random_state=42,
+)
+
+
 def train_price_model(
     listings_df: pd.DataFrame,
     min_samples: int = 50,
-) -> tuple[HistGradientBoostingRegressor, dict[str, dict[str, int]]] | None:
-    """Train a gradient boosting model on all active priced listings.
+) -> tuple[dict[str, HistGradientBoostingRegressor], dict[str, dict[str, int]]] | None:
+    """Train quantile regression models: median, low (10th), high (90th).
 
-    Returns (model, category_maps) or None if insufficient data.
+    Returns ({"median": model, "low": model, "high": model}, category_maps) or None.
     """
     needed = {"price_eur", "year", "mileage_km"}
     if not needed.issubset(listings_df.columns):
@@ -136,22 +148,20 @@ def train_price_model(
 
     y = df["price_eur"].values.astype(float)
     X_arr, cat_maps = _prepare_X(df)
-
     cat_indices = [_ALL_FEATURES.index(c) for c in CATEGORICAL_FEATURES]
 
-    model = HistGradientBoostingRegressor(
-        max_iter=700,
-        max_depth=4,
-        learning_rate=0.05,
-        min_samples_leaf=10,
-        l2_regularization=1.5,
-        max_bins=MAX_HGB_BINS,
-        categorical_features=cat_indices,
-        random_state=42,
-    )
-    model.fit(X_arr, y)
+    models = {}
+    for name, quantile in [("low", 0.1), ("median", 0.5), ("high", 0.9)]:
+        model = HistGradientBoostingRegressor(
+            loss="quantile",
+            quantile=quantile,
+            categorical_features=cat_indices,
+            **_HGB_PARAMS,
+        )
+        model.fit(X_arr, y)
+        models[name] = model
 
-    return model, cat_maps
+    return models, cat_maps
 
 
 def compute_feature_completeness(listings_df: pd.DataFrame) -> pd.Series:
@@ -176,31 +186,23 @@ def compute_data_completeness(
     return (0.6 * feature_fill_rate + 0.4 * sample_conf).rename("data_completeness")
 
 
-_MIN_SPREAD = 0.05   # ±5% at full completeness
-_MAX_SPREAD = 0.30   # ±30% at zero completeness
-
-
 def predict_prices(
-    model: HistGradientBoostingRegressor,
+    models: dict[str, HistGradientBoostingRegressor],
     cat_maps: dict[str, dict[str, int]],
     listings_df: pd.DataFrame,
-) -> pd.Series:
-    """Predict fair price for each listing. Returns Series aligned with listings_df index."""
-    X_arr, _ = _prepare_X(listings_df, cat_maps)
-    predictions = model.predict(X_arr)
-    return pd.Series(np.maximum(predictions, 0), index=listings_df.index, name="predicted_price")
-
-
-def price_range_from_completeness(
-    predicted: pd.Series,
-    data_completeness: pd.Series,
 ) -> pd.DataFrame:
-    """Compute fair price range whose width depends on data completeness.
+    """Predict fair price range for each listing.
 
-    Returns DataFrame with columns: fair_price_low, fair_price_high.
-    Less data → wider spread around predicted price.
+    Returns DataFrame with columns: predicted_price, fair_price_low, fair_price_high.
     """
-    spread = _MIN_SPREAD + (_MAX_SPREAD - _MIN_SPREAD) * (1 - data_completeness.clip(0, 1))
-    low = (predicted * (1 - spread)).clip(lower=0).round(0)
-    high = (predicted * (1 + spread)).round(0)
-    return pd.DataFrame({"fair_price_low": low, "fair_price_high": high}, index=predicted.index)
+    X_arr, _ = _prepare_X(listings_df, cat_maps)
+
+    median = models["median"].predict(X_arr)
+    low = models["low"].predict(X_arr)
+    high = models["high"].predict(X_arr)
+
+    return pd.DataFrame({
+        "predicted_price": np.maximum(median, 0),
+        "fair_price_low": np.maximum(low, 0),
+        "fair_price_high": np.maximum(high, 0),
+    }, index=listings_df.index).round(0)

@@ -314,16 +314,18 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
 
     gb_result = train_price_model(active)
     gb_predictions: dict[str, float] = {}
-    gb_completeness: dict[str, float] = {}
     gb_fair_low: dict[str, float] = {}
     gb_fair_high: dict[str, float] = {}
     if gb_result is not None:
-        gb_model, gb_cat_maps = gb_result
-        preds = predict_prices(gb_model, gb_cat_maps, active)
-        for idx, pred in preds.items():
+        gb_models, gb_cat_maps = gb_result
+        price_df = predict_prices(gb_models, gb_cat_maps, active)
+        for idx in price_df.index:
             olx_id = active.loc[idx, "olx_id"] if "olx_id" in active.columns else None
+            pred = price_df.loc[idx, "predicted_price"]
             if olx_id and pred > 0:
                 gb_predictions[olx_id] = float(pred)
+                gb_fair_low[olx_id] = float(price_df.loc[idx, "fair_price_low"])
+                gb_fair_high[olx_id] = float(price_df.loc[idx, "fair_price_high"])
 
     # --- Score each listing ---
     for _, listing in active.iterrows():
@@ -396,17 +398,12 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
             undervaluation_pct = 0.0
         discount_pct = round((1 - price / median) * 100, 1)
 
-        # Data completeness → price range spread
+        # Price range from quantile regression
+        fair_low = gb_fair_low.get(olx_id)
+        fair_high = gb_fair_high.get(olx_id)
         fill_rate = float(feature_fill.loc[listing.name]) if listing.name in feature_fill.index else 0.0
         sample_conf = min(sample / 20, 1.0)
         completeness = round(0.6 * fill_rate + 0.4 * sample_conf, 3)
-        if predicted and predicted > 0:
-            spread = 0.05 + 0.25 * (1 - completeness)
-            fair_low = round(predicted * (1 - spread))
-            fair_high = round(predicted * (1 + spread))
-        else:
-            fair_low = None
-            fair_high = None
 
         # --- Opportunity multipliers (deal quality, not market value) ---
 
