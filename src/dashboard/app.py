@@ -105,16 +105,6 @@ deals["est_roi_pct"] = ((deals["predicted_price"] - deals["price_eur"]) / deals[
 
 st.caption(f"{len(deals)} deals sorted by flip score")
 
-# --- Comparable-listings pool (all active listings with generation) ---
-from src.models.generations import get_generation as _get_gen
-
-_pool = listings_df[listings_df["is_active"] & listings_df["price_eur"].notna()].copy()
-if "duplicate_of" in _pool.columns:
-    _pool = _pool[_pool["duplicate_of"].isna()]
-_pool["generation"] = _pool.apply(
-    lambda r: _get_gen(r["brand"], r["model"], r.get("year")), axis=1
-)
-
 # --- Cards ---
 for _, deal in deals.iterrows():
     with st.container():
@@ -195,36 +185,34 @@ for _, deal in deals.iterrows():
                 label = "SV" if "standvirtual" in url else "OLX"
                 st.link_button(label, url)
 
-        # --- Comparable listings from the same segment ---
+        # --- Top deals from the same segment ---
         if pd.notna(deal.get("predicted_price")):
             deal_gen = deal.get("generation")
             seg_mask = (
-                (_pool["brand"] == deal["brand"])
-                & (_pool["model"] == deal["model"])
-                & (_pool["olx_id"] != deal["olx_id"])
+                (deals["brand"] == deal["brand"])
+                & (deals["model"] == deal["model"])
+                & (deals["olx_id"] != deal["olx_id"])
             )
             if deal_gen:
-                seg_mask = seg_mask & (_pool["generation"] == deal_gen)
-            segment = _pool[seg_mask].copy()
+                seg_mask = seg_mask & (deals["generation"] == deal_gen)
+            segment = deals[seg_mask].nlargest(5, "flip_score")
 
             if not segment.empty:
-                segment["_dist"] = (segment["price_eur"] - deal["predicted_price"]).abs()
-                segment = segment.sort_values("_dist").head(5)
                 total_in_seg = int(seg_mask.sum())
-
-                with st.expander(f"Segment ({total_in_seg} listings)"):
+                with st.expander(f"Segment — top {len(segment)} of {total_in_seg} deals"):
                     for _, comp in segment.iterrows():
                         c1, c2, c3 = st.columns([5, 2, 1])
                         c_year = int(comp["year"]) if pd.notna(comp.get("year")) else "?"
                         c_km = f"{int(comp['mileage_km']):,} km" if pd.notna(comp.get("mileage_km")) else "—"
                         c_fuel = str(comp["fuel_type"]) if comp.get("fuel_type") else ""
                         c_price = int(comp["price_eur"])
-                        diff = c_price - int(deal["predicted_price"])
+                        c_profit = int(comp["est_profit_eur"]) if pd.notna(comp.get("est_profit_eur")) else 0
+                        c_score = comp.get("flip_score", 0)
 
                         with c1:
                             st.text(f"{c_year} · {c_km} · {c_fuel}")
                         with c2:
-                            st.text(f"{c_price:,} EUR ({diff:+,})")
+                            st.text(f"{c_price:,} EUR ({c_profit:+,}) · Score {c_score:.0f}")
                         with c3:
                             c_url = comp.get("url")
                             if c_url and isinstance(c_url, str):
