@@ -10,4 +10,5 @@ rich>=13.0
 streamlit>=1.38
 plotly>=5.22
 scikit-learn>=1.4
+lightgbm>=4.0
 pytest>=8.0

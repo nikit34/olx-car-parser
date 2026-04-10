@@ -295,17 +295,28 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> tupl
         train_price_model, predict_prices,
         compute_feature_completeness,
         compute_permutation_importance,
+        load_model, save_model,
     )
 
     feature_fill = compute_feature_completeness(active)
 
-    gb_result = train_price_model(active)
+    # Try loading saved model; fall back to training
+    saved = load_model()
+    gb_models = None
+    gb_cat_maps: dict = {}
+    if saved is not None:
+        gb_models, gb_cat_maps, _gb_metrics = saved
+    else:
+        train_result = train_price_model(active)
+        if train_result is not None:
+            gb_models, gb_cat_maps, _gb_metrics = train_result
+            save_model(gb_models, gb_cat_maps, _gb_metrics)
+
     gb_predictions: dict[str, float] = {}
     gb_fair_low: dict[str, float] = {}
     gb_fair_high: dict[str, float] = {}
     importance_df = pd.DataFrame()
-    if gb_result is not None:
-        gb_models, gb_cat_maps = gb_result
+    if gb_models is not None:
         importance_df = compute_permutation_importance(gb_models, gb_cat_maps, active)
         price_df = predict_prices(gb_models, gb_cat_maps, active)
         for idx in price_df.index:

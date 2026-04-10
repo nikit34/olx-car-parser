@@ -1,9 +1,14 @@
-"""Tests for gradient boosting price model."""
+"""Tests for LightGBM price model."""
 
+import json
 import numpy as np
 import pandas as pd
+import pytest
 
-from src.analytics.price_model import train_price_model, predict_prices
+from src.analytics.price_model import (
+    train_price_model, predict_prices, save_model, load_model,
+    load_metrics_history, _METRICS_PATH, _MODEL_PATH,
+)
 
 
 def _sample_listings(n: int = 200) -> pd.DataFrame:
@@ -66,14 +71,20 @@ def _sample_listings(n: int = 200) -> pd.DataFrame:
     })
 
 
-def test_train_returns_model():
+def test_train_returns_model_and_metrics():
     df = _sample_listings()
     result = train_price_model(df)
     assert result is not None
-    models, cat_maps = result
+    models, cat_maps, metrics = result
     assert "brand" in cat_maps
     assert "model" in cat_maps
     assert "low" in models and "median" in models and "high" in models
+    # Metrics from cross-validation
+    assert "mae" in metrics and metrics["mae"] > 0
+    assert "mape" in metrics and metrics["mape"] > 0
+    assert "r2" in metrics
+    assert "n_samples" in metrics
+    assert "cv_folds" in metrics and metrics["cv_folds"] == 5
 
 
 def test_train_returns_none_for_small_data():
@@ -84,7 +95,7 @@ def test_train_returns_none_for_small_data():
 
 def test_predictions_are_positive():
     df = _sample_listings()
-    models, cat_maps = train_price_model(df)
+    models, cat_maps, _metrics = train_price_model(df)
     preds = predict_prices(models, cat_maps, df)
     assert (preds["predicted_price"] >= 0).all()
     assert (preds["fair_price_low"] >= 0).all()
@@ -94,7 +105,7 @@ def test_predictions_are_positive():
 
 def test_newer_cars_predicted_higher():
     df = _sample_listings(500)
-    models, cat_maps = train_price_model(df)
+    models, cat_maps, _metrics = train_price_model(df)
 
     old_car = pd.DataFrame([{
         "year": 2010, "mileage_km": 150000, "engine_cc": 1600,
@@ -116,7 +127,7 @@ def test_newer_cars_predicted_higher():
 
 def test_accident_cars_predicted_lower():
     df = _sample_listings(500)
-    models, cat_maps = train_price_model(df)
+    models, cat_maps, _metrics = train_price_model(df)
 
     base = {
         "year": 2018, "mileage_km": 100000, "engine_cc": 1600,
@@ -141,7 +152,7 @@ def test_handles_missing_features():
 
     result = train_price_model(df)
     assert result is not None
-    models, cat_maps = result
+    models, cat_maps, _metrics = result
 
     # Predict on row with missing features
     sparse = pd.DataFrame([{
@@ -153,28 +164,58 @@ def test_handles_missing_features():
     assert preds["predicted_price"].iloc[0] > 0
 
 
-def test_caps_high_cardinality_categories():
-    """Rare categories should be grouped so HGBR stays within its 255-bin limit."""
+def test_rare_categories_grouped():
+    """Rare categories should be grouped into __other__."""
     df = _sample_listings(600)
-    df["model"] = [f"Model {i}" for i in range(len(df))]
+    # Each model appears exactly once → all below _MIN_CATEGORY_COUNT
+    df["model"] = [f"Model_{i}" for i in range(len(df))]
 
     result = train_price_model(df)
-
     assert result is not None
-    models, cat_maps = result
-    assert len(cat_maps["model"]) <= 255
+    models, cat_maps, _metrics = result
     assert "__other__" in cat_maps["model"]
 
     unseen = pd.DataFrame([{
-        "year": 2018,
-        "mileage_km": 100000,
-        "engine_cc": 1600,
-        "brand": "Volkswagen",
-        "model": "Future Model",
-        "fuel_type": "Diesel",
-        "transmission": "Manual",
-        "segment": "Citadino",
-        "horsepower": 110,
+        "year": 2018, "mileage_km": 100000, "engine_cc": 1600,
+        "brand": "Volkswagen", "model": "Future_Model",
+        "fuel_type": "Diesel", "transmission": "Manual",
+        "segment": "Citadino", "horsepower": 110,
     }])
     pred = predict_prices(models, cat_maps, unseen)["predicted_price"].iloc[0]
     assert pred > 0
+
+
+def test_save_and_load_model(tmp_path, monkeypatch):
+    """Save/load round-trip produces identical predictions."""
+    monkeypatch.setattr("src.analytics.price_model._MODEL_PATH", tmp_path / "model.joblib")
+    monkeypatch.setattr("src.analytics.price_model._METRICS_PATH", tmp_path / "metrics.json")
+
+    df = _sample_listings()
+    models, cat_maps, metrics = train_price_model(df)
+    save_model(models, cat_maps, metrics)
+
+    loaded = load_model(max_age_hours=1)
+    assert loaded is not None
+    l_models, l_cat_maps, l_metrics = loaded
+
+    preds_orig = predict_prices(models, cat_maps, df)
+    preds_loaded = predict_prices(l_models, l_cat_maps, df)
+    pd.testing.assert_frame_equal(preds_orig, preds_loaded)
+    assert l_metrics["mae"] == metrics["mae"]
+
+
+def test_metrics_history(tmp_path, monkeypatch):
+    """Each save appends to metrics history."""
+    monkeypatch.setattr("src.analytics.price_model._MODEL_PATH", tmp_path / "model.joblib")
+    monkeypatch.setattr("src.analytics.price_model._METRICS_PATH", tmp_path / "metrics.json")
+
+    df = _sample_listings()
+    models, cat_maps, metrics = train_price_model(df)
+
+    save_model(models, cat_maps, metrics)
+    save_model(models, cat_maps, metrics)
+
+    history = load_metrics_history()
+    assert len(history) == 2
+    assert "timestamp" in history[0]
+    assert history[0]["mae"] == metrics["mae"]

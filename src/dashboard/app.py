@@ -69,6 +69,23 @@ if not importance_df.empty:
         chart_df = chart_df.set_index("feature").sort_values("median_importance")
         st.bar_chart(chart_df)
 
+from src.analytics.price_model import load_metrics_history
+
+_metrics_history = load_metrics_history()
+if _metrics_history:
+    with st.sidebar.expander("Model quality"):
+        _latest = _metrics_history[-1]
+        _mq1, _mq2, _mq3 = st.columns(3)
+        _mq1.metric("MAE", f"{_latest['mae']:,.0f} €")
+        _mq2.metric("MAPE", f"{_latest['mape']:.1f}%")
+        _mq3.metric("R²", f"{_latest['r2']:.2f}")
+        st.caption(f"CV {_latest.get('cv_folds', '?')}-fold · {_latest['n_samples']:,} samples")
+
+        if len(_metrics_history) > 1:
+            _hist_df = pd.DataFrame(_metrics_history)
+            _hist_df["timestamp"] = pd.to_datetime(_hist_df["timestamp"])
+            st.line_chart(_hist_df.set_index("timestamp")[["mape"]])
+
 # ---------------------------------------------------------------------------
 # Apply filters
 # ---------------------------------------------------------------------------
