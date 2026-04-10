@@ -228,6 +228,6 @@ for _, deal in deals.iterrows():
                             c_url = comp.get("url")
                             if c_url and isinstance(c_url, str):
                                 c_label = "SV" if "standvirtual" in c_url else "OLX"
-                                st.link_button(c_label, c_url, key=f"seg_{comp['olx_id']}")
+                                st.link_button(c_label, c_url, key=f"seg_{deal['olx_id']}_{comp['olx_id']}")
 
         st.divider()
