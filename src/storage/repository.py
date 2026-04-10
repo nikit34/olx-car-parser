@@ -362,6 +362,7 @@ def get_listings_df(session: Session) -> pd.DataFrame:
             "transmission": l.transmission, "segment": l.segment,
             "doors": l.doors, "seats": l.seats, "color": l.color,
             "condition": l.condition, "drive_type": l.drive_type,
+            "photo_count": l.photo_count, "description_length": l.description_length,
             "city": l.city, "district": l.district,
             "seller_type": l.seller_type, "is_active": l.is_active,
             "description": l.description,
@@ -369,6 +370,8 @@ def get_listings_df(session: Session) -> pd.DataFrame:
             "first_seen_at": l.first_seen_at,
             "last_seen_at": l.last_seen_at,
             # Enrichment columns
+            "sub_model": l.sub_model,
+            "trim_level": l.trim_level,
             "desc_mentions_repair": l.desc_mentions_repair,
             "desc_mentions_accident": l.desc_mentions_accident,
             "accident_details": l.accident_details,

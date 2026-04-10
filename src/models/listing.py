@@ -34,6 +34,8 @@ class Listing(Base):
     color = Column(String)                 # Cor
     condition = Column(String)             # Condição: Usado, Novo
     drive_type = Column(String)            # Tração: Dianteira, Traseira, Integral
+    photo_count = Column(Integer)          # Number of photos in listing
+    description_length = Column(Integer)   # Length of description text
 
     registration_month = Column(String)    # Mes de Registo
     city = Column(String, index=True)      # Cidade/freguesia
@@ -51,6 +53,8 @@ class Listing(Base):
     generation = Column(String)               # Car generation (e.g. "Golf VII", "E90")
 
     # Enrichment columns (extracted from listing description text)
+    sub_model = Column(String)                 # Engine/body variant: "320d", "1.6 TDI"
+    trim_level = Column(String)                # Equipment line: "AMG Line", "M Sport", "GTI"
     desc_mentions_repair = Column(Boolean)
     desc_mentions_accident = Column(Boolean)
     accident_details = Column(String)

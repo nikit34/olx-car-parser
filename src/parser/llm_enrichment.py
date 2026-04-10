@@ -21,6 +21,7 @@ OLLAMA_URL = "http://localhost:11434"
 
 EXTRACTION_PROMPT = """\
 Extract structured data from this Portuguese car listing. JSON fields (null if unknown):
+sub_model(str), trim_level(str), \
 desc_mentions_num_owners(int), desc_mentions_accident(bool), accident_details(str), service_history(bool), \
 desc_mentions_repair(bool), repair_details(str), \
 mileage_in_description_km(int), desc_mentions_customs_cleared(bool), imported(bool), \
@@ -30,7 +31,9 @@ suspicious_signs(list), extras(list), issues(list), reason_for_sale(str), \
 urgency("high"/"medium"/"low"), warranty(bool), tuning_or_mods(list), \
 taxi_fleet_rental(bool), recent_maintenance(list), \
 first_owner_selling(bool).
-Rules: mileage_in_description_km=exact km as integer ("4300 km"→4300, "150 mil km"→150000, \
+Rules: sub_model=engine/body variant from title: "320d","1.6 TDI","2.0 HDi","1.4 TSI","A 200","C 220d". \
+trim_level=equipment line from title/description: "AMG Line","M Sport","S-Line","FR","GTI","GT Line","Luxury","Titanium","N-Connecta","Tekna","Avantgarde","Elegance","Comfort","Executive". null if basic/unknown. \
+mileage_in_description_km=exact km as integer ("4300 km"→4300, "150 mil km"→150000, \
 "89.500km"→89500, "4.300km"→4300). "mil"=thousand ONLY when written as a separate word. \
 desc_mentions_repair=true if ANY repair/damage mentioned. desc_mentions_accident=true if collision mentioned. \
 desc_mentions_customs_cleared=look for "desalfandegado","legalizado","por legalizar","documentação em dia","documentos em ordem". \
@@ -266,6 +269,16 @@ def correct_listing_data(listing) -> dict:
             corrections["real_mileage_km"] = desc_km
     elif attr_km and attr_km > 0:
         corrections["real_mileage_km"] = attr_km
+
+    # --- Sub-model ---
+    sub_model = extras.get("sub_model")
+    if sub_model and isinstance(sub_model, str) and sub_model.strip():
+        corrections["sub_model"] = sub_model.strip()
+
+    # --- Trim level ---
+    trim = extras.get("trim_level")
+    if trim and isinstance(trim, str) and trim.strip():
+        corrections["trim_level"] = trim.strip()
 
     # --- Number of owners ---
     num_owners = _get_extra(extras, "desc_mentions_num_owners")

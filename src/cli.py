@@ -160,6 +160,8 @@ def _db_worker(db_queue: Queue, result: dict):
             "transmission": raw.transmission, "segment": raw.segment,
             "doors": raw.doors, "seats": raw.seats, "color": raw.color,
             "condition": raw.condition, "drive_type": raw.drive_type,
+            "photo_count": raw.photo_count,
+            "description_length": len(raw.description) if raw.description else None,
             "registration_month": raw.registration_month,
             "city": raw.city, "district": raw.district,
             "seller_type": raw.seller_type, "description": raw.description,

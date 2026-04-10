@@ -20,17 +20,21 @@ _OTHER_CATEGORY = "__other__"
 NUMERIC_FEATURES = [
     "year", "mileage_km", "engine_cc", "horsepower",
     "desc_mentions_num_owners", "avg_days_to_sell",
+    "photo_count", "description_length", "seats",
 ]
 
 BOOL_FEATURES = [
     "desc_mentions_accident", "desc_mentions_repair",
     "desc_mentions_customs_cleared", "right_hand_drive",
     "taxi_fleet_rental", "warranty", "first_owner_selling",
+    "service_history", "imported",
 ]
 
 CATEGORICAL_FEATURES = [
     "brand", "model", "fuel_type", "transmission", "segment",
-    "urgency",
+    "urgency", "generation", "mechanical_condition", "paint_condition",
+    "color", "district", "drive_type", "sub_model", "trim_level",
+    "doors",
 ]
 
 _ALL_FEATURES = NUMERIC_FEATURES + BOOL_FEATURES + CATEGORICAL_FEATURES

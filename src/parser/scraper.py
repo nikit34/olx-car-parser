@@ -88,6 +88,7 @@ class RawListing:
     color: str | None = None
     condition: str | None = None
     drive_type: str | None = None
+    photo_count: int | None = None
     registration_month: str | None = None
     city: str = ""
     district: str = ""
@@ -314,6 +315,11 @@ class OlxScraper:
             elif len(loc_items) == 1:
                 details["district"] = loc_items[0].split(" - ", 1)[-1].strip()
 
+        # Photo count
+        gallery = soup.select_one("[data-testid='photo-gallery']") or soup.select_one("[data-cy='ad-photos']")
+        if gallery:
+            details["photo_count"] = len(gallery.find_all("img"))
+
         # Description text
         desc_el = soup.select_one("[data-cy='ad_description'] div") or soup.select_one("[data-testid='ad-description']")
         if desc_el:
@@ -418,6 +424,18 @@ class OlxScraper:
                 details["seller_type"] = "Particular"
             elif "Profissional" in seller_text or "Stand" in seller_text:
                 details["seller_type"] = "Profissional"
+
+        # Photo count
+        photo_gallery = soup.find(attrs={"data-testid": "photo-gallery"})
+        if photo_gallery:
+            details["photo_count"] = len(photo_gallery.find_all("img"))
+        else:
+            counter = soup.find(attrs={"data-testid": "photo-counter"})
+            if counter:
+                # Format: "1/27"
+                match = re.search(r"/(\d+)", counter.get_text(strip=True))
+                if match:
+                    details["photo_count"] = int(match.group(1))
 
         # Description
         desc_el = soup.find(attrs={"data-testid": "content-description-section"})
