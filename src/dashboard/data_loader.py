@@ -257,14 +257,14 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
         .reset_index()
     )
 
-    # --- Turnover stats: avg days to sell per brand+model ---
+    # --- Turnover stats: avg days to sell per brand+model+generation ---
     turnover = compute_turnover_stats(listings_df)
     liquidity_map: dict[tuple, float] = {}
     if not turnover.empty:
         for _, row in turnover.iterrows():
             days = row.get("avg_days_to_sell")
             if pd.notna(days):
-                liquidity_map[(row["brand"], row["model"])] = float(days)
+                liquidity_map[(row["brand"], row["model"], row.get("generation"))] = float(days)
 
     # --- Price trend from history (last 60 days) ---
     trend_map: dict[tuple, float] = {}
@@ -292,15 +292,16 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
                 pd.to_datetime(sold["deactivated_at"]) - pd.to_datetime(sold["first_seen_at"])
             ).dt.days
             sold = sold[sold["_lifespan"] > 0]
-            for (brand, model), group in sold.groupby(["brand", "model"]):
+            group_keys = ["brand", "model", "generation"] if "generation" in sold.columns else ["brand", "model"]
+            for keys, group in sold.groupby(group_keys, dropna=False):
                 if len(group) < 3:
                     continue
-                velocity_map[(brand, model)] = float((group["_lifespan"] <= 21).mean())
+                velocity_map[keys] = float((group["_lifespan"] <= 21).mean())
 
     # --- Merge avg_days_to_sell into active for price model ---
     if liquidity_map:
         active["avg_days_to_sell"] = active.apply(
-            lambda r: liquidity_map.get((r["brand"], r["model"])), axis=1
+            lambda r: liquidity_map.get((r["brand"], r["model"], r.get("generation"))), axis=1
         )
 
     # --- Gradient boosting price model (uses LLM fields + market data) ---
@@ -427,7 +428,7 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.D
             warranty_mult = 1.0
 
         # 7. Sale velocity — fast-selling segments = better for flipping
-        velocity = velocity_map.get((brand, model))
+        velocity = velocity_map.get((brand, model, listing.get("generation")))
         if velocity is not None:
             velocity_mult = min(max(0.7 + velocity * 0.8, 0.7), 1.5)
         else:

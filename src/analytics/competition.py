@@ -56,9 +56,14 @@ def compute_competition_density(
     ).round(2)
 
     if not turnover_df.empty:
+        merge_keys = ["brand", "model"]
+        turnover_cols = ["brand", "model", "avg_days_to_sell"]
+        if "generation" in turnover_df.columns and "generation" in result.columns:
+            merge_keys.append("generation")
+            turnover_cols.append("generation")
         result = result.merge(
-            turnover_df[["brand", "model", "avg_days_to_sell"]],
-            on=["brand", "model"],
+            turnover_df[turnover_cols],
+            on=merge_keys,
             how="left",
         )
 
