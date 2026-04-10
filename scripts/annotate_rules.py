@@ -247,7 +247,7 @@ def extract_first_owner_selling(desc: str) -> bool | None:
 
 
 def annotate_example(messages: list[dict]) -> list[dict]:
-    """Add 7 new fields to the assistant response JSON."""
+    """Add new fields to the assistant response JSON."""
     if len(messages) < 2:
         return messages
 
@@ -269,9 +269,14 @@ def annotate_example(messages: list[dict]) -> list[dict]:
     existing["warranty"] = extract_warranty(desc)
     existing["tuning_or_mods"] = extract_tuning_or_mods(desc)
     existing["taxi_fleet_rental"] = extract_taxi_fleet_rental(desc)
-    existing["recent_maintenance"] = extract_recent_maintenance(desc)
-    existing["tires_condition"] = extract_tires_condition(desc)
     existing["first_owner_selling"] = extract_first_owner_selling(desc)
+
+    # Remove deprecated fields
+    for dead in ("recent_maintenance", "tires_condition", "accident_details",
+                 "service_history", "repair_details", "imported", "paint_condition",
+                 "suspicious_signs", "extras", "issues", "reason_for_sale",
+                 "accident_free", "legal_issues"):
+        existing.pop(dead, None)
 
     messages[1]["content"] = json.dumps(existing, ensure_ascii=False)
     return messages

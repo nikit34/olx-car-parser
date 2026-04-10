@@ -33,23 +33,20 @@ class FakeListing:
 
 
 VALID_LLM_JSON = {
+    "sub_model": "320d",
+    "trim_level": None,
     "desc_mentions_num_owners": 2,
-    "accident_free": True,
     "desc_mentions_accident": False,
-    "accident_details": None,
-    "service_history": True,
     "desc_mentions_repair": True,
-    "repair_details": "precisa de embraiagem",
     "mileage_in_description_km": 180000,
     "desc_mentions_customs_cleared": None,
-    "imported": None,
-    "legal_issues": [],
+    "right_hand_drive": None,
     "mechanical_condition": "good",
-    "paint_condition": "good",
-    "suspicious_signs": [],
-    "extras": ["GPS", "bancos em pele"],
-    "issues": ["embraiagem"],
-    "reason_for_sale": None,
+    "urgency": "low",
+    "warranty": None,
+    "tuning_or_mods": None,
+    "taxi_fleet_rental": None,
+    "first_owner_selling": None,
 }
 
 
@@ -208,15 +205,15 @@ class TestCorrectListingData:
         corrections = correct_listing_data(listing)
         assert corrections["desc_mentions_repair"] is True
 
-    def test_needs_repair_inferred_from_issues(self):
+    def test_needs_repair_not_set_when_null(self):
         listing = FakeListing()
-        listing._llm_extras = {"desc_mentions_repair": None, "issues": ["motor faz barulho"]}
+        listing._llm_extras = {"desc_mentions_repair": None}
         corrections = correct_listing_data(listing)
-        assert corrections["desc_mentions_repair"] is True
+        assert "desc_mentions_repair" not in corrections
 
-    def test_accident_from_accident_free(self):
+    def test_accident_explicit_false(self):
         listing = FakeListing()
-        listing._llm_extras = {"desc_mentions_accident": None, "accident_free": True}
+        listing._llm_extras = {"desc_mentions_accident": False}
         corrections = correct_listing_data(listing)
         assert corrections["desc_mentions_accident"] is False
 

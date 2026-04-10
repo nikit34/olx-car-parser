@@ -13,20 +13,30 @@ BATCH = 50
 
 PROMPT = """\
 Extract structured data from this Portuguese car listing. JSON fields (null if unknown):
-desc_mentions_num_owners(int), desc_mentions_accident(bool), accident_details(str), service_history(bool), \
-desc_mentions_repair(bool), repair_details(str), \
-mileage_in_description_km(int), desc_mentions_customs_cleared(bool), imported(bool), \
+sub_model(str), trim_level(str), \
+desc_mentions_num_owners(int), desc_mentions_accident(bool), \
+desc_mentions_repair(bool), \
+mileage_in_description_km(int), desc_mentions_customs_cleared(bool), \
 right_hand_drive(bool), \
-mechanical_condition("excellent"/"good"/"fair"/"poor"), paint_condition(same), \
-suspicious_signs(list), extras(list), issues(list), reason_for_sale(str), \
+mechanical_condition("excellent"/"good"/"fair"/"poor"), \
 urgency("high"/"medium"/"low"), warranty(bool), tuning_or_mods(list), \
-taxi_fleet_rental(bool), recent_maintenance(list), tires_condition("new"/"good"/"fair"/"poor"), \
+taxi_fleet_rental(bool), \
 first_owner_selling(bool).
-Rules: mileage_in_description_km=exact km as integer. \
-desc_mentions_repair=true if ANY repair/damage mentioned. desc_mentions_accident=true if collision mentioned. \
-If "para pecas","vender as pecas","venda de pecas","para desmanchar","so pecas": \
-mechanical_condition="poor", suspicious_signs must include "selling for parts", \
-desc_mentions_accident=true (likely total loss), reason_for_sale="para pecas (total loss or registration issue)".
+Rules: sub_model=engine/body variant from title: "320d","1.6 TDI","2.0 HDi","1.4 TSI","A 200","C 220d". \
+trim_level=equipment line from title/description: "AMG Line","M Sport","S-Line","FR","GTI","GT Line","Luxury","Titanium","N-Connecta","Tekna","Avantgarde","Elegance","Comfort","Executive". null if basic/unknown. \
+mileage_in_description_km=exact km as integer ("4300 km"→4300, "150 mil km"→150000, \
+"89.500km"→89500, "4.300km"→4300). "mil"=thousand ONLY when written as a separate word. \
+desc_mentions_repair=true if ANY repair/damage/breakdown mentioned ("avariado","imobilizado" included). \
+desc_mentions_accident=true if collision/accident mentioned ("sinistro","acidente","batido"). \
+desc_mentions_customs_cleared=look for "desalfandegado","legalizado","por legalizar","documentação em dia","documentos em ordem". \
+right_hand_drive=true if right-hand drive/UK/Japan import/"mão inglesa"/"volante à direita"/"condução à direita"/"matrícula inglesa". \
+urgency=high if "urgente","preciso vender rápido","emigração","preço para despachar"; medium if "aceito propostas","negociável","oportunidade"; low otherwise. \
+warranty=true if "garantia" mentioned (not "sem garantia"). \
+tuning_or_mods=list of aftermarket modifications: "reprogramação","stage 1/2","remap","chip tuning","suspensão rebaixada","coilovers","escape desportivo","downpipe","wrap","bodykit". \
+taxi_fleet_rental=true if "ex-táxi","TVDE","Uber","Bolt","rent-a-car","frota","carro de empresa". \
+first_owner_selling=true if "1 dono desde novo","único dono","comprado novo por mim","vendo o meu". \
+If "para peças","vender as peças","venda de peças","para desmanchar","só peças","avariado","imobilizado": \
+mechanical_condition="poor", desc_mentions_accident=true, desc_mentions_repair=true.
 
 """
 

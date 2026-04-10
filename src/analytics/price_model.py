@@ -23,20 +23,18 @@ NUMERIC_FEATURES = [
     "year", "mileage_km", "engine_cc", "horsepower",
     "desc_mentions_num_owners", "avg_days_to_sell",
     "photo_count", "description_length", "seats",
-    "suspicious_signs_count", "extras_count", "issues_count",
-    "tuning_or_mods_count", "recent_maintenance_count",
+    "tuning_or_mods_count",
 ]
 
 BOOL_FEATURES = [
     "desc_mentions_accident", "desc_mentions_repair",
     "desc_mentions_customs_cleared", "right_hand_drive",
     "taxi_fleet_rental", "warranty", "first_owner_selling",
-    "service_history", "imported", "has_reason_for_sale",
 ]
 
 CATEGORICAL_FEATURES = [
     "brand", "model", "fuel_type", "transmission", "segment",
-    "urgency", "generation", "mechanical_condition", "paint_condition",
+    "urgency", "generation", "mechanical_condition",
     "color", "district", "drive_type", "sub_model", "trim_level",
     "doors",
 ]

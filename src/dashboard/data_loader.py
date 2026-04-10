@@ -158,9 +158,11 @@ def _normalized_text_list(value) -> list[str]:
 def _blocking_deal_reason(listing: pd.Series) -> str | None:
     """Return a hard-stop reason for listings that should not be shown as deals.
 
-    We intentionally do not block all ``desc_mentions_repair`` cases because the
-    LLM also marks completed maintenance ("clutch replaced", "new timing belt")
-    with that coarse boolean. Instead, only block obviously problematic cases.
+    Relies on two signals: desc_mentions_accident (DB column) and
+    mechanical_condition (from llm_extras JSON).  The LLM prompt sets
+    mechanical_condition="poor" for parts cars / breakdowns, so the old
+    free-text checks (suspicious_signs, reason_for_sale, issues) are
+    no longer needed.
     """
     desc_mentions_accident = listing.get("desc_mentions_accident")
     if pd.notna(desc_mentions_accident) and bool(desc_mentions_accident):
@@ -172,22 +174,6 @@ def _blocking_deal_reason(listing: pd.Series) -> str | None:
 
     if str(extras.get("mechanical_condition") or "").strip().lower() == "poor":
         return "poor mechanical condition"
-
-    suspicious = set(_normalized_text_list(extras.get("suspicious_signs")))
-    if "selling for parts" in suspicious:
-        return "selling for parts"
-
-    reason = str(extras.get("reason_for_sale") or "").strip().lower()
-    if "para peças" in reason or "total loss" in reason:
-        return "selling for parts"
-
-    issue_text = " ".join(
-        _normalized_text_list(extras.get("issues"))
-        + [str(extras.get("repair_details") or "").strip().lower()]
-        + [str(extras.get("accident_details") or "").strip().lower()]
-    )
-    if any(keyword in issue_text for keyword in ("avariado", "imobilizado", "sinistr", "para peças", "total loss")):
-        return "serious unresolved issue"
 
     return None
 

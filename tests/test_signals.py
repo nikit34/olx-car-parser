@@ -10,11 +10,12 @@ from src.dashboard.data_loader import compute_signals
 
 class TestComputeSignals:
     def test_empty_inputs(self):
-        assert compute_signals(pd.DataFrame(), pd.DataFrame()).empty
+        signals, importance = compute_signals(pd.DataFrame(), pd.DataFrame())
+        assert signals.empty
 
     def test_no_generation_uses_model_fallback(self, sample_listings_df, sample_history_df, generations_data):
         with patch("src.models.generations.load_generations", return_value=generations_data):
-            signals = compute_signals(sample_listings_df, sample_history_df)
+            signals, _ = compute_signals(sample_listings_df, sample_history_df)
             # a4 has no year → no generation, but model-level median is used as fallback
             # a4 price=5000, model median of [5000,8000,14000,15000]=11000
             # 5000 < 11000*0.85=9350 → should be a signal via model fallback
@@ -25,7 +26,7 @@ class TestComputeSignals:
 
     def test_finds_discount(self, sample_listings_df, sample_history_df, generations_data):
         with patch("src.models.generations.load_generations", return_value=generations_data):
-            signals = compute_signals(sample_listings_df, sample_history_df)
+            signals, _ = compute_signals(sample_listings_df, sample_history_df)
             if not signals.empty:
                 # a1 has price 8000, generation median should be computed from a1+a2+a3
                 # median of [8000, 14000, 15000] = 14000 → 8000 < 14000*0.85=11900 → signal
@@ -37,7 +38,7 @@ class TestComputeSignals:
 
     def test_signal_has_required_fields(self, sample_listings_df, sample_history_df, generations_data):
         with patch("src.models.generations.load_generations", return_value=generations_data):
-            signals = compute_signals(sample_listings_df, sample_history_df)
+            signals, _ = compute_signals(sample_listings_df, sample_history_df)
             if not signals.empty:
                 required = {"olx_id", "brand", "model", "generation", "year",
                             "price_eur", "predicted_price", "median_price_eur",
@@ -54,8 +55,6 @@ class TestComputeSignals:
              "fuel_type": "Diesel", "is_active": True, "desc_mentions_accident": True,
              "llm_extras": json.dumps({
                  "mechanical_condition": "poor",
-                 "suspicious_signs": ["selling for parts"],
-                 "reason_for_sale": "para peças (total loss or registration issue)",
              })},
             {"olx_id": "comp-1", "url": "", "brand": "Volkswagen", "model": "Golf",
              "year": 2015, "price_eur": 12000, "mileage_km": 160000, "engine_cc": 1600,
@@ -75,7 +74,7 @@ class TestComputeSignals:
         ])
 
         with patch("src.models.generations.load_generations", return_value=generations_data):
-            signals = compute_signals(listings, sample_history_df)
+            signals, _ = compute_signals(listings, sample_history_df)
 
         assert signals.empty or "risk-1" not in signals["olx_id"].values
 
@@ -87,9 +86,6 @@ class TestComputeSignals:
              "desc_mentions_accident": False,
              "llm_extras": json.dumps({
                  "mechanical_condition": "good",
-                 "repair_details": "embreagem trocada há 1 mês",
-                 "issues": [],
-                 "suspicious_signs": [],
              })},
             {"olx_id": "comp-1", "url": "", "brand": "Volkswagen", "model": "Golf",
              "year": 2015, "price_eur": 12000, "mileage_km": 160000, "engine_cc": 1600,
@@ -109,6 +105,6 @@ class TestComputeSignals:
         ])
 
         with patch("src.models.generations.load_generations", return_value=generations_data):
-            signals = compute_signals(listings, sample_history_df)
+            signals, _ = compute_signals(listings, sample_history_df)
 
         assert "maint-1" in signals["olx_id"].values

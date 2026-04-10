@@ -49,11 +49,8 @@ def _json_list_len(val) -> int:
 
 
 def add_list_counts(df: pd.DataFrame) -> pd.DataFrame:
-    for field in ("suspicious_signs", "extras", "issues", "tuning_or_mods", "recent_maintenance"):
-        if field in df.columns:
-            df[f"{field}_count"] = df[field].apply(_json_list_len)
-    if "reason_for_sale" in df.columns:
-        df["has_reason_for_sale"] = df["reason_for_sale"].notna() & (df["reason_for_sale"] != "")
+    if "tuning_or_mods" in df.columns:
+        df["tuning_or_mods_count"] = df["tuning_or_mods"].apply(_json_list_len)
     return df
 
 

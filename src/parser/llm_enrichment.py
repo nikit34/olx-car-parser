@@ -1,9 +1,8 @@
 """Enrich listing data using a local Ollama model.
 
-Extracts additional structured info from description text:
-- Description mentions of accidents, repairs, customs status
-- Description-mentioned owner count, warranty, recent maintenance
-- Real mileage, red flags, extras/features
+Extracts 14 structured fields from title + description text:
+sub_model, trim_level, mileage, accident/repair flags, condition,
+urgency, warranty, tuning, taxi/fleet, first owner, customs, RHD.
 """
 
 import json
@@ -22,31 +21,29 @@ OLLAMA_URL = "http://localhost:11434"
 EXTRACTION_PROMPT = """\
 Extract structured data from this Portuguese car listing. JSON fields (null if unknown):
 sub_model(str), trim_level(str), \
-desc_mentions_num_owners(int), desc_mentions_accident(bool), accident_details(str), service_history(bool), \
-desc_mentions_repair(bool), repair_details(str), \
-mileage_in_description_km(int), desc_mentions_customs_cleared(bool), imported(bool), \
+desc_mentions_num_owners(int), desc_mentions_accident(bool), \
+desc_mentions_repair(bool), \
+mileage_in_description_km(int), desc_mentions_customs_cleared(bool), \
 right_hand_drive(bool), \
-mechanical_condition("excellent"/"good"/"fair"/"poor"), paint_condition(same), \
-suspicious_signs(list), extras(list), issues(list), reason_for_sale(str), \
+mechanical_condition("excellent"/"good"/"fair"/"poor"), \
 urgency("high"/"medium"/"low"), warranty(bool), tuning_or_mods(list), \
-taxi_fleet_rental(bool), recent_maintenance(list), \
+taxi_fleet_rental(bool), \
 first_owner_selling(bool).
 Rules: sub_model=engine/body variant from title: "320d","1.6 TDI","2.0 HDi","1.4 TSI","A 200","C 220d". \
 trim_level=equipment line from title/description: "AMG Line","M Sport","S-Line","FR","GTI","GT Line","Luxury","Titanium","N-Connecta","Tekna","Avantgarde","Elegance","Comfort","Executive". null if basic/unknown. \
 mileage_in_description_km=exact km as integer ("4300 km"→4300, "150 mil km"→150000, \
 "89.500km"→89500, "4.300km"→4300). "mil"=thousand ONLY when written as a separate word. \
-desc_mentions_repair=true if ANY repair/damage mentioned. desc_mentions_accident=true if collision mentioned. \
+desc_mentions_repair=true if ANY repair/damage/breakdown mentioned ("avariado","imobilizado" included). \
+desc_mentions_accident=true if collision/accident mentioned ("sinistro","acidente","batido"). \
 desc_mentions_customs_cleared=look for "desalfandegado","legalizado","por legalizar","documentação em dia","documentos em ordem". \
 right_hand_drive=true if right-hand drive/UK/Japan import/"mão inglesa"/"volante à direita"/"condução à direita"/"matrícula inglesa". \
 urgency=high if "urgente","preciso vender rápido","emigração","preço para despachar"; medium if "aceito propostas","negociável","oportunidade"; low otherwise. \
 warranty=true if "garantia" mentioned (not "sem garantia"). \
 tuning_or_mods=list of aftermarket modifications: "reprogramação","stage 1/2","remap","chip tuning","suspensão rebaixada","coilovers","escape desportivo","downpipe","wrap","bodykit". \
 taxi_fleet_rental=true if "ex-táxi","TVDE","Uber","Bolt","rent-a-car","frota","carro de empresa". \
-recent_maintenance=list of specific completed maintenance: "correia distribuição","embreagem nova","travões novos","revisão feita", with km/date if mentioned. \
 first_owner_selling=true if "1 dono desde novo","único dono","comprado novo por mim","vendo o meu". \
-If "para peças","vender as peças","venda de peças","para desmanchar","só peças": \
-mechanical_condition="poor", suspicious_signs must include "selling for parts", \
-desc_mentions_accident=true (likely total loss), reason_for_sale="para peças (total loss or registration issue)".
+If "para peças","vender as peças","venda de peças","para desmanchar","só peças","avariado","imobilizado": \
+mechanical_condition="poor", desc_mentions_accident=true, desc_mentions_repair=true.
 
 """
 
@@ -289,15 +286,11 @@ def correct_listing_data(listing) -> dict:
     needs_repair = _get_extra(extras, "desc_mentions_repair")
     if needs_repair is not None:
         corrections["desc_mentions_repair"] = bool(needs_repair)
-    elif extras.get("issues"):
-        corrections["desc_mentions_repair"] = True
 
     # --- Description mentions accident ---
     had_accident = _get_extra(extras, "desc_mentions_accident")
     if had_accident is not None:
         corrections["desc_mentions_accident"] = bool(had_accident)
-    elif extras.get("accident_free") is not None:
-        corrections["desc_mentions_accident"] = not extras["accident_free"]
 
     # --- Description mentions customs/legalization ---
     customs = _get_extra(extras, "desc_mentions_customs_cleared")
@@ -334,46 +327,10 @@ def correct_listing_data(listing) -> dict:
     if first_owner is not None:
         corrections["first_owner_selling"] = bool(first_owner)
 
-    # --- Accident details ---
-    accident_details = extras.get("accident_details")
-    if accident_details and isinstance(accident_details, str) and accident_details.strip():
-        corrections["accident_details"] = accident_details.strip()
-
-    # --- Imported ---
-    imported = extras.get("imported")
-    if imported is not None:
-        corrections["imported"] = bool(imported)
-
     # --- Mechanical condition ---
     mech = extras.get("mechanical_condition")
     if mech in ("excellent", "good", "fair", "poor"):
         corrections["mechanical_condition"] = mech
-
-    # --- Paint condition ---
-    paint = extras.get("paint_condition")
-    if paint in ("excellent", "good", "fair", "poor"):
-        corrections["paint_condition"] = paint
-
-    # --- Service history ---
-    service = extras.get("service_history")
-    if service is not None:
-        corrections["service_history"] = bool(service)
-
-    # --- Repair details ---
-    repair_details = extras.get("repair_details")
-    if repair_details and isinstance(repair_details, str) and repair_details.strip():
-        corrections["repair_details"] = repair_details.strip()
-
-    # --- Lists → JSON strings ---
-    for field in ("suspicious_signs", "extras", "issues", "recent_maintenance"):
-        val = extras.get(field)
-        if val and isinstance(val, list) and len(val) > 0:
-            corrections[field] = json.dumps(val, ensure_ascii=False)
-
-    # --- Reason for sale ---
-    reason = extras.get("reason_for_sale")
-    if reason and isinstance(reason, str) and reason.strip():
-        corrections["reason_for_sale"] = reason.strip()
 
     # --- Fix internal LLM contradictions (only tighten, never loosen) ---
     if corrections.get("desc_mentions_accident") and not corrections.get("desc_mentions_repair"):

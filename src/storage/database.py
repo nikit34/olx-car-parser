@@ -1,5 +1,6 @@
 """Database connection and initialization."""
 
+import json
 import os
 from pathlib import Path
 
@@ -13,14 +14,6 @@ import src.models.portfolio  # noqa: F401 — register PortfolioDeal with Base
 
 _engine = None
 _Session = None
-
-
-_LISTING_COLUMN_ALIASES = {
-    "needs_repair": "desc_mentions_repair",
-    "had_accident": "desc_mentions_accident",
-    "num_owners": "desc_mentions_num_owners",
-    "customs_cleared": "desc_mentions_customs_cleared",
-}
 
 
 def get_db_path() -> str:
@@ -78,17 +71,7 @@ def init_db(db_path: str | None = None):
         ("tuning_or_mods", "TEXT"),
         ("taxi_fleet_rental", "BOOLEAN"),
         ("first_owner_selling", "BOOLEAN"),
-        ("accident_details", "TEXT"),
-        ("imported", "BOOLEAN"),
         ("mechanical_condition", "TEXT"),
-        ("paint_condition", "TEXT"),
-        ("service_history", "BOOLEAN"),
-        ("repair_details", "TEXT"),
-        ("suspicious_signs", "TEXT"),
-        ("extras", "TEXT"),
-        ("issues", "TEXT"),
-        ("reason_for_sale", "TEXT"),
-        ("recent_maintenance", "TEXT"),
         ("drive_type", "TEXT"),
         ("sub_model", "TEXT"),
         ("trim_level", "TEXT"),
@@ -98,6 +81,25 @@ def init_db(db_path: str | None = None):
     _migrate_unmatched_columns = [
         ("source", "TEXT DEFAULT 'olx'"),
     ]
+    # Columns removed from ORM — drop from DB if present
+    _drop_columns = [
+        # old heuristic columns (replaced by desc_mentions_* equivalents)
+        "needs_repair", "had_accident", "num_owners", "customs_cleared",
+        "mileage_suspect", "estimated_repair_cost_eur",
+        # never used in src/
+        "origin", "registration_plate", "tires_condition",
+        # removed LLM fields (zero price-model importance)
+        "accident_details", "imported", "paint_condition", "service_history",
+        "repair_details", "suspicious_signs", "extras", "issues",
+        "reason_for_sale", "recent_maintenance",
+    ]
+    # Keys to strip from llm_extras JSON
+    _dead_json_keys = {
+        "accident_details", "imported", "paint_condition", "service_history",
+        "repair_details", "suspicious_signs", "extras", "issues",
+        "reason_for_sale", "recent_maintenance", "tires_condition",
+        "accident_free", "legal_issues",
+    }
     with engine.connect() as conn:
         for col_name, col_type in _migrate_columns:
             try:
@@ -111,17 +113,35 @@ def init_db(db_path: str | None = None):
                 conn.commit()
             except Exception:
                 conn.rollback()
+        # Drop dead columns
         listing_columns = _get_table_columns(conn, "listings")
-        for old_name, new_name in _LISTING_COLUMN_ALIASES.items():
-            if old_name in listing_columns and new_name in listing_columns:
+        for col_name in _drop_columns:
+            if col_name in listing_columns:
                 try:
-                    conn.execute(
-                        text(
-                            f"UPDATE listings SET {new_name} = {old_name} "
-                            f"WHERE {new_name} IS NULL AND {old_name} IS NOT NULL"
-                        )
-                    )
+                    conn.execute(text(f"ALTER TABLE listings DROP COLUMN {col_name}"))
                     conn.commit()
                 except Exception:
                     conn.rollback()
+        # Clean llm_extras JSON: strip removed keys
+        rows = conn.execute(
+            text("SELECT id, llm_extras FROM listings WHERE llm_extras IS NOT NULL")
+        ).fetchall()
+        updated = 0
+        for row_id, raw in rows:
+            try:
+                data = json.loads(raw)
+                keys_present = set(data) & _dead_json_keys
+                if not keys_present:
+                    continue
+                for k in keys_present:
+                    del data[k]
+                conn.execute(
+                    text("UPDATE listings SET llm_extras = :extras WHERE id = :id"),
+                    {"extras": json.dumps(data, ensure_ascii=False), "id": row_id},
+                )
+                updated += 1
+            except (json.JSONDecodeError, TypeError):
+                continue
+        if updated:
+            conn.commit()
     return engine

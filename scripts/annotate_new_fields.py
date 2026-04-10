@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Re-annotate training data with 7 new fields using Claude API.
+"""Re-annotate training data with new fields using Claude API.
 
 Reads training_data.jsonl, sends each description to Claude to extract:
-urgency, warranty, tuning_or_mods, taxi_fleet_rental,
-recent_maintenance, tires_condition, first_owner_selling.
+urgency, warranty, tuning_or_mods, taxi_fleet_rental, first_owner_selling.
 
 Merges new fields into existing JSON and writes updated file.
 
@@ -27,15 +26,13 @@ OUTPUT_FILE = DATA_DIR / "training_data_v2.jsonl"
 
 NEW_FIELDS_PROMPT = """\
 You are annotating Portuguese car listings for ML training.
-Given a car listing description, extract ONLY these 7 fields as JSON:
+Given a car listing description, extract ONLY these 5 fields as JSON:
 
 {
   "urgency": "high" | "medium" | "low" | null,
   "warranty": true | false | null,
   "tuning_or_mods": ["list of modifications"] | [],
   "taxi_fleet_rental": true | false | null,
-  "recent_maintenance": ["list of completed maintenance work"] | [],
-  "tires_condition": "new" | "good" | "fair" | "poor" | null,
   "first_owner_selling": true | false | null
 }
 
@@ -44,8 +41,6 @@ Rules:
 - warranty: true if "garantia" mentioned positively (not "sem garantia"); false if explicitly denied; null if not mentioned
 - tuning_or_mods: aftermarket modifications only: reprogramação, stage 1/2, remap, chip tuning, suspensão rebaixada, coilovers, escape desportivo não-original, downpipe, wrap, bodykit. Empty list if none
 - taxi_fleet_rental: true if ex-táxi, TVDE, Uber, Bolt, rent-a-car, frota, carro de empresa
-- recent_maintenance: specific completed work with km/date if mentioned. E.g. "correia distribuição trocada aos 180000km". Empty list if none mentioned
-- tires_condition: "new" if "pneus novos"; "good" if "bom estado"/"80% piso"; "fair" if "razoável"; "poor" if "gastos"; null if not mentioned
 - first_owner_selling: true if "1 dono desde novo","único dono","comprado novo por mim","vendo o meu" and seller is that owner
 
 Return ONLY valid JSON, no explanation."""
