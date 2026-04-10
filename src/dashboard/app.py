@@ -184,7 +184,8 @@ for _, deal in deals.iterrows():
                     st.markdown(f"**{price:,} EUR** → {predicted:,}")
                 st.markdown(f"Profit: **{profit:+,} EUR** ({roi:+.0f}%)")
                 flip = deal.get("flip_score", 0)
-                st.caption(f"Score: {flip:.0f}")
+                sample = int(deal["sample_size"]) if pd.notna(deal.get("sample_size")) else 0
+                st.caption(f"Score: {flip:.0f} · based on {sample} listings")
             else:
                 st.markdown(f"**{price:,} EUR**")
 
