@@ -37,6 +37,8 @@ NUMERIC_FEATURES = [
     "desc_mentions_num_owners", "avg_days_to_sell",
     "photo_count", "description_length", "seats",
     "tuning_or_mods_count",
+    "num_price_drops", "max_drop_pct", "price_drop_velocity",
+    "days_since_last_drop",
 ]
 
 BOOL_FEATURES = [

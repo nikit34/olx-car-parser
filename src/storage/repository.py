@@ -352,11 +352,44 @@ def get_listings_df(session: Session) -> pd.DataFrame:
         snaps = l.price_snapshots.order_by(PriceSnapshot.scraped_at.desc()).all()
         latest_price = snaps[0].price_eur if snaps else None
         first_price = snaps[-1].price_eur if snaps else None
+
+        # --- Price dynamics from snapshot history ---
+        num_price_drops = 0
+        max_drop_pct = 0.0
+        price_drop_velocity = None
+        days_since_last_drop = None
+        if len(snaps) >= 2:
+            last_drop_at = None
+            # snaps are newest-first; walk from oldest to newest
+            for i in range(len(snaps) - 1, 0, -1):
+                older_price = snaps[i].price_eur
+                newer_price = snaps[i - 1].price_eur
+                if newer_price < older_price and older_price > 0:
+                    num_price_drops += 1
+                    drop_pct = (older_price - newer_price) / older_price * 100
+                    if drop_pct > max_drop_pct:
+                        max_drop_pct = drop_pct
+                    last_drop_at = snaps[i - 1].scraped_at
+            if num_price_drops > 0 and first_price and first_price > 0:
+                total_drop_pct = max((first_price - latest_price) / first_price * 100, 0)
+                first_ts = snaps[-1].scraped_at
+                last_ts = snaps[0].scraped_at
+                span_days = max((last_ts - first_ts).total_seconds() / 86400, 1)
+                price_drop_velocity = round(total_drop_pct / span_days, 3)
+            if last_drop_at is not None:
+                days_since_last_drop = max(
+                    (snaps[0].scraped_at - last_drop_at).total_seconds() / 86400, 0
+                )
+
         rows.append({
             "olx_id": l.olx_id, "url": l.url, "title": l.title,
             "brand": l.brand, "model": l.model, "year": l.year,
             "price_eur": latest_price,
             "first_price_eur": first_price,
+            "num_price_drops": num_price_drops,
+            "max_drop_pct": round(max_drop_pct, 1),
+            "price_drop_velocity": price_drop_velocity,
+            "days_since_last_drop": round(days_since_last_drop, 1) if days_since_last_drop is not None else None,
             "mileage_km": l.mileage_km, "engine_cc": l.engine_cc,
             "fuel_type": l.fuel_type, "horsepower": l.horsepower,
             "transmission": l.transmission, "segment": l.segment,
