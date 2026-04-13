@@ -37,8 +37,14 @@ NUMERIC_FEATURES = [
     "desc_mentions_num_owners", "avg_days_to_sell",
     "photo_count", "description_length", "seats",
     "tuning_or_mods_count",
-    "num_price_drops", "max_drop_pct", "price_drop_velocity",
-    "days_since_last_drop",
+    # NOTE: price-history features (num_price_drops, max_drop_pct,
+    # price_drop_velocity, days_since_last_drop) are intentionally excluded.
+    # They are post-hoc — known only after observing the listing for days —
+    # and create circular logic: model learns "listings that dropped are
+    # cheaper" instead of explaining price from the car's own attributes.
+    # That nukes the flip-score signal for exactly the deals we care about
+    # (motivated sellers who slashed prices). Dashboard still displays them
+    # as separate indicators; they just don't feed the model.
 ]
 
 BOOL_FEATURES = [
