@@ -139,38 +139,134 @@ _LGB_PARAMS = dict(
     n_jobs=-1,
 )
 
+_QUANTILES = {"low": 0.1, "median": 0.5, "high": 0.9}
+_EARLY_STOPPING_ROUNDS = 40
+_MIN_N_ESTIMATORS = 50
+
+
+def _pinball_loss(y_true: np.ndarray, y_pred: np.ndarray, alpha: float) -> float:
+    """Quantile (pinball) loss — the native metric for quantile regression."""
+    diff = y_true - y_pred
+    return float(np.mean(np.maximum(alpha * diff, (alpha - 1) * diff)))
+
+
+def _filter_training_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    """Drop outliers that would poison the quantile targets.
+
+    Returns (filtered_df, drop_stats) for logging.  Filters:
+      1. Price that moved 10× in either direction (data-entry noise, wrong currency)
+      2. Prices outside [1st, 99th] percentile (heavy-tail clip)
+      3. km / max(age, 1) outside [500, 100 000] (implausible mileage)
+    """
+    start = len(df)
+    out = df.copy()
+    stats = {"start": start}
+
+    # 1. 10× price swings from first known price
+    if "first_price_eur" in out.columns:
+        first = pd.to_numeric(out["first_price_eur"], errors="coerce")
+        last = pd.to_numeric(out["price_eur"], errors="coerce")
+        ratio = last / first.where(first > 0)
+        extreme = (ratio >= 10) | (ratio <= 0.1)
+        dropped = int(extreme.fillna(False).sum())
+        if dropped:
+            out = out[~extreme.fillna(False)]
+        stats["dropped_10x_swing"] = dropped
+
+    # 2. Price percentile clip
+    prices = pd.to_numeric(out["price_eur"], errors="coerce")
+    if len(prices) > 0:
+        low_p, high_p = prices.quantile([0.01, 0.99])
+        price_mask = (prices >= low_p) & (prices <= high_p)
+        stats["dropped_price_percentile"] = int((~price_mask.fillna(False)).sum())
+        out = out[price_mask.fillna(False)]
+
+    # 3. Mileage sanity (km per year of age)
+    current_year = datetime.now(timezone.utc).year
+    years = pd.to_numeric(out["year"], errors="coerce")
+    km = pd.to_numeric(out["mileage_km"], errors="coerce")
+    age = (current_year - years).clip(lower=1)
+    km_per_year = km / age
+    implausible = (km_per_year < 500) | (km_per_year > 100_000)
+    stats["dropped_mileage_sanity"] = int(implausible.fillna(False).sum())
+    out = out[~implausible.fillna(False)]
+
+    stats["kept"] = len(out)
+    return out, stats
+
 
 def _cv_metrics(
-    X: np.ndarray,
-    y: np.ndarray,
-    cat_indices: list[int],
+    df: pd.DataFrame,
     n_splits: int = 5,
-) -> dict:
-    """Run k-fold cross-validation on the median model and return quality metrics."""
+) -> tuple[dict, int]:
+    """K-fold CV for all three quantile models with per-fold categorical
+    encoding (no leakage) and early stopping to tune n_estimators.
+
+    Returns (metrics_dict, suggested_n_estimators).
+    """
+    y_all = df["price_eur"].values.astype(float)
+    n_splits = min(n_splits, max(2, len(df) // 20))
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
-    oof = np.full(len(y), np.nan)
+    cat_indices = [_ALL_FEATURES.index(c) for c in CATEGORICAL_FEATURES]
 
-    for train_idx, val_idx in kf.split(X):
-        model = lgb.LGBMRegressor(
-            objective="quantile", alpha=0.5, **_LGB_PARAMS,
-        )
-        model.fit(X[train_idx], y[train_idx], categorical_feature=cat_indices)
-        oof[val_idx] = model.predict(X[val_idx])
+    oof = {name: np.full(len(y_all), np.nan) for name in _QUANTILES}
+    best_iters: list[int] = []
 
-    oof = np.maximum(oof, 0)
-    mae = float(np.mean(np.abs(y - oof)))
-    mape = float(np.mean(np.abs((y - oof) / np.maximum(y, 1))) * 100)
-    ss_res = np.sum((y - oof) ** 2)
-    ss_tot = np.sum((y - np.mean(y)) ** 2)
+    for train_idx, val_idx in kf.split(df):
+        train_df = df.iloc[train_idx]
+        val_df = df.iloc[val_idx]
+        # Encode categoricals on train only, apply mapping to val — no leakage
+        X_train, cat_maps_fold = _prepare_X(train_df)
+        X_val, _ = _prepare_X(val_df, cat_maps_fold)
+        y_train = y_all[train_idx]
+        y_val = y_all[val_idx]
+
+        for name, alpha in _QUANTILES.items():
+            model = lgb.LGBMRegressor(
+                objective="quantile", alpha=alpha, **_LGB_PARAMS,
+            )
+            model.fit(
+                X_train, y_train,
+                eval_set=[(X_val, y_val)],
+                categorical_feature=cat_indices,
+                callbacks=[lgb.early_stopping(_EARLY_STOPPING_ROUNDS, verbose=False)],
+            )
+            oof[name][val_idx] = model.predict(X_val)
+            if name == "median":
+                best_iters.append(int(model.best_iteration_ or _LGB_PARAMS["n_estimators"]))
+
+    for name in oof:
+        oof[name] = np.maximum(oof[name], 0)
+
+    median_oof = oof["median"]
+    mae = float(np.mean(np.abs(y_all - median_oof)))
+    mape = float(np.mean(np.abs((y_all - median_oof) / np.maximum(y_all, 1))) * 100)
+    ss_res = float(np.sum((y_all - median_oof) ** 2))
+    ss_tot = float(np.sum((y_all - np.mean(y_all)) ** 2))
     r2 = float(1 - ss_res / ss_tot) if ss_tot > 0 else 0.0
+
+    pinball = {
+        name: _pinball_loss(y_all, oof[name], alpha)
+        for name, alpha in _QUANTILES.items()
+    }
+    # Fraction of true prices inside the [p10, p90] band — should be ~0.80
+    coverage_80 = float(np.mean((y_all >= oof["low"]) & (y_all <= oof["high"])))
+
+    suggested = int(np.median(best_iters)) if best_iters else _LGB_PARAMS["n_estimators"]
+    suggested = max(suggested, _MIN_N_ESTIMATORS)
 
     return {
         "mae": round(mae, 0),
         "mape": round(mape, 1),
         "r2": round(r2, 3),
-        "n_samples": int(len(y)),
+        "pinball_low": round(pinball["low"], 1),
+        "pinball_median": round(pinball["median"], 1),
+        "pinball_high": round(pinball["high"], 1),
+        "coverage_80": round(coverage_80, 3),
+        "best_n_estimators": suggested,
+        "n_samples": int(len(y_all)),
         "cv_folds": n_splits,
-    }
+    }, suggested
 
 
 def train_price_model(
@@ -192,21 +288,26 @@ def train_price_model(
         & listings_df["mileage_km"].notna()
     ].copy()
 
+    df, filter_stats = _filter_training_data(df)
+
     if len(df) < min_samples:
         return None
 
     y = df["price_eur"].values.astype(float)
+
+    # CV with per-fold cat encoding + early stopping → tuned n_estimators
+    metrics, best_n_estimators = _cv_metrics(df)
+    metrics["filter_stats"] = filter_stats
+
+    # Final models: fit on full filtered data with CV-tuned n_estimators
     X_arr, cat_maps = _prepare_X(df)
     cat_indices = [_ALL_FEATURES.index(c) for c in CATEGORICAL_FEATURES]
 
-    # Cross-validation metrics (median model only — most important)
-    metrics = _cv_metrics(X_arr, y, cat_indices)
-
-    # Train final models on full data
+    final_params = {**_LGB_PARAMS, "n_estimators": best_n_estimators}
     models = {}
-    for name, quantile in [("low", 0.1), ("median", 0.5), ("high", 0.9)]:
+    for name, quantile in _QUANTILES.items():
         model = lgb.LGBMRegressor(
-            objective="quantile", alpha=quantile, **_LGB_PARAMS,
+            objective="quantile", alpha=quantile, **final_params,
         )
         model.fit(X_arr, y, categorical_feature=cat_indices)
         models[name] = model

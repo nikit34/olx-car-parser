@@ -79,6 +79,14 @@ if _metrics_history:
         _mq1.metric("MAE", f"{_latest['mae']:,.0f} €")
         _mq2.metric("MAPE", f"{_latest['mape']:.1f}%")
         _mq3.metric("R²", f"{_latest['r2']:.2f}")
+        _cov = _latest.get("coverage_80")
+        if _cov is not None:
+            # Target coverage for p10-p90 band is 0.80; deviations reveal miscalibrated quantiles
+            _mq4, _mq5 = st.columns(2)
+            _mq4.metric("80% coverage", f"{_cov:.1%}", delta=f"{(_cov - 0.80):+.1%}")
+            _best_n = _latest.get("best_n_estimators")
+            if _best_n is not None:
+                _mq5.metric("Trees (CV-tuned)", f"{_best_n}")
         st.caption(f"CV {_latest.get('cv_folds', '?')}-fold · {_latest['n_samples']:,} samples")
 
         if len(_metrics_history) > 1:
