@@ -259,10 +259,14 @@ class TestLlmPipeline:
     def test_queue_feeds_llm_worker(self, mock_enrich, mock_avail):
         """Simulate the CLI pipeline: scraper puts (olx_id, desc) in queue, worker processes."""
         import multiprocessing
+        import queue
         from src.cli import _llm_worker
 
-        in_q = multiprocessing.Queue()
-        out_q = multiprocessing.Queue()
+        # Use queue.Queue (not multiprocessing.Queue) since worker runs as a
+        # thread here — avoids the race where mp.Queue's internal feeder daemon
+        # hasn't flushed the pipe by the time we check empty().
+        in_q = queue.Queue()
+        out_q = queue.Queue()
         shutdown = multiprocessing.Event()
 
         worker = threading.Thread(target=_llm_worker, args=(in_q, out_q, shutdown))
@@ -285,10 +289,11 @@ class TestLlmPipeline:
     def test_worker_handles_failures(self, mock_enrich, mock_avail):
         """Worker sends None results and exits after 5 consecutive failures."""
         import multiprocessing
+        import queue
         from src.cli import _llm_worker
 
-        in_q = multiprocessing.Queue()
-        out_q = multiprocessing.Queue()
+        in_q = queue.Queue()
+        out_q = queue.Queue()
         shutdown = multiprocessing.Event()
 
         for i in range(7):
