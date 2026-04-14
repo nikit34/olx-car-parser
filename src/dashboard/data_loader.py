@@ -318,7 +318,8 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> tupl
     importance_df = pd.DataFrame()
     if gb_models is not None:
         importance_df = compute_permutation_importance(gb_models, gb_cat_maps, active)
-        price_df = predict_prices(gb_models, gb_cat_maps, active)
+        _conformal_q = _gb_metrics.get("conformal_q", 0.0) if _gb_metrics else 0.0
+        price_df = predict_prices(gb_models, gb_cat_maps, active, conformal_q=_conformal_q)
         for idx in price_df.index:
             olx_id = active.loc[idx, "olx_id"] if "olx_id" in active.columns else None
             pred = price_df.loc[idx, "predicted_price"]

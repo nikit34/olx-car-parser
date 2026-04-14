@@ -260,7 +260,24 @@ def _cv_metrics(
         for name, alpha in _QUANTILES.items()
     }
     # Fraction of true prices inside the [p10, p90] band — should be ~0.80
-    coverage_80 = float(np.mean((y_all >= oof["low"]) & (y_all <= oof["high"])))
+    coverage_raw = float(np.mean((y_all >= oof["low"]) & (y_all <= oof["high"])))
+
+    # Conformal Quantile Regression (CQR — Romano, Patterson, Candes 2019).
+    # Compute per-sample conformity scores: how far outside the predicted
+    # [low, high] band each true price falls.  Positive = missed, negative =
+    # comfortably inside.  The 80th-percentile score is the correction Q that
+    # widens the band to guarantee 80% marginal coverage on new data.
+    _TARGET_COVERAGE = 0.80
+    n = len(y_all)
+    scores = np.maximum(oof["low"] - y_all, y_all - oof["high"])
+    q_level = min(np.ceil(_TARGET_COVERAGE * (n + 1)) / n, 1.0)
+    conformal_q = float(np.quantile(scores, q_level))
+
+    calibrated_low = oof["low"] - conformal_q
+    calibrated_high = oof["high"] + conformal_q
+    coverage_calibrated = float(np.mean(
+        (y_all >= calibrated_low) & (y_all <= calibrated_high)
+    ))
 
     suggested = int(np.median(best_iters)) if best_iters else _LGB_PARAMS["n_estimators"]
     suggested = max(suggested, _MIN_N_ESTIMATORS)
@@ -272,7 +289,9 @@ def _cv_metrics(
         "pinball_low": round(pinball["low"], 1),
         "pinball_median": round(pinball["median"], 1),
         "pinball_high": round(pinball["high"], 1),
-        "coverage_80": round(coverage_80, 3),
+        "coverage_80": round(coverage_raw, 3),
+        "coverage_80_calibrated": round(coverage_calibrated, 3),
+        "conformal_q": round(conformal_q, 1),
         "best_n_estimators": suggested,
         "n_samples": int(len(y_all)),
         "cv_folds": n_splits,
@@ -329,13 +348,19 @@ def predict_prices(
     models: dict[str, lgb.LGBMRegressor],
     cat_maps: dict[str, dict[str, int]],
     listings_df: pd.DataFrame,
+    conformal_q: float = 0.0,
 ) -> pd.DataFrame:
-    """Predict fair price range for each listing."""
+    """Predict fair price range for each listing.
+
+    If *conformal_q* is provided (from CQR calibration in CV metrics),
+    the [low, high] band is widened symmetrically so that empirical
+    coverage matches the 80% target.
+    """
     X_arr, _ = _prepare_X(listings_df, cat_maps)
 
     median = models["median"].predict(X_arr)
-    low = models["low"].predict(X_arr)
-    high = models["high"].predict(X_arr)
+    low = models["low"].predict(X_arr) - conformal_q
+    high = models["high"].predict(X_arr) + conformal_q
 
     return pd.DataFrame({
         "predicted_price": np.maximum(median, 0),
