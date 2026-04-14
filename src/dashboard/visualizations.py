@@ -100,13 +100,13 @@ def _apply_layout(fig, **kw):
 
 
 # ---------------------------------------------------------------------------
-# Data loading
+# Data loading — keep module-level work lightweight (no model training)
 # ---------------------------------------------------------------------------
 @st.cache_data(ttl=600)
 def get_data():
     db_data = load_from_db()
     if db_data is None:
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
     listings, history = db_data
     listings = enrich_listings(listings)
@@ -114,42 +114,13 @@ def get_data():
         listings["mileage_km"] = listings["real_mileage_km"].fillna(listings["mileage_km"])
     turnover = compute_turnover_stats(listings)
     competition = compute_competition_density(listings, turnover)
-    return listings, history, turnover, competition, pd.DataFrame()
+    return listings, history, turnover, competition
 
 
-@st.cache_data(ttl=600)
-def get_model_data(listings_hash):
-    """Train/load model and return predictions + metrics."""
-    db_data = load_from_db()
-    if db_data is None:
-        return None
-    listings, _ = db_data
-    listings = enrich_listings(listings)
-    if "real_mileage_km" in listings.columns:
-        listings["mileage_km"] = listings["real_mileage_km"].fillna(listings["mileage_km"])
-
-    active = listings[listings["is_active"]].copy() if "is_active" in listings.columns else listings.copy()
-    if "duplicate_of" in active.columns:
-        active = active[active["duplicate_of"].isna()].copy()
-
-    from src.models.generations import get_generation
-    active["generation"] = active.apply(
-        lambda r: get_generation(r["brand"], r["model"], r.get("year")), axis=1
-    )
-
-    # Merge avg_days_to_sell
-    from src.analytics.turnover import compute_turnover_stats as _ts
-    turnover = _ts(listings)
-    liq = {}
-    if not turnover.empty:
-        for _, row in turnover.iterrows():
-            days = row.get("avg_days_to_sell")
-            if pd.notna(days):
-                liq[(row["brand"], row["model"], row.get("generation"))] = float(days)
-    if liq:
-        active["avg_days_to_sell"] = active.apply(
-            lambda r: liq.get((r["brand"], r["model"], r.get("generation"))), axis=1
-        )
+@st.cache_data(ttl=600, show_spinner="Loading model & predictions...")
+def get_model_data(_active_df, _listings_df):
+    """Load saved model (or train if user requested) and return predictions."""
+    active = _active_df.copy()
 
     saved = load_model()
     if saved is not None:
@@ -178,7 +149,40 @@ def get_model_data(listings_hash):
     }
 
 
-listings, history, turnover, competition, _ = get_data()
+@st.cache_data(ttl=600, show_spinner="Computing deal signals...")
+def get_signals(_listings_df, _history_df):
+    """Compute flip-score signals (loads saved model, never trains from scratch)."""
+    from data_loader import compute_signals
+    return compute_signals(_listings_df, _history_df)
+
+
+def _prepare_active(listings):
+    """Prepare active listings with generation + turnover for model input."""
+    from src.models.generations import get_generation
+
+    active = listings[listings["is_active"]].copy() if "is_active" in listings.columns else listings.copy()
+    if "duplicate_of" in active.columns:
+        active = active[active["duplicate_of"].isna()].copy()
+
+    active["generation"] = active.apply(
+        lambda r: get_generation(r["brand"], r["model"], r.get("year")), axis=1
+    )
+
+    turnover = compute_turnover_stats(listings)
+    liq = {}
+    if not turnover.empty:
+        for _, row in turnover.iterrows():
+            days = row.get("avg_days_to_sell")
+            if pd.notna(days):
+                liq[(row["brand"], row["model"], row.get("generation"))] = float(days)
+    if liq:
+        active["avg_days_to_sell"] = active.apply(
+            lambda r: liq.get((r["brand"], r["model"], r.get("generation"))), axis=1
+        )
+    return active
+
+
+listings, history, turnover, competition = get_data()
 
 if listings.empty:
     st.error("No data. Run `python -m src.cli scrape` first.")
@@ -471,186 +475,190 @@ with tab_price_model:
     Uses **Conformal Quantile Regression (CQR)** to calibrate the prediction band for guaranteed 80% coverage.
     """)
 
-    # Load model data
-    model_hash = f"{len(active)}_{active['price_eur'].sum():.0f}"
-    model_data = get_model_data(model_hash)
+    # Load model data — prefer saved model; train only on explicit user request
+    _has_saved = load_model() is not None
+    if not _has_saved:
+        st.warning("No trained model found. Train it first (takes ~2 min on 5k listings).")
+        if st.button("Train model now", key="train_price"):
+            with st.spinner("Training LightGBM quantile models..."):
+                _model_active = _prepare_active(listings)
+                model_data = get_model_data(_model_active, listings)
+        else:
+            model_data = None
+    else:
+        _model_active = _prepare_active(listings)
+        model_data = get_model_data(_model_active, listings)
 
-    if model_data is None:
-        st.warning("Could not train/load model. Need at least 50 listings with price, year, and mileage.")
-        st.stop()
+    _show_model = model_data is not None
+    if not _show_model:
+        st.info("Model metrics and charts will appear here after training.")
 
-    m_active = model_data["active"]
-    metrics = model_data["metrics"]
-    importance = model_data["importance"]
+    if _show_model:
+        m_active = model_data["active"]
+        metrics = model_data["metrics"]
+        importance = model_data["importance"]
 
-    # Metrics row
-    st.subheader("Model Performance (5-fold CV)")
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("MAE", f"{metrics['mae']:,.0f} EUR")
-    m2.metric("MAPE", f"{metrics['mape']:.1f}%")
-    m3.metric("R\u00b2", f"{metrics['r2']:.3f}")
-    cov = metrics.get("coverage_80_calibrated") or metrics.get("coverage_80", 0)
-    m4.metric("80% Band Coverage", f"{cov:.1%}")
-    m5.metric("Trees (early-stop)", f"{metrics.get('best_n_estimators', '?')}")
+        # Metrics row
+        st.subheader("Model Performance (5-fold CV)")
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("MAE", f"{metrics['mae']:,.0f} EUR")
+        m2.metric("MAPE", f"{metrics['mape']:.1f}%")
+        m3.metric("R\u00b2", f"{metrics['r2']:.3f}")
+        cov = metrics.get("coverage_80_calibrated") or metrics.get("coverage_80", 0)
+        m4.metric("80% Band Coverage", f"{cov:.1%}")
+        m5.metric("Trees (early-stop)", f"{metrics.get('best_n_estimators', '?')}")
 
-    st.caption(
-        f"Trained on **{metrics['n_samples']:,}** samples "
-        f"| Conformal Q = {metrics.get('conformal_q', 0):.0f} EUR "
-        f"| {metrics.get('cv_folds', 5)}-fold CV"
-    )
+        st.caption(
+            f"Trained on **{metrics['n_samples']:,}** samples "
+            f"| Conformal Q = {metrics.get('conformal_q', 0):.0f} EUR "
+            f"| {metrics.get('cv_folds', 5)}-fold CV"
+        )
 
-    # Row: Predicted vs Actual + Residuals
-    col_pva, col_res = st.columns(2)
+        # Row: Predicted vs Actual + Residuals
+        col_pva, col_res = st.columns(2)
 
-    pred_data = m_active[
-        m_active["predicted_price"].notna()
-        & m_active["price_eur"].notna()
-        & (m_active["price_eur"] > 0)
-    ].copy()
-    pred_data["residual"] = pred_data["predicted_price"] - pred_data["price_eur"]
-    pred_data["residual_pct"] = (pred_data["residual"] / pred_data["price_eur"] * 100).round(1)
+        pred_data = m_active[
+            m_active["predicted_price"].notna()
+            & m_active["price_eur"].notna()
+            & (m_active["price_eur"] > 0)
+        ].copy()
+        pred_data["residual"] = pred_data["predicted_price"] - pred_data["price_eur"]
+        pred_data["residual_pct"] = (pred_data["residual"] / pred_data["price_eur"] * 100).round(1)
 
-    with col_pva:
-        max_price = pred_data[["price_eur", "predicted_price"]].max().max()
-        fig = go.Figure()
-
-        # Perfect prediction line
-        fig.add_trace(go.Scatter(
-            x=[0, max_price], y=[0, max_price],
-            mode="lines", line=dict(color="#FFD166", width=2, dash="dash"),
-            name="Perfect prediction",
-            showlegend=True,
-        ))
-
-        # Scatter
-        fig.add_trace(go.Scatter(
-            x=pred_data["price_eur"],
-            y=pred_data["predicted_price"],
-            mode="markers",
-            marker=dict(
-                color=pred_data["residual_pct"].clip(-50, 50),
-                colorscale=[[0, "#E63946"], [0.5, "#FAFAFA"], [1, "#06D6A0"]],
-                size=5, opacity=0.6,
-                colorbar=dict(title="Residual %", ticksuffix="%"),
-            ),
-            text=pred_data.apply(
-                lambda r: f"{r['brand']} {r['model']}<br>Actual: {r['price_eur']:,.0f}<br>Predicted: {r['predicted_price']:,.0f}",
-                axis=1,
-            ),
-            hoverinfo="text",
-            name="Listings",
-        ))
-
-        _apply_layout(fig, title="Predicted vs Actual Price", height=500)
-        fig.update_xaxes(title_text="Actual Price (EUR)", tickformat=",")
-        fig.update_yaxes(title_text="Predicted Price (EUR)", tickformat=",")
-        st.plotly_chart(fig, use_container_width=True)
-
-    with col_res:
-        fig = go.Figure()
-        fig.add_trace(go.Histogram(
-            x=pred_data["residual_pct"].clip(-100, 100),
-            nbinsx=60,
-            marker=dict(
-                color="rgba(0, 180, 216, 0.7)",
-                line=dict(color="#00B4D8", width=0.5),
-            ),
-            name="Residuals",
-        ))
-        fig.add_vline(x=0, line_dash="dash", line_color="#FFD166", line_width=2)
-
-        median_res = pred_data["residual_pct"].median()
-        fig.add_vline(x=median_res, line_dash="dot", line_color="#FF6B35", line_width=1.5,
-                       annotation_text=f"median: {median_res:.1f}%", annotation_position="top")
-
-        _apply_layout(fig, title="Residual Distribution (%)", height=500)
-        fig.update_xaxes(title_text="(Predicted - Actual) / Actual (%)")
-        fig.update_yaxes(title_text="Count")
-        st.plotly_chart(fig, use_container_width=True)
-
-    # Row: Feature Importance + Quantile Bands
-    col_imp, col_bands = st.columns(2)
-
-    with col_imp:
-        if not importance.empty:
-            imp = importance[importance["median_importance"] > 0].head(20).copy()
-            imp = imp.sort_values("median_importance")
-
+        with col_pva:
+            max_price = pred_data[["price_eur", "predicted_price"]].max().max()
             fig = go.Figure()
-            fig.add_trace(go.Bar(
-                x=imp["median_importance"],
-                y=imp["feature"],
-                orientation="h",
-                name="Median model",
-                marker=dict(color="#FF6B35"),
-            ))
-            fig.add_trace(go.Bar(
-                x=imp["low_importance"],
-                y=imp["feature"],
-                orientation="h",
-                name="Low (P10)",
-                marker=dict(color="#00B4D8", opacity=0.7),
-            ))
-            fig.add_trace(go.Bar(
-                x=imp["high_importance"],
-                y=imp["feature"],
-                orientation="h",
-                name="High (P90)",
-                marker=dict(color="#2EC4B6", opacity=0.7),
+
+            fig.add_trace(go.Scatter(
+                x=[0, max_price], y=[0, max_price],
+                mode="lines", line=dict(color="#FFD166", width=2, dash="dash"),
+                name="Perfect prediction",
+                showlegend=True,
             ))
 
-            _apply_layout(fig, title="Permutation Feature Importance", height=600,
-                         barmode="group")
-            fig.update_xaxes(title_text="Importance (MAE increase on permutation)")
+            fig.add_trace(go.Scatter(
+                x=pred_data["price_eur"],
+                y=pred_data["predicted_price"],
+                mode="markers",
+                marker=dict(
+                    color=pred_data["residual_pct"].clip(-50, 50),
+                    colorscale=[[0, "#E63946"], [0.5, "#FAFAFA"], [1, "#06D6A0"]],
+                    size=5, opacity=0.6,
+                    colorbar=dict(title="Residual %", ticksuffix="%"),
+                ),
+                text=pred_data.apply(
+                    lambda r: f"{r['brand']} {r['model']}<br>Actual: {r['price_eur']:,.0f}<br>Predicted: {r['predicted_price']:,.0f}",
+                    axis=1,
+                ),
+                hoverinfo="text",
+                name="Listings",
+            ))
+
+            _apply_layout(fig, title="Predicted vs Actual Price", height=500)
+            fig.update_xaxes(title_text="Actual Price (EUR)", tickformat=",")
+            fig.update_yaxes(title_text="Predicted Price (EUR)", tickformat=",")
             st.plotly_chart(fig, use_container_width=True)
 
-    with col_bands:
-        # Show prediction bands for a sample of listings sorted by actual price
-        band_data = pred_data[
-            pred_data["fair_price_low"].notna() & pred_data["fair_price_high"].notna()
-        ].copy()
-        band_data = band_data.sort_values("price_eur").reset_index(drop=True)
+        with col_res:
+            fig = go.Figure()
+            fig.add_trace(go.Histogram(
+                x=pred_data["residual_pct"].clip(-100, 100),
+                nbinsx=60,
+                marker=dict(
+                    color="rgba(0, 180, 216, 0.7)",
+                    line=dict(color="#00B4D8", width=0.5),
+                ),
+                name="Residuals",
+            ))
+            fig.add_vline(x=0, line_dash="dash", line_color="#FFD166", line_width=2)
 
-        # Sample to keep chart readable
-        if len(band_data) > 200:
-            step = len(band_data) // 200
-            band_data = band_data.iloc[::step]
+            median_res = pred_data["residual_pct"].median()
+            fig.add_vline(x=median_res, line_dash="dot", line_color="#FF6B35", line_width=1.5,
+                           annotation_text=f"median: {median_res:.1f}%", annotation_position="top")
 
-        x_range = list(range(len(band_data)))
+            _apply_layout(fig, title="Residual Distribution (%)", height=500)
+            fig.update_xaxes(title_text="(Predicted - Actual) / Actual (%)")
+            fig.update_yaxes(title_text="Count")
+            st.plotly_chart(fig, use_container_width=True)
 
-        fig = go.Figure()
+        # Row: Feature Importance + Quantile Bands
+        col_imp, col_bands = st.columns(2)
 
-        # P10-P90 band
-        fig.add_trace(go.Scatter(
-            x=x_range + x_range[::-1],
-            y=list(band_data["fair_price_high"]) + list(band_data["fair_price_low"])[::-1],
-            fill="toself",
-            fillcolor="rgba(0, 180, 216, 0.15)",
-            line=dict(color="rgba(0,0,0,0)"),
-            name="P10–P90 band",
-            hoverinfo="skip",
-        ))
+        with col_imp:
+            if not importance.empty:
+                imp = importance[importance["median_importance"] > 0].head(20).copy()
+                imp = imp.sort_values("median_importance")
 
-        # Actual price
-        fig.add_trace(go.Scatter(
-            x=x_range, y=band_data["price_eur"],
-            mode="markers", marker=dict(color="#E63946", size=4, opacity=0.7),
-            name="Actual price",
-        ))
+                fig = go.Figure()
+                fig.add_trace(go.Bar(
+                    x=imp["median_importance"],
+                    y=imp["feature"],
+                    orientation="h",
+                    name="Median model",
+                    marker=dict(color="#FF6B35"),
+                ))
+                fig.add_trace(go.Bar(
+                    x=imp["low_importance"],
+                    y=imp["feature"],
+                    orientation="h",
+                    name="Low (P10)",
+                    marker=dict(color="#00B4D8", opacity=0.7),
+                ))
+                fig.add_trace(go.Bar(
+                    x=imp["high_importance"],
+                    y=imp["feature"],
+                    orientation="h",
+                    name="High (P90)",
+                    marker=dict(color="#2EC4B6", opacity=0.7),
+                ))
 
-        # Predicted (median)
-        fig.add_trace(go.Scatter(
-            x=x_range, y=band_data["predicted_price"],
-            mode="markers", marker=dict(color="#FFD166", size=3, opacity=0.5),
-            name="Predicted (P50)",
-        ))
+                _apply_layout(fig, title="Permutation Feature Importance", height=600,
+                             barmode="group")
+                fig.update_xaxes(title_text="Importance (MAE increase on permutation)")
+                st.plotly_chart(fig, use_container_width=True)
 
-        _apply_layout(fig, title="Prediction Bands: P10 / P50 / P90", height=600)
-        fig.update_xaxes(title_text="Listings (sorted by actual price)", showticklabels=False)
-        fig.update_yaxes(title_text="Price (EUR)", tickformat=",")
-        st.plotly_chart(fig, use_container_width=True)
+        with col_bands:
+            band_data = pred_data[
+                pred_data["fair_price_low"].notna() & pred_data["fair_price_high"].notna()
+            ].copy()
+            band_data = band_data.sort_values("price_eur").reset_index(drop=True)
 
-    # Row: Metrics history
+            if len(band_data) > 200:
+                step = len(band_data) // 200
+                band_data = band_data.iloc[::step]
+
+            x_range = list(range(len(band_data)))
+
+            fig = go.Figure()
+
+            fig.add_trace(go.Scatter(
+                x=x_range + x_range[::-1],
+                y=list(band_data["fair_price_high"]) + list(band_data["fair_price_low"])[::-1],
+                fill="toself",
+                fillcolor="rgba(0, 180, 216, 0.15)",
+                line=dict(color="rgba(0,0,0,0)"),
+                name="P10\u2013P90 band",
+                hoverinfo="skip",
+            ))
+
+            fig.add_trace(go.Scatter(
+                x=x_range, y=band_data["price_eur"],
+                mode="markers", marker=dict(color="#E63946", size=4, opacity=0.7),
+                name="Actual price",
+            ))
+
+            fig.add_trace(go.Scatter(
+                x=x_range, y=band_data["predicted_price"],
+                mode="markers", marker=dict(color="#FFD166", size=3, opacity=0.5),
+                name="Predicted (P50)",
+            ))
+
+            _apply_layout(fig, title="Prediction Bands: P10 / P50 / P90", height=600)
+            fig.update_xaxes(title_text="Listings (sorted by actual price)", showticklabels=False)
+            fig.update_yaxes(title_text="Price (EUR)", tickformat=",")
+            st.plotly_chart(fig, use_container_width=True)
+
+    # Row: Metrics history (always show if available, even without fresh model)
     metrics_hist = load_metrics_history()
     if len(metrics_hist) > 1:
         st.subheader("Model Quality Over Time")
@@ -714,9 +722,15 @@ with tab_flip:
     **Formula:** `flip_score = undervaluation% x liquidity x trend x motivated x urgency x warranty x velocity x confidence`
     """)
 
-    # Load signals
-    from data_loader import compute_signals
-    signals_df, _ = compute_signals(listings, history) if not listings.empty else (pd.DataFrame(), pd.DataFrame())
+    # Load signals — uses saved model, never trains from scratch during page load
+    _has_saved_flip = load_model() is not None
+    if not _has_saved_flip and not listings.empty:
+        st.warning("No trained model found. Go to **Price Model** tab and train first.")
+        signals_df = pd.DataFrame()
+    elif not listings.empty:
+        signals_df, _ = get_signals(listings, history)
+    else:
+        signals_df = pd.DataFrame()
 
     if signals_df.empty:
         st.info("No deals found. Need active listings with price data.")
