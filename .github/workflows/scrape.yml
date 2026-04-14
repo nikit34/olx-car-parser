@@ -3,10 +3,19 @@ name: Scrape OLX
 on:
   schedule:
     - cron: "0 2,10,18 * * *"   # every 8 hours (02:00, 10:00, 18:00 UTC)
-  workflow_dispatch:             # manual trigger
+  workflow_dispatch:
+    inputs:
+      with_llm:
+        description: "Run LLM enrichment after scraping"
+        type: boolean
+        default: true
 
 permissions:
   contents: write
+
+# Schedule always runs with LLM; manual trigger respects the input.
+env:
+  WITH_LLM: ${{ github.event_name == 'schedule' && 'true' || inputs.with_llm }}
 
 jobs:
   scrape:
@@ -27,6 +36,7 @@ jobs:
           .venv/bin/pip install -q -e .
 
       - name: Ensure Ollama is running
+        if: env.WITH_LLM == 'true'
         run: |
           if ! curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
             pkill -9 -f "Ollama" 2>/dev/null || true
@@ -54,6 +64,7 @@ jobs:
         run: .venv/bin/python -m src.cli scrape
 
       - name: Enrich with LLM
+        if: env.WITH_LLM == 'true'
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: .venv/bin/python -m src.cli enrich --workers 3
