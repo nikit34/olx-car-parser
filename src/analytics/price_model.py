@@ -134,7 +134,11 @@ def _prepare_X(
 
 
 _LGB_PARAMS = dict(
-    n_estimators=700,
+    # Ceiling only — the actual tree count comes from early stopping in CV
+    # (`best_n_estimators`), so this just has to be high enough not to cap
+    # the search.  On ~8k rows early stopping was pegged at 699/700 before
+    # this bump, meaning the old cap was the bottleneck, not overfitting.
+    n_estimators=2000,
     max_depth=4,
     learning_rate=0.05,
     min_child_samples=10,
