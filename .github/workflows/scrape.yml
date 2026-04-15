@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       with_llm:
-        description: "Run LLM enrichment after scraping"
+        description: "Enable LLM enrichment (start Ollama, enrich inline + final pass)"
         type: boolean
         default: true
 
