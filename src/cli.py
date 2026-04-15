@@ -226,13 +226,15 @@ def scrape(
     private_only: bool = typer.Option(None, help="Only private sellers (Particular)"),
     concurrency: int = typer.Option(None, help="Parallel detail page workers (default 8)"),
     llm_workers: int = typer.Option(None, help="Parallel LLM enrichment workers (default from config, or 1)"),
-    skip_llm: bool = typer.Option(True, help="Skip LLM during scrape, use 'enrich' command after"),
 ):
     """Scrape OLX.pt car listings, enrich with LLM, save to database.
 
     Streaming pipeline: Scraper -> LLM -> DB all run in parallel.
     Listings are saved to DB as soon as LLM finishes (or immediately if
     no enrichment needed), without waiting for the full scrape to complete.
+
+    LLM enrichment runs inline whenever Ollama is reachable; if it isn't,
+    listings are saved raw and can be filled in later via `enrich`.
     """
     _LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     lock_file = open(_LOCK_PATH, "w")
@@ -269,19 +271,21 @@ def scrape(
     db_queue: Queue = Queue()
     raw_by_id: dict = {}
 
-    # LLM pipeline (optional — skipped by default for speed)
+    # LLM pipeline — runs inline if Ollama is reachable, otherwise we save raw
+    # and let the separate `enrich` command (or a later run) catch up.
     llm_in: multiprocessing.Queue | None = None
     llm_out: multiprocessing.Queue | None = None
     llm_shutdown = None
     llm_procs = []
     merger = None
 
-    if not skip_llm:
+    from src.parser.llm_enrichment import _get_config as _get_llm_config, _ollama_available
+    llm_cfg = _get_llm_config()
+    llm_enabled = _ollama_available(llm_cfg["ollama_url"])
+    if llm_enabled:
         llm_in = multiprocessing.Queue()
         llm_out = multiprocessing.Queue()
         llm_shutdown = multiprocessing.Event()
-        from src.parser.llm_enrichment import _get_config as _get_llm_config
-        llm_cfg = _get_llm_config()
         num_workers = llm_workers if llm_workers is not None else llm_cfg.get("llm_workers", 1)
         for _ in range(num_workers):
             p = multiprocessing.Process(target=_llm_worker, args=(llm_in, llm_out, llm_shutdown), daemon=True)
@@ -289,8 +293,10 @@ def scrape(
             llm_procs.append(p)
         merger = threading.Thread(target=_llm_to_db, args=(llm_out, raw_by_id, db_queue), daemon=True)
         merger.start()
+        log.info("Inline LLM enrichment enabled (%d workers)", num_workers)
     else:
-        log.info("LLM skipped during scrape (use 'enrich' command after)")
+        log.warning("Ollama not reachable at %s — saving listings raw, run `enrich` later",
+                    llm_cfg["ollama_url"])
 
     # DB worker thread: saves listings as they arrive
     db_result: dict = {}
@@ -305,7 +311,7 @@ def scrape(
         nonlocal sent_to_llm, skipped_llm
         for listing in batch:
             raw_by_id[listing.olx_id] = listing
-            if skip_llm:
+            if not llm_enabled:
                 db_queue.put((listing, None))
                 continue
             if not listing.description or len(listing.description.strip()) < 20:
@@ -390,7 +396,7 @@ def scrape(
     log.info("Scraping done (%d OLX + %d SV = %d total). Waiting for pipeline to drain...",
              len(raw_listings) - len(sv_listings), len(sv_listings), len(raw_listings))
 
-    if not skip_llm:
+    if llm_enabled:
         # 1. Stop LLM workers
         for _ in llm_procs:
             llm_in.put(None)

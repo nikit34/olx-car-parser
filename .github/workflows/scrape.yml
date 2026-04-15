@@ -61,10 +61,16 @@ jobs:
       - name: Scrape
         env:
           PYTHONPATH: ${{ github.workspace }}
+        # scrape auto-detects Ollama: if reachable → inline LLM enrichment,
+        # otherwise saves raw. When with_llm=false the previous step doesn't
+        # start Ollama, so this naturally falls back to raw-only.
         run: .venv/bin/python -m src.cli scrape
 
       - name: Enrich with LLM
-        if: env.WITH_LLM == 'true'
+        # always() so this runs even if Scrape failed/timed out/was canceled,
+        # picking up any listings that didn't make it through the inline LLM
+        # pipeline before shutdown (llm_extras IS NULL).
+        if: ${{ always() && env.WITH_LLM == 'true' }}
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: .venv/bin/python -m src.cli enrich --workers 3
