@@ -29,7 +29,7 @@ listings_df, history_df, signals_df, brands_models, turnover_df, _portfolio_init
 st.sidebar.title("Filters")
 
 if listings_df.empty:
-    st.sidebar.warning("No data. Run `python -m src.cli scrape`.")
+    st.sidebar.warning("No data yet. Scraper runs every 8 hours via GitHub Actions.")
     st.stop()
 else:
     st.sidebar.success(f"{len(listings_df)} listings")
