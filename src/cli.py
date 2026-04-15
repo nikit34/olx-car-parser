@@ -494,16 +494,23 @@ def enrich(
     consecutive_failures = 0
     batch_size = 25
 
-    def _enrich_one(listing):
-        if not listing.description or len(listing.description.strip()) < 20:
+    def _enrich_one(listing, description, title):
+        # Worker runs on a non-main thread — must not touch ORM attributes,
+        # because the shared Session is not thread-safe and attributes get
+        # expired after each main-thread commit, triggering lazy reloads.
+        if not description or len(description.strip()) < 20:
             return listing, {}
-        result = enrich_from_description(listing.description, listing.title or "")
+        result = enrich_from_description(description, title or "")
         return listing, result
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {}
         for listing in pending:
-            futures[pool.submit(_enrich_one, listing)] = listing
+            # Snapshot fields on the main thread before submitting, so the
+            # worker never needs to hit the Session.
+            desc = listing.description or ""
+            title = listing.title or ""
+            futures[pool.submit(_enrich_one, listing, desc, title)] = listing
 
         for fut in as_completed(futures):
             listing, result = fut.result()
