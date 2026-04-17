@@ -16,13 +16,28 @@ DB_PATH = PROJECT_ROOT / "data" / "olx_cars.db"
 _CHECK_INTERVAL_SECONDS = 2 * 3600  # check for new release every 2 hours
 
 
+def _github_token() -> str | None:
+    tok = os.environ.get("GITHUB_TOKEN")
+    if tok:
+        return tok
+    try:
+        import streamlit as st
+        return st.secrets.get("GITHUB_TOKEN")
+    except Exception:
+        return None
+
+
 def _release_updated(repo: str) -> str | None:
-    """Return download URL if the release asset is newer than local DB, else None."""
+    """Return asset API URL if the release asset is newer than local DB, else None."""
     import httpx
 
     api_url = f"https://api.github.com/repos/{repo}/releases/tags/latest-data"
+    headers = {"Accept": "application/vnd.github+json"}
+    token = _github_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     try:
-        resp = httpx.get(api_url, timeout=10)
+        resp = httpx.get(api_url, headers=headers, timeout=10)
         if resp.status_code != 200:
             return None
         for asset in resp.json().get("assets", []):
@@ -34,7 +49,8 @@ def _release_updated(repo: str) -> str | None:
                     local_dt = datetime.fromtimestamp(DB_PATH.stat().st_mtime, tz=timezone.utc)
                     if remote_dt <= local_dt:
                         return None  # local is up to date
-                return asset["browser_download_url"]
+                # Use API URL (not browser_download_url) — required to auth private-repo assets.
+                return asset["url"]
     except Exception:
         return None
     return None
@@ -70,7 +86,11 @@ def _ensure_db() -> bool:
     try:
         import httpx
 
-        resp = httpx.get(url, follow_redirects=True, timeout=30)
+        headers = {"Accept": "application/octet-stream"}
+        token = _github_token()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        resp = httpx.get(url, headers=headers, follow_redirects=True, timeout=60)
         if resp.status_code == 200:
             DB_PATH.parent.mkdir(parents=True, exist_ok=True)
             DB_PATH.write_bytes(resp.content)
