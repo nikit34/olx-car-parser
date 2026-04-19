@@ -331,7 +331,10 @@ def scrape(
         log.info("Page done: %d listings -> %d sent to LLM, %d skipped", len(batch), sent_to_llm, skipped_llm)
 
     with OlxScraper(config) as scraper:
-        raw_listings = scraper.scrape_all(on_batch_ready=_on_batch)
+        raw_listings = scraper.scrape_all(
+            on_batch_ready=_on_batch,
+            skip_enrichment_ids=duplicate_ids,
+        )
 
     # --- Scrape StandVirtual (same pipeline) ---
     sv_config = ScraperConfig(
@@ -344,7 +347,10 @@ def scrape(
     )
     log.info("Starting scrape of StandVirtual: up to %d pages...", sv_config.max_pages)
     with StandVirtualScraper(sv_config) as sv_scraper:
-        sv_listings = sv_scraper.scrape_all(on_batch_ready=_on_batch)
+        sv_listings = sv_scraper.scrape_all(
+            on_batch_ready=_on_batch,
+            skip_enrichment_ids=duplicate_ids,
+        )
     raw_listings.extend(sv_listings)
 
     # Collect scraped IDs now; mark_inactive runs after DB worker finishes

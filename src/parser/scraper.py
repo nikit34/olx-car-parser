@@ -105,9 +105,11 @@ class OlxScraper:
         self.client = httpx.Client(
             timeout=self.config.timeout,
             follow_redirects=True,
+            http2=True,
             headers={
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.5",
+                "Accept-Encoding": "gzip, deflate, br",
             },
         )
         self._consecutive_403 = 0
@@ -259,7 +261,9 @@ class OlxScraper:
         soup = BeautifulSoup(html, "lxml")
         details = {}
 
-        for script in soup.find_all("script", type="application/ld+json"):
+        # Limit JSON-LD scan: Vehicle block is always among the first scripts,
+        # and `find_all(limit=N)` stops DOM traversal once N hits accumulate.
+        for script in soup.find_all("script", type="application/ld+json", limit=5):
             try:
                 data = json.loads(script.string)
                 if isinstance(data, dict) and data.get("@type") == "Vehicle":
@@ -448,10 +452,11 @@ class OlxScraper:
             items = [el.get_text(strip=True) for el in breadcrumb.find_all("a")]
             # Breadcrumbs: Carros > Brand > Model (no location in standvirtual breadcrumbs)
 
-        # Posted/updated date (SV has it as plain text: "29 de março de 2026 às 22:17")
-        for p in soup.find_all("p"):
-            pt_text = p.get_text(strip=True)
-            parsed = _parse_pt_date(pt_text)
+        # Posted/updated date (SV has it as plain text: "29 de março de 2026 às 22:17").
+        # Pre-filter by the Portuguese "de" separator to skip the vast majority
+        # of <p> tags without parsing each one.
+        for p in soup.find_all("p", string=re.compile(r"\d+\s+de\s+\w+\s+de\s+\d{4}"), limit=5):
+            parsed = _parse_pt_date(p.get_text(strip=True))
             if parsed:
                 details["posted_at"] = parsed
                 break
@@ -485,15 +490,33 @@ class OlxScraper:
 
     _ENRICH_TIMEOUT = 90  # seconds — max time per detail page (incl. retries)
 
-    def _enrich_batch(self, listings: list[RawListing]) -> tuple[int, int]:
-        """Fetch detail pages for a batch of listings. Returns (ok, failed)."""
+    def _enrich_batch(
+        self,
+        listings: list[RawListing],
+        skip_ids: set[str] | None = None,
+    ) -> tuple[int, int]:
+        """Fetch detail pages for a batch of listings. Returns (ok, failed).
+
+        *skip_ids* lists olx_ids that already have a canonical twin enriched
+        elsewhere (e.g. cross-platform duplicates) — their detail page is a
+        wasted HTTP request, so we just keep card-level fields.
+        """
         workers = self.config.concurrency
         enriched = 0
         failed = 0
+        to_fetch = (
+            [l for l in listings if l.olx_id not in skip_ids]
+            if skip_ids else listings
+        )
+        skipped = len(listings) - len(to_fetch)
+        if skipped:
+            logger.info("Skipped detail fetch for %d known duplicates", skipped)
+        if not to_fetch:
+            return 0, 0
         with ThreadPoolExecutor(max_workers=workers) as executor:
             future_to_listing = {
                 executor.submit(self._enrich_one, listing): listing
-                for listing in listings
+                for listing in to_fetch
             }
             try:
                 for future in as_completed(future_to_listing,
@@ -519,7 +542,8 @@ class OlxScraper:
         return enriched, failed
 
     def scrape_all(self, enrich_details: bool = True,
-                   on_batch_ready=None) -> list[RawListing]:
+                   on_batch_ready=None,
+                   skip_enrichment_ids: set[str] | None = None) -> list[RawListing]:
         """Scrape all listings.
 
         Args:
@@ -527,6 +551,8 @@ class OlxScraper:
             on_batch_ready: Optional callback ``fn(batch: list[RawListing])``
                 called after each page's detail pages are fetched and saved.
                 Allows the caller to persist listings to DB incrementally.
+            skip_enrichment_ids: olx_ids whose detail page we already have
+                covered via a canonical twin (cross-platform duplicates).
         """
         all_listings = []
         for page in range(1, self.config.max_pages + 1):
@@ -538,7 +564,7 @@ class OlxScraper:
                 break
 
             if enrich_details:
-                ok, fail = self._enrich_batch(page_listings)
+                ok, fail = self._enrich_batch(page_listings, skip_ids=skip_enrichment_ids)
                 logger.info("Page %d: %d listings, details ok=%d fail=%d",
                             page, len(page_listings), ok, fail)
             else:
@@ -843,15 +869,20 @@ class StandVirtualScraper:
             on_ready(listing)
         return True
 
-    def _enrich_batch(self, listings: list[RawListing]) -> tuple[int, int]:
-        return self._olx_scraper._enrich_batch(listings)
+    def _enrich_batch(
+        self,
+        listings: list[RawListing],
+        skip_ids: set[str] | None = None,
+    ) -> tuple[int, int]:
+        return self._olx_scraper._enrich_batch(listings, skip_ids=skip_ids)
 
     # ------------------------------------------------------------------
     # Full scrape
     # ------------------------------------------------------------------
 
     def scrape_all(self, enrich_details: bool = True,
-                   on_batch_ready=None) -> list[RawListing]:
+                   on_batch_ready=None,
+                   skip_enrichment_ids: set[str] | None = None) -> list[RawListing]:
         all_listings = []
         for page in range(1, self.config.max_pages + 1):
             page_listings = self.scrape_search_page(page)
@@ -862,7 +893,7 @@ class StandVirtualScraper:
                 break
 
             if enrich_details:
-                ok, fail = self._enrich_batch(page_listings)
+                ok, fail = self._enrich_batch(page_listings, skip_ids=skip_enrichment_ids)
                 logger.info("SV page %d: %d listings, details ok=%d fail=%d",
                             page, len(page_listings), ok, fail)
             else:

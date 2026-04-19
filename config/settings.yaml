@@ -3,11 +3,11 @@
 scraper:
   base_url: "https://www.olx.pt/carros-motos-e-barcos/carros/"
   interval_hours: 6
-  request_delay_min: 2.0
-  request_delay_max: 5.0
+  request_delay_min: 0.7
+  request_delay_max: 1.5
   max_pages: 999
   private_only: true
-  concurrency: 8
+  concurrency: 12
 
 database:
   path: "data/olx_cars.db"
