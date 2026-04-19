@@ -87,7 +87,17 @@ jobs:
           sqlite3 data/olx_cars.db "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null || \
             .venv/bin/python -c "import sqlite3; sqlite3.connect('data/olx_cars.db').execute('PRAGMA wal_checkpoint(TRUNCATE)')"
 
-      - name: Upload DB to GitHub Releases
+      - name: Train price model
+        # Runs even if earlier steps partially failed — training only needs
+        # whatever got persisted to the DB.  Non-fatal: dashboard tolerates
+        # a stale model and just skips predictions if training fails here.
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: .venv/bin/python -m src.cli train-model
+
+      - name: Upload DB + model to GitHub Releases
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -96,6 +106,8 @@ jobs:
           gh release view latest-data 2>/dev/null || \
             gh release create latest-data \
               --title "Latest Data" \
-              --notes "Auto-updated database from scraper" \
+              --notes "Auto-updated database + price model from scraper" \
               --latest=false
           gh release upload latest-data data/olx_cars.db --clobber
+          [ -f data/price_model.joblib ]  && gh release upload latest-data data/price_model.joblib  --clobber || true
+          [ -f data/price_metrics.json ]  && gh release upload latest-data data/price_metrics.json  --clobber || true

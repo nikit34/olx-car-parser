@@ -620,6 +620,50 @@ def alerts():
         console.print("[yellow]No new alerts to send.[/yellow]")
 
 
+@app.command("train-model")
+def train_model():
+    """Train price model and save to data/price_model.joblib.
+
+    Intended for CI: runs after scrape+enrich, uploads to the release alongside
+    the DB. Dashboard loads the shipped model and never trains inline.
+    """
+    from src.storage.repository import get_listings_df
+    from src.analytics.computed_columns import enrich_listings
+    from src.analytics.turnover import compute_turnover_stats
+    from src.analytics.price_model import train_price_model, save_model
+    from src.dashboard.data_loader import prepare_active_for_model
+
+    init_db()
+    session = get_session()
+    listings = get_listings_df(session)
+    session.close()
+
+    if listings.empty:
+        console.print("[yellow]No listings in DB — nothing to train on.[/yellow]")
+        raise typer.Exit(1)
+
+    listings = enrich_listings(listings)
+    if "real_mileage_km" in listings.columns:
+        listings["mileage_km"] = listings["real_mileage_km"].fillna(listings["mileage_km"])
+
+    turnover = compute_turnover_stats(listings)
+    active = prepare_active_for_model(listings, turnover=turnover)
+
+    console.print(f"Training on {len(active)} active listings...")
+    result = train_price_model(active)
+    if result is None:
+        console.print("[red]Training failed: insufficient data after filtering.[/red]")
+        raise typer.Exit(1)
+
+    models, cat_maps, metrics = result
+    save_model(models, cat_maps, metrics)
+    console.print(
+        f"[green]Model saved.[/green] MAE={metrics['mae']:.0f} € · "
+        f"MAPE={metrics['mape']:.1f}% · R²={metrics['r2']:.3f} · "
+        f"n={metrics['n_samples']}"
+    )
+
+
 @app.command()
 def init():
     """Initialize database (create tables)."""

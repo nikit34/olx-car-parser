@@ -27,8 +27,8 @@ def _github_token() -> str | None:
         return None
 
 
-def _release_updated(repo: str) -> str | None:
-    """Return asset API URL if the release asset is newer than local DB, else None."""
+def _list_release_assets(repo: str) -> dict[str, dict] | None:
+    """Return {asset_name: asset_dict} for the latest-data release."""
     import httpx
 
     api_url = f"https://api.github.com/repos/{repo}/releases/tags/latest-data"
@@ -40,20 +40,40 @@ def _release_updated(repo: str) -> str | None:
         resp = httpx.get(api_url, headers=headers, timeout=10)
         if resp.status_code != 200:
             return None
-        for asset in resp.json().get("assets", []):
-            if asset["name"] == "olx_cars.db":
-                remote_ts = asset["updated_at"]  # ISO 8601
-                from datetime import datetime, timezone
-                remote_dt = datetime.fromisoformat(remote_ts.replace("Z", "+00:00"))
-                if DB_PATH.exists():
-                    local_dt = datetime.fromtimestamp(DB_PATH.stat().st_mtime, tz=timezone.utc)
-                    if remote_dt <= local_dt:
-                        return None  # local is up to date
-                # Use API URL (not browser_download_url) — required to auth private-repo assets.
-                return asset["url"]
+        return {a["name"]: a for a in resp.json().get("assets", [])}
     except Exception:
         return None
-    return None
+
+
+def _asset_url_if_newer(asset: dict, local_path: Path) -> str | None:
+    """Return the asset API URL if remote is newer than local_path (or local is missing)."""
+    from datetime import datetime, timezone
+    remote_dt = datetime.fromisoformat(asset["updated_at"].replace("Z", "+00:00"))
+    if local_path.exists():
+        local_dt = datetime.fromtimestamp(local_path.stat().st_mtime, tz=timezone.utc)
+        if remote_dt <= local_dt:
+            return None
+    # Use API URL (not browser_download_url) — required to auth private-repo assets.
+    return asset["url"]
+
+
+def _download_asset(url: str, dest: Path) -> bool:
+    import httpx
+
+    headers = {"Accept": "application/octet-stream"}
+    token = _github_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        resp = httpx.get(url, headers=headers, follow_redirects=True, timeout=60)
+        if resp.status_code == 200:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(resp.content)
+            print(f"Downloaded {dest.name} from release ({len(resp.content)} bytes)")
+            return True
+    except Exception as e:
+        print(f"Warning: could not download {dest.name} from release: {e}")
+    return False
 
 
 def _force_next_check():
@@ -62,43 +82,54 @@ def _force_next_check():
         os.utime(DB_PATH, (0, 0))
 
 
-def _ensure_db() -> bool:
-    """Download DB from GitHub Releases if missing or newer version available."""
+# Model + metrics live alongside the DB in the data release — shipped by CI
+# (see .github/workflows/scrape.yml `train-model` step). The dashboard never
+# trains locally; it just consumes what the pipeline produced.
+_MODEL_PATH = PROJECT_ROOT / "data" / "price_model.joblib"
+_METRICS_PATH = PROJECT_ROOT / "data" / "price_metrics.json"
+
+_RELEASE_ASSETS: tuple[tuple[str, Path], ...] = (
+    ("olx_cars.db", DB_PATH),
+    ("price_model.joblib", _MODEL_PATH),
+    ("price_metrics.json", _METRICS_PATH),
+)
+
+
+def _ensure_release_assets() -> bool:
+    """Sync DB + model + metrics from the latest-data release (once per TTL).
+
+    Returns True if the local DB exists after the attempt (model/metrics are
+    best-effort — dashboard falls back to "no predictions" if they're missing).
+    """
     import time
 
-    if not DB_PATH.exists():
-        needs_check = True
-    else:
-        age = time.time() - DB_PATH.stat().st_mtime
-        needs_check = age > _CHECK_INTERVAL_SECONDS
-
-    if not needs_check:
+    # TTL gate is keyed on the DB's mtime (same as before): if DB was
+    # refreshed recently, skip the GitHub API call entirely.
+    if DB_PATH.exists() and (time.time() - DB_PATH.stat().st_mtime) <= _CHECK_INTERVAL_SECONDS:
         return True
 
     repo = os.environ.get("GITHUB_REPOSITORY", "nikit34/olx-car-parser")
     if not repo:
         return DB_PATH.exists()
 
-    url = _release_updated(repo)
-    if not url:
+    assets = _list_release_assets(repo)
+    if not assets:
         return DB_PATH.exists()
 
-    try:
-        import httpx
+    for name, dest in _RELEASE_ASSETS:
+        asset = assets.get(name)
+        if not asset:
+            continue
+        url = _asset_url_if_newer(asset, dest)
+        if url:
+            _download_asset(url, dest)
 
-        headers = {"Accept": "application/octet-stream"}
-        token = _github_token()
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-        resp = httpx.get(url, headers=headers, follow_redirects=True, timeout=60)
-        if resp.status_code == 200:
-            DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-            DB_PATH.write_bytes(resp.content)
-            print(f"Downloaded database from release ({len(resp.content)} bytes)")
-            return True
-    except Exception as e:
-        print(f"Warning: could not download DB from release: {e}")
     return DB_PATH.exists()
+
+
+def _ensure_db() -> bool:
+    """Back-compat alias — sync all release assets, report DB status."""
+    return _ensure_release_assets()
 
 
 def load_from_db() -> tuple[pd.DataFrame, pd.DataFrame] | None:
@@ -198,7 +229,73 @@ def _blocking_deal_reason(listing: pd.Series) -> str | None:
     return None
 
 
-def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def prepare_active_for_model(
+    listings_df: pd.DataFrame,
+    turnover: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Active-listing subset enriched with generation, sub_segment, avg_days_to_sell.
+
+    Shared by compute_signals (dashboard) and the `train-model` CLI so the
+    model sees the exact same feature prep in both paths.
+    """
+    from src.models.generations import get_generation
+    from src.analytics.turnover import compute_turnover_stats
+
+    if listings_df.empty:
+        return listings_df.copy()
+
+    active = listings_df[listings_df["is_active"]].copy() if "is_active" in listings_df.columns else listings_df.copy()
+    if "duplicate_of" in active.columns:
+        active = active[active["duplicate_of"].isna()].copy()
+
+    gen_keys = active[["brand", "model", "year"]].drop_duplicates()
+    gen_map = {
+        (b, m, y if pd.notna(y) else None): get_generation(b, m, y if pd.notna(y) else None)
+        for b, m, y in gen_keys.itertuples(index=False, name=None)
+    }
+    active["generation"] = [
+        gen_map.get((b, m, y if pd.notna(y) else None))
+        for b, m, y in zip(active["brand"], active["model"], active["year"])
+    ]
+
+    def _sub_key(f, e):
+        fk = f if (isinstance(f, str) and f) else None
+        ek = float(e) if pd.notna(e) and e else None
+        return (fk, ek)
+
+    sub_keys = active[["fuel_type", "engine_cc"]].drop_duplicates()
+    sub_map = {
+        _sub_key(f, e): _sub_segment(f, e)
+        for f, e in sub_keys.itertuples(index=False, name=None)
+    }
+    active["sub_segment"] = [
+        sub_map.get(_sub_key(f, e))
+        for f, e in zip(active["fuel_type"], active["engine_cc"])
+    ]
+
+    if turnover is None:
+        turnover = compute_turnover_stats(listings_df)
+    liquidity_map: dict[tuple, float] = {}
+    if not turnover.empty:
+        for row in turnover.itertuples(index=False):
+            days = getattr(row, "avg_days_to_sell", None)
+            if pd.notna(days):
+                gen = getattr(row, "generation", None)
+                liquidity_map[(row.brand, row.model, gen if pd.notna(gen) else None)] = float(days)
+    if liquidity_map:
+        active["avg_days_to_sell"] = [
+            liquidity_map.get((b, m, g if pd.notna(g) else None))
+            for b, m, g in zip(active["brand"], active["model"], active["generation"])
+        ]
+
+    return active
+
+
+def compute_signals(
+    listings_df: pd.DataFrame,
+    history_df: pd.DataFrame,
+    turnover: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Find undervalued listings and rank by flip potential.
 
     Price model (gradient boosting) uses 20 features including LLM-extracted
@@ -217,22 +314,9 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> tupl
         return pd.DataFrame(), pd.DataFrame()
 
     import numpy as np
-    from src.models.generations import get_generation
-    from src.analytics.turnover import compute_turnover_stats
 
     signals = []
-    active = listings_df[listings_df["is_active"]].copy() if "is_active" in listings_df.columns else listings_df.copy()
-
-    # Exclude cross-platform duplicates from stats
-    if "duplicate_of" in active.columns:
-        active = active[active["duplicate_of"].isna()].copy()
-
-    active["generation"] = active.apply(
-        lambda r: get_generation(r["brand"], r["model"], r.get("year")), axis=1
-    )
-    active["sub_segment"] = active.apply(
-        lambda r: _sub_segment(r.get("fuel_type"), r.get("engine_cc")), axis=1
-    )
+    active = prepare_active_for_model(listings_df, turnover=turnover)
 
     # --- Generation-level stats ---
     priced_gen = active[active["price_eur"].notna() & active["generation"].notna()]
@@ -263,14 +347,17 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> tupl
         .reset_index()
     )
 
-    # --- Turnover stats: avg days to sell per brand+model+generation ---
-    turnover = compute_turnover_stats(listings_df)
+    # --- Liquidity map (keyed by (brand, model, generation|None)) ---
+    from src.analytics.turnover import compute_turnover_stats
+    if turnover is None:
+        turnover = compute_turnover_stats(listings_df)
     liquidity_map: dict[tuple, float] = {}
     if not turnover.empty:
-        for _, row in turnover.iterrows():
-            days = row.get("avg_days_to_sell")
+        for row in turnover.itertuples(index=False):
+            days = getattr(row, "avg_days_to_sell", None)
             if pd.notna(days):
-                liquidity_map[(row["brand"], row["model"], row.get("generation"))] = float(days)
+                gen = getattr(row, "generation", None)
+                liquidity_map[(row.brand, row.model, gen if pd.notna(gen) else None)] = float(days)
 
     # --- Price trend from history (last 60 days) ---
     trend_map: dict[tuple, float] = {}
@@ -304,33 +391,33 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> tupl
                     continue
                 velocity_map[keys] = float((group["_lifespan"] <= 21).mean())
 
-    # --- Merge avg_days_to_sell into active for price model ---
-    if liquidity_map:
-        active["avg_days_to_sell"] = active.apply(
-            lambda r: liquidity_map.get((r["brand"], r["model"], r.get("generation"))), axis=1
-        )
+    # avg_days_to_sell already populated by prepare_active_for_model.
 
     # --- Gradient boosting price model (uses LLM fields + market data) ---
     from src.analytics.price_model import (
-        train_price_model, predict_prices,
+        predict_prices,
         compute_feature_completeness,
         compute_permutation_importance,
-        load_model, save_model,
+        load_model,
     )
 
     feature_fill = compute_feature_completeness(active)
 
-    # Try loading saved model; fall back to training
-    saved = load_model()
+    # Model is trained in CI (see `train-model` CLI) and shipped in the data
+    # release. Dashboard never trains inline — if the model is missing or
+    # too old, we skip predictions instead of blocking the user for minutes.
+    saved = load_model(max_age_hours=14 * 24)  # tolerate up to 2 weeks
     gb_models = None
     gb_cat_maps: dict = {}
+    _gb_metrics: dict | None = None
     if saved is not None:
         gb_models, gb_cat_maps, _gb_metrics = saved
     else:
-        train_result = train_price_model(active)
-        if train_result is not None:
-            gb_models, gb_cat_maps, _gb_metrics = train_result
-            save_model(gb_models, gb_cat_maps, _gb_metrics)
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "No fresh price model available — skipping predictions. "
+            "Run `python -m src.cli train-model` or wait for the next CI run."
+        )
 
     gb_predictions: dict[str, float] = {}
     gb_fair_low: dict[str, float] = {}
@@ -340,13 +427,34 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> tupl
         importance_df = compute_permutation_importance(gb_models, gb_cat_maps, active)
         _conformal_q = _gb_metrics.get("conformal_q", 0.0) if _gb_metrics else 0.0
         price_df = predict_prices(gb_models, gb_cat_maps, active, conformal_q=_conformal_q)
-        for idx in price_df.index:
-            olx_id = active.loc[idx, "olx_id"] if "olx_id" in active.columns else None
-            pred = price_df.loc[idx, "predicted_price"]
-            if olx_id and pred > 0:
-                gb_predictions[olx_id] = float(pred)
-                gb_fair_low[olx_id] = float(price_df.loc[idx, "fair_price_low"])
-                gb_fair_high[olx_id] = float(price_df.loc[idx, "fair_price_high"])
+        if "olx_id" in active.columns:
+            olx_ids = active["olx_id"].reindex(price_df.index).values
+            preds = price_df["predicted_price"].values
+            lows = price_df["fair_price_low"].values
+            highs = price_df["fair_price_high"].values
+            for oid, pred, lo, hi in zip(olx_ids, preds, lows, highs):
+                if oid and pred > 0:
+                    gb_predictions[oid] = float(pred)
+                    gb_fair_low[oid] = float(lo)
+                    gb_fair_high[oid] = float(hi)
+
+    # --- Precompute stat lookups (dict by tuple) to avoid per-row boolean
+    # indexing over sub_stats/gen_stats/model_stats in the scoring loop.
+    sub_lookup: dict[tuple, tuple] = {
+        (r.brand, r.model, r.generation, r.sub_segment):
+            (r.sub_median, int(r.sub_count), r.sub_year_median, r.sub_mileage_median)
+        for r in sub_stats.itertuples(index=False)
+    }
+    gen_lookup: dict[tuple, tuple] = {
+        (r.brand, r.model, r.generation):
+            (r.gen_median, int(r.gen_count), r.gen_year_median, r.gen_mileage_median)
+        for r in gen_stats.itertuples(index=False)
+    }
+    model_lookup: dict[tuple, tuple] = {
+        (r.brand, r.model):
+            (r.model_median, int(r.model_count), r.model_year_median, r.model_mileage_median)
+        for r in model_stats.itertuples(index=False)
+    }
 
     # --- Score each listing ---
     for _, listing in active.iterrows():
@@ -368,40 +476,20 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> tupl
         sub_seg = listing.get("sub_segment")
 
         if generation and sub_seg:
-            ss = sub_stats[
-                (sub_stats["brand"] == brand)
-                & (sub_stats["model"] == model)
-                & (sub_stats["generation"] == generation)
-                & (sub_stats["sub_segment"] == sub_seg)
-            ]
-            if not ss.empty and int(ss.iloc[0]["sub_count"]) >= 5:
-                median = ss.iloc[0]["sub_median"]
-                sample = int(ss.iloc[0]["sub_count"])
-                group_year_median = ss.iloc[0]["sub_year_median"]
-                group_mileage_median = ss.iloc[0]["sub_mileage_median"]
+            hit = sub_lookup.get((brand, model, generation, sub_seg))
+            if hit is not None and hit[1] >= 5:
+                median, sample, group_year_median, group_mileage_median = hit
 
         if median is None and generation:
-            gs = gen_stats[
-                (gen_stats["brand"] == brand)
-                & (gen_stats["model"] == model)
-                & (gen_stats["generation"] == generation)
-            ]
-            if not gs.empty:
-                median = gs.iloc[0]["gen_median"]
-                sample = int(gs.iloc[0]["gen_count"])
-                group_year_median = gs.iloc[0]["gen_year_median"]
-                group_mileage_median = gs.iloc[0]["gen_mileage_median"]
+            hit = gen_lookup.get((brand, model, generation))
+            if hit is not None:
+                median, sample, group_year_median, group_mileage_median = hit
 
         if median is None:
-            ms = model_stats[
-                (model_stats["brand"] == brand) & (model_stats["model"] == model)
-            ]
-            if ms.empty:
+            hit = model_lookup.get((brand, model))
+            if hit is None:
                 continue
-            median = ms.iloc[0]["model_median"]
-            sample = int(ms.iloc[0]["model_count"])
-            group_year_median = ms.iloc[0]["model_year_median"]
-            group_mileage_median = ms.iloc[0]["model_mileage_median"]
+            median, sample, group_year_median, group_mileage_median = hit
 
         if not median or price >= median * 0.85:
             continue
@@ -428,8 +516,13 @@ def compute_signals(listings_df: pd.DataFrame, history_df: pd.DataFrame) -> tupl
 
         # --- Opportunity multipliers (deal quality, not market value) ---
 
-        # 2. Liquidity multiplier (30 days = 1.0 baseline)
-        days_to_sell = liquidity_map.get((brand, model))
+        # 2. Liquidity multiplier (30 days = 1.0 baseline).
+        # Key matches how the map is built: (brand, model, generation|None),
+        # with a 2-level fallback if the generation-specific stat is missing.
+        gen_key = generation if pd.notna(generation) and generation else None
+        days_to_sell = liquidity_map.get((brand, model, gen_key))
+        if days_to_sell is None and gen_key is not None:
+            days_to_sell = liquidity_map.get((brand, model, None))
         if days_to_sell and days_to_sell > 0:
             liquidity_mult = min(max(30 / days_to_sell, 0.5), 2.0)
         else:
@@ -603,8 +696,8 @@ def load_all():
         # Use LLM-corrected mileage everywhere (sellers game filters with fake low values)
         if "real_mileage_km" in listings.columns:
             listings["mileage_km"] = listings["real_mileage_km"].fillna(listings["mileage_km"])
-        signals, importance = compute_signals(listings, history)
         turnover = compute_turnover_stats(listings)
+        signals, importance = compute_signals(listings, history, turnover=turnover)
     else:
         listings = pd.DataFrame()
         history = pd.DataFrame()
@@ -614,14 +707,11 @@ def load_all():
 
     portfolio = load_portfolio()
 
-    brands_models = {}
+    brands_models: dict[str, list[str]] = {}
     if not listings.empty:
-        for _, row in listings[["brand", "model"]].drop_duplicates().iterrows():
-            brand = row["brand"]
-            if brand not in brands_models:
-                brands_models[brand] = []
-            if row["model"] not in brands_models[brand]:
-                brands_models[brand].append(row["model"])
+        pairs = listings[["brand", "model"]].drop_duplicates()
+        for brand, grp in pairs.groupby("brand", sort=False):
+            brands_models[brand] = grp["model"].tolist()
 
     unmatched = load_unmatched()
 
