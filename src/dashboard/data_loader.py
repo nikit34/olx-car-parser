@@ -263,14 +263,19 @@ def prepare_active_for_model(
         ek = float(e) if pd.notna(e) and e else None
         return (fk, ek)
 
-    sub_keys = active[["fuel_type", "engine_cc"]].drop_duplicates()
+    # Tolerate fixtures/tests that omit these optional columns — fall back
+    # to None for the missing one so the original apply-based behavior holds.
+    fuel_series = active["fuel_type"] if "fuel_type" in active.columns else pd.Series([None] * len(active), index=active.index)
+    cc_series = active["engine_cc"] if "engine_cc" in active.columns else pd.Series([None] * len(active), index=active.index)
+
+    sub_keys = pd.DataFrame({"fuel_type": fuel_series, "engine_cc": cc_series}).drop_duplicates()
     sub_map = {
         _sub_key(f, e): _sub_segment(f, e)
         for f, e in sub_keys.itertuples(index=False, name=None)
     }
     active["sub_segment"] = [
         sub_map.get(_sub_key(f, e))
-        for f, e in zip(active["fuel_type"], active["engine_cc"])
+        for f, e in zip(fuel_series, cc_series)
     ]
 
     if turnover is None:
