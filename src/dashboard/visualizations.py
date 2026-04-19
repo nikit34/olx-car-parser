@@ -968,8 +968,10 @@ with tab_llm:
     l2.metric("Total Active", f"{total_count:,}")
     l3.metric("Coverage", f"{enriched_count / total_count * 100:.1f}%" if total_count > 0 else "0%")
 
-    # Count listings with descriptions
-    has_desc = active["description"].notna() & (active["description"].str.len() > 20)
+    # Count listings with meaningful descriptions (length is precomputed at
+    # scrape time — cheaper than keeping the raw description text in the df).
+    desc_len = pd.to_numeric(active.get("description_length"), errors="coerce")
+    has_desc = desc_len.fillna(0) > 20
     l4.metric("With Description", f"{has_desc.sum():,}")
 
     # LLM fields coverage

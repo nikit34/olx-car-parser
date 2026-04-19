@@ -87,11 +87,13 @@ def _force_next_check():
 # trains locally; it just consumes what the pipeline produced.
 _MODEL_PATH = PROJECT_ROOT / "data" / "price_model.joblib"
 _METRICS_PATH = PROJECT_ROOT / "data" / "price_metrics.json"
+_IMPORTANCE_PATH = PROJECT_ROOT / "data" / "price_importance.json"
 
 _RELEASE_ASSETS: tuple[tuple[str, Path], ...] = (
     ("olx_cars.db", DB_PATH),
     ("price_model.joblib", _MODEL_PATH),
     ("price_metrics.json", _METRICS_PATH),
+    ("price_importance.json", _IMPORTANCE_PATH),
 )
 
 
@@ -402,7 +404,7 @@ def compute_signals(
     from src.analytics.price_model import (
         predict_prices,
         compute_feature_completeness,
-        compute_permutation_importance,
+        load_importance,
         load_model,
     )
 
@@ -427,9 +429,11 @@ def compute_signals(
     gb_predictions: dict[str, float] = {}
     gb_fair_low: dict[str, float] = {}
     gb_fair_high: dict[str, float] = {}
-    importance_df = pd.DataFrame()
+    # Importance is computed once during training (CI) and shipped in the
+    # data release — loading it here costs one JSON read instead of a
+    # 690-predict permutation loop per signal recompute.
+    importance_df = load_importance()
     if gb_models is not None:
-        importance_df = compute_permutation_importance(gb_models, gb_cat_maps, active)
         _conformal_q = _gb_metrics.get("conformal_q", 0.0) if _gb_metrics else 0.0
         price_df = predict_prices(gb_models, gb_cat_maps, active, conformal_q=_conformal_q)
         if "olx_id" in active.columns:

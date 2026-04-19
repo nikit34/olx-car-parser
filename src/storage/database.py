@@ -31,8 +31,19 @@ def get_engine(db_path: str | None = None):
         @event.listens_for(_engine, "connect")
         def _set_sqlite_pragmas(dbapi_conn, connection_record):
             cursor = dbapi_conn.cursor()
+            # WAL + a relaxed fsync policy — durable enough for a scraper
+            # (worst case we lose the last ~second on kernel panic, which we
+            # recover from the next run anyway).
             cursor.execute("PRAGMA journal_mode=WAL")
-            cursor.execute("PRAGMA busy_timeout=30000")  # wait up to 30s instead of failing immediately
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA busy_timeout=30000")
+            # 64 MB page cache — keeps the hot working set (active listings,
+            # indexes, recent snapshots) in memory instead of paging from disk.
+            cursor.execute("PRAGMA cache_size=-65536")
+            # ORDER BY / GROUP BY / CREATE INDEX scratch space stays in RAM.
+            cursor.execute("PRAGMA temp_store=MEMORY")
+            # 256 MB memory-mapped reads — saves a syscall per page on SELECTs.
+            cursor.execute("PRAGMA mmap_size=268435456")
             cursor.close()
     return _engine
 
@@ -49,9 +60,36 @@ def _get_table_columns(conn, table_name: str) -> set[str]:
     return {row[1] for row in rows}
 
 
+_SCHEMA_VERSION = 1  # bump when _migrate_columns or _dead_json_keys changes
+
+
+def _read_schema_version(conn) -> int:
+    conn.execute(text(
+        "CREATE TABLE IF NOT EXISTS _schema_meta (version INTEGER NOT NULL)"
+    ))
+    row = conn.execute(text("SELECT version FROM _schema_meta LIMIT 1")).fetchone()
+    return int(row[0]) if row else 0
+
+
+def _write_schema_version(conn, version: int):
+    conn.execute(text("DELETE FROM _schema_meta"))
+    conn.execute(text("INSERT INTO _schema_meta (version) VALUES (:v)"), {"v": version})
+
+
 def init_db(db_path: str | None = None):
     engine = get_engine(db_path)
     Base.metadata.create_all(engine)
+
+    # Schema migrations are idempotent but expensive on large DBs (full
+    # SELECT over llm_extras + one ALTER per added column).  Gate on a
+    # persisted schema_version so startup cost for scrape/enrich/dashboard
+    # is a single integer read once the migration has been applied.
+    with engine.connect() as conn:
+        current = _read_schema_version(conn)
+        if current >= _SCHEMA_VERSION:
+            conn.commit()
+            return engine
+
     # Migrate: add columns to existing listings table
     _migrate_columns = [
         ("generation", "TEXT"),
@@ -144,4 +182,6 @@ def init_db(db_path: str | None = None):
                 continue
         if updated:
             conn.commit()
+        _write_schema_version(conn, _SCHEMA_VERSION)
+        conn.commit()
     return engine

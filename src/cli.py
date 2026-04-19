@@ -130,9 +130,7 @@ def _db_worker(db_queue: Queue, result: dict):
     enriched = 0
     unmatched = 0
     active_ids: set[str] = set()
-    changed_pairs: set[tuple[str, str]] = set()  # (brand, model) pairs touched since last stats
     processed = 0
-    last_maintenance_at = 0  # saved count at last dedup/stats run
 
     while True:
         item = db_queue.get()
@@ -179,7 +177,6 @@ def _db_worker(db_queue: Queue, result: dict):
             if raw.price_eur is not None:
                 add_price_snapshot(session, listing.id, raw.price_eur, raw.negotiable)
             active_ids.add(raw.olx_id)
-            changed_pairs.add((raw.brand, raw.model or ""))
             saved += 1
         else:
             reason = "no_year" if not raw.year else "no_generation_match"
@@ -193,21 +190,10 @@ def _db_worker(db_queue: Queue, result: dict):
             log.info("DB save progress: %d saved, %d enriched, %d unmatched",
                      saved, enriched, unmatched)
 
-        # Periodic dedup + market stats every 500 saves (incremental)
-        if saved - last_maintenance_at >= 500:
-            session.commit()
-            try:
-                deduplicate_cross_platform(session)
-                compute_market_stats(session, changed_pairs=changed_pairs)
-                session.commit()
-                log.info("Periodic maintenance done at %d saved (%d pairs updated)",
-                         saved, len(changed_pairs))
-            except Exception as e:
-                log.warning("Periodic maintenance failed: %s", e)
-                session.rollback()
-            changed_pairs.clear()
-            last_maintenance_at = saved
-
+    # Dedup + market stats used to run incrementally inside this loop every
+    # 500 saves, but the final passes after the whole pipeline drains already
+    # recompute everything — the incremental runs were duplicated work that
+    # added seconds per batch.  Keep only the final passes (see main scrape()).
     session.commit()
     session.close()
     log.info("DB worker done: %d saved, %d enriched, %d unmatched",
@@ -283,7 +269,12 @@ def scrape(
     llm_cfg = _get_llm_config()
     llm_enabled = _ollama_available(llm_cfg["ollama_url"])
     if llm_enabled:
-        llm_in = multiprocessing.Queue()
+        # Bounded queue provides back-pressure: the scraper blocks on put()
+        # once the LLM can't keep up, rather than buffering tens of thousands
+        # of descriptions in RAM (qwen3:4b throughput ≪ scraper page rate on
+        # an 8 GB M1).  500 ≈ one hour of LLM headroom, enough to absorb
+        # bursts without risking OOM.
+        llm_in = multiprocessing.Queue(maxsize=500)
         llm_out = multiprocessing.Queue()
         llm_shutdown = multiprocessing.Event()
         num_workers = llm_workers if llm_workers is not None else llm_cfg.get("llm_workers", 1)
@@ -448,8 +439,23 @@ def scrape(
     dedup_count = deduplicate_cross_platform(final_session)
     if dedup_count:
         log.info("Marked %d cross-platform duplicates", dedup_count)
-    log.info("Final market stats...")
-    compute_market_stats(final_session)
+    # Market stats roll up per day, so there's no point recomputing them on
+    # every 8-hour scrape — only do the full pass if today hasn't been stamped
+    # yet. The three-per-day full pass was the single slowest step for a
+    # large DB.
+    from datetime import date as _date
+    from src.models.listing import MarketStats
+    latest_stats_date = (
+        final_session.query(MarketStats.date)
+        .order_by(MarketStats.date.desc())
+        .limit(1)
+        .scalar()
+    )
+    if latest_stats_date == _date.today():
+        log.info("Market stats already computed today — skipping full pass.")
+    else:
+        log.info("Final market stats...")
+        compute_market_stats(final_session)
     final_session.commit()
     final_session.close()
 
@@ -495,8 +501,21 @@ def enrich(
         return
 
     if cheap_first:
-        pending.sort(key=lambda l: l.price_snapshots.first().price_eur
-                     if l.price_snapshots.first() else float("inf"))
+        # Fetch min price per listing in one SQL query instead of firing a
+        # lazy relationship lookup per listing (N+1 over price_snapshots).
+        from sqlalchemy import func
+        from src.models.listing import PriceSnapshot
+        pending_ids = [l.id for l in pending]
+        min_prices = dict(
+            session.query(
+                PriceSnapshot.listing_id,
+                func.min(PriceSnapshot.price_eur),
+            )
+            .filter(PriceSnapshot.listing_id.in_(pending_ids))
+            .group_by(PriceSnapshot.listing_id)
+            .all()
+        )
+        pending.sort(key=lambda l: min_prices.get(l.id) or float("inf"))
 
     log.info("Enriching %d listings with %d workers (%s)...",
              len(pending), workers, cfg['ollama_model'])
@@ -636,7 +655,10 @@ def train_model():
     from src.storage.repository import get_listings_df
     from src.analytics.computed_columns import enrich_listings
     from src.analytics.turnover import compute_turnover_stats
-    from src.analytics.price_model import train_price_model, save_model
+    from src.analytics.price_model import (
+        train_price_model, save_model, save_importance,
+        compute_permutation_importance,
+    )
     from src.dashboard.data_loader import prepare_active_for_model
 
     init_db()
@@ -663,10 +685,16 @@ def train_model():
 
     models, cat_maps, metrics = result
     save_model(models, cat_maps, metrics)
+
+    console.print("Computing permutation importance...")
+    importance_df = compute_permutation_importance(models, cat_maps, active)
+    save_importance(importance_df)
+
     console.print(
         f"[green]Model saved.[/green] MAE={metrics['mae']:.0f} € · "
         f"MAPE={metrics['mape']:.1f}% · R²={metrics['r2']:.3f} · "
-        f"n={metrics['n_samples']}"
+        f"n={metrics['n_samples']} · "
+        f"importance rows={len(importance_df)}"
     )
 
 

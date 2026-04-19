@@ -1,12 +1,18 @@
 """SQLAlchemy models for OLX.pt car listings and price history."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, Date,
     UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
+
+
+def _utcnow() -> datetime:
+    """Naive UTC now (stored naive for back-compat) without triggering
+    datetime.utcnow's deprecation warning on Python 3.12+."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class Base(DeclarativeBase):
@@ -44,8 +50,8 @@ class Listing(Base):
     description = Column(Text)              # Listing description text
     llm_extras = Column(Text)               # JSON: LLM-extracted structured data from description
     llm_description_hash = Column(String)    # Hash of description used for LLM enrichment
-    first_seen_at = Column(DateTime, default=datetime.utcnow)
-    last_seen_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    first_seen_at = Column(DateTime, default=_utcnow)
+    last_seen_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
     is_active = Column(Boolean, default=True)
     deactivated_at = Column(DateTime)          # When listing went inactive (sold/removed)
     deactivation_reason = Column(String)       # "sold", "expired", "removed", "unknown"
@@ -81,7 +87,7 @@ class PriceSnapshot(Base):
     listing_id = Column(Integer, ForeignKey("listings.id"), nullable=False, index=True)
     price_eur = Column(Float, nullable=False)
     negotiable = Column(Boolean, default=False)
-    scraped_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    scraped_at = Column(DateTime, nullable=False, default=_utcnow)
 
     listing = relationship("Listing", back_populates="price_snapshots")
 
@@ -126,6 +132,6 @@ class UnmatchedListing(Base):
     description = Column(Text)
     reason = Column(String)              # "no_year", "no_generation_match"
     source = Column(String, default="olx")     # "olx" or "standvirtual"
-    first_seen_at = Column(DateTime, default=datetime.utcnow)
-    last_seen_at = Column(DateTime, default=datetime.utcnow)
+    first_seen_at = Column(DateTime, default=_utcnow)
+    last_seen_at = Column(DateTime, default=_utcnow)
     is_active = Column(Boolean, default=True)

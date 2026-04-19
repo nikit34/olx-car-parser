@@ -28,6 +28,7 @@ from sklearn.inspection import permutation_importance
 _MODEL_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 _MODEL_PATH = _MODEL_DIR / "price_model.joblib"
 _METRICS_PATH = _MODEL_DIR / "price_metrics.json"
+_IMPORTANCE_PATH = _MODEL_DIR / "price_importance.json"
 _MODEL_MAX_AGE_HOURS = 24
 _MIN_CATEGORY_COUNT = 3
 _OTHER_CATEGORY = "__other__"
@@ -430,6 +431,28 @@ def load_metrics_history() -> list[dict]:
         return json.loads(_METRICS_PATH.read_text())
     except (json.JSONDecodeError, ValueError):
         return []
+
+
+def save_importance(importance_df: pd.DataFrame) -> None:
+    """Persist permutation importance next to the model.
+
+    Computed once at training time and shipped in the data release so the
+    dashboard doesn't rerun a 690-predict permutation loop on every load.
+    """
+    if importance_df is None or importance_df.empty:
+        return
+    _MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    _IMPORTANCE_PATH.write_text(importance_df.to_json(orient="records"))
+
+
+def load_importance() -> pd.DataFrame:
+    """Return the shipped importance frame, or empty if missing."""
+    if not _IMPORTANCE_PATH.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_json(_IMPORTANCE_PATH, orient="records")
+    except (ValueError, json.JSONDecodeError):
+        return pd.DataFrame()
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,16 @@
 """CRUD operations for listings and price snapshots."""
 
-from datetime import datetime, date
+from datetime import datetime, date, timezone
+
+
+def _utcnow() -> datetime:
+    """Timezone-aware UTC now, then stripped to naive for schema compat.
+
+    SQLAlchemy columns were defined as naive datetime, so we keep writes
+    naive but use timezone-aware arithmetic to avoid Python 3.12+
+    DeprecationWarning on `datetime.utcnow()`.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 import pandas as pd
 from sqlalchemy import func, select
@@ -13,7 +23,7 @@ from src.models.portfolio import PortfolioDeal
 def upsert_listing(session: Session, data: dict) -> Listing:
     """Insert or update a listing by olx_id. Returns the Listing object."""
     listing = session.query(Listing).filter_by(olx_id=data["olx_id"]).first()
-    now = datetime.utcnow()
+    now = _utcnow()
     # Use the site-parsed date if available, fall back to scrape time
     posted_at = data.pop("posted_at", None)
     seen_at = posted_at or now
@@ -40,7 +50,7 @@ def add_price_snapshot(session: Session, listing_id: int, price_eur: float,
         listing_id=listing_id,
         price_eur=price_eur,
         negotiable=negotiable,
-        scraped_at=datetime.utcnow(),
+        scraped_at=_utcnow(),
     )
     session.add(snap)
 
@@ -48,7 +58,7 @@ def add_price_snapshot(session: Session, listing_id: int, price_eur: float,
 def upsert_unmatched(session: Session, data: dict, reason: str) -> UnmatchedListing:
     """Insert or update an unmatched listing."""
     row = session.query(UnmatchedListing).filter_by(olx_id=data["olx_id"]).first()
-    now = datetime.utcnow()
+    now = _utcnow()
     fields = {
         "url": data.get("url", ""),
         "title": data.get("title"),
@@ -100,7 +110,7 @@ def mark_inactive(session: Session, active_olx_ids: set[str]):
     """Mark listings not seen in this scrape as inactive."""
     import logging
     log = logging.getLogger(__name__)
-    now = datetime.utcnow()
+    now = _utcnow()
     count = session.query(Listing).filter(
         Listing.is_active == True,
         ~Listing.olx_id.in_(active_olx_ids),
@@ -343,13 +353,30 @@ def compute_market_stats(
 # ---------------------------------------------------------------------------
 
 def get_listings_df(session: Session) -> pd.DataFrame:
-    """All listings as DataFrame."""
+    """All listings as DataFrame.
+
+    Batches the price-snapshot load into one query keyed by listing id,
+    replacing the old N+1 lazy-relationship access that fired one SELECT
+    per listing on the hot dashboard-load path.
+    """
     q = session.query(Listing).all()
     if not q:
         return pd.DataFrame()
+
+    listing_ids = [l.id for l in q]
+    snap_rows = (
+        session.query(PriceSnapshot)
+        .filter(PriceSnapshot.listing_id.in_(listing_ids))
+        .order_by(PriceSnapshot.listing_id, PriceSnapshot.scraped_at.desc())
+        .all()
+    )
+    snaps_by_listing: dict[int, list] = {}
+    for s in snap_rows:
+        snaps_by_listing.setdefault(s.listing_id, []).append(s)
+
     rows = []
     for l in q:
-        snaps = l.price_snapshots.order_by(PriceSnapshot.scraped_at.desc()).all()
+        snaps = snaps_by_listing.get(l.id, [])
         latest_price = snaps[0].price_eur if snaps else None
         first_price = snaps[-1].price_eur if snaps else None
 
@@ -398,7 +425,10 @@ def get_listings_df(session: Session) -> pd.DataFrame:
             "photo_count": l.photo_count, "description_length": l.description_length,
             "city": l.city, "district": l.district,
             "seller_type": l.seller_type, "is_active": l.is_active,
-            "description": l.description,
+            # description text itself is intentionally excluded — it can be
+            # hundreds of KB × thousands of rows and no consumer of this df
+            # needs the raw text. Anything that wants to gate on presence
+            # uses the separately-stored description_length column.
             "llm_extras": l.llm_extras,
             "first_seen_at": l.first_seen_at,
             "last_seen_at": l.last_seen_at,

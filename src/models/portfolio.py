@@ -1,10 +1,8 @@
 """Portfolio deal tracking model for car flipping."""
 
-from datetime import datetime
-
 from sqlalchemy import Column, Date, DateTime, Float, Integer, String, Text
 
-from src.models.listing import Base
+from src.models.listing import Base, _utcnow
 
 
 class PortfolioDeal(Base):
@@ -27,4 +25,4 @@ class PortfolioDeal(Base):
     sell_price_eur = Column(Float)
     notes = Column(Text)
     olx_listing_id = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)

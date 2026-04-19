@@ -109,5 +109,6 @@ jobs:
               --notes "Auto-updated database + price model from scraper" \
               --latest=false
           gh release upload latest-data data/olx_cars.db --clobber
-          [ -f data/price_model.joblib ]  && gh release upload latest-data data/price_model.joblib  --clobber || true
-          [ -f data/price_metrics.json ]  && gh release upload latest-data data/price_metrics.json  --clobber || true
+          [ -f data/price_model.joblib ]     && gh release upload latest-data data/price_model.joblib     --clobber || true
+          [ -f data/price_metrics.json ]     && gh release upload latest-data data/price_metrics.json     --clobber || true
+          [ -f data/price_importance.json ]  && gh release upload latest-data data/price_importance.json  --clobber || true
