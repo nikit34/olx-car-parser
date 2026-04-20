@@ -46,11 +46,11 @@ _DAMAGE_PATTERN = re.compile(
     r"\bavariado\b|\bimobilizado\b|\bpartido\b|\bdanificado\b|\bestragado\b|"
     r"fuga\s+de|para\s+pe[çc]as|salvado|sinistro|acidente|batido|"
     r"precisa\s+de\s+(?:reparo|arranjo|conserto)|necessita\s+de\s+repara|"
-    # "reparar"/"substituir" as bare infinitives usually signal pending repair
-    # work ("Reparar a abertura…", "é necessário substituir…").  Past-tense
-    # conjugations like "substituiu/reparado/reparações" are *not* matched —
-    # those are usually "already done" maintenance, which must not flip the flag.
-    r"\breparar\b|\bsubstituir\b",
+    # "reparar"/"substituir" + their participle forms that show up in the
+    # "precisa ser reparado / precisa ser substituído" pattern.  Deliberately
+    # excluded: the plural noun "reparações" (as in "sem reparações" —
+    # a positive signal meaning no damage history).
+    r"\brepara(?:r|do|da|dos|das)\b|\bsubstitu(?:ir|ido|ida|idos|idas)\b",
     re.IGNORECASE,
 )
 
