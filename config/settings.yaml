@@ -19,7 +19,7 @@ analytics:
 llm:
   ollama_model: "qwen3:4b-instruct"
   ollama_url: "http://localhost:11434"
-  llm_workers: 1  # parallel LLM processes (1 for M1 8GB, 2 for server)
+  llm_workers: 2  # Ollama side is configured for NUM_PARALLEL=3; 2 client workers keep both requests inflight without OOM'ing 8 GB RAM
 
 alerts:
   telegram_bot_token: "8651422044:AAEf93eodK6d4F7fn1FVH-vh0H5JX-gb92s"
