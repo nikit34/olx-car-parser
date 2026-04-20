@@ -19,32 +19,22 @@ CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "settin
 OLLAMA_URL = "http://localhost:11434"
 
 EXTRACTION_PROMPT = """\
-Extract structured data from this Portuguese car listing. JSON fields (null if unknown):
-sub_model(str), trim_level(str), \
-desc_mentions_num_owners(int), desc_mentions_accident(bool), \
-desc_mentions_repair(bool), \
-mileage_in_description_km(int), desc_mentions_customs_cleared(bool), \
-right_hand_drive(bool), \
-mechanical_condition("excellent"/"good"/"fair"/"poor"), \
-urgency("high"/"medium"/"low"), warranty(bool), tuning_or_mods(list), \
-taxi_fleet_rental(bool), \
-first_owner_selling(bool).
-Rules: sub_model=engine/body variant from title: "320d","1.6 TDI","2.0 HDi","1.4 TSI","A 200","C 220d". \
-trim_level=equipment line from title/description: "AMG Line","M Sport","S-Line","FR","GTI","GT Line","Luxury","Titanium","N-Connecta","Tekna","Avantgarde","Elegance","Comfort","Executive". null if basic/unknown. \
-mileage_in_description_km=exact km as integer ("4300 km"→4300, "150 mil km"→150000, \
-"89.500km"→89500, "4.300km"→4300). "mil"=thousand ONLY when written as a separate word. \
-desc_mentions_repair=true if ANY repair/damage/breakdown mentioned ("avariado","imobilizado" included). \
-desc_mentions_accident=true if collision/accident mentioned ("sinistro","acidente","batido"). \
-desc_mentions_customs_cleared=look for "desalfandegado","legalizado","por legalizar","documentação em dia","documentos em ordem". \
-right_hand_drive=true if right-hand drive/UK/Japan import/"mão inglesa"/"volante à direita"/"condução à direita"/"matrícula inglesa". \
-urgency=high if "urgente","preciso vender rápido","emigração","preço para despachar"; medium if "aceito propostas","negociável","oportunidade"; low otherwise. \
-warranty=true if "garantia" mentioned (not "sem garantia"). \
-tuning_or_mods=list of aftermarket modifications: "reprogramação","stage 1/2","remap","chip tuning","suspensão rebaixada","coilovers","escape desportivo","downpipe","wrap","bodykit". \
-taxi_fleet_rental=true if "ex-táxi","TVDE","Uber","Bolt","rent-a-car","frota","carro de empresa". \
-first_owner_selling=true if "1 dono desde novo","único dono","comprado novo por mim","vendo o meu". \
-If "para peças","vender as peças","venda de peças","para desmanchar","só peças","avariado","imobilizado": \
-mechanical_condition="poor", desc_mentions_accident=true, desc_mentions_repair=true.
-
+Extract structured data from a Portuguese car listing. Output a single JSON object (null if unknown):
+sub_model(str), trim_level(str), desc_mentions_num_owners(int), desc_mentions_accident(bool), desc_mentions_repair(bool), mileage_in_description_km(int), desc_mentions_customs_cleared(bool), right_hand_drive(bool), mechanical_condition("excellent"/"good"/"fair"/"poor"), urgency("high"/"medium"/"low"), warranty(bool), tuning_or_mods(list), taxi_fleet_rental(bool), first_owner_selling(bool).
+Rules:
+sub_model: engine/body variant only (displacement+fuel+power code), e.g. "320d","1.6 TDI","2.0 TFSI","A 200","CLA 45". NOT a trim/package like "AMG Line","M Sport". NOT a bare model name like "DS3","Qashqai".
+trim_level: equipment line, e.g. "AMG Line","M Sport","S-Line","GTI","FR","Tekna". null if basic.
+mileage_in_description_km: integer km. "mil"=thousand ONLY as a separate word ("150 mil km"→150000; "89.500km"→89500; "4300 km"→4300; "127 mil km"→127000).
+desc_mentions_accident: "sinistro","acidente","batido".
+desc_mentions_repair: only if damage/breakdown is mentioned ("avariado","imobilizado","partido","danificado"). Routine maintenance ("óleo mudado","correia mudada","pastilhas novas","revisão feita") is NOT repair — keep false.
+desc_mentions_customs_cleared: "desalfandegado","legalizado","por legalizar".
+right_hand_drive: "mão inglesa","volante à direita","matrícula inglesa".
+urgency: high="urgente","emigração"; medium="aceito propostas","negociável".
+warranty: "garantia" (not "sem garantia").
+tuning_or_mods: ["reprogramação","stage 1","remap","coilovers","bodykit"].
+taxi_fleet_rental: "ex-táxi","TVDE","Uber","Bolt".
+first_owner_selling: "1 dono","único dono".
+PARTS-CAR OVERRIDE — if the description contains ANY of "para peças","vender as peças","venda de peças","para desmanchar","só peças","abate","salvado","avariado","imobilizado", then you MUST set ALL THREE: mechanical_condition="poor", desc_mentions_accident=true, desc_mentions_repair=true.
 """
 
 
@@ -130,11 +120,18 @@ def _call_ollama(description: str, cfg: dict) -> dict | None:
                 "/api/generate",
                 json={
                     "model": cfg["ollama_model"],
-                    "prompt": EXTRACTION_PROMPT + description[:1200],
+                    # System prompt must stay byte-identical across calls so
+                    # Ollama reuses the same KV-cache slot (prefix caching),
+                    # turning the ~240-token instruction block into a near-zero
+                    # prefill cost after the first inference on each slot.
+                    "system": EXTRACTION_PROMPT,
+                    "prompt": description[:1200],
                     "stream": False,
+                    "keep_alive": "30m",
                     "options": {
                         "temperature": 0.1,
-                        "num_predict": 512,
+                        "num_predict": 220,       # JSON with 14 fields fits in ~180 tokens
+                        "num_ctx": 1536,          # system(~240) + desc(~400) + reply(~220) + margin
                         "stop": ["} {", "}\n{"],
                     },
                 },
