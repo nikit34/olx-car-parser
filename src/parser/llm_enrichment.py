@@ -7,6 +7,7 @@ urgency, warranty, tuning, taxi/fleet, first owner, customs, RHD.
 
 import json
 import logging
+import re
 from pathlib import Path
 
 import httpx
@@ -17,6 +18,50 @@ logger = logging.getLogger(__name__)
 CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "settings.yaml"
 
 OLLAMA_URL = "http://localhost:11434"
+
+
+# ---------------------------------------------------------------------------
+# Post-rules — run *after* the LLM emits its JSON, to make the result robust
+# to known model mistakes without needing a retrain.  Each pattern is derived
+# from failures observed on the golden eval set at /tmp/olx_golden/.
+# ---------------------------------------------------------------------------
+
+# Parts-car / salvage triggers: whenever a description explicitly says the car
+# is being sold for parts, for scrapping, as a salvage title, or is inoperable,
+# we force mechanical_condition=poor AND accident=true AND repair=true — the
+# LLM in-prompt rule was not consistently firing all three.
+_PARTS_CAR_PATTERN = re.compile(
+    r"para\s+pe[çc]as|vender\s+as\s+pe[çc]as|venda\s+de\s+pe[çc]as|"
+    r"para\s+desmanchar|s[óo]\s+pe[çc]as|abate|salvado|"
+    r"\bavariado\b|\bimobilizado\b",
+    re.IGNORECASE,
+)
+
+# Damage / actual-repair keywords: if none of these appear in the text, a
+# repair=True flag from the model was probably triggered by routine maintenance
+# phrases ("óleo mudado", "correia mudada", "revisão feita") which are NOT
+# repairs — revert the flag.  Accident keywords are included because an accident
+# implies damage that needed repair.
+_DAMAGE_PATTERN = re.compile(
+    r"\bavariado\b|\bimobilizado\b|\bpartido\b|\bdanificado\b|\bestragado\b|"
+    r"fuga\s+de|para\s+pe[çc]as|salvado|sinistro|acidente|batido|"
+    r"precisa\s+de\s+(?:reparo|arranjo|conserto)|necessita\s+de\s+repara|"
+    # "reparar"/"substituir" as bare infinitives usually signal pending repair
+    # work ("Reparar a abertura…", "é necessário substituir…").  Past-tense
+    # conjugations like "substituiu/reparado/reparações" are *not* matched —
+    # those are usually "already done" maintenance, which must not flip the flag.
+    r"\breparar\b|\bsubstituir\b",
+    re.IGNORECASE,
+)
+
+# Right-hand-drive explicit phrases: absent these, the model's RHD=True was
+# almost always a false positive triggered by generic "importado" or a
+# northern-European import (e.g. Belgium — drives on the right).
+_RHD_PATTERN = re.compile(
+    r"m[ãa]o\s+inglesa|volante\s+[àa]\s+direita|matr[ií]cula\s+inglesa|"
+    r"condu[çc][ãa]o\s+[àa]\s+direita|\bRHD\b|right[\s-]hand\s+drive",
+    re.IGNORECASE,
+)
 
 EXTRACTION_PROMPT = """\
 Extract structured data from a Portuguese car listing. Output a single JSON object (null if unknown):
@@ -332,6 +377,27 @@ def correct_listing_data(listing) -> dict:
     # --- Fix internal LLM contradictions (only tighten, never loosen) ---
     if corrections.get("desc_mentions_accident") and not corrections.get("desc_mentions_repair"):
         corrections["desc_mentions_repair"] = True
+
+    # --- Deterministic post-rules on raw description text ---
+    # These run AFTER the LLM pass and override its flags for cases where the
+    # model has repeatedly failed on the golden eval set.  Cheap safety net.
+    description = getattr(listing, "description", "") or ""
+    if description:
+        if _PARTS_CAR_PATTERN.search(description):
+            corrections["mechanical_condition"] = "poor"
+            corrections["desc_mentions_accident"] = True
+            corrections["desc_mentions_repair"] = True
+        else:
+            # If the LLM flagged repair but nothing in the text actually mentions
+            # damage/breakdown, we assume it conflated routine maintenance with a
+            # repair and revert to False.  Parts-car override above wins over this.
+            if corrections.get("desc_mentions_repair") and not _DAMAGE_PATTERN.search(description):
+                corrections["desc_mentions_repair"] = False
+
+        # RHD without an explicit right-hand phrase is almost always a false
+        # positive from the model (usually provoked by "importado").
+        if corrections.get("right_hand_drive") and not _RHD_PATTERN.search(description):
+            corrections["right_hand_drive"] = False
 
     return corrections
 

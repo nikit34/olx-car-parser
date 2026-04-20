@@ -200,10 +200,48 @@ class TestCorrectListingData:
         assert "desc_mentions_num_owners" not in corrections
 
     def test_needs_repair_from_extras(self):
-        listing = FakeListing()
+        # Post-rules require a damage keyword in the description for
+        # desc_mentions_repair=True to pass through — otherwise the flag is
+        # assumed to be an over-flag on routine maintenance phrases.
+        listing = FakeListing(description="BMW 320d avariado, precisa reparar")
         listing._llm_extras = {"desc_mentions_repair": True}
         corrections = correct_listing_data(listing)
         assert corrections["desc_mentions_repair"] is True
+
+    def test_needs_repair_reverted_without_damage_keywords(self):
+        # Same flag but a clean description — post-rules assume the LLM
+        # conflated maintenance with damage and revert the flag.
+        listing = FakeListing(description="BMW 320d em estado impecável, revisão feita")
+        listing._llm_extras = {"desc_mentions_repair": True}
+        corrections = correct_listing_data(listing)
+        assert corrections["desc_mentions_repair"] is False
+
+    def test_parts_car_override_forces_triple(self):
+        # Parts-car listings must always come back with all three flags set,
+        # regardless of what the LLM returned.
+        listing = FakeListing(description="Vendo unicamente para peças, motor avariado")
+        listing._llm_extras = {
+            "desc_mentions_repair": False,
+            "desc_mentions_accident": False,
+            "mechanical_condition": "good",
+        }
+        corrections = correct_listing_data(listing)
+        assert corrections["desc_mentions_repair"] is True
+        assert corrections["desc_mentions_accident"] is True
+        assert corrections["mechanical_condition"] == "poor"
+
+    def test_rhd_reverted_without_explicit_phrase(self):
+        # Generic "importado" must not be accepted as RHD evidence.
+        listing = FakeListing(description="Nissan Qashqai importado da Bélgica, legalizado")
+        listing._llm_extras = {"right_hand_drive": True}
+        corrections = correct_listing_data(listing)
+        assert corrections["right_hand_drive"] is False
+
+    def test_rhd_kept_with_explicit_phrase(self):
+        listing = FakeListing(description="Carro com matrícula inglesa, documentação em dia")
+        listing._llm_extras = {"right_hand_drive": True}
+        corrections = correct_listing_data(listing)
+        assert corrections["right_hand_drive"] is True
 
     def test_needs_repair_not_set_when_null(self):
         listing = FakeListing()
@@ -235,7 +273,10 @@ class TestCorrectListingData:
 
 class TestApplyCorrections:
     def test_applies_to_listings_with_extras(self):
-        listing = FakeListing()
+        # Description has a damage keyword ("partido") but NOT a parts-car
+        # trigger — so desc_mentions_repair stays True while accident=False
+        # is preserved (the parts-car override would otherwise force both).
+        listing = FakeListing(description="BMW 320d com para-choques partido, resto bem")
         listing._llm_extras = {"desc_mentions_repair": True, "desc_mentions_accident": False}
         count = apply_corrections([listing])
         assert count == 1
