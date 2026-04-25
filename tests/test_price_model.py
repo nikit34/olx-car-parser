@@ -7,7 +7,7 @@ import pytest
 
 from src.analytics.price_model import (
     train_price_model, predict_prices, save_model, load_model,
-    load_metrics_history, _METRICS_PATH, _MODEL_PATH,
+    load_metrics_history, _METRICS_PATH, _MODEL_PATH, _SCHEMA_VERSION,
 )
 
 
@@ -75,7 +75,7 @@ def test_train_returns_model_and_metrics():
     df = _sample_listings()
     result = train_price_model(df)
     assert result is not None
-    models, cat_maps, metrics = result
+    models, cat_maps, metrics, oof_preds = result
     assert "brand" in cat_maps
     assert "model" in cat_maps
     assert "low" in models and "median" in models and "high" in models
@@ -85,6 +85,21 @@ def test_train_returns_model_and_metrics():
     assert "r2" in metrics
     assert "n_samples" in metrics
     assert "cv_folds" in metrics and metrics["cv_folds"] == 5
+    # Per-quantile early-stop iters are tracked separately
+    assert "best_n_estimators_per_q" in metrics
+    assert set(metrics["best_n_estimators_per_q"]) == {"low", "median", "high"}
+    # Log target on by default; conformal_q is in log space and a
+    # human-readable percent is also exposed.
+    assert metrics.get("log_target") is True
+    assert "conformal_q_pct" in metrics
+    # OOF preds keyed by olx_id, one entry per training listing
+    assert isinstance(oof_preds, dict)
+    assert len(oof_preds) > 0
+    sample_id = next(iter(oof_preds))
+    lo, med, hi = oof_preds[sample_id]
+    # OOF entries are already crossing-repaired and clamped
+    assert lo <= med <= hi
+    assert lo >= 0
 
 
 def test_train_returns_none_for_small_data():
@@ -95,7 +110,7 @@ def test_train_returns_none_for_small_data():
 
 def test_predictions_are_positive():
     df = _sample_listings()
-    models, cat_maps, _metrics = train_price_model(df)
+    models, cat_maps, _metrics, _oof = train_price_model(df)
     preds = predict_prices(models, cat_maps, df)
     assert (preds["predicted_price"] >= 0).all()
     assert (preds["fair_price_low"] >= 0).all()
@@ -103,9 +118,59 @@ def test_predictions_are_positive():
     assert len(preds) == len(df)
 
 
+def test_predictions_never_cross():
+    """low ≤ median ≤ high must hold for every row, with or without OOF override."""
+    df = _sample_listings(300)
+    models, cat_maps, metrics, oof_preds = train_price_model(df)
+
+    # In-sample (uses OOF preds for every row)
+    in_sample = predict_prices(
+        models, cat_maps, df,
+        conformal_q=metrics.get("conformal_q", 0.0),
+        oof_preds=oof_preds,
+    )
+    assert (in_sample["fair_price_low"] <= in_sample["predicted_price"]).all()
+    assert (in_sample["predicted_price"] <= in_sample["fair_price_high"]).all()
+
+    # Out-of-sample (synthetic rows the model has never seen, no OOF override).
+    # Build new olx_ids so nothing collides with the OOF dict.
+    fresh = df.copy()
+    fresh["olx_id"] = [f"new_{i}" for i in range(len(fresh))]
+    oos = predict_prices(
+        models, cat_maps, fresh,
+        conformal_q=metrics.get("conformal_q", 0.0),
+        oof_preds=oof_preds,
+    )
+    assert (oos["fair_price_low"] <= oos["predicted_price"]).all()
+    assert (oos["predicted_price"] <= oos["fair_price_high"]).all()
+
+
+def test_oof_preds_used_for_known_olx_ids():
+    """Listings present in oof_preds get exactly the OOF values, not model.predict."""
+    df = _sample_listings(150)
+    models, cat_maps, _metrics, oof_preds = train_price_model(df)
+
+    # Pick an olx_id that's in the OOF dict and predict on a single-row df.
+    target_id = next(iter(oof_preds))
+    row = df[df["olx_id"] == target_id].head(1).copy()
+    if row.empty:  # all training rows survived filtering
+        target_id = df["olx_id"].iloc[0]
+        row = df.head(1).copy()
+
+    expected_low, expected_median, expected_high = oof_preds[str(target_id)]
+    preds = predict_prices(
+        models, cat_maps, row,
+        conformal_q=0.0, oof_preds=oof_preds,
+    )
+    # Round-trip through DataFrame.round(0) — compare with rounded expected too
+    assert preds["predicted_price"].iloc[0] == round(expected_median)
+    assert preds["fair_price_low"].iloc[0] == round(expected_low)
+    assert preds["fair_price_high"].iloc[0] == round(expected_high)
+
+
 def test_newer_cars_predicted_higher():
     df = _sample_listings(500)
-    models, cat_maps, _metrics = train_price_model(df)
+    models, cat_maps, _metrics, _oof = train_price_model(df)
 
     old_car = pd.DataFrame([{
         "year": 2010, "mileage_km": 150000, "engine_cc": 1600,
@@ -127,7 +192,7 @@ def test_newer_cars_predicted_higher():
 
 def test_accident_cars_predicted_lower():
     df = _sample_listings(500)
-    models, cat_maps, _metrics = train_price_model(df)
+    models, cat_maps, _metrics, _oof = train_price_model(df)
 
     base = {
         "year": 2018, "mileage_km": 100000, "engine_cc": 1600,
@@ -152,7 +217,7 @@ def test_handles_missing_features():
 
     result = train_price_model(df)
     assert result is not None
-    models, cat_maps, _metrics = result
+    models, cat_maps, _metrics, _oof = result
 
     # Predict on row with missing features
     sparse = pd.DataFrame([{
@@ -172,7 +237,7 @@ def test_rare_categories_grouped():
 
     result = train_price_model(df)
     assert result is not None
-    models, cat_maps, _metrics = result
+    models, cat_maps, _metrics, _oof = result
     assert "__other__" in cat_maps["model"]
 
     unseen = pd.DataFrame([{
@@ -186,22 +251,59 @@ def test_rare_categories_grouped():
 
 
 def test_save_and_load_model(tmp_path, monkeypatch):
-    """Save/load round-trip produces identical predictions."""
+    """Save/load round-trip produces identical predictions and oof_preds."""
     monkeypatch.setattr("src.analytics.price_model._MODEL_PATH", tmp_path / "model.joblib")
     monkeypatch.setattr("src.analytics.price_model._METRICS_PATH", tmp_path / "metrics.json")
 
     df = _sample_listings()
-    models, cat_maps, metrics = train_price_model(df)
-    save_model(models, cat_maps, metrics)
+    models, cat_maps, metrics, oof_preds = train_price_model(df)
+    save_model(models, cat_maps, metrics, oof_preds=oof_preds)
 
     loaded = load_model(max_age_hours=1)
     assert loaded is not None
-    l_models, l_cat_maps, l_metrics = loaded
+    l_models, l_cat_maps, l_metrics, l_oof = loaded
 
-    preds_orig = predict_prices(models, cat_maps, df)
-    preds_loaded = predict_prices(l_models, l_cat_maps, df)
+    preds_orig = predict_prices(models, cat_maps, df, oof_preds=oof_preds)
+    preds_loaded = predict_prices(l_models, l_cat_maps, df, oof_preds=l_oof)
     pd.testing.assert_frame_equal(preds_orig, preds_loaded)
     assert l_metrics["mae"] == metrics["mae"]
+    assert l_oof == oof_preds
+
+
+def test_load_model_rejects_schema_mismatch(tmp_path, monkeypatch):
+    """A bundle with a stale schema_version is rejected, not silently used."""
+    import joblib
+    monkeypatch.setattr("src.analytics.price_model._MODEL_PATH", tmp_path / "model.joblib")
+    monkeypatch.setattr("src.analytics.price_model._METRICS_PATH", tmp_path / "metrics.json")
+
+    df = _sample_listings()
+    models, cat_maps, metrics, oof_preds = train_price_model(df)
+    save_model(models, cat_maps, metrics, oof_preds=oof_preds)
+
+    # Hand-corrupt the schema_version field, simulating an artifact trained
+    # against an older feature list.
+    bundle = joblib.load(tmp_path / "model.joblib")
+    bundle["schema_version"] = _SCHEMA_VERSION - 1
+    joblib.dump(bundle, tmp_path / "model.joblib")
+
+    assert load_model(max_age_hours=1) is None
+
+
+def test_load_model_rejects_feature_mismatch(tmp_path, monkeypatch):
+    """A bundle whose feature_names list differs from current is rejected."""
+    import joblib
+    monkeypatch.setattr("src.analytics.price_model._MODEL_PATH", tmp_path / "model.joblib")
+    monkeypatch.setattr("src.analytics.price_model._METRICS_PATH", tmp_path / "metrics.json")
+
+    df = _sample_listings()
+    models, cat_maps, metrics, oof_preds = train_price_model(df)
+    save_model(models, cat_maps, metrics, oof_preds=oof_preds)
+
+    bundle = joblib.load(tmp_path / "model.joblib")
+    bundle["feature_names"] = bundle["feature_names"] + ["fictional_feature"]
+    joblib.dump(bundle, tmp_path / "model.joblib")
+
+    assert load_model(max_age_hours=1) is None
 
 
 def test_metrics_history(tmp_path, monkeypatch):
@@ -210,10 +312,10 @@ def test_metrics_history(tmp_path, monkeypatch):
     monkeypatch.setattr("src.analytics.price_model._METRICS_PATH", tmp_path / "metrics.json")
 
     df = _sample_listings()
-    models, cat_maps, metrics = train_price_model(df)
+    models, cat_maps, metrics, oof_preds = train_price_model(df)
 
-    save_model(models, cat_maps, metrics)
-    save_model(models, cat_maps, metrics)
+    save_model(models, cat_maps, metrics, oof_preds=oof_preds)
+    save_model(models, cat_maps, metrics, oof_preds=oof_preds)
 
     history = load_metrics_history()
     assert len(history) == 2

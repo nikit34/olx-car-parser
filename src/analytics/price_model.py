@@ -21,8 +21,9 @@ import joblib
 import numpy as np
 import pandas as pd
 import lightgbm as lgb
-from sklearn.model_selection import KFold
 from sklearn.inspection import permutation_importance
+from sklearn.metrics import make_scorer, mean_pinball_loss
+from sklearn.model_selection import KFold
 
 
 _MODEL_DIR = Path(__file__).resolve().parent.parent.parent / "data"
@@ -32,6 +33,11 @@ _IMPORTANCE_PATH = _MODEL_DIR / "price_importance.json"
 _MODEL_MAX_AGE_HOURS = 24
 _MIN_CATEGORY_COUNT = 3
 _OTHER_CATEGORY = "__other__"
+# Bumped whenever the bundle on-disk shape changes (feature list, log target,
+# CQR semantics, OOF preds, etc.). load_model rejects mismatches so the
+# dashboard can't accidentally consume an artifact trained against a different
+# feature set or target transform.
+_SCHEMA_VERSION = 2
 
 NUMERIC_FEATURES = [
     "year", "mileage_km", "engine_cc", "horsepower",
@@ -140,7 +146,10 @@ _LGB_PARAMS = dict(
     # the search.  On ~8k rows early stopping was pegged at 699/700 before
     # this bump, meaning the old cap was the bottleneck, not overfitting.
     n_estimators=2000,
-    max_depth=4,
+    # max_depth and num_leaves must be consistent: a tree of depth d can have
+    # at most 2^d leaves. With max_depth=4, num_leaves was silently capped at
+    # 16 — depth=6 lets num_leaves=31 actually be reached.
+    max_depth=6,
     learning_rate=0.05,
     min_child_samples=10,
     reg_lambda=1.5,
@@ -209,19 +218,35 @@ def _filter_training_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 def _cv_metrics(
     df: pd.DataFrame,
     n_splits: int = 5,
-) -> tuple[dict, int]:
+) -> tuple[dict, dict[str, int], np.ndarray]:
     """K-fold CV for all three quantile models with per-fold categorical
     encoding (no leakage) and early stopping to tune n_estimators.
 
-    Returns (metrics_dict, suggested_n_estimators).
+    Models are trained in log1p(price) space (heavy-tailed targets bias raw-EUR
+    pinball toward expensive listings; log-target evens the influence and
+    typically improves MAPE on the cheap end). User-facing metrics (MAE, MAPE,
+    R², pinball) are reported on the price scale by back-transforming OOF
+    predictions with expm1.
+
+    Returns:
+      metrics: dict of CV metrics for the dashboard
+      suggested: per-quantile early-stop iteration counts (log-pinball converges
+                 at different rates for α=0.1/0.5/0.9, so each tail tunes its own)
+      oof_band: (3, n) array of [low, median, high] OOF predictions in price
+                space — already calibrated with conformal_q, sorted to repair
+                crossings, and clamped at 0. Indexed by df row position.
     """
     y_all = df["price_eur"].values.astype(float)
+    # Train on log1p — clamp at 0 first so log1p never sees a negative input
+    # (filter step normally already enforces this, but be defensive)
+    y_log = np.log1p(np.maximum(y_all, 0))
     n_splits = min(n_splits, max(2, len(df) // 20))
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
     cat_indices = [_ALL_FEATURES.index(c) for c in CATEGORICAL_FEATURES]
 
-    oof = {name: np.full(len(y_all), np.nan) for name in _QUANTILES}
-    best_iters: list[int] = []
+    # OOF in log space (raw model output, before back-transform)
+    oof_log = {name: np.full(len(y_all), np.nan) for name in _QUANTILES}
+    best_iters: dict[str, list[int]] = {name: [] for name in _QUANTILES}
 
     for train_idx, val_idx in kf.split(df):
         train_df = df.iloc[train_idx]
@@ -229,61 +254,83 @@ def _cv_metrics(
         # Encode categoricals on train only, apply mapping to val — no leakage
         X_train, cat_maps_fold = _prepare_X(train_df)
         X_val, _ = _prepare_X(val_df, cat_maps_fold)
-        y_train = y_all[train_idx]
-        y_val = y_all[val_idx]
+        y_train_log = y_log[train_idx]
+        y_val_log = y_log[val_idx]
 
         for name, alpha in _QUANTILES.items():
             model = lgb.LGBMRegressor(
                 objective="quantile", alpha=alpha, **_LGB_PARAMS,
             )
             model.fit(
-                X_train, y_train,
-                eval_set=[(X_val, y_val)],
+                X_train, y_train_log,
+                eval_set=[(X_val, y_val_log)],
                 categorical_feature=cat_indices,
                 callbacks=[lgb.early_stopping(_EARLY_STOPPING_ROUNDS, verbose=False)],
             )
-            oof[name][val_idx] = model.predict(X_val)
-            if name == "median":
-                best_iters.append(int(model.best_iteration_ or _LGB_PARAMS["n_estimators"]))
+            oof_log[name][val_idx] = model.predict(X_val)
+            best_iters[name].append(
+                int(model.best_iteration_ or _LGB_PARAMS["n_estimators"])
+            )
 
-    for name in oof:
-        oof[name] = np.maximum(oof[name], 0)
+    # CQR in log space — score = max(log_low − log_y, log_y − log_high). The
+    # widening factor stays in log space and is applied to log predictions at
+    # predict time, then expm1 back. This is asymmetric in price space (which is
+    # what we want for heavy-tailed targets: a € band that grows with price).
+    _TARGET_COVERAGE = 0.80
+    n = len(y_all)
+    scores = np.maximum(oof_log["low"] - y_log, y_log - oof_log["high"])
+    q_level = min(np.ceil(_TARGET_COVERAGE * (n + 1)) / n, 1.0)
+    conformal_q_log = float(np.quantile(scores, q_level))
 
-    median_oof = oof["median"]
+    # Back-transform OOF to price scale, build the calibrated band and repair
+    # crossings (so what ships in oof_band matches what predict_prices returns
+    # for new rows). Clamp at 0 — expm1 of a negative log is negative.
+    band_log = np.stack([
+        oof_log["low"] - conformal_q_log,
+        oof_log["median"],
+        oof_log["high"] + conformal_q_log,
+    ])
+    band_price = np.expm1(band_log)
+    band_price = np.sort(band_price, axis=0)
+    oof_band = np.maximum(band_price, 0)
+
+    # User-facing metrics on price scale (back-transformed median OOF)
+    median_oof = oof_band[1]
+    low_oof_calibrated = oof_band[0]
+    high_oof_calibrated = oof_band[2]
+
     mae = float(np.mean(np.abs(y_all - median_oof)))
     mape = float(np.mean(np.abs((y_all - median_oof) / np.maximum(y_all, 1))) * 100)
     ss_res = float(np.sum((y_all - median_oof) ** 2))
     ss_tot = float(np.sum((y_all - np.mean(y_all)) ** 2))
     r2 = float(1 - ss_res / ss_tot) if ss_tot > 0 else 0.0
 
+    # Pinball on price scale uses the raw (uncalibrated) OOF quantile
+    # predictions — that's the thing the model directly optimizes (after
+    # expm1 the relative ordering is preserved for monotonic transforms).
+    raw_low = np.maximum(np.expm1(oof_log["low"]), 0)
+    raw_high = np.maximum(np.expm1(oof_log["high"]), 0)
     pinball = {
-        name: _pinball_loss(y_all, oof[name], alpha)
-        for name, alpha in _QUANTILES.items()
+        "low": _pinball_loss(y_all, raw_low, _QUANTILES["low"]),
+        "median": _pinball_loss(y_all, median_oof, _QUANTILES["median"]),
+        "high": _pinball_loss(y_all, raw_high, _QUANTILES["high"]),
     }
-    # Fraction of true prices inside the [p10, p90] band — should be ~0.80
-    coverage_raw = float(np.mean((y_all >= oof["low"]) & (y_all <= oof["high"])))
 
-    # Conformal Quantile Regression (CQR — Romano, Patterson, Candes 2019).
-    # Compute per-sample conformity scores: how far outside the predicted
-    # [low, high] band each true price falls.  Positive = missed, negative =
-    # comfortably inside.  The 80th-percentile score is the correction Q that
-    # widens the band to guarantee 80% marginal coverage on new data.
-    _TARGET_COVERAGE = 0.80
-    n = len(y_all)
-    scores = np.maximum(oof["low"] - y_all, y_all - oof["high"])
-    q_level = min(np.ceil(_TARGET_COVERAGE * (n + 1)) / n, 1.0)
-    conformal_q = float(np.quantile(scores, q_level))
-
-    calibrated_low = oof["low"] - conformal_q
-    calibrated_high = oof["high"] + conformal_q
+    # Coverage: invariant under monotonic transforms, so log/price agree.
+    coverage_raw = float(np.mean((y_all >= raw_low) & (y_all <= raw_high)))
     coverage_calibrated = float(np.mean(
-        (y_all >= calibrated_low) & (y_all <= calibrated_high)
+        (y_all >= low_oof_calibrated) & (y_all <= high_oof_calibrated)
     ))
 
-    suggested = int(np.median(best_iters)) if best_iters else _LGB_PARAMS["n_estimators"]
-    suggested = max(suggested, _MIN_N_ESTIMATORS)
+    # Per-quantile early-stop suggestion (median across folds). Each quantile
+    # converges at a different rate, so the tails get their own count.
+    suggested: dict[str, int] = {}
+    for name in _QUANTILES:
+        iters = best_iters[name]
+        median_iters = int(np.median(iters)) if iters else _LGB_PARAMS["n_estimators"]
+        suggested[name] = max(median_iters, _MIN_N_ESTIMATORS)
 
-    return {
+    metrics = {
         "mae": round(mae, 0),
         "mape": round(mape, 1),
         "r2": round(r2, 3),
@@ -292,21 +339,40 @@ def _cv_metrics(
         "pinball_high": round(pinball["high"], 1),
         "coverage_80": round(coverage_raw, 3),
         "coverage_80_calibrated": round(coverage_calibrated, 3),
-        "conformal_q": round(conformal_q, 1),
-        "best_n_estimators": suggested,
+        # conformal_q is in LOG space (the band-widening exponent). Apply it to
+        # log predictions in predict_prices, then expm1 to price scale.
+        "conformal_q": round(conformal_q_log, 4),
+        # Approximate ± multiplicative band widening for human display:
+        # a row's price band stretches by roughly (exp(q) − 1) × 100 % on each
+        # side relative to the raw model band.
+        "conformal_q_pct": round(float(np.expm1(conformal_q_log) * 100), 1),
+        # Back-compat single number for the dashboard's "Trees (early-stop)"
+        # KPI; the actual fit uses the per-quantile dict below.
+        "best_n_estimators": suggested["median"],
+        "best_n_estimators_per_q": suggested,
         "n_samples": int(len(y_all)),
         "cv_folds": n_splits,
-    }, suggested
+        "log_target": True,
+    }
+    return metrics, suggested, oof_band
 
 
 def train_price_model(
     listings_df: pd.DataFrame,
     min_samples: int = 50,
-) -> tuple[dict[str, lgb.LGBMRegressor], dict[str, dict[str, int]], dict] | None:
+) -> tuple[
+    dict[str, lgb.LGBMRegressor],
+    dict[str, dict[str, int]],
+    dict,
+    dict[str, tuple[float, float, float]],
+] | None:
     """Train quantile regression models: median, low (10th), high (90th).
 
-    Returns ({"median": model, "low": model, "high": model}, category_maps, metrics)
-    or None if insufficient data.
+    Returns (models, category_maps, metrics, oof_preds) or None if insufficient
+    data. ``oof_preds`` is a dict olx_id → (low, median, high) of cross-
+    validated, calibrated, crossing-repaired predictions in price space — used
+    by ``predict_prices`` so listings that were in the training set get scored
+    out-of-fold rather than in-sample.
     """
     needed = {"price_eur", "year", "mileage_km"}
     if not needed.issubset(listings_df.columns):
@@ -323,26 +389,40 @@ def train_price_model(
     if len(df) < min_samples:
         return None
 
-    y = df["price_eur"].values.astype(float)
+    y_log = np.log1p(np.maximum(df["price_eur"].values.astype(float), 0))
 
-    # CV with per-fold cat encoding + early stopping → tuned n_estimators
-    metrics, best_n_estimators = _cv_metrics(df)
+    # CV with per-fold cat encoding + per-quantile early stopping → tuned
+    # n_estimators dict + OOF predictions in price space.
+    metrics, best_iters_per_q, oof_band = _cv_metrics(df)
     metrics["filter_stats"] = filter_stats
 
-    # Final models: fit on full filtered data with CV-tuned n_estimators
+    # Final models: fit on full filtered data with CV-tuned per-quantile iters
     X_arr, cat_maps = _prepare_X(df)
     cat_indices = [_ALL_FEATURES.index(c) for c in CATEGORICAL_FEATURES]
 
-    final_params = {**_LGB_PARAMS, "n_estimators": best_n_estimators}
     models = {}
     for name, quantile in _QUANTILES.items():
+        params = {**_LGB_PARAMS, "n_estimators": best_iters_per_q[name]}
         model = lgb.LGBMRegressor(
-            objective="quantile", alpha=quantile, **final_params,
+            objective="quantile", alpha=quantile, **params,
         )
-        model.fit(X_arr, y, categorical_feature=cat_indices)
+        model.fit(X_arr, y_log, categorical_feature=cat_indices)
         models[name] = model
 
-    return models, cat_maps, metrics
+    # Build OOF map keyed by olx_id (the stable join key the dashboard uses).
+    # Listings without an olx_id fall back to model.predict at score time.
+    oof_preds: dict[str, tuple[float, float, float]] = {}
+    if "olx_id" in df.columns:
+        for i, oid in enumerate(df["olx_id"].values):
+            if oid is None or (isinstance(oid, float) and np.isnan(oid)):
+                continue
+            oof_preds[str(oid)] = (
+                float(oof_band[0, i]),
+                float(oof_band[1, i]),
+                float(oof_band[2, i]),
+            )
+
+    return models, cat_maps, metrics, oof_preds
 
 
 def predict_prices(
@@ -350,18 +430,52 @@ def predict_prices(
     cat_maps: dict[str, dict[str, int]],
     listings_df: pd.DataFrame,
     conformal_q: float = 0.0,
+    oof_preds: dict[str, tuple[float, float, float]] | None = None,
 ) -> pd.DataFrame:
     """Predict fair price range for each listing.
 
-    If *conformal_q* is provided (from CQR calibration in CV metrics),
-    the [low, high] band is widened symmetrically so that empirical
-    coverage matches the 80% target.
+    Models predict in log1p space; this function back-transforms with expm1.
+    If *conformal_q* is provided (from CQR calibration in CV metrics), the
+    [low, high] band is widened symmetrically in log space — asymmetric in
+    price space, which is appropriate for heavy-tailed targets.
+
+    If *oof_preds* is provided (a dict olx_id → (low, median, high) in price
+    space, shipped with the model bundle), listings whose olx_id appears in
+    that dict get their out-of-fold CV predictions instead of in-sample
+    model.predict output. This prevents the deal-scoring loop from comparing a
+    listing's price against a "fair price" the model already memorized.
+
+    The returned [low, median, high] is sorted per row to guarantee
+    low ≤ median ≤ high (Chernozhukov et al. 2010 — independent quantile
+    regressors can cross; this is the standard non-crossing repair).
     """
     X_arr, _ = _prepare_X(listings_df, cat_maps)
 
-    median = models["median"].predict(X_arr)
-    low = models["low"].predict(X_arr) - conformal_q
-    high = models["high"].predict(X_arr) + conformal_q
+    # Model output is in log1p(price) space.
+    log_median = models["median"].predict(X_arr)
+    log_low = models["low"].predict(X_arr) - conformal_q
+    log_high = models["high"].predict(X_arr) + conformal_q
+
+    median = np.expm1(log_median)
+    low = np.expm1(log_low)
+    high = np.expm1(log_high)
+
+    # Override with OOF predictions for listings the model was trained on.
+    if oof_preds and "olx_id" in listings_df.columns:
+        olx_ids = listings_df["olx_id"].values
+        for i, oid in enumerate(olx_ids):
+            if oid is None or (isinstance(oid, float) and np.isnan(oid)):
+                continue
+            entry = oof_preds.get(str(oid))
+            if entry is None:
+                continue
+            low[i], median[i], high[i] = entry
+
+    # Repair quantile crossing: sort [low, median, high] per row so the band
+    # always satisfies low ≤ median ≤ high. CQR widens symmetrically and
+    # doesn't touch the median, so crossings are still possible without this.
+    stacked = np.sort(np.stack([low, median, high]), axis=0)
+    low, median, high = stacked[0], stacked[1], stacked[2]
 
     return pd.DataFrame({
         "predicted_price": np.maximum(median, 0),
@@ -378,13 +492,17 @@ def save_model(
     models: dict[str, lgb.LGBMRegressor],
     cat_maps: dict[str, dict[str, int]],
     metrics: dict,
+    oof_preds: dict[str, tuple[float, float, float]] | None = None,
 ) -> None:
     """Save trained model bundle to disk and append metrics to history."""
     _MODEL_DIR.mkdir(parents=True, exist_ok=True)
     bundle = {
+        "schema_version": _SCHEMA_VERSION,
+        "feature_names": list(_ALL_FEATURES),
         "models": models,
         "cat_maps": cat_maps,
         "metrics": metrics,
+        "oof_preds": oof_preds or {},
         "saved_at": datetime.now(timezone.utc).isoformat(),
     }
     joblib.dump(bundle, _MODEL_PATH)
@@ -393,8 +511,19 @@ def save_model(
 
 def load_model(
     max_age_hours: float = _MODEL_MAX_AGE_HOURS,
-) -> tuple[dict, dict, dict] | None:
-    """Load saved model if it exists and is fresh enough."""
+) -> tuple[dict, dict, dict, dict] | None:
+    """Load saved model if it exists, is fresh, and matches current schema.
+
+    Returns (models, cat_maps, metrics, oof_preds) or None.
+
+    Mismatches that cause rejection:
+      - file age > max_age_hours
+      - schema_version != _SCHEMA_VERSION (e.g. log target was added)
+      - feature_names != _ALL_FEATURES (training features were renamed/added/removed)
+
+    Returning None falls through to "no fresh model" — the dashboard then logs
+    a warning and skips price predictions until the next CI training run.
+    """
     if not _MODEL_PATH.exists():
         return None
     age_hours = (time.time() - _MODEL_PATH.stat().st_mtime) / 3600
@@ -402,7 +531,16 @@ def load_model(
         return None
     try:
         bundle = joblib.load(_MODEL_PATH)
-        return bundle["models"], bundle["cat_maps"], bundle.get("metrics", {})
+        if bundle.get("schema_version") != _SCHEMA_VERSION:
+            return None
+        if bundle.get("feature_names") != list(_ALL_FEATURES):
+            return None
+        return (
+            bundle["models"],
+            bundle["cat_maps"],
+            bundle.get("metrics", {}),
+            bundle.get("oof_preds", {}),
+        )
     except Exception:
         return None
 
@@ -483,24 +621,41 @@ def compute_permutation_importance(
     listings_df: pd.DataFrame,
     n_repeats: int = 10,
 ) -> pd.DataFrame:
-    """Permutation importance for each feature across all three quantile models."""
+    """Permutation importance for each feature across all three quantile models.
+
+    Scorer: alpha-aligned negative pinball loss (the metric each quantile model
+    is actually optimizing) instead of the sklearn default R², which makes no
+    sense for the tail quantiles. Targets are in log space because the models
+    predict log1p(price).
+
+    Note: importance is computed on the same data the model was trained on,
+    which mildly overstates feature contributions. A cleaner version would
+    score on a held-out fold, but that costs a re-fit per quantile and the
+    current ranking is already stable enough for the dashboard's purpose.
+    """
     df = listings_df[
         listings_df["price_eur"].notna()
         & listings_df["year"].notna()
         & listings_df["mileage_km"].notna()
     ].copy()
 
-    y = df["price_eur"].values.astype(float)
+    y_log = np.log1p(np.maximum(df["price_eur"].values.astype(float), 0))
     X_arr, _ = _prepare_X(df, cat_maps)
 
     rows = []
-    for name in ("median", "low", "high"):
-        result = permutation_importance(
-            models[name], X_arr, y,
-            n_repeats=n_repeats, random_state=42, n_jobs=-1,
+    for name, alpha in _QUANTILES.items():
+        scorer = make_scorer(
+            mean_pinball_loss, alpha=alpha, greater_is_better=False,
         )
-        rows.append(pd.Series(result.importances_mean, index=_ALL_FEATURES, name=f"{name}_importance"))
+        result = permutation_importance(
+            models[name], X_arr, y_log,
+            n_repeats=n_repeats, random_state=42, n_jobs=-1,
+            scoring=scorer,
+        )
+        rows.append(pd.Series(
+            result.importances_mean, index=_ALL_FEATURES, name=f"{name}_importance",
+        ))
 
     imp = pd.concat(rows, axis=1).reset_index()
-    imp.columns = ["feature", "median_importance", "low_importance", "high_importance"]
+    imp.columns = ["feature", "low_importance", "median_importance", "high_importance"]
     return imp.sort_values("median_importance", ascending=False).reset_index(drop=True)

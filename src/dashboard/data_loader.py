@@ -417,8 +417,9 @@ def compute_signals(
     gb_models = None
     gb_cat_maps: dict = {}
     _gb_metrics: dict | None = None
+    _gb_oof_preds: dict[str, tuple[float, float, float]] = {}
     if saved is not None:
-        gb_models, gb_cat_maps, _gb_metrics = saved
+        gb_models, gb_cat_maps, _gb_metrics, _gb_oof_preds = saved
     else:
         import logging as _logging
         _logging.getLogger(__name__).warning(
@@ -435,7 +436,14 @@ def compute_signals(
     importance_df = load_importance()
     if gb_models is not None:
         _conformal_q = _gb_metrics.get("conformal_q", 0.0) if _gb_metrics else 0.0
-        price_df = predict_prices(gb_models, gb_cat_maps, active, conformal_q=_conformal_q)
+        # OOF preds (built during CV training) override model.predict for any
+        # listing the model was trained on, so the deal-scoring loop compares
+        # asking price against an out-of-fold "fair price" rather than an
+        # in-sample one.
+        price_df = predict_prices(
+            gb_models, gb_cat_maps, active,
+            conformal_q=_conformal_q, oof_preds=_gb_oof_preds,
+        )
         if "olx_id" in active.columns:
             olx_ids = active["olx_id"].reindex(price_df.index).values
             preds = price_df["predicted_price"].values

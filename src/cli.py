@@ -683,8 +683,8 @@ def train_model():
         console.print("[red]Training failed: insufficient data after filtering.[/red]")
         raise typer.Exit(1)
 
-    models, cat_maps, metrics = result
-    save_model(models, cat_maps, metrics)
+    models, cat_maps, metrics, oof_preds = result
+    save_model(models, cat_maps, metrics, oof_preds=oof_preds)
 
     console.print("Computing permutation importance...")
     importance_df = compute_permutation_importance(models, cat_maps, active)

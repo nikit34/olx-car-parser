@@ -124,16 +124,19 @@ def get_model_data(_active_df, _listings_df):
 
     saved = load_model()
     if saved is not None:
-        models, cat_maps, metrics = saved
+        models, cat_maps, metrics, oof_preds = saved
     else:
         result = train_price_model(active)
         if result is None:
             return None
-        models, cat_maps, metrics = result
-        save_model(models, cat_maps, metrics)
+        models, cat_maps, metrics, oof_preds = result
+        save_model(models, cat_maps, metrics, oof_preds=oof_preds)
 
     conformal_q = metrics.get("conformal_q", 0.0)
-    price_df = predict_prices(models, cat_maps, active, conformal_q=conformal_q)
+    price_df = predict_prices(
+        models, cat_maps, active,
+        conformal_q=conformal_q, oof_preds=oof_preds,
+    )
     importance = compute_permutation_importance(models, cat_maps, active)
     fill_rate = compute_feature_completeness(active)
 
@@ -508,9 +511,18 @@ with tab_price_model:
         m4.metric("80% Band Coverage", f"{cov:.1%}")
         m5.metric("Trees (early-stop)", f"{metrics.get('best_n_estimators', '?')}")
 
+        # conformal_q is now in log space (multiplicative band widening); show
+        # the percent equivalent so the dashboard caption still reads in human
+        # units. Older bundles without conformal_q_pct fall back to the raw
+        # number with a "(log)" suffix so it isn't mistaken for euros.
+        _q_pct = metrics.get("conformal_q_pct")
+        if _q_pct is not None:
+            _q_str = f"±{_q_pct:.1f}%"
+        else:
+            _q_str = f"{metrics.get('conformal_q', 0):.2f} (log)"
         st.caption(
             f"Trained on **{metrics['n_samples']:,}** samples "
-            f"| Conformal Q = {metrics.get('conformal_q', 0):.0f} EUR "
+            f"| Conformal Q = {_q_str} "
             f"| {metrics.get('cv_folds', 5)}-fold CV"
         )
 
