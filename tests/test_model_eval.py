@@ -29,6 +29,14 @@ def _sample_listings(n: int = 200, seed: int = 42) -> pd.DataFrame:
         else:
             models.append("320d")
 
+    _CONDITIONS = ["bom estado", "excelente", "muito bom", "primeiro dono",
+                   "pouco usado", "diesel económico"]
+    titles = [f"{b} {m} {y}" for b, m, y in zip(brands, models, years)]
+    descriptions = [
+        f"Vendo {b} {m} de {y}, {rng.choice(_CONDITIONS)}, ITV em dia."
+        for b, m, y in zip(brands, models, years)
+    ]
+
     accident = rng.choice([True, False, None], size=n, p=[0.05, 0.75, 0.20])
     price = (
         (years - 2000) * 600
@@ -57,6 +65,8 @@ def _sample_listings(n: int = 200, seed: int = 42) -> pd.DataFrame:
         "horsepower": (engine_cc * 0.07 + rng.normal(0, 10, size=n)).clip(min=50).round(0),
         "is_active": True,
         "first_seen_at": first_seen,
+        "title": titles,
+        "description": descriptions,
         "desc_mentions_accident": accident,
         "desc_mentions_repair": rng.choice([True, False, None], size=n, p=[0.10, 0.70, 0.20]),
         "right_hand_drive": rng.choice([True, False, None], size=n, p=[0.02, 0.78, 0.20]),
@@ -77,12 +87,12 @@ def trained():
     fold above the 100-row train minimum that time_backtest requires.
     """
     df = _sample_listings(600)
-    models, cat_maps, metrics, oof_preds, calibrator = train_price_model(df)
-    return df, models, cat_maps, metrics, oof_preds, calibrator
+    models, cat_maps, metrics, oof_preds, calibrator, text_pipeline = train_price_model(df)
+    return df, models, cat_maps, metrics, oof_preds, calibrator, text_pipeline
 
 
 def test_evaluate_oof_global_metrics(trained):
-    df, _models, _maps, _metrics, oof, _calib = trained
+    df, _models, _maps, _metrics, oof, _calib, _text = trained
     report = evaluate_oof(df, oof)
     g = report["global"]
     # Every training row appears in oof_preds (filter dropped <1%), so
@@ -100,7 +110,7 @@ def test_evaluate_oof_global_metrics(trained):
 def test_evaluate_oof_buckets_sum_to_global(trained):
     """Sum of bucket sample counts must equal global n (each row → exactly one
     bucket; there are no gaps in the price/year ranges)."""
-    df, _models, _maps, _metrics, oof, _calib = trained
+    df, _models, _maps, _metrics, oof, _calib, _text = trained
     report = evaluate_oof(df, oof)
     g = report["global"]
     assert int(report["by_price"]["n"].sum()) == g["n"]
@@ -117,7 +127,7 @@ def test_evaluate_oof_returns_empty_on_no_overlap():
 
 
 def test_worst_residuals_sorted_desc(trained):
-    df, _models, _maps, _metrics, oof, _calib = trained
+    df, _models, _maps, _metrics, oof, _calib, _text = trained
     worst = worst_residuals(df, oof, n=10)
     assert len(worst) <= 10
     assert len(worst) > 0
@@ -127,7 +137,7 @@ def test_worst_residuals_sorted_desc(trained):
 
 
 def test_reliability_curve_bin_count(trained):
-    df, _models, _maps, _metrics, oof, _calib = trained
+    df, _models, _maps, _metrics, oof, _calib, _text = trained
     rel = reliability_curve(df, oof, n_bins=10)
     # qcut may collapse duplicate edges, so n_bins is an upper bound.
     assert 1 <= len(rel) <= 10
@@ -138,7 +148,7 @@ def test_reliability_curve_bin_count(trained):
 
 
 def test_time_backtest_returns_one_row_per_fold(trained):
-    df, _models, _maps, metrics, _oof, _calib = trained
+    df, _models, _maps, metrics, _oof, _calib, _text = trained
     n_per_q = metrics.get("best_n_estimators_per_q", {n: 100 for n in ("low", "median", "high")})
     bt = time_backtest(df, n_splits=4, n_estimators_per_q=n_per_q)
     # 4 splits → 3 folds (skip the first slice, which has no train data)
@@ -163,7 +173,7 @@ def test_save_load_backtest_round_trip(tmp_path, monkeypatch, trained):
         "src.analytics.model_eval._BACKTEST_PATH",
         tmp_path / "price_backtest.json",
     )
-    df, _models, _maps, metrics, _oof, _calib = trained
+    df, _models, _maps, metrics, _oof, _calib, _text = trained
     n_per_q = metrics.get("best_n_estimators_per_q", {n: 100 for n in ("low", "median", "high")})
     bt = time_backtest(df, n_splits=3, n_estimators_per_q=n_per_q)
 

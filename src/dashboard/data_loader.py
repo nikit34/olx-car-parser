@@ -419,8 +419,12 @@ def compute_signals(
     _gb_metrics: dict | None = None
     _gb_oof_preds: dict[str, tuple[float, float, float]] = {}
     _gb_calibrator = None
+    _gb_text_pipeline = None
     if saved is not None:
-        gb_models, gb_cat_maps, _gb_metrics, _gb_oof_preds, _gb_calibrator = saved
+        (
+            gb_models, gb_cat_maps, _gb_metrics, _gb_oof_preds,
+            _gb_calibrator, _gb_text_pipeline,
+        ) = saved
     else:
         import logging as _logging
         _logging.getLogger(__name__).warning(
@@ -437,16 +441,24 @@ def compute_signals(
     importance_df = load_importance()
     if gb_models is not None:
         _conformal_q = _gb_metrics.get("conformal_q", 0.0) if _gb_metrics else 0.0
+        _per_bucket_q = (
+            _gb_metrics.get("conformal_q_per_bucket", {}) if _gb_metrics else {}
+        )
         # OOF preds (built during CV training) override model.predict for any
         # listing the model was trained on, so the deal-scoring loop compares
         # asking price against an out-of-fold "fair price" rather than an
         # in-sample one. The calibrator only applies to non-OOF rows since
-        # OOF preds already have isotonic calibration baked in.
+        # OOF preds already have isotonic calibration baked in. text_pipeline
+        # is required for v4 bundles to recompute the text PCs on new rows.
+        # conformal_q_per_bucket gives class-conditional widening — each
+        # row's q depends on its predicted-price tier.
         price_df = predict_prices(
             gb_models, gb_cat_maps, active,
             conformal_q=_conformal_q,
             oof_preds=_gb_oof_preds,
             median_calibrator=_gb_calibrator,
+            text_pipeline=_gb_text_pipeline,
+            conformal_q_per_bucket=_per_bucket_q,
         )
         if "olx_id" in active.columns:
             olx_ids = active["olx_id"].reindex(price_df.index).values

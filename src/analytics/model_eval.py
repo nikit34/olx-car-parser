@@ -371,18 +371,23 @@ def time_backtest(
         if len(train) < 100 or len(test) < 50:
             continue
 
-        X_train, cat_maps = _prepare_X(train)
-        y_train_log = np.log1p(
-            np.maximum(train["price_eur"].astype(float).values, 0)
-        )
-        X_test, _ = _prepare_X(test, cat_maps)
+        X_train, cat_maps, text_pipeline = _prepare_X(train)
+        y_train_price = train["price_eur"].astype(float).values
+        y_train_log = np.log1p(np.maximum(y_train_price, 0))
+        X_test, _, _ = _prepare_X(test, cat_maps, text_pipeline)
         y_test = test["price_eur"].astype(float).values
+        from src.analytics.price_model import _compute_sample_weights
+        sample_weight = _compute_sample_weights(y_train_price)
 
+        from src.analytics.price_model import _model_for_quantile
         log_preds: dict[str, np.ndarray] = {}
         for name, alpha in _QUANTILES.items():
-            params = {**_LGB_PARAMS, "n_estimators": n_estimators_per_q[name]}
-            model = lgb.LGBMRegressor(objective="quantile", alpha=alpha, **params)
-            model.fit(X_train, y_train_log, categorical_feature=cat_indices)
+            model = _model_for_quantile(name, alpha, n_estimators_per_q[name])
+            model.fit(
+                X_train, y_train_log,
+                sample_weight=sample_weight,
+                categorical_feature=cat_indices,
+            )
             log_preds[name] = model.predict(X_test)
 
         # Apply CQR widening in log space (asymmetric in price space — exactly

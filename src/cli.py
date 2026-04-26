@@ -683,14 +683,18 @@ def train_model():
         console.print("[red]Training failed: insufficient data after filtering.[/red]")
         raise typer.Exit(1)
 
-    models, cat_maps, metrics, oof_preds, calibrator = result
+    models, cat_maps, metrics, oof_preds, calibrator, text_pipeline = result
     save_model(
         models, cat_maps, metrics,
-        oof_preds=oof_preds, median_calibrator=calibrator,
+        oof_preds=oof_preds,
+        median_calibrator=calibrator,
+        text_pipeline=text_pipeline,
     )
 
     console.print("Computing permutation importance...")
-    importance_df = compute_permutation_importance(models, cat_maps, active)
+    importance_df = compute_permutation_importance(
+        models, cat_maps, active, text_pipeline=text_pipeline,
+    )
     save_importance(importance_df)
 
     console.print(
@@ -743,7 +747,7 @@ def eval_model(
             "Run [bold]train-model[/bold] first."
         )
         raise typer.Exit(1)
-    _models, _maps, metrics, oof_preds, _calibrator = saved
+    _models, _maps, metrics, oof_preds, _calibrator, _text_pipeline = saved
 
     if not oof_preds:
         console.print(

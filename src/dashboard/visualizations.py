@@ -127,25 +127,32 @@ def get_model_data(_active_df, _listings_df):
 
     saved = load_model()
     if saved is not None:
-        models, cat_maps, metrics, oof_preds, calibrator = saved
+        models, cat_maps, metrics, oof_preds, calibrator, text_pipeline = saved
     else:
         result = train_price_model(active)
         if result is None:
             return None
-        models, cat_maps, metrics, oof_preds, calibrator = result
+        models, cat_maps, metrics, oof_preds, calibrator, text_pipeline = result
         save_model(
             models, cat_maps, metrics,
-            oof_preds=oof_preds, median_calibrator=calibrator,
+            oof_preds=oof_preds,
+            median_calibrator=calibrator,
+            text_pipeline=text_pipeline,
         )
 
     conformal_q = metrics.get("conformal_q", 0.0)
+    per_bucket_q = metrics.get("conformal_q_per_bucket", {})
     price_df = predict_prices(
         models, cat_maps, active,
         conformal_q=conformal_q,
         oof_preds=oof_preds,
         median_calibrator=calibrator,
+        text_pipeline=text_pipeline,
+        conformal_q_per_bucket=per_bucket_q,
     )
-    importance = compute_permutation_importance(models, cat_maps, active)
+    importance = compute_permutation_importance(
+        models, cat_maps, active, text_pipeline=text_pipeline,
+    )
     fill_rate = compute_feature_completeness(active)
 
     active = active.join(price_df)
@@ -159,6 +166,7 @@ def get_model_data(_active_df, _listings_df):
         "importance": importance,
         "oof_preds": oof_preds,
         "calibrator": calibrator,
+        "text_pipeline": text_pipeline,
     }
 
 
