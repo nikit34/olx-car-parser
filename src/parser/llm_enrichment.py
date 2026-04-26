@@ -197,9 +197,14 @@ def _get_config() -> dict:
         "max_workers": cfg.get("max_workers", 16),
         "max_tokens": cfg.get("max_tokens", 600),
         "max_chars": cfg.get("max_chars", 4000),
-        # Ollama fallback config — used when ANTHROPIC_AUTH_TOKEN is missing.
-        # Lets the remote run enrichment via the local fine-tuned car-parser
-        # model without needing API access. Settings can override.
+        # OpenRouter fallback — used when ANTHROPIC_AUTH_TOKEN is missing
+        # but OPENROUTER_API_KEY is set. Free Qwen model is more than capable
+        # of the structured extraction and avoids per-call cost. Rate-limited
+        # to ~20 req/min on the free tier, so workers should drop accordingly.
+        "openrouter_model": cfg.get("openrouter_model", "qwen/qwen-2.5-72b-instruct:free"),
+        "openrouter_url": cfg.get("openrouter_url", "https://openrouter.ai/api/v1"),
+        # Ollama fallback — used when neither cloud backend is configured.
+        # Lets the remote run enrichment via a local model without API access.
         "ollama_model": cfg.get("ollama_model", "car-parser-3b"),
         "ollama_url": cfg.get("ollama_url", "http://localhost:11434"),
     }
@@ -228,15 +233,24 @@ def _get_client():
 
 
 def _llm_available() -> bool:
-    """True iff EITHER Claude is reachable OR the local Ollama backend is up.
-
-    The two backends are tried in that order at call time; this helper
+    """True iff ANY of the three backends (Claude / OpenRouter / Ollama) is
+    reachable. Backends are tried in that order at call time; this helper
     short-circuits the no-LLM-anywhere case so the enrich CLI can fail fast
-    with a useful message instead of hanging on N parallel timeouts.
+    instead of hanging on N parallel timeouts.
     """
     if _get_client() is not None:
         return True
+    if _openrouter_key() is not None:
+        return True
     return _ollama_available()
+
+
+def _openrouter_key() -> str | None:
+    """OpenRouter API key from env or .env file."""
+    tok = os.environ.get("OPENROUTER_API_KEY")
+    if tok:
+        return tok
+    return _read_env_file().get("OPENROUTER_API_KEY")
 
 
 _ollama_status: bool | None = None
@@ -267,12 +281,15 @@ def _ollama_available(_url: str = "") -> bool:
 # ---------------------------------------------------------------------------
 
 def _call_llm(text: str, cfg: dict) -> dict | None:
-    """Run one extraction round-trip. Tries Claude first, falls back to a
-    local Ollama deployment if the API client isn't configured. Returns the
-    extracted payload as dict, or None."""
+    """Run one extraction round-trip. Tries Claude → OpenRouter → Ollama in
+    that order until one succeeds. Returns the extracted payload as dict,
+    or None if every backend fails."""
     client = _get_client()
     if client is not None:
         return _call_claude(client, text, cfg)
+    or_key = _openrouter_key()
+    if or_key is not None:
+        return _call_openrouter(or_key, text, cfg)
     if _ollama_available():
         return _call_ollama(text, cfg)
     return None
@@ -322,6 +339,78 @@ def _call_claude(client, text: str, cfg: dict) -> dict | None:
             logger.warning("Claude connection error (attempt %d): %s", attempt + 1, e)
         except Exception as e:  # noqa: BLE001 — last-resort log so a worker never dies
             logger.debug("Claude enrichment failed: %s", e)
+            return None
+    return None
+
+
+def _call_openrouter(api_key: str, text: str, cfg: dict) -> dict | None:
+    """OpenRouter (OpenAI-compatible) JSON-mode fallback for the same schema.
+
+    Uses /chat/completions with response_format=json_object so the model
+    returns parseable JSON. Free-tier Qwen-2.5-72B handles this Portuguese
+    extraction reliably and the rate limits work for one-shot batches when
+    workers are kept modest (the CLI default 16 will trip the 20-req/min
+    free-tier cap; --workers 4-6 is the right setting on free).
+    """
+    import json as _json
+    try:
+        import httpx
+    except ImportError:
+        return None
+
+    base = cfg.get("openrouter_url", "https://openrouter.ai/api/v1")
+    model = cfg.get("openrouter_model", "qwen/qwen-2.5-72b-instruct:free")
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": text[:cfg.get("max_chars", 4000)]},
+        ],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.0,
+        "max_tokens": cfg.get("max_tokens", 600),
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        # OpenRouter's analytics referrer + name fields — optional but it's
+        # polite, and they let you see usage attributed back to the project.
+        "HTTP-Referer": "https://github.com/nikit34/olx-car-parser",
+        "X-Title": "olx-car-parser",
+    }
+    for attempt in range(3):
+        try:
+            resp = httpx.post(
+                f"{base}/chat/completions", json=payload, headers=headers,
+                timeout=120.0,
+            )
+            if resp.status_code == 429:
+                # Free-tier rate limit. Back off and retry with jitter.
+                wait = 2 ** attempt
+                logger.warning("OpenRouter 429 (attempt %d) — sleeping %ds", attempt + 1, wait)
+                import time
+                time.sleep(wait)
+                continue
+            if resp.status_code != 200:
+                logger.warning("OpenRouter HTTP %s: %s", resp.status_code, resp.text[:200])
+                return None
+            content = resp.json()["choices"][0]["message"]["content"]
+            if not content:
+                return None
+            try:
+                parsed = _json.loads(content)
+            except _json.JSONDecodeError:
+                stripped = content.strip().strip("`").lstrip("json").strip()
+                try:
+                    parsed = _json.loads(stripped)
+                except _json.JSONDecodeError:
+                    logger.debug("OpenRouter returned non-JSON: %s", content[:200])
+                    return None
+            return parsed if isinstance(parsed, dict) else None
+        except httpx.RequestError as e:
+            logger.warning("OpenRouter connection error (attempt %d): %s", attempt + 1, e)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("OpenRouter enrichment failed: %s", e)
             return None
     return None
 
