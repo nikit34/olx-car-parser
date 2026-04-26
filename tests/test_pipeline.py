@@ -274,7 +274,7 @@ class TestDbWorker:
 # ---------------------------------------------------------------------------
 
 class TestLlmWorker:
-    @patch("src.parser.llm_enrichment._ollama_available", return_value=True)
+    @patch("src.parser.llm_enrichment._llm_available", return_value=True)
     @patch("src.parser.llm_enrichment.enrich_from_description", return_value=VALID_LLM_RESULT)
     def test_processes_items_and_sends_results(self, mock_enrich, mock_avail):
         in_q = multiprocessing.Queue()
@@ -298,7 +298,7 @@ class TestLlmWorker:
         for olx_id, result in results:
             assert result == VALID_LLM_RESULT
 
-    @patch("src.parser.llm_enrichment._ollama_available", return_value=True)
+    @patch("src.parser.llm_enrichment._llm_available", return_value=True)
     @patch("src.parser.llm_enrichment.enrich_from_description", return_value=None)
     def test_sends_none_on_failure(self, mock_enrich, mock_avail):
         in_q = multiprocessing.Queue()
@@ -316,7 +316,7 @@ class TestLlmWorker:
         assert olx_id == "fail-1"
         assert result is None
 
-    @patch("src.parser.llm_enrichment._ollama_available", return_value=True)
+    @patch("src.parser.llm_enrichment._llm_available", return_value=True)
     @patch("src.parser.llm_enrichment.enrich_from_description", return_value=None)
     def test_exits_after_5_consecutive_failures(self, mock_enrich, mock_avail):
         in_q = multiprocessing.Queue()
@@ -336,7 +336,7 @@ class TestLlmWorker:
         # Worker exits after 5 consecutive failures, processes exactly 5
         assert len(results) == 5
 
-    @patch("src.parser.llm_enrichment._ollama_available", return_value=True)
+    @patch("src.parser.llm_enrichment._llm_available", return_value=True)
     @patch("src.parser.llm_enrichment.enrich_from_description", return_value=VALID_LLM_RESULT)
     def test_short_description_sends_none(self, mock_enrich, mock_avail):
         in_q = multiprocessing.Queue()
@@ -355,7 +355,7 @@ class TestLlmWorker:
         assert result is None
         mock_enrich.assert_not_called()
 
-    @patch("src.parser.llm_enrichment._ollama_available", return_value=True)
+    @patch("src.parser.llm_enrichment._llm_available", return_value=True)
     @patch("src.parser.llm_enrichment.enrich_from_description", return_value=VALID_LLM_RESULT)
     def test_shutdown_event_exits_worker(self, mock_enrich, mock_avail):
         in_q = multiprocessing.Queue()
@@ -372,8 +372,8 @@ class TestLlmWorker:
         t.join(timeout=5)
         assert not t.is_alive()
 
-    @patch("src.parser.llm_enrichment._ollama_available", return_value=False)
-    def test_exits_when_ollama_unavailable(self, mock_avail):
+    @patch("src.parser.llm_enrichment._llm_available", return_value=False)
+    def test_exits_when_llm_unavailable(self, mock_avail):
         in_q = multiprocessing.Queue()
         out_q = multiprocessing.Queue()
         shutdown = multiprocessing.Event()
@@ -453,7 +453,7 @@ class TestShutdownDrain:
 # ---------------------------------------------------------------------------
 
 class TestFullPipeline:
-    @patch("src.parser.llm_enrichment._ollama_available", return_value=True)
+    @patch("src.parser.llm_enrichment._llm_available", return_value=True)
     @patch("src.parser.llm_enrichment.enrich_from_description", return_value=VALID_LLM_RESULT)
     @patch("src.cli.get_generation", return_value="Mk7")
     @patch("src.cli.add_price_snapshot")
@@ -505,7 +505,7 @@ class TestFullPipeline:
         assert mock_upsert.call_count == 5
         assert mock_snapshot.call_count == 5
 
-    @patch("src.parser.llm_enrichment._ollama_available", return_value=True)
+    @patch("src.parser.llm_enrichment._llm_available", return_value=True)
     @patch("src.parser.llm_enrichment.enrich_from_description", return_value=VALID_LLM_RESULT)
     @patch("src.cli.get_generation", return_value="Mk7")
     @patch("src.cli.add_price_snapshot")
@@ -558,7 +558,7 @@ class TestFullPipeline:
         assert db_result["saved"] == 5
         assert db_result["enriched"] == 3  # only LLM ones
 
-    @patch("src.parser.llm_enrichment._ollama_available", return_value=True)
+    @patch("src.parser.llm_enrichment._llm_available", return_value=True)
     @patch("src.parser.llm_enrichment.enrich_from_description", return_value=None)
     @patch("src.cli.get_generation", return_value="Mk7")
     @patch("src.cli.add_price_snapshot")

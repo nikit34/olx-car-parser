@@ -1,23 +1,27 @@
-"""Enrich listing data using a local Ollama model.
+"""Enrich listing data using Claude (Haiku 4.5) via the Anthropic API.
 
 Extracts 14 structured fields from title + description text:
 sub_model, trim_level, mileage, accident/repair flags, condition,
 urgency, warranty, tuning, taxi/fleet, first owner, customs, RHD.
+
+Auth: Bearer token from `ANTHROPIC_AUTH_TOKEN` (set in .env). Sent via the
+`auth_token` parameter so it goes as `Authorization: Bearer …` — required for
+Claude Code OAuth / setup tokens, which `x-api-key` rejects.
 """
 
 import json
 import logging
+import os
 import re
+import threading
 from pathlib import Path
 
-import httpx
 import yaml
 
 logger = logging.getLogger(__name__)
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "settings.yaml"
-
-OLLAMA_URL = "http://localhost:11434"
+ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
 
 
 # ---------------------------------------------------------------------------
@@ -26,10 +30,6 @@ OLLAMA_URL = "http://localhost:11434"
 # from failures observed on the golden eval set at /tmp/olx_golden/.
 # ---------------------------------------------------------------------------
 
-# Parts-car / salvage triggers: whenever a description explicitly says the car
-# is being sold for parts, for scrapping, as a salvage title, or is inoperable,
-# we force mechanical_condition=poor AND accident=true AND repair=true — the
-# LLM in-prompt rule was not consistently firing all three.
 _PARTS_CAR_PATTERN = re.compile(
     r"para\s+pe[çc]as|vender\s+as\s+pe[çc]as|venda\s+de\s+pe[çc]as|"
     r"para\s+desmanchar|s[óo]\s+pe[çc]as|abate|salvado|"
@@ -37,58 +37,153 @@ _PARTS_CAR_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Damage / actual-repair keywords: if none of these appear in the text, a
-# repair=True flag from the model was probably triggered by routine maintenance
-# phrases ("óleo mudado", "correia mudada", "revisão feita") which are NOT
-# repairs — revert the flag.  Accident keywords are included because an accident
-# implies damage that needed repair.
 _DAMAGE_PATTERN = re.compile(
     r"\bavariado\b|\bimobilizado\b|\bpartido\b|\bdanificado\b|\bestragado\b|"
     r"fuga\s+de|para\s+pe[çc]as|salvado|sinistro|acidente|batido|"
     r"precisa\s+de\s+(?:reparo|arranjo|conserto)|necessita\s+de\s+repara|"
-    # "reparar"/"substituir" + their participle forms that show up in the
-    # "precisa ser reparado / precisa ser substituído" pattern.  Deliberately
-    # excluded: the plural noun "reparações" (as in "sem reparações" —
-    # a positive signal meaning no damage history).
     r"\brepara(?:r|do|da|dos|das)\b|\bsubstitu(?:ir|ido|ida|idos|idas)\b",
     re.IGNORECASE,
 )
 
-# Right-hand-drive explicit phrases: absent these, the model's RHD=True was
-# almost always a false positive triggered by generic "importado" or a
-# northern-European import (e.g. Belgium — drives on the right).
 _RHD_PATTERN = re.compile(
     r"m[ãa]o\s+inglesa|volante\s+[àa]\s+direita|matr[ií]cula\s+inglesa|"
     r"condu[çc][ãa]o\s+[àa]\s+direita|\bRHD\b|right[\s-]hand\s+drive",
     re.IGNORECASE,
 )
 
-EXTRACTION_PROMPT = """\
-Extract structured data from a Portuguese car listing. Output a single JSON object (null if unknown):
-sub_model(str), trim_level(str), desc_mentions_num_owners(int), desc_mentions_accident(bool), desc_mentions_repair(bool), mileage_in_description_km(int), desc_mentions_customs_cleared(bool), right_hand_drive(bool), mechanical_condition("excellent"/"good"/"fair"/"poor"), urgency("high"/"medium"/"low"), warranty(bool), tuning_or_mods(list), taxi_fleet_rental(bool), first_owner_selling(bool).
-Rules:
+
+# ---------------------------------------------------------------------------
+# Tool schema — forces Claude to emit a single tool_use block with all fields.
+# Unlike free-form JSON parsing this can never return "Sorry I can't" prose.
+# ---------------------------------------------------------------------------
+
+_FIELD_NAMES = [
+    "sub_model", "trim_level", "desc_mentions_num_owners",
+    "desc_mentions_accident", "desc_mentions_repair",
+    "mileage_in_description_km", "desc_mentions_customs_cleared",
+    "right_hand_drive", "mechanical_condition", "urgency",
+    "warranty", "tuning_or_mods", "taxi_fleet_rental",
+    "first_owner_selling",
+    # 0-3 severity inferred from the description as a whole — replaces the
+    # rule-based damage_score for the price model. Captures "para peças",
+    # "sem matrícula", "sinistro com toque", and similar phrasings the
+    # boolean accident/repair flags miss because they fire as a whole only
+    # on the most explicit mentions.
+    "damage_severity",
+]
+
+_EXTRACT_TOOL = {
+    "name": "record_listing_features",
+    "description": "Record extracted structured features from a Portuguese car listing. Always call this exactly once with all fields populated — use null when a field is not mentioned or cannot be inferred.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "sub_model": {
+                "type": ["string", "null"],
+                "description": "Engine/body variant (e.g. '320d', '1.6 TDI', '2.0 TFSI', 'A 200'). NOT a trim line, NOT a bare model name.",
+            },
+            "trim_level": {
+                "type": ["string", "null"],
+                "description": "Equipment line: 'AMG Line', 'M Sport', 'S-Line', 'GTI', 'FR', 'Tekna'. null if basic.",
+            },
+            "desc_mentions_num_owners": {"type": ["integer", "null"]},
+            "desc_mentions_accident": {"type": ["boolean", "null"]},
+            "desc_mentions_repair": {"type": ["boolean", "null"]},
+            "mileage_in_description_km": {"type": ["integer", "null"]},
+            "desc_mentions_customs_cleared": {"type": ["boolean", "null"]},
+            "right_hand_drive": {"type": ["boolean", "null"]},
+            "mechanical_condition": {
+                "type": ["string", "null"],
+                "enum": ["excellent", "good", "fair", "poor", None],
+            },
+            "urgency": {
+                "type": ["string", "null"],
+                "enum": ["high", "medium", "low", None],
+            },
+            "warranty": {"type": ["boolean", "null"]},
+            "tuning_or_mods": {
+                "type": ["array", "null"],
+                "items": {"type": "string"},
+            },
+            "taxi_fleet_rental": {"type": ["boolean", "null"]},
+            "first_owner_selling": {"type": ["boolean", "null"]},
+            "damage_severity": {
+                "type": ["integer", "null"],
+                "enum": [0, 1, 2, 3, None],
+                "description": "Overall vehicle state inferred from the description: 0=pristine/like-new, 1=normal age-appropriate wear (default for unspecified), 2=needs significant repair OR has accident history, 3=salvage / parts-only / non-runner.",
+            },
+        },
+        "required": _FIELD_NAMES,
+    },
+}
+
+
+_SYSTEM_PROMPT = """\
+Extract structured features from a Portuguese (pt-PT) car listing. Always call the record_listing_features tool exactly once with all fields populated; use null for anything not mentioned or unclear.
+
+Field rules:
 sub_model: engine/body variant only (displacement+fuel+power code), e.g. "320d","1.6 TDI","2.0 TFSI","A 200","CLA 45". NOT a trim/package like "AMG Line","M Sport". NOT a bare model name like "DS3","Qashqai".
 trim_level: equipment line, e.g. "AMG Line","M Sport","S-Line","GTI","FR","Tekna". null if basic.
 mileage_in_description_km: integer km. "mil"=thousand ONLY as a separate word ("150 mil km"→150000; "89.500km"→89500; "4300 km"→4300; "127 mil km"→127000).
 desc_mentions_accident: "sinistro","acidente","batido".
 desc_mentions_repair: only if damage/breakdown is mentioned ("avariado","imobilizado","partido","danificado"). Routine maintenance ("óleo mudado","correia mudada","pastilhas novas","revisão feita") is NOT repair — keep false.
 desc_mentions_customs_cleared: "desalfandegado","legalizado","por legalizar".
-right_hand_drive: "mão inglesa","volante à direita","matrícula inglesa".
-urgency: high="urgente","emigração"; medium="aceito propostas","negociável".
-warranty: "garantia" (not "sem garantia").
-tuning_or_mods: ["reprogramação","stage 1","remap","coilovers","bodykit"].
-taxi_fleet_rental: "ex-táxi","TVDE","Uber","Bolt".
-first_owner_selling: "1 dono","único dono".
-PARTS-CAR OVERRIDE — if the description contains ANY of "para peças","vender as peças","venda de peças","para desmanchar","só peças","abate","salvado","avariado","imobilizado", then you MUST set ALL THREE: mechanical_condition="poor", desc_mentions_accident=true, desc_mentions_repair=true.
+right_hand_drive: "mão inglesa","volante à direita","matrícula inglesa". Generic "importado" alone is NOT enough.
+urgency: high="urgente","emigração","preço para despachar"; medium="aceito propostas","negociável","oportunidade"; low otherwise.
+warranty: "garantia" mentioned positively (not "sem garantia").
+tuning_or_mods: aftermarket mods only: ["reprogramação","stage 1","remap","coilovers","bodykit","escape desportivo","downpipe","wrap"]. Empty list if none.
+taxi_fleet_rental: "ex-táxi","TVDE","Uber","Bolt","rent-a-car","frota","carro de empresa".
+first_owner_selling: "1 dono desde novo","único dono","comprado novo por mim","vendo o meu".
+
+damage_severity: 0 (pristine: "como novo","estado impecável", warranty mentioned, "primeiro dono comprado novo"); 1 (normal age-appropriate wear, no damage signals — DEFAULT for typical used-car language); 2 (needs significant repair OR accident history: "sinistro","embate","toque dianteiro/traseiro/lateral","necessita reparações","pintura fraca","amortecedores partidos","precisa óleo/correia"); 3 (salvage / parts-only / non-runner: "para peças","vender as peças","para sucata","para desmanchar","abate","salvado","motor fundido","imobilizado","não anda","sem matrícula","para exportação/utilização das peças"). When in doubt between two levels, pick the higher one.
+
+PARTS-CAR OVERRIDE — if description contains ANY of "para peças","vender as peças","venda de peças","para desmanchar","só peças","abate","salvado","avariado","imobilizado", you MUST set ALL FOUR: mechanical_condition="poor", desc_mentions_accident=true, desc_mentions_repair=true, damage_severity=3.
+
+Examples:
+
+Listing: "BMW Série 3 320d Pack M com 180.000 km, 1 dono, garantia até 2026, sem sinistros."
+→ sub_model="320d", trim_level="Pack M", desc_mentions_num_owners=1, desc_mentions_accident=false, desc_mentions_repair=false, mileage_in_description_km=180000, mechanical_condition="excellent", urgency="low", warranty=true, tuning_or_mods=[], first_owner_selling=true, damage_severity=0 (rest null).
+
+Listing: "Vendo Audi A3 1.6 TDI S-Line, 150 mil km. Avariado motor, vendo para peças. Aceito propostas."
+→ sub_model="1.6 TDI", trim_level="S-Line", desc_mentions_accident=true, desc_mentions_repair=true, mileage_in_description_km=150000, mechanical_condition="poor", urgency="medium", tuning_or_mods=[], damage_severity=3 (rest null).
+
+Listing: "Seat Ibiza FR 1.4 TSI com 89.500km. Reprogramação stage 1, escape desportivo. Revisão feita, pneus novos."
+→ sub_model="1.4 TSI", trim_level="FR", desc_mentions_accident=false, desc_mentions_repair=false, mileage_in_description_km=89500, mechanical_condition="good", urgency="low", tuning_or_mods=["reprogramação","stage 1","escape desportivo"], damage_severity=1 (rest null).
+
+Listing: "Honda Civic 2009 com toque dianteiro esquerdo, mecânica boa, vendo para peças."
+→ desc_mentions_accident=true, desc_mentions_repair=true, mechanical_condition="poor", damage_severity=3 (rest null).
 """
 
 
-_EXTRAS_KEY_ALIASES = {
-    "desc_mentions_num_owners": "num_owners",
-    "desc_mentions_accident": "had_accident",
-    "desc_mentions_repair": "needs_repair",
-    "desc_mentions_customs_cleared": "customs_cleared",
-}
+# ---------------------------------------------------------------------------
+# Client / config / availability
+# ---------------------------------------------------------------------------
+
+_client = None
+_client_lock = threading.Lock()
+_token_status: bool | None = None
+
+
+def _read_env_file() -> dict:
+    """Tiny .env reader so callers don't need python-dotenv installed."""
+    if not ENV_PATH.exists():
+        return {}
+    out = {}
+    for line in ENV_PATH.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        out[k.strip()] = v.strip().strip('"').strip("'")
+    return out
+
+
+def _get_token() -> str | None:
+    """Resolve the Anthropic auth token. Env > .env file."""
+    tok = os.environ.get("ANTHROPIC_AUTH_TOKEN")
+    if tok:
+        return tok
+    return _read_env_file().get("ANTHROPIC_AUTH_TOKEN")
 
 
 def _get_config() -> dict:
@@ -98,120 +193,134 @@ def _get_config() -> dict:
             data = yaml.safe_load(f) or {}
         cfg = data.get("llm", {})
     return {
-        "ollama_model": cfg.get("ollama_model", "qwen3:4b-instruct"),
-        "ollama_url": cfg.get("ollama_url", OLLAMA_URL),
-        "llm_workers": cfg.get("llm_workers", 1),
+        "model": cfg.get("model", "claude-haiku-4-5"),
+        "max_workers": cfg.get("max_workers", 16),
+        "max_tokens": cfg.get("max_tokens", 600),
+        "max_chars": cfg.get("max_chars", 4000),
     }
 
 
-_ollama_status: bool | None = None
+def _get_client():
+    """Lazy, thread-safe Anthropic client. Returns None if SDK or token missing."""
+    global _client
+    if _client is not None:
+        return _client
+    with _client_lock:
+        if _client is not None:
+            return _client
+        token = _get_token()
+        if not token:
+            return None
+        try:
+            import anthropic
+        except ImportError:
+            logger.error("`anthropic` package not installed. Run: pip install anthropic")
+            return None
+        # auth_token sets `Authorization: Bearer <token>`. Required for Claude
+        # Code OAuth / setup tokens — `x-api-key` rejects them.
+        _client = anthropic.Anthropic(auth_token=token, max_retries=2, timeout=60.0)
+    return _client
 
-# Thread-local HTTP clients — one per thread for thread safety
-import threading
-_thread_local = threading.local()
+
+def _llm_available() -> bool:
+    """True iff a token is configured and the SDK loads. Cached for the process."""
+    global _token_status
+    if _token_status is not None:
+        return _token_status
+    _token_status = _get_client() is not None
+    if not _token_status:
+        logger.warning("Claude enrichment disabled: ANTHROPIC_AUTH_TOKEN missing or SDK unavailable.")
+    return _token_status
 
 
-def _get_client(base_url: str) -> httpx.Client:
-    """Return a thread-local persistent httpx.Client."""
-    client = getattr(_thread_local, "http_client", None)
-    if client is None:
-        client = httpx.Client(base_url=base_url, timeout=httpx.Timeout(60, connect=10))
-        _thread_local.http_client = client
-    return client
+# Backward-compat shim — older call sites in cli.py and tests reference this name.
+def _ollama_available(_url: str = "") -> bool:
+    return _llm_available()
 
 
-def _ollama_available(base_url: str) -> bool:
-    """Check if Ollama is running locally. Result is cached for the process lifetime."""
-    global _ollama_status
-    if _ollama_status is not None:
-        return _ollama_status
+# ---------------------------------------------------------------------------
+# Core API call
+# ---------------------------------------------------------------------------
+
+def _call_llm(text: str, cfg: dict) -> dict | None:
+    """Run one extraction round-trip. Returns the tool_use payload as dict, or None."""
+    client = _get_client()
+    if not client:
+        return None
+
     try:
-        client = _get_client(base_url)
-        resp = client.get("/api/tags")
-        _ollama_status = resp.status_code == 200
-    except httpx.HTTPError:
-        _ollama_status = False
-    return _ollama_status
+        import anthropic
+    except ImportError:
+        return None
 
-
-def _parse_llm_json(content: str) -> dict | None:
-    """Extract JSON from LLM response, handling markdown code blocks and surrounding text."""
-    # Try markdown code blocks first
-    if "```" in content:
-        content = content.split("```")[1]
-        if content.startswith("json"):
-            content = content[4:]
-        return json.loads(content.strip())
-    # Extract first {...} object from response
-    start = content.find("{")
-    if start >= 0:
-        depth = 0
-        for i in range(start, len(content)):
-            if content[i] == "{":
-                depth += 1
-            elif content[i] == "}":
-                depth -= 1
-            if depth == 0:
-                return json.loads(content[start : i + 1])
-    return json.loads(content.strip())
-
-
-def _call_ollama(description: str, cfg: dict) -> dict | None:
-    """Call local Ollama model for extraction with retry."""
     for attempt in range(2):
         try:
-            client = _get_client(cfg["ollama_url"])
-            resp = client.post(
-                "/api/generate",
-                json={
-                    "model": cfg["ollama_model"],
-                    # System prompt must stay byte-identical across calls so
-                    # Ollama reuses the same KV-cache slot (prefix caching),
-                    # turning the ~240-token instruction block into a near-zero
-                    # prefill cost after the first inference on each slot.
-                    "system": EXTRACTION_PROMPT,
-                    "prompt": description[:1200],
-                    "stream": False,
-                    "keep_alive": "30m",
-                    "options": {
-                        "temperature": 0.1,
-                        "num_predict": 220,       # JSON with 14 fields fits in ~180 tokens
-                        "num_ctx": 1536,          # system(~240) + desc(~400) + reply(~220) + margin
-                        "stop": ["} {", "}\n{"],
-                    },
-                },
+            resp = client.messages.create(
+                model=cfg["model"],
+                max_tokens=cfg.get("max_tokens", 600),
+                # Prompt caching on the system prompt: after the first call in a
+                # 5-minute window the ~600-token instruction block costs 0.1×.
+                # The list-of-blocks form is required to attach cache_control.
+                system=[{
+                    "type": "text",
+                    "text": _SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }],
+                tools=[_EXTRACT_TOOL],
+                tool_choice={"type": "tool", "name": "record_listing_features"},
+                messages=[{"role": "user", "content": text[:cfg.get("max_chars", 4000)]}],
             )
-            if resp.status_code != 200:
-                logger.warning("Ollama API error: %s", resp.status_code)
+            for block in resp.content:
+                if getattr(block, "type", None) == "tool_use" and block.name == "record_listing_features":
+                    return dict(block.input)
+            logger.debug("Claude returned no tool_use block")
+            return None
+
+        except anthropic.RateLimitError as e:
+            wait = 2 ** attempt
+            logger.warning("Claude rate-limited: %s — sleeping %ds", e, wait)
+            import time
+            time.sleep(wait)
+        except anthropic.APIStatusError as e:
+            # 4xx (auth, request shape) won't be fixed by retry.
+            if 400 <= e.status_code < 500:
+                logger.error("Claude API error %s: %s", e.status_code, e.message)
                 return None
-
-            content = resp.json()["response"]
-            return _parse_llm_json(content)
-
-        except httpx.TimeoutException:
-            logger.warning("Ollama request timed out (attempt %d)", attempt + 1)
-        except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError) as e:
-            logger.debug("Ollama enrichment failed: %s", e)
+            logger.warning("Claude server error %s (attempt %d)", e.status_code, attempt + 1)
+        except anthropic.APIConnectionError as e:
+            logger.warning("Claude connection error (attempt %d): %s", attempt + 1, e)
+        except Exception as e:  # noqa: BLE001 — last-resort log so a worker never dies
+            logger.debug("Claude enrichment failed: %s", e)
             return None
     return None
 
 
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+_EXTRAS_KEY_ALIASES = {
+    "desc_mentions_num_owners": "num_owners",
+    "desc_mentions_accident": "had_accident",
+    "desc_mentions_repair": "needs_repair",
+    "desc_mentions_customs_cleared": "customs_cleared",
+}
+
+
 def enrich_from_description(description: str, title: str = "") -> dict | None:
-    """Extract structured data from title + description using local Ollama.
+    """Extract structured data from title + description via Claude.
 
     Returns dict with extracted fields, or None on failure.
     """
     if not description or len(description.strip()) < 20:
         return None
 
-    cfg = _get_config()
-
-    if not _ollama_available(cfg["ollama_url"]):
-        logger.warning("Ollama not running at %s. Skipping enrichment.", cfg["ollama_url"])
+    if not _llm_available():
         return None
 
+    cfg = _get_config()
     text = f"{title}\n{description}" if title else description
-    result = _call_ollama(text, cfg)
+    result = _call_llm(text, cfg)
     return normalize_llm_extras(result) if result else None
 
 
@@ -219,7 +328,6 @@ def normalize_llm_extras(extras: dict | None) -> dict | None:
     """Normalize legacy and current extraction keys to the current schema."""
     if not extras:
         return extras
-
     normalized = dict(extras)
     for new_key, old_key in _EXTRAS_KEY_ALIASES.items():
         if new_key not in normalized and old_key in normalized:
@@ -237,18 +345,17 @@ def _get_extra(extras: dict, key: str):
 
 
 def enrich_listings_batch(listings: list, batch_size: int = 50) -> int:
-    """Enrich a batch of RawListing objects with LLM-extracted data.
+    """Enrich a batch of RawListing objects with Claude-extracted data.
 
     Modifies listings in place. Returns count of enriched listings.
     """
-    cfg = _get_config()
-
-    if not _ollama_available(cfg["ollama_url"]):
-        logger.info("Ollama not running. Skipping LLM enrichment.")
+    if not _llm_available():
+        logger.info("Claude not available. Skipping LLM enrichment.")
         return 0
 
-    logger.info("LLM enrichment using Ollama (%s) for up to %d listings",
-                cfg["ollama_model"], min(batch_size, len(listings)))
+    cfg = _get_config()
+    logger.info("LLM enrichment using Claude (%s) for up to %d listings",
+                cfg["model"], min(batch_size, len(listings)))
 
     enriched = 0
     failures = 0
@@ -260,7 +367,7 @@ def enrich_listings_batch(listings: list, batch_size: int = 50) -> int:
         if result:
             listing._llm_extras = normalize_llm_extras(result)
             enriched += 1
-            failures = 0  # reset on success
+            failures = 0
         else:
             failures += 1
             if failures >= 5:
@@ -276,12 +383,7 @@ def enrich_listings_batch(listings: list, batch_size: int = 50) -> int:
 # ---------------------------------------------------------------------------
 
 def correct_listing_data(listing) -> dict:
-    """Cross-check listing attributes against LLM-extracted data and return corrections.
-
-    Returns a dict with corrected/enriched fields to apply to the listing.
-    The dict includes top-level column values derived from description mentions.
-    and an updated llm_extras JSON.
-    """
+    """Cross-check listing attributes against LLM-extracted data and return corrections."""
     extras = getattr(listing, "_llm_extras", None)
     if extras is None:
         return {}
@@ -309,118 +411,99 @@ def correct_listing_data(listing) -> dict:
     elif attr_km and attr_km > 0:
         corrections["real_mileage_km"] = attr_km
 
-    # --- Sub-model ---
     sub_model = extras.get("sub_model")
     if sub_model and isinstance(sub_model, str) and sub_model.strip():
         corrections["sub_model"] = sub_model.strip()
 
-    # --- Trim level ---
     trim = extras.get("trim_level")
     if trim and isinstance(trim, str) and trim.strip():
         corrections["trim_level"] = trim.strip()
 
-    # --- Number of owners ---
     num_owners = _get_extra(extras, "desc_mentions_num_owners")
     if num_owners and isinstance(num_owners, (int, float)) and num_owners > 0:
         corrections["desc_mentions_num_owners"] = int(num_owners)
 
-    # --- Description mentions repair ---
     needs_repair = _get_extra(extras, "desc_mentions_repair")
     if needs_repair is not None:
         corrections["desc_mentions_repair"] = bool(needs_repair)
 
-    # --- Description mentions accident ---
     had_accident = _get_extra(extras, "desc_mentions_accident")
     if had_accident is not None:
         corrections["desc_mentions_accident"] = bool(had_accident)
 
-    # --- Description mentions customs/legalization ---
     customs = _get_extra(extras, "desc_mentions_customs_cleared")
     if customs is not None:
         corrections["desc_mentions_customs_cleared"] = bool(customs)
 
-    # --- Right-hand drive ---
     rhd = extras.get("right_hand_drive")
     if rhd is not None:
         corrections["right_hand_drive"] = bool(rhd)
 
-    # --- Urgency ---
     urgency = extras.get("urgency")
     if urgency in ("high", "medium", "low"):
         corrections["urgency"] = urgency
 
-    # --- Warranty ---
     warranty = extras.get("warranty")
     if warranty is not None:
         corrections["warranty"] = bool(warranty)
 
-    # --- Tuning or modifications ---
     tuning = extras.get("tuning_or_mods")
     if tuning and isinstance(tuning, list) and len(tuning) > 0:
         corrections["tuning_or_mods"] = json.dumps(tuning, ensure_ascii=False)
 
-    # --- Taxi / fleet / rental ---
     taxi = extras.get("taxi_fleet_rental")
     if taxi is not None:
         corrections["taxi_fleet_rental"] = bool(taxi)
 
-    # --- First owner selling ---
     first_owner = extras.get("first_owner_selling")
     if first_owner is not None:
         corrections["first_owner_selling"] = bool(first_owner)
 
-    # --- Mechanical condition ---
     mech = extras.get("mechanical_condition")
     if mech in ("excellent", "good", "fair", "poor"):
         corrections["mechanical_condition"] = mech
 
-    # --- Fix internal LLM contradictions (only tighten, never loosen) ---
+    severity = extras.get("damage_severity")
+    if severity is not None and isinstance(severity, (int, float)):
+        sev_int = int(severity)
+        if 0 <= sev_int <= 3:
+            corrections["damage_severity"] = sev_int
+
     if corrections.get("desc_mentions_accident") and not corrections.get("desc_mentions_repair"):
         corrections["desc_mentions_repair"] = True
 
-    # --- Deterministic post-rules on raw description text ---
-    # These run AFTER the LLM pass and override its flags for cases where the
-    # model has repeatedly failed on the golden eval set.  Cheap safety net.
     description = getattr(listing, "description", "") or ""
     if description:
         if _PARTS_CAR_PATTERN.search(description):
             corrections["mechanical_condition"] = "poor"
             corrections["desc_mentions_accident"] = True
             corrections["desc_mentions_repair"] = True
+            # Belt-and-suspenders: any parts-car phrase in the raw text
+            # forces severity 3, even if the LLM under-rated it.
+            corrections["damage_severity"] = 3
         else:
-            # If the LLM flagged repair but nothing in the text actually mentions
-            # damage/breakdown, we assume it conflated routine maintenance with a
-            # repair and revert to False.  Parts-car override above wins over this.
             if corrections.get("desc_mentions_repair") and not _DAMAGE_PATTERN.search(description):
                 corrections["desc_mentions_repair"] = False
 
-        # RHD without an explicit right-hand phrase is almost always a false
-        # positive from the model (usually provoked by "importado").
         if corrections.get("right_hand_drive") and not _RHD_PATTERN.search(description):
             corrections["right_hand_drive"] = False
 
     return corrections
 
 
-
 def apply_corrections(listings: list) -> int:
-    """Apply data corrections to all listings that have LLM extras.
-
-    Modifies listings in place. Returns count of corrected listings.
-    """
+    """Apply data corrections to all listings that have LLM extras."""
     corrected = 0
     for listing in listings:
         corrections = correct_listing_data(listing)
         if not corrections:
             continue
 
-        # Store corrections as a separate attribute for the CLI to pick up
         if not hasattr(listing, "_corrections"):
             listing._corrections = {}
         listing._corrections.update(corrections)
         corrected += 1
 
-        # Log significant corrections
         if corrections.get("real_mileage_km") and corrections.get("real_mileage_km") != getattr(listing, "mileage_km", None):
             logger.info(
                 "Corrected %s: real_mileage=%s, desc_mentions_repair=%s, desc_mentions_accident=%s",

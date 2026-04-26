@@ -442,6 +442,7 @@ def get_listings_df(session: Session) -> pd.DataFrame:
             "desc_mentions_customs_cleared": l.desc_mentions_customs_cleared,
             "right_hand_drive": l.right_hand_drive,
             "mechanical_condition": l.mechanical_condition,
+            "damage_severity": l.damage_severity,
             "urgency": l.urgency,
             "warranty": l.warranty,
             "tuning_or_mods": l.tuning_or_mods,

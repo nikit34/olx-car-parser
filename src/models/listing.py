@@ -68,6 +68,7 @@ class Listing(Base):
     desc_mentions_customs_cleared = Column(Boolean)
     right_hand_drive = Column(Boolean)
     mechanical_condition = Column(String)       # "excellent", "good", "fair", "poor"
+    damage_severity = Column(Integer)           # LLM-inferred 0-3 severity (0=pristine, 3=salvage/parts)
     urgency = Column(String)                   # "high", "medium", "low"
     warranty = Column(Boolean)
     tuning_or_mods = Column(Text)              # JSON list

@@ -43,7 +43,9 @@ _OTHER_CATEGORY = "__other__"
 # feature set or target transform.
 # v4: rule-based damage signals + TF-IDF text PCs + per-bucket conformal_q +
 # monotonic constraints + inverse-log sample weights
-_SCHEMA_VERSION = 4
+# v5: LLM-extracted damage_severity (0-3) — replaces the rule-based score's
+# role as the primary damage feature. Keyword rules stay as a cheap backup.
+_SCHEMA_VERSION = 5
 # Fraction of the dataset (newest rows by first_seen_at) used as the
 # time-honest conformal calibration window. Random-KFold CQR mixes
 # time-adjacent rows across folds and over-estimates coverage on real future
@@ -191,6 +193,12 @@ NUMERIC_FEATURES = [
     "desc_mentions_num_owners", "avg_days_to_sell",
     "photo_count", "description_length", "seats",
     "tuning_or_mods_count",
+    # LLM-inferred damage severity (0=pristine, 1=normal wear, 2=needs
+    # repair / accident history, 3=salvage/parts). Backfilled by
+    # `python -m src.cli enrich` for any row whose llm_extras lacks the
+    # field. Captures phrasings the boolean accident/repair flags miss
+    # ("para peças", "sem matrícula", "toque dianteiro", etc.).
+    "damage_severity",
     # Rule-based damage severity score (0/0.4/0.7/1.0). Independent backstop
     # for the LLM-extracted accident/repair flags below.
     "damage_score",
@@ -234,6 +242,7 @@ _MONOTONE_BY_FEATURE: dict[str, int] = {
     "year": 1,
     "mileage_km": -1,
     "desc_mentions_num_owners": -1,
+    "damage_severity": -1,  # 0=pristine → high price, 3=salvage → low price
     "damage_score": -1,
     "desc_mentions_accident": -1,
     "desc_mentions_repair": -1,

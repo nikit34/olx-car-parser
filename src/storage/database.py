@@ -60,7 +60,7 @@ def _get_table_columns(conn, table_name: str) -> set[str]:
     return {row[1] for row in rows}
 
 
-_SCHEMA_VERSION = 1  # bump when _migrate_columns or _dead_json_keys changes
+_SCHEMA_VERSION = 2  # bump when _migrate_columns or _dead_json_keys changes
 
 
 def _read_schema_version(conn) -> int:
@@ -115,6 +115,10 @@ def init_db(db_path: str | None = None):
         ("trim_level", "TEXT"),
         ("photo_count", "INTEGER"),
         ("description_length", "INTEGER"),
+        # v2: LLM-inferred damage severity (0=pristine, 3=salvage/parts).
+        # Backfilled by `python -m src.cli enrich` (the pending query
+        # re-runs LLM on rows whose llm_extras has no damage_severity yet).
+        ("damage_severity", "INTEGER"),
     ]
     _migrate_unmatched_columns = [
         ("source", "TEXT DEFAULT 'olx'"),

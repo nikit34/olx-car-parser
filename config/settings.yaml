@@ -17,9 +17,13 @@ analytics:
   buy_signal_threshold: 10
 
 llm:
-  ollama_model: "qwen3:4b-instruct"
-  ollama_url: "http://localhost:11434"
-  llm_workers: 2  # Ollama side is configured for NUM_PARALLEL=3; 2 client workers keep both requests inflight without OOM'ing 8 GB RAM
+  # Claude Haiku 4.5 — best price/perf for structured extraction. Tool-use mode
+  # guarantees JSON shape, prompt caching makes the system prompt nearly free
+  # after the first call in each 5-minute window.
+  model: "claude-haiku-4-5"
+  max_workers: 16   # network-bound; SDK retries handle the occasional 429
+  max_tokens: 600   # 14-field tool call fits in ~350 tokens; 600 leaves slack
+  max_chars: 4000   # truncate very long descriptions before sending
 
 alerts:
   telegram_bot_token: "8651422044:AAEf93eodK6d4F7fn1FVH-vh0H5JX-gb92s"

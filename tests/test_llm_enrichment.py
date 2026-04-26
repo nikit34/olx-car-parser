@@ -1,4 +1,4 @@
-"""Tests for LLM enrichment: Ollama, pipeline, corrections, export."""
+"""Tests for LLM enrichment: Claude API, pipeline, corrections, export."""
 
 import json
 import queue
@@ -10,9 +10,8 @@ import pytest
 
 import src.parser.llm_enrichment as llm_mod
 from src.parser.llm_enrichment import (
-    _call_ollama,
+    _call_llm,
     _get_config,
-    _parse_llm_json,
     correct_listing_data,
     apply_corrections,
     enrich_from_description,
@@ -51,76 +50,55 @@ VALID_LLM_JSON = {
 
 
 # ---------------------------------------------------------------------------
-# _parse_llm_json
+# _call_llm — Claude tool-use round-trip
 # ---------------------------------------------------------------------------
 
-class TestParseLlmJson:
-    def test_plain_json(self):
-        result = _parse_llm_json('{"key": "value"}')
-        assert result == {"key": "value"}
-
-    def test_markdown_code_block(self):
-        text = '```json\n{"key": "value"}\n```'
-        result = _parse_llm_json(text)
-        assert result == {"key": "value"}
-
-    def test_markdown_without_language(self):
-        text = '```\n{"key": 123}\n```'
-        result = _parse_llm_json(text)
-        assert result == {"key": 123}
-
-    def test_invalid_json_raises(self):
-        with pytest.raises(json.JSONDecodeError):
-            _parse_llm_json("not json at all")
+def _make_claude_resp(tool_input: dict | None):
+    """Build a fake `messages.create()` return value with a single tool_use block."""
+    block = MagicMock()
+    block.type = "tool_use"
+    block.name = "record_listing_features"
+    block.input = tool_input or {}
+    resp = MagicMock()
+    resp.content = [block] if tool_input is not None else []
+    return resp
 
 
-# ---------------------------------------------------------------------------
-# _call_ollama
-# ---------------------------------------------------------------------------
-
-class TestCallOllama:
+class TestCallLlm:
     def setup_method(self):
-        llm_mod._http_client = None
+        llm_mod._client = None
+        llm_mod._token_status = None
 
     def test_success(self):
         cfg = _get_config()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {
-            "response": json.dumps(VALID_LLM_JSON)
-        }
         mock_client = MagicMock()
-        mock_client.post.return_value = mock_resp
+        mock_client.messages.create.return_value = _make_claude_resp(VALID_LLM_JSON)
 
         with patch("src.parser.llm_enrichment._get_client", return_value=mock_client):
-            result = _call_ollama("Vendo carro com 100km", cfg)
+            result = _call_llm("Vendo carro com 100km", cfg)
 
         assert result is not None
         assert result["desc_mentions_accident"] is False
+        # The system prompt must be sent with cache_control so prompt caching
+        # actually engages — this is how the per-call cost stays low.
+        kwargs = mock_client.messages.create.call_args.kwargs
+        assert kwargs["system"][0]["cache_control"] == {"type": "ephemeral"}
+        assert kwargs["tool_choice"]["name"] == "record_listing_features"
 
-    def test_api_error(self):
+    def test_no_tool_use_block(self):
         cfg = _get_config()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 500
         mock_client = MagicMock()
-        mock_client.post.return_value = mock_resp
+        mock_client.messages.create.return_value = _make_claude_resp(None)
 
         with patch("src.parser.llm_enrichment._get_client", return_value=mock_client):
-            result = _call_ollama("Vendo carro", cfg)
+            result = _call_llm("Vendo carro", cfg)
 
         assert result is None
 
-    def test_invalid_json_response(self):
+    def test_no_client_returns_none(self):
         cfg = _get_config()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"response": "Sorry I cannot help"}
-        mock_client = MagicMock()
-        mock_client.post.return_value = mock_resp
-
-        with patch("src.parser.llm_enrichment._get_client", return_value=mock_client):
-            result = _call_ollama("Vendo carro", cfg)
-
+        with patch("src.parser.llm_enrichment._get_client", return_value=None):
+            result = _call_llm("Vendo carro", cfg)
         assert result is None
 
 
@@ -133,21 +111,21 @@ class TestEnrichFromDescription:
         assert enrich_from_description("") is None
         assert enrich_from_description("short") is None
 
-    @patch("src.parser.llm_enrichment._ollama_available", return_value=True)
-    @patch("src.parser.llm_enrichment._call_ollama", return_value=VALID_LLM_JSON)
-    def test_calls_ollama(self, mock_ollama, mock_avail):
+    @patch("src.parser.llm_enrichment._llm_available", return_value=True)
+    @patch("src.parser.llm_enrichment._call_llm", return_value=VALID_LLM_JSON)
+    def test_calls_claude(self, mock_call, mock_avail):
         result = enrich_from_description("Vendo BMW 320d com 180.000km reais")
         assert result == VALID_LLM_JSON
-        mock_ollama.assert_called_once()
+        mock_call.assert_called_once()
 
-    @patch("src.parser.llm_enrichment._ollama_available", return_value=True)
-    @patch("src.parser.llm_enrichment._call_ollama", return_value=None)
-    def test_returns_none_on_ollama_failure(self, mock_ollama, mock_avail):
+    @patch("src.parser.llm_enrichment._llm_available", return_value=True)
+    @patch("src.parser.llm_enrichment._call_llm", return_value=None)
+    def test_returns_none_on_claude_failure(self, mock_call, mock_avail):
         result = enrich_from_description("Vendo BMW 320d com 180.000km reais")
         assert result is None
 
-    @patch("src.parser.llm_enrichment._ollama_available", return_value=False)
-    def test_returns_none_when_ollama_unavailable(self, mock_avail):
+    @patch("src.parser.llm_enrichment._llm_available", return_value=False)
+    def test_returns_none_when_token_missing(self, mock_avail):
         result = enrich_from_description("Vendo BMW 320d com 180.000km reais")
         assert result is None
 
@@ -295,7 +273,7 @@ class TestApplyCorrections:
 # ---------------------------------------------------------------------------
 
 class TestLlmPipeline:
-    @patch("src.parser.llm_enrichment._ollama_available", return_value=True)
+    @patch("src.parser.llm_enrichment._llm_available", return_value=True)
     @patch("src.parser.llm_enrichment.enrich_from_description", return_value=VALID_LLM_JSON)
     def test_queue_feeds_llm_worker(self, mock_enrich, mock_avail):
         """Simulate the CLI pipeline: scraper puts (olx_id, desc) in queue, worker processes."""
@@ -325,7 +303,7 @@ class TestLlmPipeline:
         assert len(results) == 5
         assert all(r[1] == VALID_LLM_JSON for r in results)
 
-    @patch("src.parser.llm_enrichment._ollama_available", return_value=True)
+    @patch("src.parser.llm_enrichment._llm_available", return_value=True)
     @patch("src.parser.llm_enrichment.enrich_from_description", return_value=None)
     def test_worker_handles_failures(self, mock_enrich, mock_avail):
         """Worker sends None results and exits after 5 consecutive failures."""
