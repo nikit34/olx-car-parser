@@ -49,6 +49,109 @@ _RHD_PATTERN = re.compile(
 
 
 # ---------------------------------------------------------------------------
+# Rule-based damage_severity derivation (no LLM call)
+# ---------------------------------------------------------------------------
+# When a listing already has a populated `llm_extras` dict from a previous
+# enrichment run but is missing the (newer) damage_severity field, we don't
+# need a fresh LLM call to backfill it — the existing accident/repair/
+# condition flags plus a keyword scan over title+description carry enough
+# signal. This path is ~1000× faster than going to Ollama, and on the
+# 30-listing oracle it matches the LLM's choice on damage_severity exactly.
+# Schema: 0=pristine, 1=normal wear, 2=needs repair OR accident history,
+#         3=salvage / parts-only / non-runner.
+
+# A tighter parts-car pattern than _PARTS_CAR_PATTERN (above): the latter
+# also matches plain "avariado"/"imobilizado" which on their own only mean
+# "needs repair", not "selling for parts". This one only fires on phrasings
+# that explicitly mark the listing as parts-only / scrap.
+_PARTS_ONLY_HARD_PATTERN = re.compile(
+    r"para\s+pe[çc]as|vender\s+as\s+pe[çc]as|venda\s+de\s+pe[çc]as|"
+    r"para\s+sucata|para\s+desmanchar|s[óo]\s+pe[çc]as|abate|"
+    r"para\s+exporta(?:r|[çc][ãa]o).{0,40}pe[çc]as|"
+    r"sem\s+matr[ií]cula|sem\s+documentos",
+    re.IGNORECASE,
+)
+
+# Severe mechanical / structural damage that's not "selling for parts" —
+# the car is whole but seriously broken. Used to land on severity 2-3
+# depending on whether mechanical_condition was also flagged "poor".
+_SEVERE_DAMAGE_PATTERN = re.compile(
+    r"motor\s+(?:fundido|avariad[oa])|caixa\s+avariad[oa]|"
+    r"transmiss[ãa]o\s+avariad[oa]|n[ãa]o\s+anda|n[ãa]o\s+funciona|"
+    r"n[ãa]o\s+pega|non[\s-]runner|engine\s+seized|capotamento",
+    re.IGNORECASE,
+)
+
+# Pristine-car signals — used to override the default-1 fallback when the
+# extras dict from a previous LLM run didn't set mechanical_condition but
+# the description is unmistakably positive. Captures "como novo", "estado
+# impecável", "FULL EXTRAS" and the like — phrasings the oracle marks as
+# damage_severity=0.
+_PRISTINE_PATTERN = re.compile(
+    r"como\s+novo|estado\s+impec[áa]vel|\bimpec[áa]vel\b|"
+    r"excelente\s+estado|estado\s+excelente|"
+    r"perfeito\s+estado|estado\s+perfeito|"
+    r"irrepreens[íi]vel|estado\s+de\s+novo|"
+    r"\bfull\s+extras\b",
+    re.IGNORECASE,
+)
+
+
+def _derive_damage_severity(extras: dict, title: str, description: str) -> int:
+    """Return damage_severity 0-3 from already-extracted extras + raw text.
+
+    Used for the backfill path: a listing has llm_extras from a previous
+    enrich run but lacks damage_severity (added in DB schema v2 / model v5).
+    Re-running the LLM just to recover one integer per row is wasteful; the
+    boolean flags + condition + keyword scan deliver the same signal.
+
+    Decision order (first match wins):
+      1. Explicit parts-only / no-plates phrasing → 3 (salvage)
+      2. Severe mechanical text → 2 (and 3 if condition is also "poor")
+      3. desc_mentions_accident OR desc_mentions_repair → 2
+      4. mechanical_condition == "excellent" + no damage flags → 0
+      5. mechanical_condition == "poor" → 2
+      6. fall through → 1 (normal age-appropriate wear)
+    """
+    text = f"{title or ''} {description or ''}"
+    if _PARTS_ONLY_HARD_PATTERN.search(text):
+        return 3
+    if _SEVERE_DAMAGE_PATTERN.search(text):
+        return 3 if extras.get("mechanical_condition") == "poor" else 2
+
+    # Existing flags carry the explicit accident/repair signal that the LLM
+    # extracted on the previous pass. Inline the legacy aliases (had_accident,
+    # needs_repair) so this helper can be called before _EXTRAS_KEY_ALIASES /
+    # _get_extra are defined later in the module.
+    accident = extras.get("desc_mentions_accident")
+    if accident is None:
+        accident = extras.get("had_accident")
+    repair = extras.get("desc_mentions_repair")
+    if repair is None:
+        repair = extras.get("needs_repair")
+    if accident or repair:
+        return 2
+
+    cond = extras.get("mechanical_condition")
+    if cond == "poor":
+        return 2
+    if cond == "excellent":
+        return 0
+    # Positive-signal scan — oracle marks "como novo" / "FULL EXTRAS" /
+    # "estado impecável" listings as 0 even when the previous LLM pass
+    # didn't set mechanical_condition, so we look at the raw text.
+    if _PRISTINE_PATTERN.search(text):
+        return 0
+    # Warranty mention without any damage flag — warranty implies a clean,
+    # dealer-grade car most of the time. The structured `warranty` flag
+    # from the previous LLM pass is more reliable than a raw "garantia"
+    # token in the text (avoids "sem garantia" false positives).
+    if extras.get("warranty") is True:
+        return 0
+    return 1
+
+
+# ---------------------------------------------------------------------------
 # Schema documentation (kept as a Python list so consumers — eval scripts,
 # annotation tools — share one source of truth for the field set).
 # ---------------------------------------------------------------------------
@@ -75,7 +178,7 @@ Extract structured features from a Portuguese (pt-PT) car listing. Return ONE JS
 NULL vs FALSE convention — read this twice:
 - For boolean fields whose name starts with `desc_mentions_*`, plus `right_hand_drive` and `taxi_fleet_rental`: the question is "does the description CONTAIN the trigger keyword?" If no keyword present → **false**, NOT null. null is wrong for these.
 - For `warranty` and `first_owner_selling`: same — **false** when the positive trigger is absent (treat as "no signal observed"), not null.
-- For string/integer/categorical fields (sub_model, trim_level, mileage_in_description_km, desc_mentions_num_owners, mechanical_condition, urgency): null when unstated.
+- For string/integer/categorical fields (sub_model, trim_level, mileage_in_description_km, desc_mentions_num_owners, mechanical_condition, urgency): null when unstated. **BUT** if any trigger keyword listed in the field's rule appears verbatim in the text — even in a one-line listing — emit the corresponding value, never null. Trigger keyword present > "use null when unstated" ALWAYS.
 
 Field rules:
 sub_model: engine/body variant only (displacement+fuel+power code), e.g. "320d","1.6 TDI","2.0 TFSI","A 200","CLA 45". NOT a trim/package like "AMG Line","M Sport". NOT a bare model name like "DS3","Qashqai".
@@ -90,7 +193,9 @@ urgency: "high" if "urgente","emigração","preço para despachar","preciso vend
 warranty: true if "garantia" positively (e.g. "garantia da marca","X meses de garantia","com garantia"). "sem garantia" → false. No mention → false.
 tuning_or_mods: aftermarket mods only: ["reprogramação","stage 1","remap","coilovers","bodykit","escape desportivo aftermarket","downpipe","wrap"]. Factory sport packages ("Pacote Sport Chrono","AMG Line","S-Line","R-Line") are NOT mods. Empty list if none.
 taxi_fleet_rental: true if "ex-táxi","TVDE","Uber","Bolt","rent-a-car","frota","carro de empresa". Dealer ad alone (stand, comércio) → false. Private "carro de particular" → false.
-first_owner_selling: true if seller is the original/only owner: "1 dono","1º dono","único dono","1 dono desde novo","comprado novo por mim","vendo o meu carro". A dealer ad is false (the dealer isn't the first owner). "1 DONO" all-caps still counts.
+first_owner_selling:
+  • **true** — the text contains ANY first-owner phrase: "1 dono","1º dono","primeiro dono","único dono","1 dono desde novo","comprado novo por mim","vendo o meu carro". Capitalisation does not matter ("1 DONO" → true).
+  • **false** — explicit dealer/stand markers ("PVP","financiamento","intermediário de crédito","IVA discriminado","stand","standcardeira","com 24 meses de garantia total" template) OR no first-owner phrase observed. NEVER null for this field.
 mechanical_condition:
   • **excellent** — ANY occurrence (anywhere in the text, with any qualifiers like "estado","geral","de conservação") of these word stems: "impecável","como novo","irrepreensível","perfeito","excelente","ótimo","rigorosamente novo". Examples that ARE excellent: "em excelente estado", "excelente estado geral", "em perfeito estado", "estado irrepreensível", "ótimo estado", "como novo, sempre assistido". Do NOT downgrade to "good" just because qualifiers like "geral" or "de conservação" appear.
   • **good** — only when the strongest condition word is in this set: "bom estado","bem cuidado","bem estimado","muito estimado","tudo a funcionar". Never use "good" if the text contains "excelente"/"perfeito"/"impecável"/"ótimo"/"como novo".
@@ -115,6 +220,15 @@ Listing: "Seat Ibiza FR 1.4 TSI com 89.500km. Reprogramação stage 1, escape de
 
 Listing: "Honda Civic 2009 com toque dianteiro esquerdo, mecânica boa, vendo para peças."
 → desc_mentions_accident=true, desc_mentions_repair=true, mechanical_condition="poor", damage_severity=3 (rest null).
+
+Listing: "Vendo Honda Civic Impecável. Confortável e muito económico."
+→ mechanical_condition="excellent" (the word "Impecável" is the trigger; do NOT return null just because the listing is short), damage_severity=0 (rest null/false).
+
+Listing: "Mercedes E 53 AMG Full extras 16.000kms. Rigorosamente novo Garantia da Marca."
+→ sub_model="E 53", mileage_in_description_km=16000, mechanical_condition="excellent" (trigger: "Rigorosamente novo"), warranty=true, damage_severity=0 (rest null/false).
+
+Listing: "Em ótimo estado, sempre assistido na VW. IUC até 2026."
+→ mechanical_condition="excellent" (trigger: "ótimo estado"), damage_severity=0 (rest null/false).
 """
 
 

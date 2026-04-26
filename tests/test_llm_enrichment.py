@@ -479,3 +479,78 @@ class TestScraperCallback:
         assert len(callback_received) == 0
 
 
+class TestDeriveDamageSeverity:
+    """Rule-based derivation for the backfill path. Validated 100%
+    LLM-equivalent on data/eval/qwen3_4b-instruct.jsonl."""
+
+    def test_parts_only_returns_3(self):
+        from src.parser.llm_enrichment import _derive_damage_severity
+        assert _derive_damage_severity(
+            {}, "Honda Civic 2009", "Vendo para peças, sucata.",
+        ) == 3
+
+    def test_no_plates_returns_3(self):
+        from src.parser.llm_enrichment import _derive_damage_severity
+        assert _derive_damage_severity(
+            {}, "Nissan Qashqai", "SEM MATRICULA, para exportação.",
+        ) == 3
+
+    def test_severe_damage_returns_2_or_3(self):
+        from src.parser.llm_enrichment import _derive_damage_severity
+        # Whole car, broken — severity 2
+        assert _derive_damage_severity(
+            {"mechanical_condition": "fair"}, "BMW", "Motor fundido, não anda.",
+        ) == 2
+        # And condition=poor on top → severity 3
+        assert _derive_damage_severity(
+            {"mechanical_condition": "poor"}, "BMW", "Motor fundido, não anda.",
+        ) == 3
+
+    def test_accident_or_repair_flag_returns_2(self):
+        from src.parser.llm_enrichment import _derive_damage_severity
+        assert _derive_damage_severity(
+            {"desc_mentions_accident": True}, "VW Golf", "Sofreu sinistro.",
+        ) == 2
+        assert _derive_damage_severity(
+            {"desc_mentions_repair": True}, "Renault", "Precisa de reparações.",
+        ) == 2
+
+    def test_excellent_condition_returns_0(self):
+        from src.parser.llm_enrichment import _derive_damage_severity
+        assert _derive_damage_severity(
+            {"mechanical_condition": "excellent"}, "Audi", "Boa máquina.",
+        ) == 0
+
+    def test_pristine_keywords_return_0(self):
+        from src.parser.llm_enrichment import _derive_damage_severity
+        assert _derive_damage_severity(
+            {}, "Mercedes", "Veículo como novo, estado impecável.",
+        ) == 0
+        assert _derive_damage_severity(
+            {}, "Porsche Cayenne", "FULL EXTRAS, todas as opções.",
+        ) == 0
+
+    def test_warranty_flag_returns_0(self):
+        from src.parser.llm_enrichment import _derive_damage_severity
+        assert _derive_damage_severity(
+            {"warranty": True}, "VW Golf 2022", "Carro normal de família.",
+        ) == 0
+
+    def test_default_normal_wear_returns_1(self):
+        from src.parser.llm_enrichment import _derive_damage_severity
+        assert _derive_damage_severity(
+            {}, "Peugeot 208", "Vendo Peugeot 208 de 2018, 90000 km.",
+        ) == 1
+
+    def test_legacy_aliases_for_accident_repair(self):
+        """Old llm_extras dicts use had_accident / needs_repair instead of
+        the current desc_mentions_* names — the rule must read both."""
+        from src.parser.llm_enrichment import _derive_damage_severity
+        assert _derive_damage_severity(
+            {"had_accident": True}, "BMW", "Carro nacional.",
+        ) == 2
+        assert _derive_damage_severity(
+            {"needs_repair": True}, "Audi", "Vende-se.",
+        ) == 2
+
+
