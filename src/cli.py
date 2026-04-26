@@ -467,6 +467,11 @@ def scrape(
 def enrich(
     workers: int = typer.Option(6, help="Parallel Ollama workers (default 6)"),
     cheap_first: bool = typer.Option(True, help="Prioritize cheaper listings"),
+    active_only: bool = typer.Option(
+        False, help="Skip sold/expired listings (is_active=False) — useful "
+                    "for fast schema-backfill runs that only matter to the "
+                    "currently-trained model.",
+    ),
 ):
     """Enrich unenriched listings with the local LLM (parallel).
 
@@ -496,14 +501,16 @@ def enrich(
     needs_damage_backfill = sa_func.json_extract(
         Listing.llm_extras, "$.damage_severity",
     ).is_(None)
-    pending = (
+    q = (
         session.query(Listing)
         .filter(
             or_(Listing.llm_extras.is_(None), needs_damage_backfill),
             Listing.description.isnot(None),
         )
-        .all()
     )
+    if active_only:
+        q = q.filter(Listing.is_active == True)  # noqa: E712 — SQLAlchemy needs ==
+    pending = q.all()
 
     if not pending:
         log.info("All listings already enriched.")
