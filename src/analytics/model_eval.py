@@ -318,6 +318,7 @@ def time_backtest(
     *,
     n_splits: int = 5,
     n_estimators_per_q: dict[str, int] | None = None,
+    conformal_q: float = 0.0,
 ) -> pd.DataFrame:
     """Rolling-window time-aware backtest using ``first_seen_at``.
 
@@ -326,6 +327,12 @@ def time_backtest(
     slice. Honest measure of how the model performs on *tomorrow's* listings
     versus today's CV (which mixes time-adjacent rows across folds and so
     over-states quality on a non-stationary market).
+
+    ``conformal_q`` (in log space) is the band-widening exponent applied to
+    each fold's predictions — should be the production bundle's active q so
+    the reported coverage reflects what the deployed model delivers, not the
+    raw uncalibrated bands. Default 0.0 means raw bands (kept for backward
+    compatibility and as a "how miscalibrated is the bare model" baseline).
 
     The fit uses fixed ``n_estimators_per_q`` (defaulting to the bundle's
     early-stop counts) instead of nested CV per fold — that would multiply the
@@ -378,12 +385,14 @@ def time_backtest(
             model.fit(X_train, y_train_log, categorical_feature=cat_indices)
             log_preds[name] = model.predict(X_test)
 
-        # Back-transform + repair quantile crossing for an honest test band.
+        # Apply CQR widening in log space (asymmetric in price space — exactly
+        # what we want for heavy-tailed targets), then back-transform and
+        # repair any quantile crossing.
         stacked = np.sort(
             np.stack([
-                np.expm1(log_preds["low"]),
+                np.expm1(log_preds["low"] - conformal_q),
                 np.expm1(log_preds["median"]),
-                np.expm1(log_preds["high"]),
+                np.expm1(log_preds["high"] + conformal_q),
             ]),
             axis=0,
         )

@@ -884,6 +884,9 @@ def eval_model(
             listings,
             n_splits=backtest_splits,
             n_estimators_per_q=n_per_q,
+            # Apply the bundle's active CQR widening so backtest coverage
+            # reflects the deployed model, not raw uncalibrated bands.
+            conformal_q=float(metrics.get("conformal_q", 0.0)),
         )
         if bt.empty:
             console.print("[yellow]Backtest returned no folds — too little data.[/yellow]")
