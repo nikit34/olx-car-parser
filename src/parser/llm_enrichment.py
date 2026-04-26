@@ -70,21 +70,33 @@ _FIELD_NAMES = [
 
 
 _SYSTEM_PROMPT = """\
-Extract structured features from a Portuguese (pt-PT) car listing. Return ONE JSON object with all of the following keys; use null for anything not mentioned or unclear.
+Extract structured features from a Portuguese (pt-PT) car listing. Return ONE JSON object with all keys.
+
+NULL vs FALSE convention — read this twice:
+- For boolean fields whose name starts with `desc_mentions_*`, plus `right_hand_drive` and `taxi_fleet_rental`: the question is "does the description CONTAIN the trigger keyword?" If no keyword present → **false**, NOT null. null is wrong for these.
+- For `warranty` and `first_owner_selling`: same — **false** when the positive trigger is absent (treat as "no signal observed"), not null.
+- For string/integer/categorical fields (sub_model, trim_level, mileage_in_description_km, desc_mentions_num_owners, mechanical_condition, urgency): null when unstated.
 
 Field rules:
 sub_model: engine/body variant only (displacement+fuel+power code), e.g. "320d","1.6 TDI","2.0 TFSI","A 200","CLA 45". NOT a trim/package like "AMG Line","M Sport". NOT a bare model name like "DS3","Qashqai".
 trim_level: equipment line, e.g. "AMG Line","M Sport","S-Line","GTI","FR","Tekna". null if basic.
-mileage_in_description_km: integer km. "mil"=thousand ONLY as a separate word ("150 mil km"→150000; "89.500km"→89500; "4300 km"→4300; "127 mil km"→127000).
-desc_mentions_accident: "sinistro","acidente","batido".
-desc_mentions_repair: only if damage/breakdown is mentioned ("avariado","imobilizado","partido","danificado"). Routine maintenance ("óleo mudado","correia mudada","pastilhas novas","revisão feita") is NOT repair — keep false.
-desc_mentions_customs_cleared: "desalfandegado","legalizado","por legalizar".
-right_hand_drive: "mão inglesa","volante à direita","matrícula inglesa". Generic "importado" alone is NOT enough.
-urgency: high="urgente","emigração","preço para despachar"; medium="aceito propostas","negociável","oportunidade"; low otherwise.
-warranty: "garantia" mentioned positively (not "sem garantia").
-tuning_or_mods: aftermarket mods only: ["reprogramação","stage 1","remap","coilovers","bodykit","escape desportivo","downpipe","wrap"]. Empty list if none.
-taxi_fleet_rental: "ex-táxi","TVDE","Uber","Bolt","rent-a-car","frota","carro de empresa".
-first_owner_selling: "1 dono desde novo","único dono","comprado novo por mim","vendo o meu".
+mileage_in_description_km: integer km. "mil"=thousand ONLY as a separate word ("150 mil km"→150000; "89.500km"→89500; "4300 km"→4300; "127 mil km"→127000). A *service-interval* km ("revisão aos 60.000 km", "próxima revisão daqui a 20.000 kms") is NOT the car's mileage — keep null.
+desc_mentions_num_owners: integer count from "N dono(s)", "1º/2º/3º dono", "primeiro/segundo dono", "único dono"=1. Capitalisation does not matter ("1 DONO"=1). null if no owner-count phrase.
+desc_mentions_accident: true if "sinistro","acidente","batido","embate","toque (dianteiro/traseiro/lateral)" appears positively. "sem sinistros" → false explicitly. Otherwise false.
+desc_mentions_repair: true ONLY if damage/breakdown is mentioned: "avariado","imobilizado","partido","danificado","precisa reparação","necessita conserto". Routine maintenance ("óleo mudado","correia mudada","pastilhas novas","discos novos","pneus novos","revisão feita","bateria nova") is NOT repair — false. If desc says "não tem nada a fazer"/"não necessita de nada" → false.
+desc_mentions_customs_cleared: true if "desalfandegado","legalizado","por legalizar". "Importado" / "Nacional" alone → false.
+right_hand_drive: true ONLY for explicit RHD phrases: "mão inglesa","volante à direita","matrícula inglesa","condução à direita","RHD","right-hand drive". "importado","matrícula portuguesa","matrícula suíça" → false.
+urgency: "high" if "urgente","emigração","preço para despachar","preciso vender rápido"; "medium" if "aceito propostas","negociável","oportunidade","aceito retomas"; "low" otherwise (calm/detailed listing).
+warranty: true if "garantia" positively (e.g. "garantia da marca","X meses de garantia","com garantia"). "sem garantia" → false. No mention → false.
+tuning_or_mods: aftermarket mods only: ["reprogramação","stage 1","remap","coilovers","bodykit","escape desportivo aftermarket","downpipe","wrap"]. Factory sport packages ("Pacote Sport Chrono","AMG Line","S-Line","R-Line") are NOT mods. Empty list if none.
+taxi_fleet_rental: true if "ex-táxi","TVDE","Uber","Bolt","rent-a-car","frota","carro de empresa". Dealer ad alone (stand, comércio) → false. Private "carro de particular" → false.
+first_owner_selling: true if seller is the original/only owner: "1 dono","1º dono","único dono","1 dono desde novo","comprado novo por mim","vendo o meu carro". A dealer ad is false (the dealer isn't the first owner). "1 DONO" all-caps still counts.
+mechanical_condition:
+  • **excellent** — ANY occurrence (anywhere in the text, with any qualifiers like "estado","geral","de conservação") of these word stems: "impecável","como novo","irrepreensível","perfeito","excelente","ótimo","rigorosamente novo". Examples that ARE excellent: "em excelente estado", "excelente estado geral", "em perfeito estado", "estado irrepreensível", "ótimo estado", "como novo, sempre assistido". Do NOT downgrade to "good" just because qualifiers like "geral" or "de conservação" appear.
+  • **good** — only when the strongest condition word is in this set: "bom estado","bem cuidado","bem estimado","muito estimado","tudo a funcionar". Never use "good" if the text contains "excelente"/"perfeito"/"impecável"/"ótimo"/"como novo".
+  • **fair** — "uso normal","precisa de pequenos retoques","ligeiros sinais de uso".
+  • **poor** — PARTS-CAR override OR "avariado","precisa reparações graves","mecânica em mau estado".
+  • **null** — condition genuinely not stated (dealer feature dump with no condition phrase, empty desc, etc.). Routine maintenance done ≠ excellent — only the explicit phrases above.
 
 damage_severity: 0 (pristine: "como novo","estado impecável", warranty mentioned, "primeiro dono comprado novo"); 1 (normal age-appropriate wear, no damage signals — DEFAULT for typical used-car language); 2 (needs significant repair OR accident history: "sinistro","embate","toque dianteiro/traseiro/lateral","necessita reparações","pintura fraca","amortecedores partidos","precisa óleo/correia"); 3 (salvage / parts-only / non-runner: "para peças","vender as peças","para sucata","para desmanchar","abate","salvado","motor fundido","imobilizado","não anda","sem matrícula","para exportação/utilização das peças"). When in doubt between two levels, pick the higher one.
 
@@ -132,6 +144,16 @@ def _get_config() -> dict:
 
 _ollama_status: bool | None = None
 _resolved_ollama_url: str | None = None
+_resolved_ollama_urls: list[str] | None = None
+_resolve_lock = threading.Lock()
+
+# Maps thread native ID → assigned backend URL. First time a thread asks for
+# a backend we hand it the next one in round-robin order; that pinning sticks
+# for the thread's lifetime so each backend's KV-cache stays warm. Atomic via
+# a single lock — assignment happens once per worker, not per call.
+_thread_backend: dict[int, str] = {}
+_thread_backend_lock = threading.Lock()
+_next_backend_idx = [0]
 
 # Thread-local persistent httpx.Client. Reusing the TCP connection saves
 # ~10-30 ms per call (handshake + slow-start) which on a 1700-listing batch
@@ -162,35 +184,79 @@ def _get_client(base_url: str) -> httpx.Client:
     return client
 
 
-def _resolve_ollama_url() -> str | None:
-    """Return the first reachable Ollama backend URL, or None.
+def _resolve_all_ollama_urls() -> list[str]:
+    """Probe every URL in `ollama_urls` once and cache the list of healthy ones.
 
-    Probes each URL in `ollama_urls` order with a 2 s timeout and caches the
-    winner for the rest of the process so we don't hit `/api/tags` on every
-    enrichment call. Call `_invalidate_ollama_url()` to force a re-probe
-    after an in-flight failure.
+    Used for load-balancing across multiple Ollama hosts (e.g. the M1 8 GB
+    scraper at .77 + the Windows 16 GB box at .69). Per-process cache so
+    we hit `/api/tags` once at startup, not on every enrichment call.
     """
-    global _resolved_ollama_url
-    if _resolved_ollama_url is not None:
-        return _resolved_ollama_url
-    cfg = _get_config()
-    candidates = cfg.get("ollama_urls") or []
-    for url in candidates:
-        try:
-            resp = _get_client(url).get("/api/tags", timeout=2.0)
-            if resp.status_code == 200:
-                _resolved_ollama_url = url
-                logger.info("Using Ollama backend at %s", url)
-                return url
-        except Exception as e:
-            logger.warning("Ollama at %s unreachable: %s", url, e)
-    return None
+    global _resolved_ollama_urls
+    if _resolved_ollama_urls is not None:
+        return _resolved_ollama_urls
+    with _resolve_lock:
+        if _resolved_ollama_urls is not None:
+            return _resolved_ollama_urls
+        cfg = _get_config()
+        candidates = cfg.get("ollama_urls") or []
+        healthy: list[str] = []
+        for url in candidates:
+            try:
+                resp = _get_client(url).get("/api/tags", timeout=2.0)
+                if resp.status_code == 200:
+                    healthy.append(url)
+            except Exception as e:
+                logger.warning("Ollama at %s unreachable: %s", url, e)
+        _resolved_ollama_urls = healthy
+        if healthy:
+            logger.info("Ollama backends ready (%d): %s", len(healthy), healthy)
+    return healthy
+
+
+def _resolve_ollama_url() -> str | None:
+    """First reachable Ollama backend, or None. Kept for back-compat callers
+    that just want any working URL (legacy `_call_ollama` fallback path,
+    `_ollama_available()`, ad-hoc scripts). For per-call load balancing use
+    `_pick_ollama_url()` instead."""
+    healthy = _resolve_all_ollama_urls()
+    return healthy[0] if healthy else None
+
+
+def _pick_ollama_url() -> str | None:
+    """Sticky-per-thread round-robin across healthy Ollama backends.
+
+    Each ThreadPoolExecutor worker is pinned to one backend on its first
+    call and keeps hitting it for the rest of its life. That way every
+    backend retains its own KV-cache for our 1210-token system prompt
+    instead of paying re-prefill every time the load shifts. Distribution
+    is exact-uniform — first worker → backend[0], second → backend[1], etc.
+    """
+    healthy = _resolve_all_ollama_urls()
+    if not healthy:
+        return None
+    tid = threading.get_ident()
+    pinned = _thread_backend.get(tid)
+    if pinned is not None and pinned in healthy:
+        return pinned
+    with _thread_backend_lock:
+        # Re-check under lock to avoid double-assignment under contention.
+        pinned = _thread_backend.get(tid)
+        if pinned is None or pinned not in healthy:
+            pinned = healthy[_next_backend_idx[0] % len(healthy)]
+            _next_backend_idx[0] += 1
+            _thread_backend[tid] = pinned
+    return pinned
 
 
 def _invalidate_ollama_url() -> None:
-    global _resolved_ollama_url, _ollama_status
+    global _resolved_ollama_url, _resolved_ollama_urls, _ollama_status
     _resolved_ollama_url = None
+    _resolved_ollama_urls = None
     _ollama_status = None
+    # Drop sticky pinning so the next probe re-distributes work among
+    # whichever backends come back healthy.
+    _thread_backend.clear()
+    _next_backend_idx[0] = 0
 
 
 def _ollama_available(_url: str = "") -> bool:
@@ -255,7 +321,11 @@ def _call_ollama(text: str, cfg: dict) -> dict | None:
         emitting two JSON objects in a row, even though format=json should
         already prevent it.
     """
-    url = _resolve_ollama_url() or cfg.get("ollama_url", "http://localhost:11434")
+    # Sticky-per-thread backend pick — each worker prints to its own backend
+    # so each backend's prompt cache stays warm. _resolve_ollama_url() is the
+    # single-host fallback for environments with one configured backend.
+    url = _pick_ollama_url() or _resolve_ollama_url() \
+        or cfg.get("ollama_url", "http://localhost:11434")
     client = _get_client(url)
     payload = {
         "model": cfg.get("ollama_model", "qwen3:4b-instruct"),
@@ -298,14 +368,22 @@ def _call_ollama(text: str, cfg: dict) -> dict | None:
         except httpx.RequestError as e:
             logger.warning("Ollama connection error at %s (attempt %d): %s",
                            url, attempt + 1, e)
-            # Connection-level failure → the backend may be down. Drop the
-            # cached pick on the next attempt so we re-resolve and pick the
-            # next reachable backend in the list.
-            _invalidate_ollama_url()
-            new_url = _resolve_ollama_url()
-            if new_url and new_url != url:
-                url = new_url
+            # The backend we picked is down. Try a different healthy backend
+            # *without* invalidating the global cache (other threads may still
+            # be reaching their own backend just fine). Only when no other
+            # backend is available do we fall back to invalidating + reprobing.
+            healthy = _resolve_all_ollama_urls()
+            alt = next((u for u in healthy if u != url), None)
+            if alt:
+                url = alt
                 client = _get_client(url)
+                logger.info("Failing over to %s for this request", url)
+            else:
+                _invalidate_ollama_url()
+                new_url = _resolve_ollama_url()
+                if new_url and new_url != url:
+                    url = new_url
+                    client = _get_client(url)
         except Exception as e:  # noqa: BLE001 — last-resort log so a worker never dies
             logger.debug("Ollama enrichment failed: %s", e)
             return None

@@ -67,6 +67,9 @@ class TestCallLlm:
     def setup_method(self):
         llm_mod._ollama_status = None
         llm_mod._resolved_ollama_url = None
+        llm_mod._resolved_ollama_urls = None
+        llm_mod._thread_backend.clear()
+        llm_mod._next_backend_idx[0] = 0
         # _get_client memoises onto thread-local; reset between tests so the
         # mock client we install here actually replaces it.
         if hasattr(llm_mod._thread_local, "http_clients"):
@@ -142,7 +145,7 @@ class TestCallLlm:
             assert _call_llm("x", cfg) == _call_ollama("x", cfg)
 
     def test_resolve_picks_first_reachable_backend(self):
-        # First URL fails, second succeeds → resolver caches the second.
+        # First URL fails, second succeeds → resolver returns the second.
         # This is the failover path used when localhost Ollama is down and
         # the LAN backend (Windows) takes over.
         ok = MagicMock()
@@ -164,6 +167,50 @@ class TestCallLlm:
              patch("src.parser.llm_enrichment._get_client", side_effect=fake_get_client):
             picked = llm_mod._resolve_ollama_url()
         assert picked == "http://192.168.1.69:11434"
+
+    def test_pick_distributes_across_healthy_backends(self):
+        # With two healthy backends, parallel threads must NOT all land on
+        # one URL — that defeats the load-balancing point and leaves the
+        # second host idle. Sticky-per-thread keeps each thread on the same
+        # backend (so KV-cache stays warm) but the overall distribution
+        # across threads should hit both URLs.
+        ok = MagicMock()
+        ok.status_code = 200
+        with patch("src.parser.llm_enrichment._get_config",
+                   return_value={"ollama_urls": [
+                       "http://192.168.1.77:11434",
+                       "http://192.168.1.69:11434",
+                   ]}), \
+             patch("src.parser.llm_enrichment._get_client",
+                   return_value=MagicMock(get=MagicMock(return_value=ok))):
+            results = []
+            barriers = threading.Barrier(8)
+
+            def worker():
+                barriers.wait()  # max parallelism
+                results.append(llm_mod._pick_ollama_url())
+
+            ts = [threading.Thread(target=worker) for _ in range(8)]
+            for t in ts: t.start()
+            for t in ts: t.join()
+
+        unique = set(results)
+        assert unique == {"http://192.168.1.77:11434", "http://192.168.1.69:11434"}, \
+            f"expected both backends to receive traffic, got {unique}"
+
+    def test_pick_sticky_per_thread(self):
+        # Same thread must always pick the same backend (so prompt-cache
+        # stays warm on its assigned host, instead of bouncing every call).
+        ok = MagicMock()
+        ok.status_code = 200
+        with patch("src.parser.llm_enrichment._get_config",
+                   return_value={"ollama_urls": [
+                       "http://a:11434", "http://b:11434", "http://c:11434",
+                   ]}), \
+             patch("src.parser.llm_enrichment._get_client",
+                   return_value=MagicMock(get=MagicMock(return_value=ok))):
+            picks = [llm_mod._pick_ollama_url() for _ in range(20)]
+        assert len(set(picks)) == 1, f"same thread bounced backends: {set(picks)}"
 
 
 # ---------------------------------------------------------------------------

@@ -21,19 +21,23 @@ llm:
   # the model to emit parseable JSON; the system prompt documents the
   # 15-field schema, so no separate tool wrapper is required.
   ollama_model: "qwen3:4b-instruct"
-  # Backends are probed in order; first reachable one wins. localhost works
-  # both on the scraper Mac (own Ollama) and on the dev box (SSH-tunneled
-  # to the scraper Mac). The Windows box at 192.168.1.69 (16 GB, OLLAMA_HOST=0.0.0.0)
-  # is the LAN failover when the M1 8 GB scraper is paged out.
+  # Production inference pool — both hosts handle traffic in parallel
+  # via sticky-per-thread round-robin in _pick_ollama_url(). The dev Mac
+  # is intentionally NOT in this list; it orchestrates but never inferences.
+  # Both hosts must run Ollama with OLLAMA_HOST=0.0.0.0 so they're LAN-reachable.
+  #   192.168.1.77 — MacBook Air M1, 8 GB (the GH-Actions scraper itself)
+  #   192.168.1.69 — Windows, 16 GB (LAN partner; 7B+ headroom)
   ollama_urls:
-    - "http://localhost:11434"
+    - "http://192.168.1.77:11434"
     - "http://192.168.1.69:11434"
   # Legacy single-URL field kept for back-compat; ignored if ollama_urls is set.
-  ollama_url: "http://localhost:11434"
-  # Server config (LaunchAgent on the remote): OLLAMA_NUM_PARALLEL=3,
-  # OLLAMA_FLASH_ATTENTION=1. max_workers matches NUM_PARALLEL — extra
-  # client threads would just queue on the server.
-  max_workers: 3
+  ollama_url: "http://192.168.1.77:11434"
+  # Two hosts × OLLAMA_NUM_PARALLEL=3 each = 6 server slots; the sticky-
+  # per-thread balancer pins workers 1:1 to slots so we run 6 inflight to
+  # saturate both. With one slow backend (.69 ≈ 2.8× slower than .77, no
+  # GPU offload yet) the executor work-steals so the faster host serves
+  # more tasks naturally — no need to skew the worker count by hand.
+  max_workers: 6
   max_tokens: 300    # 15-field JSON ≈ 230 tokens; 300 leaves slack and
                      # caps "model looping" failures within ~3 s wall time
   max_chars: 4000
