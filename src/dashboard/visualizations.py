@@ -24,6 +24,9 @@ from src.analytics.price_model import (
     load_metrics_history, compute_permutation_importance, compute_feature_completeness,
     NUMERIC_FEATURES, BOOL_FEATURES, CATEGORICAL_FEATURES,
 )
+from src.analytics.model_eval import (
+    evaluate_oof, worst_residuals, reliability_curve, load_backtest,
+)
 
 st.set_page_config(
     page_title="OLX Car Analytics",
@@ -149,6 +152,7 @@ def get_model_data(_active_df, _listings_df):
         "cat_maps": cat_maps,
         "metrics": metrics,
         "importance": importance,
+        "oof_preds": oof_preds,
     }
 
 
@@ -709,6 +713,194 @@ with tab_price_model:
         for ax in fig.select_yaxes():
             ax.update(gridcolor=_GRID)
         st.plotly_chart(fig, use_container_width=True)
+
+    # ---------------------------------------------------------------
+    # Model Diagnostics — slice metrics, reliability, worst residuals,
+    # time backtest. All read from the bundled OOF predictions, so the
+    # numbers here reflect the actual cross-validated quality, not
+    # in-sample memorization.
+    # ---------------------------------------------------------------
+    if _show_model and model_data.get("oof_preds"):
+        st.subheader("Model Diagnostics")
+        _oof = model_data["oof_preds"]
+        _eval = evaluate_oof(m_active, _oof)
+        _g = _eval["global"]
+
+        if _g["n"] == 0:
+            st.info(
+                "No overlap between active listings and bundled OOF predictions — "
+                "the DB may have rotated since the last training run."
+            )
+        else:
+            d1, d2, d3, d4 = st.columns(4)
+            d1.metric("OOF samples", f"{_g['n']:,}")
+            d2.metric("Bias", f"{_g['bias_pct']:+.2f}%",
+                      help="Mean of (actual − predicted) / actual. Positive = model under-predicts on average.")
+            d3.metric("Coverage(80%)", f"{_g['coverage_80']:.1%}",
+                      help="Fraction of true prices inside the [P10, P90] band. Target 80%.")
+            d4.metric("Inverted bands", f"{_g['n_inverted_band']}",
+                      help="Rows where low > median or median > high. Should be 0 — sort fixes this.")
+
+            # Bucket tables side by side
+            tcol1, tcol2 = st.columns(2)
+            with tcol1:
+                st.markdown("**By price bucket**")
+                if not _eval["by_price"].empty:
+                    st.dataframe(
+                        _eval["by_price"].style.format({
+                            "n": "{:,}",
+                            "mae": "{:,.0f}",
+                            "mape": "{:.1f}",
+                            "bias_pct": "{:+.2f}",
+                            "coverage_80": "{:.1%}",
+                        }),
+                        hide_index=True, use_container_width=True,
+                    )
+            with tcol2:
+                st.markdown("**By year bucket**")
+                if not _eval["by_year"].empty:
+                    st.dataframe(
+                        _eval["by_year"].style.format({
+                            "n": "{:,}",
+                            "mae": "{:,.0f}",
+                            "mape": "{:.1f}",
+                            "bias_pct": "{:+.2f}",
+                            "coverage_80": "{:.1%}",
+                        }),
+                        hide_index=True, use_container_width=True,
+                    )
+
+            st.markdown("**By brand (top 10 by sample count)**")
+            if not _eval["by_brand"].empty:
+                st.dataframe(
+                    _eval["by_brand"].style.format({
+                        "n": "{:,}",
+                        "mae": "{:,.0f}",
+                        "mape": "{:.1f}",
+                        "bias_pct": "{:+.2f}",
+                        "coverage_80": "{:.1%}",
+                    }),
+                    hide_index=True, use_container_width=True,
+                )
+
+            # Reliability curve
+            rel = reliability_curve(m_active, _oof, n_bins=10)
+            if not rel.empty:
+                rel_col, worst_col = st.columns([3, 2])
+                with rel_col:
+                    fig = go.Figure()
+                    # Nominal target line at 0.80
+                    fig.add_hline(
+                        y=0.80, line_dash="dash", line_color="#FFD166", line_width=2,
+                        annotation_text="target 80%", annotation_position="top right",
+                    )
+                    fig.add_trace(go.Scatter(
+                        x=rel["predicted_mean"],
+                        y=rel["empirical_coverage"],
+                        mode="lines+markers",
+                        line=dict(color="#00B4D8", width=2.5),
+                        marker=dict(
+                            color="#00B4D8",
+                            size=rel["n"].clip(lower=10) ** 0.5,
+                            sizemode="area",
+                            sizeref=0.05,
+                        ),
+                        text=rel.apply(
+                            lambda r: (
+                                f"€{r['predicted_min']:,.0f}–{r['predicted_max']:,.0f}<br>"
+                                f"n={int(r['n']):,}<br>"
+                                f"empirical: {r['empirical_coverage']:.1%}<br>"
+                                f"gap: {r['calibration_gap']:+.3f}"
+                            ),
+                            axis=1,
+                        ),
+                        hoverinfo="text",
+                        name="Empirical coverage",
+                    ))
+                    _apply_layout(fig, title="Reliability curve (coverage by predicted-price decile)",
+                                 height=400, showlegend=False)
+                    fig.update_xaxes(title_text="Mean predicted price (EUR)", tickformat=",")
+                    fig.update_yaxes(title_text="Empirical 80% coverage",
+                                     tickformat=".0%", range=[0, 1])
+                    st.plotly_chart(fig, use_container_width=True)
+
+                with worst_col:
+                    st.markdown("**Top 10 worst residuals (|Δ %|)**")
+                    worst = worst_residuals(m_active, _oof, n=10)
+                    if not worst.empty:
+                        display_cols = [c for c in (
+                            "olx_id", "brand", "model", "year",
+                            "price_eur", "oof_median", "abs_residual_pct", "in_band",
+                        ) if c in worst.columns]
+                        st.dataframe(
+                            worst[display_cols].style.format({
+                                "year": "{:.0f}",
+                                "price_eur": "{:,.0f}",
+                                "oof_median": "{:,.0f}",
+                                "abs_residual_pct": "{:.1f}",
+                            }),
+                            hide_index=True, use_container_width=True,
+                        )
+
+        # Time backtest panel — shown only if a backtest run was persisted
+        # (CLI: python -m src.cli eval-model --time-backtest).
+        _bt = load_backtest()
+        if _bt and _bt.get("folds"):
+            st.markdown("---")
+            st.markdown("**Time-aware backtest** — train on rolling window, test on next slice")
+            st.caption(f"Generated {_bt.get('generated_at', '')[:19]} UTC")
+
+            bt_df = pd.DataFrame(_bt["folds"])
+            bt_left, bt_right = st.columns([2, 3])
+            with bt_left:
+                st.dataframe(
+                    bt_df[[
+                        "fold", "test_from", "test_to",
+                        "n_train", "n_test", "mae", "mape", "coverage_80",
+                    ]].style.format({
+                        "n_train": "{:,}",
+                        "n_test": "{:,}",
+                        "mae": "{:,.0f}",
+                        "mape": "{:.1f}",
+                        "coverage_80": "{:.1%}",
+                    }),
+                    hide_index=True, use_container_width=True,
+                )
+            with bt_right:
+                fig = make_subplots(
+                    rows=1, cols=2,
+                    subplot_titles=("MAPE per fold (%)", "80% coverage per fold"),
+                    horizontal_spacing=0.15,
+                )
+                fig.add_trace(go.Bar(
+                    x=bt_df["fold"], y=bt_df["mape"],
+                    marker_color="#FF6B35", name="MAPE",
+                ), row=1, col=1)
+                fig.add_trace(go.Bar(
+                    x=bt_df["fold"], y=bt_df["coverage_80"],
+                    marker_color="#00B4D8", name="Coverage",
+                ), row=1, col=2)
+                fig.add_hline(
+                    y=0.80, line_dash="dash", line_color="#FFD166",
+                    line_width=1.5, row=1, col=2,
+                )
+                fig.update_layout(
+                    paper_bgcolor=_PAPER, plot_bgcolor=_BG, font=_FONT,
+                    height=300, showlegend=False,
+                    margin=dict(l=40, r=20, t=50, b=40),
+                )
+                for ax in fig.select_xaxes():
+                    ax.update(gridcolor=_GRID, title_text="Fold")
+                for ax in fig.select_yaxes():
+                    ax.update(gridcolor=_GRID)
+                fig.update_yaxes(tickformat=".0%", range=[0, 1], row=1, col=2)
+                st.plotly_chart(fig, use_container_width=True)
+        elif _show_model:
+            st.caption(
+                "Time backtest not yet generated. Run "
+                "`python -m src.cli eval-model --time-backtest` to populate "
+                "`data/price_backtest.json`."
+            )
 
     # Feature category breakdown
     st.subheader("Model Architecture")

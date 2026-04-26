@@ -698,6 +698,224 @@ def train_model():
     )
 
 
+@app.command(name="eval-model")
+def eval_model(
+    time_backtest: bool = typer.Option(
+        False, "--time-backtest",
+        help="Run rolling-window time-aware backtest (slow: retrains 4 models).",
+    ),
+    backtest_splits: int = typer.Option(
+        5, "--splits", help="Number of folds for time backtest.",
+    ),
+    top_n_worst: int = typer.Option(
+        20, "--top-n", help="Number of worst residuals to print.",
+    ),
+):
+    """Print quality diagnostics for the saved price model.
+
+    Reads ``data/price_model.joblib`` (no retraining) and reports:
+      - global MAE/MAPE/R²/coverage on out-of-fold predictions
+      - per-bucket slices (price tier, year, brand) so you can see *where*
+        the model is wrong, not just the headline number
+      - top-N listings with the largest absolute residual %
+      - reliability curve: empirical 80% coverage by predicted-price decile
+
+    With ``--time-backtest`` it also retrains on rolling windows (~30 min on
+    5k listings) and persists the result to ``data/price_backtest.json``.
+    """
+    from src.storage.repository import get_listings_df
+    from src.analytics.computed_columns import enrich_listings
+    from src.analytics.turnover import compute_turnover_stats
+    from src.analytics.price_model import load_model
+    from src.analytics.model_eval import (
+        evaluate_oof, worst_residuals, reliability_curve,
+        time_backtest as run_time_backtest, save_backtest,
+    )
+    from src.dashboard.data_loader import prepare_active_for_model
+
+    saved = load_model(max_age_hours=14 * 24)
+    if saved is None:
+        console.print(
+            "[red]No fresh model bundle found.[/red] "
+            "Run [bold]train-model[/bold] first."
+        )
+        raise typer.Exit(1)
+    _models, _maps, metrics, oof_preds = saved
+
+    if not oof_preds:
+        console.print(
+            "[yellow]Bundle has no oof_preds — likely trained with an older "
+            "schema. Retrain to populate them.[/yellow]"
+        )
+        raise typer.Exit(1)
+
+    init_db()
+    session = get_session()
+    listings = get_listings_df(session)
+    session.close()
+    if listings.empty:
+        console.print("[red]No listings in DB.[/red]")
+        raise typer.Exit(1)
+
+    listings = enrich_listings(listings)
+    if "real_mileage_km" in listings.columns:
+        listings["mileage_km"] = listings["real_mileage_km"].fillna(listings["mileage_km"])
+    turnover = compute_turnover_stats(listings)
+    active = prepare_active_for_model(listings, turnover=turnover)
+
+    # --- Global ---
+    report = evaluate_oof(active, oof_preds)
+    g = report["global"]
+    if g["n"] == 0:
+        console.print(
+            "[yellow]No overlap between active listings and bundled OOF preds. "
+            "DB may have rotated since the model was trained.[/yellow]"
+        )
+        raise typer.Exit(1)
+
+    console.print()
+    console.print(f"[bold cyan]OOF diagnostics[/bold cyan] (n={g['n']:,})")
+    console.print(
+        f"  MAE: €{g['mae']:,.0f} · MAPE: {g['mape']:.1f}% · "
+        f"R²: {g['r2']:.3f}"
+    )
+    console.print(
+        f"  Coverage(80%): {g['coverage_80']:.1%} · "
+        f"Bias: {g['bias_pct']:+.2f}%"
+    )
+    if g["n_inverted_band"]:
+        console.print(
+            f"  [red]⚠ {g['n_inverted_band']} inverted bands found "
+            f"(should be 0 — bundle may be from before the crossing-repair fix)[/red]"
+        )
+
+    # --- Bucket tables ---
+    def _print_bucket_table(title: str, df: pd.DataFrame) -> None:
+        if df.empty:
+            return
+        t = Table(title=title, show_header=True, header_style="bold")
+        t.add_column("Bucket")
+        t.add_column("n", justify="right")
+        t.add_column("MAE €", justify="right")
+        t.add_column("MAPE %", justify="right")
+        t.add_column("Bias %", justify="right")
+        t.add_column("Cov 80%", justify="right")
+        for _, r in df.iterrows():
+            bias = r["bias_pct"]
+            bias_color = "green" if abs(bias) < 2 else ("yellow" if abs(bias) < 5 else "red")
+            cov = r["coverage_80"]
+            cov_color = "green" if 0.75 <= cov <= 0.85 else "yellow"
+            t.add_row(
+                str(r["bucket"]),
+                f"{int(r['n']):,}",
+                f"{r['mae']:,.0f}",
+                f"{r['mape']:.1f}",
+                f"[{bias_color}]{bias:+.2f}[/{bias_color}]",
+                f"[{cov_color}]{cov:.1%}[/{cov_color}]",
+            )
+        console.print(t)
+
+    _print_bucket_table("By price bucket", report["by_price"])
+    _print_bucket_table("By year bucket", report["by_year"])
+    _print_bucket_table("By brand (top 10)", report["by_brand"])
+
+    # --- Reliability curve ---
+    rel = reliability_curve(active, oof_preds, n_bins=10)
+    if not rel.empty:
+        t = Table(title="Reliability curve (target 80% coverage per decile)",
+                  show_header=True, header_style="bold")
+        t.add_column("Pred range €")
+        t.add_column("n", justify="right")
+        t.add_column("Empirical cov", justify="right")
+        t.add_column("Gap", justify="right")
+        for _, r in rel.iterrows():
+            gap = r["calibration_gap"]
+            gap_color = "green" if abs(gap) < 0.05 else ("yellow" if abs(gap) < 0.10 else "red")
+            t.add_row(
+                f"{r['predicted_min']:,.0f} – {r['predicted_max']:,.0f}",
+                f"{int(r['n']):,}",
+                f"{r['empirical_coverage']:.1%}",
+                f"[{gap_color}]{gap:+.3f}[/{gap_color}]",
+            )
+        console.print(t)
+
+    # --- Worst residuals ---
+    worst = worst_residuals(active, oof_preds, n=top_n_worst)
+    if not worst.empty:
+        t = Table(
+            title=f"Top {top_n_worst} worst residuals (by |residual %|)",
+            show_header=True, header_style="bold",
+        )
+        t.add_column("olx_id")
+        t.add_column("Brand")
+        t.add_column("Model")
+        t.add_column("Year", justify="right")
+        t.add_column("Price €", justify="right")
+        t.add_column("Pred €", justify="right")
+        t.add_column("Δ %", justify="right")
+        t.add_column("In band")
+        for _, r in worst.iterrows():
+            pct = r["abs_residual_pct"]
+            pct_color = "red" if pct > 50 else ("yellow" if pct > 25 else "white")
+            sign = "−" if r["residual"] < 0 else "+"
+            t.add_row(
+                str(r.get("olx_id", "")),
+                str(r.get("brand", "")),
+                str(r.get("model", "")),
+                f"{int(r['year']) if pd.notna(r.get('year')) else '–'}",
+                f"{r['price_eur']:,.0f}",
+                f"{r['oof_median']:,.0f}",
+                f"[{pct_color}]{sign}{pct:.1f}[/{pct_color}]",
+                "✓" if r.get("in_band") else "✗",
+            )
+        console.print(t)
+
+    # --- Time backtest (opt-in, slow) ---
+    if time_backtest:
+        console.print()
+        console.print("[bold]Running time-aware backtest...[/bold]")
+        n_per_q = metrics.get("best_n_estimators_per_q") or {
+            name: 400 for name in ("low", "median", "high")
+        }
+        bt = run_time_backtest(
+            listings,
+            n_splits=backtest_splits,
+            n_estimators_per_q=n_per_q,
+        )
+        if bt.empty:
+            console.print("[yellow]Backtest returned no folds — too little data.[/yellow]")
+        else:
+            t = Table(title="Time backtest (rolling window, train→next slice)",
+                      show_header=True, header_style="bold")
+            t.add_column("Fold", justify="right")
+            t.add_column("Train until")
+            t.add_column("Test from → to")
+            t.add_column("n_train", justify="right")
+            t.add_column("n_test", justify="right")
+            t.add_column("MAE €", justify="right")
+            t.add_column("MAPE %", justify="right")
+            t.add_column("Bias %", justify="right")
+            t.add_column("Cov 80%", justify="right")
+            for _, r in bt.iterrows():
+                t.add_row(
+                    str(r["fold"]),
+                    str(r["train_until"])[:10],
+                    f"{str(r['test_from'])[:10]} → {str(r['test_to'])[:10]}",
+                    f"{int(r['n_train']):,}",
+                    f"{int(r['n_test']):,}",
+                    f"{r['mae']:,.0f}",
+                    f"{r['mape']:.1f}",
+                    f"{r['bias_pct']:+.2f}",
+                    f"{r['coverage_80']:.1%}",
+                )
+            console.print(t)
+            save_backtest(bt)
+            console.print(
+                "[green]Backtest saved to data/price_backtest.json — "
+                "dashboard will pick it up.[/green]"
+            )
+
+
 @app.command()
 def init():
     """Initialize database (create tables)."""
