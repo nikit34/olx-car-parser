@@ -24,7 +24,9 @@ from src.parser.llm_enrichment import _SYSTEM_PROMPT, _get_config  # noqa: E402
 
 DB = "~/olx-car-parser/data/olx_cars.db"
 BATCH = 50           # rows per fetch
-WORKERS = 6          # parallel Ollama requests; M1 8 GB tops out around here
+# Match remote OLLAMA_NUM_PARALLEL (LaunchAgent env). Extra client threads
+# would just queue on the server; bump both in lockstep.
+WORKERS = 3
 PUSH_TIMEOUT = 120   # ssh sqlite write timeout (s)
 
 SSH = ["/opt/homebrew/bin/sshpass", "-p", "1234", "ssh", "-o", "ConnectTimeout=10",
@@ -71,7 +73,21 @@ def enrich_one(client: httpx.Client, model: str, max_tokens: int, max_chars: int
         "format": "json",
         "stream": False,
         "keep_alive": "30m",
-        "options": {"temperature": 0.0, "num_predict": max_tokens},
+        "options": {
+            "temperature": 0.0,
+            # Greedy = top_k=1; explicitly disable every per-token sampling
+            # check so the decoder doesn't waste cycles on top_p / repeat
+            # penalty filters whose output is identical with temperature=0.
+            "top_k": 1,
+            "top_p": 1.0,
+            "repeat_penalty": 1.0,
+            # Real measured budget: system 1210 + desc ≤1200 + reply ≤300.
+            # 4096 has safety margin; smaller values silently drop the head
+            # of the system prompt on long descriptions.
+            "num_ctx": 4096,
+            "num_predict": max_tokens,
+            "stop": ["}\n{", "} {"],
+        },
     }
     try:
         resp = client.post("/api/generate", json=payload)

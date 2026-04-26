@@ -6,6 +6,7 @@ import threading
 from dataclasses import dataclass
 from unittest.mock import MagicMock, patch
 
+import httpx as httpx_mod
 import pytest
 
 import src.parser.llm_enrichment as llm_mod
@@ -65,12 +66,21 @@ def _make_ollama_resp(content: str, status: int = 200):
 class TestCallLlm:
     def setup_method(self):
         llm_mod._ollama_status = None
+        llm_mod._resolved_ollama_url = None
+        # _get_client memoises onto thread-local; reset between tests so the
+        # mock client we install here actually replaces it.
+        if hasattr(llm_mod._thread_local, "http_clients"):
+            del llm_mod._thread_local.http_clients
+        if hasattr(llm_mod._thread_local, "http_client"):
+            del llm_mod._thread_local.http_client
 
     def test_success(self):
         cfg = _get_config()
         mock_resp = _make_ollama_resp(json.dumps(VALID_LLM_JSON))
+        mock_client = MagicMock()
+        mock_client.post.return_value = mock_resp
 
-        with patch("src.parser.llm_enrichment.httpx.post", return_value=mock_resp) as mock_post:
+        with patch("src.parser.llm_enrichment._get_client", return_value=mock_client):
             result = _call_llm("Vendo carro com 100km", cfg)
 
         assert result is not None
@@ -78,24 +88,35 @@ class TestCallLlm:
         # Confirm we hit /api/generate (NOT /api/chat) so the system prompt
         # stays byte-identical across calls and Ollama can reuse its KV-cache
         # slot for the instruction prefix. format=json keeps the output
-        # parseable.
-        call_args = mock_post.call_args
-        assert call_args.args[0].endswith("/api/generate")
-        assert call_args.kwargs["json"]["format"] == "json"
-        assert call_args.kwargs["json"]["system"] == llm_mod._SYSTEM_PROMPT
-        assert call_args.kwargs["json"]["keep_alive"] == "30m"
+        # parseable; the latency-tuned options below are also part of the
+        # contract — regressing them silently would slow every batch.
+        call_args = mock_client.post.call_args
+        assert call_args.args[0] == "/api/generate"
+        body = call_args.kwargs["json"]
+        assert body["format"] == "json"
+        assert body["system"] == llm_mod._SYSTEM_PROMPT
+        assert body["keep_alive"] == "30m"
+        opts = body["options"]
+        assert opts["temperature"] == 0.0
+        assert opts["top_k"] == 1
+        assert opts["num_ctx"] == 4096
+        assert opts["stop"] == ["}\n{", "} {"]
 
     def test_http_error_returns_none(self):
         cfg = _get_config()
         mock_resp = _make_ollama_resp("", status=500)
-        with patch("src.parser.llm_enrichment.httpx.post", return_value=mock_resp):
+        mock_client = MagicMock()
+        mock_client.post.return_value = mock_resp
+        with patch("src.parser.llm_enrichment._get_client", return_value=mock_client):
             result = _call_llm("Vendo carro", cfg)
         assert result is None
 
     def test_invalid_json_returns_none(self):
         cfg = _get_config()
         mock_resp = _make_ollama_resp("not json at all")
-        with patch("src.parser.llm_enrichment.httpx.post", return_value=mock_resp):
+        mock_client = MagicMock()
+        mock_client.post.return_value = mock_resp
+        with patch("src.parser.llm_enrichment._get_client", return_value=mock_client):
             result = _call_llm("Vendo carro", cfg)
         assert result is None
 
@@ -105,7 +126,9 @@ class TestCallLlm:
         cfg = _get_config()
         wrapped = "```json\n" + json.dumps(VALID_LLM_JSON) + "\n```"
         mock_resp = _make_ollama_resp(wrapped)
-        with patch("src.parser.llm_enrichment.httpx.post", return_value=mock_resp):
+        mock_client = MagicMock()
+        mock_client.post.return_value = mock_resp
+        with patch("src.parser.llm_enrichment._get_client", return_value=mock_client):
             result = _call_llm("Vendo carro", cfg)
         assert result == VALID_LLM_JSON
 
@@ -113,8 +136,34 @@ class TestCallLlm:
         # _call_llm is a thin alias; both should resolve to the same payload.
         cfg = _get_config()
         mock_resp = _make_ollama_resp(json.dumps(VALID_LLM_JSON))
-        with patch("src.parser.llm_enrichment.httpx.post", return_value=mock_resp):
+        mock_client = MagicMock()
+        mock_client.post.return_value = mock_resp
+        with patch("src.parser.llm_enrichment._get_client", return_value=mock_client):
             assert _call_llm("x", cfg) == _call_ollama("x", cfg)
+
+    def test_resolve_picks_first_reachable_backend(self):
+        # First URL fails, second succeeds → resolver caches the second.
+        # This is the failover path used when localhost Ollama is down and
+        # the LAN backend (Windows) takes over.
+        ok = MagicMock()
+        ok.status_code = 200
+
+        def fake_get_client(url):
+            client = MagicMock()
+            if "192.168.1.69" in url:
+                client.get.return_value = ok
+            else:
+                client.get.side_effect = httpx_mod.RequestError("boom")
+            return client
+
+        with patch("src.parser.llm_enrichment._get_config",
+                   return_value={"ollama_urls": [
+                       "http://localhost:11434",
+                       "http://192.168.1.69:11434",
+                   ]}), \
+             patch("src.parser.llm_enrichment._get_client", side_effect=fake_get_client):
+            picked = llm_mod._resolve_ollama_url()
+        assert picked == "http://192.168.1.69:11434"
 
 
 # ---------------------------------------------------------------------------

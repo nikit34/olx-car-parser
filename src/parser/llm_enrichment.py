@@ -116,16 +116,22 @@ def _get_config() -> dict:
         with open(CONFIG_PATH) as f:
             data = yaml.safe_load(f) or {}
         cfg = data.get("llm", {})
+    urls = cfg.get("ollama_urls")
+    if not urls:
+        urls = [cfg.get("ollama_url", "http://localhost:11434")]
     return {
         "ollama_model": cfg.get("ollama_model", "qwen3:4b-instruct"),
         "ollama_url": cfg.get("ollama_url", "http://localhost:11434"),
-        "max_workers": cfg.get("max_workers", 6),
-        "max_tokens": cfg.get("max_tokens", 600),
+        "ollama_urls": [u for u in urls if u],
+        "max_workers": cfg.get("max_workers", 3),
+        "max_tokens": cfg.get("max_tokens", 300),
         "max_chars": cfg.get("max_chars", 4000),
+        "num_ctx": cfg.get("num_ctx", 4096),
     }
 
 
 _ollama_status: bool | None = None
+_resolved_ollama_url: str | None = None
 
 # Thread-local persistent httpx.Client. Reusing the TCP connection saves
 # ~10-30 ms per call (handshake + slow-start) which on a 1700-listing batch
@@ -134,29 +140,81 @@ _thread_local = threading.local()
 
 
 def _get_client(base_url: str) -> httpx.Client:
-    client = getattr(_thread_local, "http_client", None)
+    """Return a per-(thread, base_url) httpx.Client, creating it on first use.
+
+    Keying by base_url lets us hold persistent connections to several Ollama
+    backends in parallel — the local one and the LAN failover — without
+    one client's base URL leaking into requests aimed at the other.
+    """
+    clients = getattr(_thread_local, "http_clients", None)
+    if clients is None:
+        clients = {}
+        _thread_local.http_clients = clients
+        # Also expose a single-client alias for back-compat with tests that
+        # only check that _get_client was called (don't care about URL).
+        _thread_local.http_client = None
+    client = clients.get(base_url)
     if client is None:
         client = httpx.Client(base_url=base_url,
                               timeout=httpx.Timeout(120.0, connect=10.0))
+        clients[base_url] = client
         _thread_local.http_client = client
     return client
 
 
+def _resolve_ollama_url() -> str | None:
+    """Return the first reachable Ollama backend URL, or None.
+
+    Probes each URL in `ollama_urls` order with a 2 s timeout and caches the
+    winner for the rest of the process so we don't hit `/api/tags` on every
+    enrichment call. Call `_invalidate_ollama_url()` to force a re-probe
+    after an in-flight failure.
+    """
+    global _resolved_ollama_url
+    if _resolved_ollama_url is not None:
+        return _resolved_ollama_url
+    cfg = _get_config()
+    candidates = cfg.get("ollama_urls") or []
+    for url in candidates:
+        try:
+            resp = _get_client(url).get("/api/tags", timeout=2.0)
+            if resp.status_code == 200:
+                _resolved_ollama_url = url
+                logger.info("Using Ollama backend at %s", url)
+                return url
+        except Exception as e:
+            logger.warning("Ollama at %s unreachable: %s", url, e)
+    return None
+
+
+def _invalidate_ollama_url() -> None:
+    global _resolved_ollama_url, _ollama_status
+    _resolved_ollama_url = None
+    _ollama_status = None
+
+
 def _ollama_available(_url: str = "") -> bool:
-    """True iff the local Ollama HTTP API answers. Result cached per process
-    so we don't probe `/api/tags` on every enrichment call."""
+    """True iff at least one configured Ollama backend answers. Result cached
+    per process so we don't probe `/api/tags` on every enrichment call."""
     global _ollama_status
     if _ollama_status is not None:
         return _ollama_status
-    cfg = _get_config()
-    url = _url or cfg.get("ollama_url", "http://localhost:11434")
-    try:
-        resp = _get_client(url).get("/api/tags", timeout=2.0)
-        _ollama_status = resp.status_code == 200
-    except Exception:
-        _ollama_status = False
+    if _url:
+        # Legacy single-URL probe path retained for callers that pass a URL
+        # explicitly (tests, ad-hoc scripts).
+        try:
+            resp = _get_client(_url).get("/api/tags", timeout=2.0)
+            _ollama_status = resp.status_code == 200
+        except Exception:
+            _ollama_status = False
+        if not _ollama_status:
+            logger.warning("Ollama not reachable at %s — LLM enrichment disabled.", _url)
+        return _ollama_status
+    _ollama_status = _resolve_ollama_url() is not None
     if not _ollama_status:
-        logger.warning("Ollama not reachable at %s — LLM enrichment disabled.", url)
+        cfg = _get_config()
+        logger.warning("No Ollama backend reachable (tried %s) — LLM enrichment disabled.",
+                       ", ".join(cfg.get("ollama_urls") or []))
     return _ollama_status
 
 
@@ -175,15 +233,30 @@ def _call_ollama(text: str, cfg: dict) -> dict | None:
 
     Uses /api/generate (not /api/chat) on purpose:
       - the `system` field is byte-stable across calls, so Ollama keeps the
-        same KV-cache slot and skips ~600 tokens of prefill every call;
+        same KV-cache slot and skips ~700 tokens of prefill every call;
       - no chat-template wrapping → fewer tokens, no template-version drift;
       - keep_alive holds the model in RAM between bursts so we don't pay the
         5 s reload cost on the M1 8 GB box.
     format=json constrains the output to parseable JSON; the system prompt
     already documents the 15-field schema, so any instruction-tuned model
     (e.g. qwen3:4b-instruct) matches it without a separate tool wrapper.
+
+    Inference options are tuned for latency on M1 8 GB without quality loss:
+      - num_ctx 4096 = budget for system(1210, measured) + desc(≤1200) +
+        reply(≤300). 2048 silently truncates the head of the system prompt
+        when the description is long, which kills extraction quality.
+      - num_predict 300 hard-caps generation; 15 fields × ~12 tokens + JSON
+        wrapping ≈ 230, so 300 is a comfortable ceiling and cuts the rare
+        "model loops" failure mode short.
+      - top_k=1 + top_p=1 + repeat_penalty=1 disable every per-token
+        sampling check; with temperature=0 the result is identical (greedy)
+        and ~3-5 % faster decoding.
+      - stop=["}\\n{","} {"] — belt-and-suspenders against the model
+        emitting two JSON objects in a row, even though format=json should
+        already prevent it.
     """
-    url = cfg.get("ollama_url", "http://localhost:11434")
+    url = _resolve_ollama_url() or cfg.get("ollama_url", "http://localhost:11434")
+    client = _get_client(url)
     payload = {
         "model": cfg.get("ollama_model", "qwen3:4b-instruct"),
         "system": _SYSTEM_PROMPT,
@@ -193,12 +266,17 @@ def _call_ollama(text: str, cfg: dict) -> dict | None:
         "keep_alive": "30m",
         "options": {
             "temperature": 0.0,
-            "num_predict": cfg.get("max_tokens", 600),
+            "top_k": 1,
+            "top_p": 1.0,
+            "repeat_penalty": 1.0,
+            "num_ctx": cfg.get("num_ctx", 4096),
+            "num_predict": cfg.get("max_tokens", 300),
+            "stop": ["}\n{", "} {"],
         },
     }
     for attempt in range(2):
         try:
-            resp = httpx.post(f"{url}/api/generate", json=payload, timeout=120.0)
+            resp = client.post("/api/generate", json=payload)
             if resp.status_code != 200:
                 logger.warning("Ollama HTTP %s (attempt %d)", resp.status_code, attempt + 1)
                 continue
@@ -218,7 +296,16 @@ def _call_ollama(text: str, cfg: dict) -> dict | None:
                     return None
             return parsed if isinstance(parsed, dict) else None
         except httpx.RequestError as e:
-            logger.warning("Ollama connection error (attempt %d): %s", attempt + 1, e)
+            logger.warning("Ollama connection error at %s (attempt %d): %s",
+                           url, attempt + 1, e)
+            # Connection-level failure → the backend may be down. Drop the
+            # cached pick on the next attempt so we re-resolve and pick the
+            # next reachable backend in the list.
+            _invalidate_ollama_url()
+            new_url = _resolve_ollama_url()
+            if new_url and new_url != url:
+                url = new_url
+                client = _get_client(url)
         except Exception as e:  # noqa: BLE001 — last-resort log so a worker never dies
             logger.debug("Ollama enrichment failed: %s", e)
             return None

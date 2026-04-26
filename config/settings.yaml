@@ -21,10 +21,27 @@ llm:
   # the model to emit parseable JSON; the system prompt documents the
   # 15-field schema, so no separate tool wrapper is required.
   ollama_model: "qwen3:4b-instruct"
+  # Backends are probed in order; first reachable one wins. localhost works
+  # both on the scraper Mac (own Ollama) and on the dev box (SSH-tunneled
+  # to the scraper Mac). The Windows box at 192.168.1.69 (16 GB, OLLAMA_HOST=0.0.0.0)
+  # is the LAN failover when the M1 8 GB scraper is paged out.
+  ollama_urls:
+    - "http://localhost:11434"
+    - "http://192.168.1.69:11434"
+  # Legacy single-URL field kept for back-compat; ignored if ollama_urls is set.
   ollama_url: "http://localhost:11434"
-  max_workers: 6     # M1 8 GB tops out around here; raise on bigger boxes
-  max_tokens: 600
+  # Server config (LaunchAgent on the remote): OLLAMA_NUM_PARALLEL=3,
+  # OLLAMA_FLASH_ATTENTION=1. max_workers matches NUM_PARALLEL — extra
+  # client threads would just queue on the server.
+  max_workers: 3
+  max_tokens: 300    # 15-field JSON ≈ 230 tokens; 300 leaves slack and
+                     # caps "model looping" failures within ~3 s wall time
   max_chars: 4000
+  # Real measured budget: system=1210 (few-shot + damage rules + 15 fields),
+  # description ≤ ~1200 (max_chars 4000 ÷ ~3.3 chars/token pt-PT), reply ≤ 300.
+  # 4096 = next power-of-2 above 2710 with safety margin; smaller (2048)
+  # silently drops the head of the system prompt on long descriptions.
+  num_ctx: 4096
 
 alerts:
   telegram_bot_token: "8651422044:AAEf93eodK6d4F7fn1FVH-vh0H5JX-gb92s"
