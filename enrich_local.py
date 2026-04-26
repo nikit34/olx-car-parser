@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
-"""Batch-enrich listings via Claude API and push results to the remote DB.
+"""Batch-enrich listings via local Ollama and push results to the remote DB.
 
 Pulls un-enriched rows from the remote sqlite over SSH, sends each description
-to Claude (Haiku 4.5) with prompt caching + tool-use, and writes back the JSON
-in batches.  Designed for high parallelism — 20+ inflight requests against the
-Anthropic API are network-bound and don't stress the local box.
+to Ollama (`qwen3:4b-instruct` by default — overridable via settings.yaml),
+and writes back the JSON in batches.
 """
 from __future__ import annotations
 
-import os
 import sys
 import json
 import subprocess
@@ -16,24 +14,21 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-# Make the package importable so we reuse the exact prompt + schema as the
-# inline pipeline — keeps train/eval/inference all on one definition.
+import httpx
+
+# Reuse the exact prompt + config as the inline pipeline so train/eval/inference
+# stay on one definition.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from src.parser.llm_enrichment import (  # noqa: E402
-    _SYSTEM_PROMPT,
-    _EXTRACT_TOOL,
-    _get_token,
-    _get_config,
-)
+from src.parser.llm_enrichment import _SYSTEM_PROMPT, _get_config  # noqa: E402
 
 
 DB = "~/olx-car-parser/data/olx_cars.db"
 BATCH = 50           # rows per fetch
-WORKERS = 20         # parallel Claude calls
+WORKERS = 6          # parallel Ollama requests; M1 8 GB tops out around here
 PUSH_TIMEOUT = 120   # ssh sqlite write timeout (s)
 
 SSH = ["/opt/homebrew/bin/sshpass", "-p", "1234", "ssh", "-o", "ConnectTimeout=10",
-       "anastasia@192.168.1.74"]
+       "anastasia@192.168.1.77"]
 
 
 def ssh_cmd(cmd: str, timeout: int = 30) -> str:
@@ -60,39 +55,39 @@ def fetch_batch() -> list[tuple[str, str]]:
     return out
 
 
-def enrich_one(client, model: str, max_tokens: int, max_chars: int, desc: str) -> dict | None:
-    """One Claude call. Returns the tool input dict or None."""
+def enrich_one(client: httpx.Client, model: str, max_tokens: int, max_chars: int,
+               desc: str) -> dict | None:
+    """One Ollama /api/generate call. Returns the parsed JSON dict or None.
+
+    /api/generate (rather than /api/chat) keeps the system prompt byte-stable
+    across calls so Ollama reuses the KV-cache slot and skips re-prefilling
+    the ~600-token instruction block on every request — by far the biggest
+    per-call latency win on an M1 8 GB.
+    """
+    payload = {
+        "model": model,
+        "system": _SYSTEM_PROMPT,
+        "prompt": desc[:max_chars],
+        "format": "json",
+        "stream": False,
+        "keep_alive": "30m",
+        "options": {"temperature": 0.0, "num_predict": max_tokens},
+    }
     try:
-        import anthropic
-    except ImportError:
-        return None
-    try:
-        resp = client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            system=[{
-                "type": "text",
-                "text": _SYSTEM_PROMPT,
-                # Prompt caching: identical system prompt across all workers
-                # turns the ~600-token instruction block into a 0.1× cost
-                # after the first hit in each 5-minute window.
-                "cache_control": {"type": "ephemeral"},
-            }],
-            tools=[_EXTRACT_TOOL],
-            tool_choice={"type": "tool", "name": "record_listing_features"},
-            messages=[{"role": "user", "content": desc[:max_chars]}],
-        )
-        for block in resp.content:
-            if getattr(block, "type", None) == "tool_use" and block.name == "record_listing_features":
-                return dict(block.input)
-        return None
-    except anthropic.RateLimitError:
-        time.sleep(2)
-        return None
-    except anthropic.APIStatusError as e:
-        if 400 <= e.status_code < 500:
-            print(f"  API {e.status_code}: {e.message[:120]}", flush=True)
-        return None
+        resp = client.post("/api/generate", json=payload)
+        if resp.status_code != 200:
+            return None
+        content = resp.json().get("response", "")
+        if not content:
+            return None
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            stripped = content.strip().strip("`").lstrip("json").strip()
+            try:
+                return json.loads(stripped)
+            except json.JSONDecodeError:
+                return None
     except Exception as e:  # noqa: BLE001
         print(f"  Err: {type(e).__name__}: {str(e)[:120]}", flush=True)
         return None
@@ -127,63 +122,66 @@ def push_batch(results: list[tuple[str, dict]]) -> None:
 
 
 def main() -> None:
-    token = _get_token()
-    if not token:
-        print("ANTHROPIC_AUTH_TOKEN not set (check .env).", flush=True)
-        sys.exit(1)
-
-    try:
-        import anthropic
-    except ImportError:
-        print("`anthropic` not installed. Run: pip install anthropic", flush=True)
-        sys.exit(1)
-
     cfg = _get_config()
-    model = cfg["model"]
+    model = cfg["ollama_model"]
+    url = cfg["ollama_url"]
     max_tokens = cfg.get("max_tokens", 600)
     max_chars = cfg.get("max_chars", 4000)
 
-    # One shared client across the whole pool — anthropic.Anthropic is
-    # thread-safe (httpx-based) and reuses the underlying connection pool.
-    client = anthropic.Anthropic(auth_token=token, max_retries=3, timeout=60.0)
+    # Probe early so we fail fast if Ollama is not running.
+    try:
+        with httpx.Client(base_url=url, timeout=5.0) as probe:
+            probe.get("/api/tags").raise_for_status()
+    except Exception as e:  # noqa: BLE001
+        print(f"Ollama not reachable at {url}: {e}", flush=True)
+        sys.exit(1)
 
-    print(f"Enriching with Claude {model}, {WORKERS} workers", flush=True)
+    # One shared client across the pool — httpx.Client is thread-safe and
+    # reuses the underlying connection pool, which keeps the per-call latency
+    # close to model inference time.
+    client = httpx.Client(base_url=url, timeout=httpx.Timeout(120.0, connect=10.0))
+
+    print(f"Enriching with Ollama {model} @ {url}, {WORKERS} workers", flush=True)
 
     total = 0
     failed = 0
     started = time.monotonic()
 
-    while True:
-        batch = fetch_batch()
-        if not batch:
-            elapsed = time.monotonic() - started
-            print(f"Done! Enriched {total} ({failed} failed) in {elapsed:.1f}s "
-                  f"({total / max(elapsed, 1):.2f}/s).", flush=True)
-            break
+    try:
+        while True:
+            batch = fetch_batch()
+            if not batch:
+                elapsed = time.monotonic() - started
+                print(f"Done! Enriched {total} ({failed} failed) in {elapsed:.1f}s "
+                      f"({total / max(elapsed, 1):.2f}/s).", flush=True)
+                break
 
-        print(f"Batch {len(batch)}...", end=" ", flush=True)
-        results: list[tuple[str, dict]] = []
+            print(f"Batch {len(batch)}...", end=" ", flush=True)
+            results: list[tuple[str, dict]] = []
 
-        with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-            futures = {
-                pool.submit(enrich_one, client, model, max_tokens, max_chars, desc): olx_id
-                for olx_id, desc in batch
-            }
-            for fut in as_completed(futures):
-                olx_id = futures[fut]
-                result = fut.result()
-                if result:
-                    results.append((olx_id, result))
-                    total += 1
-                else:
-                    # Empty {} marks the row "tried but failed" so the next
-                    # run doesn't pick it up again immediately.
-                    results.append((olx_id, {}))
-                    failed += 1
+            with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+                futures = {
+                    pool.submit(enrich_one, client, model, max_tokens, max_chars, desc): olx_id
+                    for olx_id, desc in batch
+                }
+                for fut in as_completed(futures):
+                    olx_id = futures[fut]
+                    result = fut.result()
+                    if result:
+                        results.append((olx_id, result))
+                        total += 1
+                    else:
+                        # Empty {} marks the row "tried but failed" so the next
+                        # run doesn't pick it up again immediately.
+                        results.append((olx_id, {}))
+                        failed += 1
 
-        push_batch(results)
-        rate = total / max(time.monotonic() - started, 1)
-        print(f"done. Total: {total} enriched, {failed} failed, {rate:.2f}/s.", flush=True)
+            push_batch(results)
+            rate = total / max(time.monotonic() - started, 1)
+            print(f"done. Total: {total} enriched, {failed} failed, {rate:.2f}/s.",
+                  flush=True)
+    finally:
+        client.close()
 
 
 if __name__ == "__main__":

@@ -17,13 +17,14 @@ analytics:
   buy_signal_threshold: 10
 
 llm:
-  # Claude Haiku 4.5 — best price/perf for structured extraction. Tool-use mode
-  # guarantees JSON shape, prompt caching makes the system prompt nearly free
-  # after the first call in each 5-minute window.
-  model: "claude-haiku-4-5"
-  max_workers: 16   # network-bound; SDK retries handle the occasional 429
-  max_tokens: 600   # 14-field tool call fits in ~350 tokens; 600 leaves slack
-  max_chars: 4000   # truncate very long descriptions before sending
+  # Local Ollama with qwen3:4b-instruct. /api/chat with format=json constrains
+  # the model to emit parseable JSON; the system prompt documents the
+  # 15-field schema, so no separate tool wrapper is required.
+  ollama_model: "qwen3:4b-instruct"
+  ollama_url: "http://localhost:11434"
+  max_workers: 6     # M1 8 GB tops out around here; raise on bigger boxes
+  max_tokens: 600
+  max_chars: 4000
 
 alerts:
   telegram_bot_token: "8651422044:AAEf93eodK6d4F7fn1FVH-vh0H5JX-gb92s"

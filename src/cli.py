@@ -66,10 +66,10 @@ def _llm_worker(in_q: multiprocessing.Queue, out_q: multiprocessing.Queue,
 
     cfg = _get_config()
     if not _llm_available():
-        log.warning("Claude auth token missing, worker exiting.")
+        log.warning("Ollama unreachable at %s, worker exiting.", cfg["ollama_url"])
         return
 
-    log.info("LLM worker started (Claude %s)", cfg["model"])
+    log.info("LLM worker started (Ollama %s)", cfg["ollama_model"])
 
     enriched = 0
     failures = 0
@@ -219,8 +219,8 @@ def scrape(
     Listings are saved to DB as soon as LLM finishes (or immediately if
     no enrichment needed), without waiting for the full scrape to complete.
 
-    LLM enrichment runs inline whenever the Claude token is configured; if it
-    isn't, listings are saved raw and can be filled in later via `enrich`.
+    LLM enrichment runs inline whenever Ollama is reachable; if it isn't,
+    listings are saved raw and can be filled in later via `enrich`.
     """
     _LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     lock_file = open(_LOCK_PATH, "w")
@@ -257,8 +257,8 @@ def scrape(
     db_queue: Queue = Queue()
     raw_by_id: dict = {}
 
-    # LLM pipeline — runs inline if a Claude token is configured, otherwise
-    # we save raw and let the separate `enrich` command catch up.
+    # LLM pipeline — runs inline if Ollama is reachable, otherwise we save
+    # raw and let the separate `enrich` command catch up.
     llm_in: multiprocessing.Queue | None = None
     llm_out: multiprocessing.Queue | None = None
     llm_shutdown = None
@@ -270,21 +270,22 @@ def scrape(
     llm_enabled = _llm_available()
     if llm_enabled:
         # Bounded queue provides back-pressure: the scraper blocks on put()
-        # once the LLM can't keep up. Claude API is network-bound so we run
-        # many cheap workers; the queue absorbs short bursts.
+        # once Ollama can't keep up, rather than buffering tens of thousands
+        # of descriptions in RAM. 500 ≈ one hour of LLM headroom on M1 8 GB.
         llm_in = multiprocessing.Queue(maxsize=500)
         llm_out = multiprocessing.Queue()
         llm_shutdown = multiprocessing.Event()
-        num_workers = llm_workers if llm_workers is not None else llm_cfg.get("max_workers", 16)
+        num_workers = llm_workers if llm_workers is not None else llm_cfg.get("max_workers", 6)
         for _ in range(num_workers):
             p = multiprocessing.Process(target=_llm_worker, args=(llm_in, llm_out, llm_shutdown), daemon=True)
             p.start()
             llm_procs.append(p)
         merger = threading.Thread(target=_llm_to_db, args=(llm_out, raw_by_id, db_queue), daemon=True)
         merger.start()
-        log.info("Inline LLM enrichment enabled (%d Claude workers)", num_workers)
+        log.info("Inline LLM enrichment enabled (%d Ollama workers)", num_workers)
     else:
-        log.warning("ANTHROPIC_AUTH_TOKEN missing — saving listings raw, run `enrich` later")
+        log.warning("Ollama unreachable at %s — saving listings raw, run `enrich` later",
+                    llm_cfg["ollama_url"])
 
     # DB worker thread: saves listings as they arrive
     db_result: dict = {}
@@ -464,14 +465,14 @@ def scrape(
 
 @app.command()
 def enrich(
-    workers: int = typer.Option(20, help="Parallel Claude workers (default 20)"),
+    workers: int = typer.Option(6, help="Parallel Ollama workers (default 6)"),
     cheap_first: bool = typer.Option(True, help="Prioritize cheaper listings"),
 ):
-    """Enrich unenriched listings with Claude (parallel).
+    """Enrich unenriched listings with the local LLM (parallel).
 
-    Processes listings that don't have llm_extras yet.
-    Uses ThreadPoolExecutor for concurrent Claude API requests; each request is
-    network-bound so 16-32 workers easily saturate the API without CPU pressure.
+    Processes listings that don't have llm_extras yet. Uses ThreadPoolExecutor
+    so several Ollama requests are inflight at once; on M1 8 GB the model
+    saturates around 6 workers.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from src.parser.llm_enrichment import (
@@ -485,7 +486,7 @@ def enrich(
 
     cfg = _get_config()
     if not _llm_available():
-        log.error("ANTHROPIC_AUTH_TOKEN not set (check .env).")
+        log.error("Ollama not reachable at %s.", cfg["ollama_url"])
         raise typer.Exit(1)
 
     # Pending = no llm_extras yet, OR llm_extras lacks the v2 damage_severity
@@ -525,8 +526,8 @@ def enrich(
         )
         pending.sort(key=lambda l: min_prices.get(l.id) or float("inf"))
 
-    log.info("Enriching %d listings with %d workers (Claude %s)...",
-             len(pending), workers, cfg['model'])
+    log.info("Enriching %d listings with %d workers (Ollama %s)...",
+             len(pending), workers, cfg['ollama_model'])
 
     enriched = 0
     failed = 0

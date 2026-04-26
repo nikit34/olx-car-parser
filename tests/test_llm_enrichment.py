@@ -1,4 +1,4 @@
-"""Tests for LLM enrichment: Claude API, pipeline, corrections, export."""
+"""Tests for LLM enrichment: Ollama call, pipeline, corrections, export."""
 
 import json
 import queue
@@ -11,6 +11,7 @@ import pytest
 import src.parser.llm_enrichment as llm_mod
 from src.parser.llm_enrichment import (
     _call_llm,
+    _call_ollama,
     _get_config,
     correct_listing_data,
     apply_corrections,
@@ -50,56 +51,70 @@ VALID_LLM_JSON = {
 
 
 # ---------------------------------------------------------------------------
-# _call_llm — Claude tool-use round-trip
+# _call_llm / _call_ollama — Ollama JSON-mode round-trip
 # ---------------------------------------------------------------------------
 
-def _make_claude_resp(tool_input: dict | None):
-    """Build a fake `messages.create()` return value with a single tool_use block."""
-    block = MagicMock()
-    block.type = "tool_use"
-    block.name = "record_listing_features"
-    block.input = tool_input or {}
+def _make_ollama_resp(content: str, status: int = 200):
+    """Fake httpx.post() return value matching Ollama's /api/generate shape."""
     resp = MagicMock()
-    resp.content = [block] if tool_input is not None else []
+    resp.status_code = status
+    resp.json.return_value = {"response": content}
     return resp
 
 
 class TestCallLlm:
     def setup_method(self):
-        llm_mod._client = None
-        llm_mod._token_status = None
+        llm_mod._ollama_status = None
 
     def test_success(self):
         cfg = _get_config()
-        mock_client = MagicMock()
-        mock_client.messages.create.return_value = _make_claude_resp(VALID_LLM_JSON)
+        mock_resp = _make_ollama_resp(json.dumps(VALID_LLM_JSON))
 
-        with patch("src.parser.llm_enrichment._get_client", return_value=mock_client):
+        with patch("src.parser.llm_enrichment.httpx.post", return_value=mock_resp) as mock_post:
             result = _call_llm("Vendo carro com 100km", cfg)
 
         assert result is not None
         assert result["desc_mentions_accident"] is False
-        # The system prompt must be sent with cache_control so prompt caching
-        # actually engages — this is how the per-call cost stays low.
-        kwargs = mock_client.messages.create.call_args.kwargs
-        assert kwargs["system"][0]["cache_control"] == {"type": "ephemeral"}
-        assert kwargs["tool_choice"]["name"] == "record_listing_features"
+        # Confirm we hit /api/generate (NOT /api/chat) so the system prompt
+        # stays byte-identical across calls and Ollama can reuse its KV-cache
+        # slot for the instruction prefix. format=json keeps the output
+        # parseable.
+        call_args = mock_post.call_args
+        assert call_args.args[0].endswith("/api/generate")
+        assert call_args.kwargs["json"]["format"] == "json"
+        assert call_args.kwargs["json"]["system"] == llm_mod._SYSTEM_PROMPT
+        assert call_args.kwargs["json"]["keep_alive"] == "30m"
 
-    def test_no_tool_use_block(self):
+    def test_http_error_returns_none(self):
         cfg = _get_config()
-        mock_client = MagicMock()
-        mock_client.messages.create.return_value = _make_claude_resp(None)
-
-        with patch("src.parser.llm_enrichment._get_client", return_value=mock_client):
-            result = _call_llm("Vendo carro", cfg)
-
-        assert result is None
-
-    def test_no_client_returns_none(self):
-        cfg = _get_config()
-        with patch("src.parser.llm_enrichment._get_client", return_value=None):
+        mock_resp = _make_ollama_resp("", status=500)
+        with patch("src.parser.llm_enrichment.httpx.post", return_value=mock_resp):
             result = _call_llm("Vendo carro", cfg)
         assert result is None
+
+    def test_invalid_json_returns_none(self):
+        cfg = _get_config()
+        mock_resp = _make_ollama_resp("not json at all")
+        with patch("src.parser.llm_enrichment.httpx.post", return_value=mock_resp):
+            result = _call_llm("Vendo carro", cfg)
+        assert result is None
+
+    def test_markdown_wrapped_json_recovers(self):
+        # Some fine-tuned checkpoints occasionally wrap output in ```json … ```;
+        # the strip pass should still recover the payload.
+        cfg = _get_config()
+        wrapped = "```json\n" + json.dumps(VALID_LLM_JSON) + "\n```"
+        mock_resp = _make_ollama_resp(wrapped)
+        with patch("src.parser.llm_enrichment.httpx.post", return_value=mock_resp):
+            result = _call_llm("Vendo carro", cfg)
+        assert result == VALID_LLM_JSON
+
+    def test_call_llm_delegates_to_ollama(self):
+        # _call_llm is a thin alias; both should resolve to the same payload.
+        cfg = _get_config()
+        mock_resp = _make_ollama_resp(json.dumps(VALID_LLM_JSON))
+        with patch("src.parser.llm_enrichment.httpx.post", return_value=mock_resp):
+            assert _call_llm("x", cfg) == _call_ollama("x", cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -113,19 +128,19 @@ class TestEnrichFromDescription:
 
     @patch("src.parser.llm_enrichment._llm_available", return_value=True)
     @patch("src.parser.llm_enrichment._call_llm", return_value=VALID_LLM_JSON)
-    def test_calls_claude(self, mock_call, mock_avail):
+    def test_calls_llm(self, mock_call, mock_avail):
         result = enrich_from_description("Vendo BMW 320d com 180.000km reais")
         assert result == VALID_LLM_JSON
         mock_call.assert_called_once()
 
     @patch("src.parser.llm_enrichment._llm_available", return_value=True)
     @patch("src.parser.llm_enrichment._call_llm", return_value=None)
-    def test_returns_none_on_claude_failure(self, mock_call, mock_avail):
+    def test_returns_none_on_llm_failure(self, mock_call, mock_avail):
         result = enrich_from_description("Vendo BMW 320d com 180.000km reais")
         assert result is None
 
     @patch("src.parser.llm_enrichment._llm_available", return_value=False)
-    def test_returns_none_when_token_missing(self, mock_avail):
+    def test_returns_none_when_ollama_unavailable(self, mock_avail):
         result = enrich_from_description("Vendo BMW 320d com 180.000km reais")
         assert result is None
 

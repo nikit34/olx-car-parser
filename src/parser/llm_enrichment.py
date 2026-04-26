@@ -1,27 +1,23 @@
-"""Enrich listing data using Claude (Haiku 4.5) via the Anthropic API.
+"""Enrich listing data using a local Ollama model.
 
-Extracts 14 structured fields from title + description text:
+Extracts 15 structured fields from title + description text:
 sub_model, trim_level, mileage, accident/repair flags, condition,
-urgency, warranty, tuning, taxi/fleet, first owner, customs, RHD.
-
-Auth: Bearer token from `ANTHROPIC_AUTH_TOKEN` (set in .env). Sent via the
-`auth_token` parameter so it goes as `Authorization: Bearer …` — required for
-Claude Code OAuth / setup tokens, which `x-api-key` rejects.
+urgency, warranty, tuning, taxi/fleet, first owner, customs, RHD,
+damage_severity.
 """
 
 import json
 import logging
-import os
 import re
 import threading
 from pathlib import Path
 
+import httpx
 import yaml
 
 logger = logging.getLogger(__name__)
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "settings.yaml"
-ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
 
 
 # ---------------------------------------------------------------------------
@@ -53,8 +49,8 @@ _RHD_PATTERN = re.compile(
 
 
 # ---------------------------------------------------------------------------
-# Tool schema — forces Claude to emit a single tool_use block with all fields.
-# Unlike free-form JSON parsing this can never return "Sorry I can't" prose.
+# Schema documentation (kept as a Python list so consumers — eval scripts,
+# annotation tools — share one source of truth for the field set).
 # ---------------------------------------------------------------------------
 
 _FIELD_NAMES = [
@@ -72,54 +68,9 @@ _FIELD_NAMES = [
     "damage_severity",
 ]
 
-_EXTRACT_TOOL = {
-    "name": "record_listing_features",
-    "description": "Record extracted structured features from a Portuguese car listing. Always call this exactly once with all fields populated — use null when a field is not mentioned or cannot be inferred.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "sub_model": {
-                "type": ["string", "null"],
-                "description": "Engine/body variant (e.g. '320d', '1.6 TDI', '2.0 TFSI', 'A 200'). NOT a trim line, NOT a bare model name.",
-            },
-            "trim_level": {
-                "type": ["string", "null"],
-                "description": "Equipment line: 'AMG Line', 'M Sport', 'S-Line', 'GTI', 'FR', 'Tekna'. null if basic.",
-            },
-            "desc_mentions_num_owners": {"type": ["integer", "null"]},
-            "desc_mentions_accident": {"type": ["boolean", "null"]},
-            "desc_mentions_repair": {"type": ["boolean", "null"]},
-            "mileage_in_description_km": {"type": ["integer", "null"]},
-            "desc_mentions_customs_cleared": {"type": ["boolean", "null"]},
-            "right_hand_drive": {"type": ["boolean", "null"]},
-            "mechanical_condition": {
-                "type": ["string", "null"],
-                "enum": ["excellent", "good", "fair", "poor", None],
-            },
-            "urgency": {
-                "type": ["string", "null"],
-                "enum": ["high", "medium", "low", None],
-            },
-            "warranty": {"type": ["boolean", "null"]},
-            "tuning_or_mods": {
-                "type": ["array", "null"],
-                "items": {"type": "string"},
-            },
-            "taxi_fleet_rental": {"type": ["boolean", "null"]},
-            "first_owner_selling": {"type": ["boolean", "null"]},
-            "damage_severity": {
-                "type": ["integer", "null"],
-                "enum": [0, 1, 2, 3, None],
-                "description": "Overall vehicle state inferred from the description: 0=pristine/like-new, 1=normal age-appropriate wear (default for unspecified), 2=needs significant repair OR has accident history, 3=salvage / parts-only / non-runner.",
-            },
-        },
-        "required": _FIELD_NAMES,
-    },
-}
-
 
 _SYSTEM_PROMPT = """\
-Extract structured features from a Portuguese (pt-PT) car listing. Always call the record_listing_features tool exactly once with all fields populated; use null for anything not mentioned or unclear.
+Extract structured features from a Portuguese (pt-PT) car listing. Return ONE JSON object with all of the following keys; use null for anything not mentioned or unclear.
 
 Field rules:
 sub_model: engine/body variant only (displacement+fuel+power code), e.g. "320d","1.6 TDI","2.0 TFSI","A 200","CLA 45". NOT a trim/package like "AMG Line","M Sport". NOT a bare model name like "DS3","Qashqai".
@@ -156,35 +107,8 @@ Listing: "Honda Civic 2009 com toque dianteiro esquerdo, mecânica boa, vendo pa
 
 
 # ---------------------------------------------------------------------------
-# Client / config / availability
+# Config / availability
 # ---------------------------------------------------------------------------
-
-_client = None
-_client_lock = threading.Lock()
-_token_status: bool | None = None
-
-
-def _read_env_file() -> dict:
-    """Tiny .env reader so callers don't need python-dotenv installed."""
-    if not ENV_PATH.exists():
-        return {}
-    out = {}
-    for line in ENV_PATH.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        out[k.strip()] = v.strip().strip('"').strip("'")
-    return out
-
-
-def _get_token() -> str | None:
-    """Resolve the Anthropic auth token. Env > .env file."""
-    tok = os.environ.get("ANTHROPIC_AUTH_TOKEN")
-    if tok:
-        return tok
-    return _read_env_file().get("ANTHROPIC_AUTH_TOKEN")
-
 
 def _get_config() -> dict:
     cfg = {}
@@ -193,251 +117,80 @@ def _get_config() -> dict:
             data = yaml.safe_load(f) or {}
         cfg = data.get("llm", {})
     return {
-        "model": cfg.get("model", "claude-haiku-4-5"),
-        "max_workers": cfg.get("max_workers", 16),
+        "ollama_model": cfg.get("ollama_model", "qwen3:4b-instruct"),
+        "ollama_url": cfg.get("ollama_url", "http://localhost:11434"),
+        "max_workers": cfg.get("max_workers", 6),
         "max_tokens": cfg.get("max_tokens", 600),
         "max_chars": cfg.get("max_chars", 4000),
-        # OpenRouter fallback — used when ANTHROPIC_AUTH_TOKEN is missing
-        # but OPENROUTER_API_KEY is set. Free Qwen model is more than capable
-        # of the structured extraction and avoids per-call cost. Rate-limited
-        # to ~20 req/min on the free tier, so workers should drop accordingly.
-        "openrouter_model": cfg.get("openrouter_model", "qwen/qwen-2.5-72b-instruct:free"),
-        "openrouter_url": cfg.get("openrouter_url", "https://openrouter.ai/api/v1"),
-        # Ollama fallback — used when neither cloud backend is configured.
-        # Lets the remote run enrichment via a local model without API access.
-        "ollama_model": cfg.get("ollama_model", "car-parser-3b"),
-        "ollama_url": cfg.get("ollama_url", "http://localhost:11434"),
     }
-
-
-def _get_client():
-    """Lazy, thread-safe Anthropic client. Returns None if SDK or token missing."""
-    global _client
-    if _client is not None:
-        return _client
-    with _client_lock:
-        if _client is not None:
-            return _client
-        token = _get_token()
-        if not token:
-            return None
-        try:
-            import anthropic
-        except ImportError:
-            logger.error("`anthropic` package not installed. Run: pip install anthropic")
-            return None
-        # auth_token sets `Authorization: Bearer <token>`. Required for Claude
-        # Code OAuth / setup tokens — `x-api-key` rejects them.
-        _client = anthropic.Anthropic(auth_token=token, max_retries=2, timeout=60.0)
-    return _client
-
-
-def _llm_available() -> bool:
-    """True iff ANY of the three backends (Claude / OpenRouter / Ollama) is
-    reachable. Backends are tried in that order at call time; this helper
-    short-circuits the no-LLM-anywhere case so the enrich CLI can fail fast
-    instead of hanging on N parallel timeouts.
-    """
-    if _get_client() is not None:
-        return True
-    if _openrouter_key() is not None:
-        return True
-    return _ollama_available()
-
-
-def _openrouter_key() -> str | None:
-    """OpenRouter API key from env or .env file."""
-    tok = os.environ.get("OPENROUTER_API_KEY")
-    if tok:
-        return tok
-    return _read_env_file().get("OPENROUTER_API_KEY")
 
 
 _ollama_status: bool | None = None
 
+# Thread-local persistent httpx.Client. Reusing the TCP connection saves
+# ~10-30 ms per call (handshake + slow-start) which on a 1700-listing batch
+# adds up to ~30-50 s.
+_thread_local = threading.local()
+
+
+def _get_client(base_url: str) -> httpx.Client:
+    client = getattr(_thread_local, "http_client", None)
+    if client is None:
+        client = httpx.Client(base_url=base_url,
+                              timeout=httpx.Timeout(120.0, connect=10.0))
+        _thread_local.http_client = client
+    return client
+
 
 def _ollama_available(_url: str = "") -> bool:
-    """True iff the local Ollama HTTP API answers and has the configured
-    model loaded. Result is cached per-process so we don't probe on every
-    enrichment call."""
+    """True iff the local Ollama HTTP API answers. Result cached per process
+    so we don't probe `/api/tags` on every enrichment call."""
     global _ollama_status
     if _ollama_status is not None:
         return _ollama_status
     cfg = _get_config()
     url = _url or cfg.get("ollama_url", "http://localhost:11434")
     try:
-        import httpx
-        resp = httpx.get(f"{url}/api/tags", timeout=2.0)
+        resp = _get_client(url).get("/api/tags", timeout=2.0)
         _ollama_status = resp.status_code == 200
     except Exception:
         _ollama_status = False
     if not _ollama_status:
-        logger.debug("Ollama fallback unavailable at %s", url)
+        logger.warning("Ollama not reachable at %s — LLM enrichment disabled.", url)
     return _ollama_status
+
+
+def _llm_available() -> bool:
+    """Backwards-compat name. Same semantics as _ollama_available()."""
+    return _ollama_available()
 
 
 # ---------------------------------------------------------------------------
 # Core API call
 # ---------------------------------------------------------------------------
 
-def _call_llm(text: str, cfg: dict) -> dict | None:
-    """Run one extraction round-trip. Tries Claude → OpenRouter → Ollama in
-    that order until one succeeds. Returns the extracted payload as dict,
-    or None if every backend fails."""
-    client = _get_client()
-    if client is not None:
-        return _call_claude(client, text, cfg)
-    or_key = _openrouter_key()
-    if or_key is not None:
-        return _call_openrouter(or_key, text, cfg)
-    if _ollama_available():
-        return _call_ollama(text, cfg)
-    return None
-
-
-def _call_claude(client, text: str, cfg: dict) -> dict | None:
-    try:
-        import anthropic
-    except ImportError:
-        return None
-
-    for attempt in range(2):
-        try:
-            resp = client.messages.create(
-                model=cfg["model"],
-                max_tokens=cfg.get("max_tokens", 600),
-                # Prompt caching on the system prompt: after the first call in a
-                # 5-minute window the ~600-token instruction block costs 0.1×.
-                # The list-of-blocks form is required to attach cache_control.
-                system=[{
-                    "type": "text",
-                    "text": _SYSTEM_PROMPT,
-                    "cache_control": {"type": "ephemeral"},
-                }],
-                tools=[_EXTRACT_TOOL],
-                tool_choice={"type": "tool", "name": "record_listing_features"},
-                messages=[{"role": "user", "content": text[:cfg.get("max_chars", 4000)]}],
-            )
-            for block in resp.content:
-                if getattr(block, "type", None) == "tool_use" and block.name == "record_listing_features":
-                    return dict(block.input)
-            logger.debug("Claude returned no tool_use block")
-            return None
-
-        except anthropic.RateLimitError as e:
-            wait = 2 ** attempt
-            logger.warning("Claude rate-limited: %s — sleeping %ds", e, wait)
-            import time
-            time.sleep(wait)
-        except anthropic.APIStatusError as e:
-            # 4xx (auth, request shape) won't be fixed by retry.
-            if 400 <= e.status_code < 500:
-                logger.error("Claude API error %s: %s", e.status_code, e.message)
-                return None
-            logger.warning("Claude server error %s (attempt %d)", e.status_code, attempt + 1)
-        except anthropic.APIConnectionError as e:
-            logger.warning("Claude connection error (attempt %d): %s", attempt + 1, e)
-        except Exception as e:  # noqa: BLE001 — last-resort log so a worker never dies
-            logger.debug("Claude enrichment failed: %s", e)
-            return None
-    return None
-
-
-def _call_openrouter(api_key: str, text: str, cfg: dict) -> dict | None:
-    """OpenRouter (OpenAI-compatible) JSON-mode fallback for the same schema.
-
-    Uses /chat/completions with response_format=json_object so the model
-    returns parseable JSON. Free-tier Qwen-2.5-72B handles this Portuguese
-    extraction reliably and the rate limits work for one-shot batches when
-    workers are kept modest (the CLI default 16 will trip the 20-req/min
-    free-tier cap; --workers 4-6 is the right setting on free).
-    """
-    import json as _json
-    try:
-        import httpx
-    except ImportError:
-        return None
-
-    base = cfg.get("openrouter_url", "https://openrouter.ai/api/v1")
-    model = cfg.get("openrouter_model", "qwen/qwen-2.5-72b-instruct:free")
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": text[:cfg.get("max_chars", 4000)]},
-        ],
-        "response_format": {"type": "json_object"},
-        "temperature": 0.0,
-        "max_tokens": cfg.get("max_tokens", 600),
-    }
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        # OpenRouter's analytics referrer + name fields — optional but it's
-        # polite, and they let you see usage attributed back to the project.
-        "HTTP-Referer": "https://github.com/nikit34/olx-car-parser",
-        "X-Title": "olx-car-parser",
-    }
-    for attempt in range(3):
-        try:
-            resp = httpx.post(
-                f"{base}/chat/completions", json=payload, headers=headers,
-                timeout=120.0,
-            )
-            if resp.status_code == 429:
-                # Free-tier rate limit. Back off and retry with jitter.
-                wait = 2 ** attempt
-                logger.warning("OpenRouter 429 (attempt %d) — sleeping %ds", attempt + 1, wait)
-                import time
-                time.sleep(wait)
-                continue
-            if resp.status_code != 200:
-                logger.warning("OpenRouter HTTP %s: %s", resp.status_code, resp.text[:200])
-                return None
-            content = resp.json()["choices"][0]["message"]["content"]
-            if not content:
-                return None
-            try:
-                parsed = _json.loads(content)
-            except _json.JSONDecodeError:
-                stripped = content.strip().strip("`").lstrip("json").strip()
-                try:
-                    parsed = _json.loads(stripped)
-                except _json.JSONDecodeError:
-                    logger.debug("OpenRouter returned non-JSON: %s", content[:200])
-                    return None
-            return parsed if isinstance(parsed, dict) else None
-        except httpx.RequestError as e:
-            logger.warning("OpenRouter connection error (attempt %d): %s", attempt + 1, e)
-        except Exception as e:  # noqa: BLE001
-            logger.debug("OpenRouter enrichment failed: %s", e)
-            return None
-    return None
-
-
 def _call_ollama(text: str, cfg: dict) -> dict | None:
-    """Ollama JSON-mode fallback for the same extraction schema.
+    """Run one extraction round-trip against Ollama. Returns the parsed JSON
+    payload as a dict, or None on any failure.
 
-    Uses /api/chat with format=json so the model returns parseable JSON
-    rather than free-form prose. Tool-use isn't part of the Ollama API, but
-    the system prompt already documents the schema so a JSON-mode response
-    matches it 1:1 for fine-tuned models like car-parser-3b.
+    Uses /api/generate (not /api/chat) on purpose:
+      - the `system` field is byte-stable across calls, so Ollama keeps the
+        same KV-cache slot and skips ~600 tokens of prefill every call;
+      - no chat-template wrapping → fewer tokens, no template-version drift;
+      - keep_alive holds the model in RAM between bursts so we don't pay the
+        5 s reload cost on the M1 8 GB box.
+    format=json constrains the output to parseable JSON; the system prompt
+    already documents the 15-field schema, so any instruction-tuned model
+    (e.g. qwen3:4b-instruct) matches it without a separate tool wrapper.
     """
-    import json as _json
-    try:
-        import httpx
-    except ImportError:
-        return None
-
     url = cfg.get("ollama_url", "http://localhost:11434")
     payload = {
-        "model": cfg.get("ollama_model", "car-parser-3b"),
-        "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": text[:cfg.get("max_chars", 4000)]},
-        ],
+        "model": cfg.get("ollama_model", "qwen3:4b-instruct"),
+        "system": _SYSTEM_PROMPT,
+        "prompt": text[:cfg.get("max_chars", 4000)],
         "format": "json",
         "stream": False,
+        "keep_alive": "30m",
         "options": {
             "temperature": 0.0,
             "num_predict": cfg.get("max_tokens", 600),
@@ -445,31 +198,37 @@ def _call_ollama(text: str, cfg: dict) -> dict | None:
     }
     for attempt in range(2):
         try:
-            resp = httpx.post(f"{url}/api/chat", json=payload, timeout=120.0)
+            resp = httpx.post(f"{url}/api/generate", json=payload, timeout=120.0)
             if resp.status_code != 200:
                 logger.warning("Ollama HTTP %s (attempt %d)", resp.status_code, attempt + 1)
                 continue
-            content = resp.json().get("message", {}).get("content", "")
+            content = resp.json().get("response", "")
             if not content:
                 return None
             try:
-                parsed = _json.loads(content)
-            except _json.JSONDecodeError:
-                # Fine-tuned models occasionally wrap with ```json ... ```;
-                # try one strip pass before giving up.
+                parsed = json.loads(content)
+            except json.JSONDecodeError:
+                # Some fine-tuned checkpoints occasionally wrap with ```json …```;
+                # one strip pass before giving up.
                 stripped = content.strip().strip("`").lstrip("json").strip()
                 try:
-                    parsed = _json.loads(stripped)
-                except _json.JSONDecodeError:
+                    parsed = json.loads(stripped)
+                except json.JSONDecodeError:
                     logger.debug("Ollama returned non-JSON: %s", content[:200])
                     return None
             return parsed if isinstance(parsed, dict) else None
         except httpx.RequestError as e:
             logger.warning("Ollama connection error (attempt %d): %s", attempt + 1, e)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 — last-resort log so a worker never dies
             logger.debug("Ollama enrichment failed: %s", e)
             return None
     return None
+
+
+# Public alias used by callers and tests; lets us swap the backend later
+# without touching cli.py / enrich_local.py / the test patch targets.
+def _call_llm(text: str, cfg: dict) -> dict | None:
+    return _call_ollama(text, cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -485,9 +244,10 @@ _EXTRAS_KEY_ALIASES = {
 
 
 def enrich_from_description(description: str, title: str = "") -> dict | None:
-    """Extract structured data from title + description via Claude.
+    """Extract structured data from title + description via the local LLM.
 
-    Returns dict with extracted fields, or None on failure.
+    Returns dict with extracted fields, or None on failure / when Ollama is
+    unreachable / when the description is too short to bother.
     """
     if not description or len(description.strip()) < 20:
         return None
@@ -522,17 +282,17 @@ def _get_extra(extras: dict, key: str):
 
 
 def enrich_listings_batch(listings: list, batch_size: int = 50) -> int:
-    """Enrich a batch of RawListing objects with Claude-extracted data.
+    """Enrich a batch of RawListing objects with LLM-extracted data.
 
     Modifies listings in place. Returns count of enriched listings.
     """
     if not _llm_available():
-        logger.info("Claude not available. Skipping LLM enrichment.")
+        logger.info("Ollama not available. Skipping LLM enrichment.")
         return 0
 
     cfg = _get_config()
-    logger.info("LLM enrichment using Claude (%s) for up to %d listings",
-                cfg["model"], min(batch_size, len(listings)))
+    logger.info("LLM enrichment using Ollama (%s) for up to %d listings",
+                cfg["ollama_model"], min(batch_size, len(listings)))
 
     enriched = 0
     failures = 0
