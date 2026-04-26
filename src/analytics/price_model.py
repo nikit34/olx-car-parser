@@ -22,6 +22,7 @@ import numpy as np
 import pandas as pd
 import lightgbm as lgb
 from sklearn.inspection import permutation_importance
+from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import make_scorer, mean_pinball_loss
 from sklearn.model_selection import KFold
 
@@ -37,7 +38,14 @@ _OTHER_CATEGORY = "__other__"
 # CQR semantics, OOF preds, etc.). load_model rejects mismatches so the
 # dashboard can't accidentally consume an artifact trained against a different
 # feature set or target transform.
-_SCHEMA_VERSION = 2
+# v3: time-aware CQR + isotonic median calibrator
+_SCHEMA_VERSION = 3
+# Fraction of the dataset (newest rows by first_seen_at) used as the
+# time-honest conformal calibration window. Random-KFold CQR mixes
+# time-adjacent rows across folds and over-estimates coverage on real future
+# listings — backtest showed 80% nominal coverage delivering 61–69% on
+# tomorrow's data. Calibrating on a held-out time-tail closes that gap.
+_TIME_CALIBRATION_FRAC = 0.2
 
 NUMERIC_FEATURES = [
     "year", "mileage_km", "engine_cc", "horsepower",
@@ -215,10 +223,79 @@ def _filter_training_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     return out, stats
 
 
+def _conformal_q_from_scores(
+    scores: np.ndarray,
+    target_coverage: float = 0.80,
+) -> float:
+    """The standard CQR quantile-of-scores formula, separated so both the
+    random-KFold and time-aware paths use exactly the same statistic."""
+    n = len(scores)
+    if n == 0:
+        return 0.0
+    q_level = min(np.ceil(target_coverage * (n + 1)) / n, 1.0)
+    return float(np.quantile(scores, q_level))
+
+
+def _time_aware_conformal_q(
+    df: pd.DataFrame,
+    best_iters_per_q: dict[str, int],
+    calibration_frac: float = _TIME_CALIBRATION_FRAC,
+) -> float | None:
+    """Compute conformal_q from a time-honest holdout.
+
+    Trains the three quantile models on the oldest ``(1 - calibration_frac)``
+    of the data (sorted by ``first_seen_at``), predicts the newest fraction,
+    and computes ``q`` from the band-miss scores on that calibration slice.
+    Honest answer to "how wide must the band be to actually cover 80% of
+    *tomorrow's* listings", versus random-KFold CQR which mixes time-adjacent
+    rows across folds and reports too small a ``q``.
+
+    Returns None if the data lacks ``first_seen_at`` or is too small to split,
+    in which case the caller should fall back to the random-KFold value.
+    """
+    if "first_seen_at" not in df.columns:
+        return None
+    sorted_df = df.copy()
+    sorted_df["_fsa"] = pd.to_datetime(sorted_df["first_seen_at"], errors="coerce")
+    sorted_df = sorted_df.dropna(subset=["_fsa"]).sort_values("_fsa").reset_index(drop=True)
+    if len(sorted_df) < 200:
+        return None
+
+    cutoff = int(len(sorted_df) * (1 - calibration_frac))
+    train = sorted_df.iloc[:cutoff]
+    cal = sorted_df.iloc[cutoff:]
+    if len(train) < 100 or len(cal) < 50:
+        return None
+
+    X_train, cat_maps = _prepare_X(train)
+    X_cal, _ = _prepare_X(cal, cat_maps)
+    y_train_log = np.log1p(np.maximum(train["price_eur"].astype(float).values, 0))
+    y_cal_log = np.log1p(np.maximum(cal["price_eur"].astype(float).values, 0))
+    cat_indices = [_ALL_FEATURES.index(c) for c in CATEGORICAL_FEATURES]
+
+    log_low_pred: np.ndarray | None = None
+    log_high_pred: np.ndarray | None = None
+    for name, alpha in _QUANTILES.items():
+        if name == "median":
+            continue  # CQR scores only use the band edges
+        params = {**_LGB_PARAMS, "n_estimators": best_iters_per_q[name]}
+        model = lgb.LGBMRegressor(objective="quantile", alpha=alpha, **params)
+        model.fit(X_train, y_train_log, categorical_feature=cat_indices)
+        preds = model.predict(X_cal)
+        if name == "low":
+            log_low_pred = preds
+        else:
+            log_high_pred = preds
+
+    assert log_low_pred is not None and log_high_pred is not None
+    scores = np.maximum(log_low_pred - y_cal_log, y_cal_log - log_high_pred)
+    return _conformal_q_from_scores(scores)
+
+
 def _cv_metrics(
     df: pd.DataFrame,
     n_splits: int = 5,
-) -> tuple[dict, dict[str, int], np.ndarray]:
+) -> tuple[dict, dict[str, int], np.ndarray, IsotonicRegression | None]:
     """K-fold CV for all three quantile models with per-fold categorical
     encoding (no leakage) and early stopping to tune n_estimators.
 
@@ -272,29 +349,71 @@ def _cv_metrics(
                 int(model.best_iteration_ or _LGB_PARAMS["n_estimators"])
             )
 
-    # CQR in log space — score = max(log_low − log_y, log_y − log_high). The
+    # Per-quantile early-stop suggestion (median across folds). Tails converge
+    # at different rates than median, so each gets its own count. Compute now
+    # because the time-aware CQR helper needs them.
+    suggested: dict[str, int] = {}
+    for name in _QUANTILES:
+        iters = best_iters[name]
+        median_iters = int(np.median(iters)) if iters else _LGB_PARAMS["n_estimators"]
+        suggested[name] = max(median_iters, _MIN_N_ESTIMATORS)
+
+    # Random-KFold CQR — score = max(log_low − log_y, log_y − log_high). The
     # widening factor stays in log space and is applied to log predictions at
-    # predict time, then expm1 back. This is asymmetric in price space (which is
-    # what we want for heavy-tailed targets: a € band that grows with price).
-    _TARGET_COVERAGE = 0.80
-    n = len(y_all)
+    # predict time, then expm1 back. This is asymmetric in price space (which
+    # is what we want for heavy-tailed targets: a € band that grows with
+    # price). Kept for diagnostic comparison vs the time-aware value below.
     scores = np.maximum(oof_log["low"] - y_log, y_log - oof_log["high"])
-    q_level = min(np.ceil(_TARGET_COVERAGE * (n + 1)) / n, 1.0)
-    conformal_q_log = float(np.quantile(scores, q_level))
+    conformal_q_log_random = _conformal_q_from_scores(scores)
 
-    # Back-transform OOF to price scale, build the calibrated band and repair
-    # crossings (so what ships in oof_band matches what predict_prices returns
-    # for new rows). Clamp at 0 — expm1 of a negative log is negative.
-    band_log = np.stack([
-        oof_log["low"] - conformal_q_log,
-        oof_log["median"],
-        oof_log["high"] + conformal_q_log,
-    ])
-    band_price = np.expm1(band_log)
-    band_price = np.sort(band_price, axis=0)
-    oof_band = np.maximum(band_price, 0)
+    # Time-aware CQR — re-train on oldest 80% by first_seen_at, score the
+    # newest 20%. Honest answer to "how wide must the band be to cover 80% of
+    # *tomorrow's* listings". Falls back to random when the dataset has no
+    # first_seen_at column or is too small.
+    conformal_q_log_time = _time_aware_conformal_q(df, suggested)
+    if conformal_q_log_time is not None:
+        conformal_q_log = conformal_q_log_time
+    else:
+        conformal_q_log = conformal_q_log_random
 
-    # User-facing metrics on price scale (back-transformed median OOF)
+    # Isotonic post-calibration of the median quantile. Fit
+    # ``predicted → actual`` on out-of-fold pairs to remove systematic shifts
+    # in the global pred-vs-actual relationship (locally we observed +€1.3k
+    # under-prediction in the €30k+ tier). Only the median is calibrated this
+    # way — for low/high the isotonic target (=actual) is the wrong reference
+    # (those predict the 10th and 90th percentile, not the actual price).
+    # Caveat: 1D isotonic cannot fix subgroup mispricing where the model
+    # mis-reads features (e.g. the −27% bias on ``<€3k`` cars whose actual
+    # price is depressed by undetected damage/salvage flags). That needs
+    # feature-level work, not post-hoc calibration.
+    median_oof_price_raw = np.maximum(np.expm1(oof_log["median"]), 0)
+    median_calibrator = IsotonicRegression(
+        out_of_bounds="clip", increasing=True,
+    )
+    median_calibrator.fit(median_oof_price_raw, y_all)
+    calibrated_median_price = median_calibrator.predict(median_oof_price_raw)
+
+    # Back-transform OOF band edges to price scale and assemble the band
+    # around the isotonic-calibrated median. We can't naive-sort all three
+    # because isotonic can move the median *outside* [raw_low, raw_high]
+    # (e.g. for the cheap-segment over-prediction case where the model says
+    # €4500 and isotonic compresses it to €1500). A blind sort would then put
+    # raw_low into the median slot and the calibrated value into low —
+    # silently dropping the calibration. Instead:
+    #   1. Repair true low/high crossing (rare independent-quantile artifact)
+    #   2. Bracket the band around the calibrated median by min/max
+    raw_low_price = np.expm1(oof_log["low"] - conformal_q_log)
+    raw_high_price = np.expm1(oof_log["high"] + conformal_q_log)
+    fixed_low = np.minimum(raw_low_price, raw_high_price)
+    fixed_high = np.maximum(raw_low_price, raw_high_price)
+    band_low = np.minimum(fixed_low, calibrated_median_price)
+    band_high = np.maximum(fixed_high, calibrated_median_price)
+    oof_band = np.maximum(
+        np.stack([band_low, calibrated_median_price, band_high]),
+        0,
+    )
+
+    # User-facing metrics on price scale (back-transformed + calibrated)
     median_oof = oof_band[1]
     low_oof_calibrated = oof_band[0]
     high_oof_calibrated = oof_band[2]
@@ -322,14 +441,6 @@ def _cv_metrics(
         (y_all >= low_oof_calibrated) & (y_all <= high_oof_calibrated)
     ))
 
-    # Per-quantile early-stop suggestion (median across folds). Each quantile
-    # converges at a different rate, so the tails get their own count.
-    suggested: dict[str, int] = {}
-    for name in _QUANTILES:
-        iters = best_iters[name]
-        median_iters = int(np.median(iters)) if iters else _LGB_PARAMS["n_estimators"]
-        suggested[name] = max(median_iters, _MIN_N_ESTIMATORS)
-
     metrics = {
         "mae": round(mae, 0),
         "mape": round(mape, 1),
@@ -339,12 +450,20 @@ def _cv_metrics(
         "pinball_high": round(pinball["high"], 1),
         "coverage_80": round(coverage_raw, 3),
         "coverage_80_calibrated": round(coverage_calibrated, 3),
-        # conformal_q is in LOG space (the band-widening exponent). Apply it to
-        # log predictions in predict_prices, then expm1 to price scale.
+        # conformal_q is in LOG space (the band-widening exponent). Apply it
+        # to log predictions in predict_prices, then expm1 to price scale.
+        # The active value is time-aware when first_seen_at is available,
+        # otherwise random-KFold (older fallback path).
         "conformal_q": round(conformal_q_log, 4),
+        "conformal_q_random": round(conformal_q_log_random, 4),
+        "conformal_q_time": (
+            round(conformal_q_log_time, 4)
+            if conformal_q_log_time is not None else None
+        ),
+        "conformal_q_source": "time" if conformal_q_log_time is not None else "random",
         # Approximate ± multiplicative band widening for human display:
-        # a row's price band stretches by roughly (exp(q) − 1) × 100 % on each
-        # side relative to the raw model band.
+        # a row's price band stretches by roughly (exp(q) − 1) × 100 % on
+        # each side relative to the raw model band.
         "conformal_q_pct": round(float(np.expm1(conformal_q_log) * 100), 1),
         # Back-compat single number for the dashboard's "Trees (early-stop)"
         # KPI; the actual fit uses the per-quantile dict below.
@@ -353,8 +472,9 @@ def _cv_metrics(
         "n_samples": int(len(y_all)),
         "cv_folds": n_splits,
         "log_target": True,
+        "median_calibrated": True,
     }
-    return metrics, suggested, oof_band
+    return metrics, suggested, oof_band, median_calibrator
 
 
 def train_price_model(
@@ -365,14 +485,18 @@ def train_price_model(
     dict[str, dict[str, int]],
     dict,
     dict[str, tuple[float, float, float]],
+    IsotonicRegression | None,
 ] | None:
     """Train quantile regression models: median, low (10th), high (90th).
 
-    Returns (models, category_maps, metrics, oof_preds) or None if insufficient
-    data. ``oof_preds`` is a dict olx_id → (low, median, high) of cross-
-    validated, calibrated, crossing-repaired predictions in price space — used
-    by ``predict_prices`` so listings that were in the training set get scored
-    out-of-fold rather than in-sample.
+    Returns (models, category_maps, metrics, oof_preds, median_calibrator) or
+    None if insufficient data.
+
+    - ``oof_preds`` is a dict olx_id → (low, median, high) of cross-validated,
+      calibrated, crossing-repaired predictions in price space.
+    - ``median_calibrator`` is an IsotonicRegression mapping raw expm1(median)
+      → calibrated price; applied by ``predict_prices`` to new rows. OOF preds
+      already have it baked in.
     """
     needed = {"price_eur", "year", "mileage_km"}
     if not needed.issubset(listings_df.columns):
@@ -392,8 +516,9 @@ def train_price_model(
     y_log = np.log1p(np.maximum(df["price_eur"].values.astype(float), 0))
 
     # CV with per-fold cat encoding + per-quantile early stopping → tuned
-    # n_estimators dict + OOF predictions in price space.
-    metrics, best_iters_per_q, oof_band = _cv_metrics(df)
+    # n_estimators dict + OOF predictions in price space + isotonic calibrator
+    # for the median quantile.
+    metrics, best_iters_per_q, oof_band, median_calibrator = _cv_metrics(df)
     metrics["filter_stats"] = filter_stats
 
     # Final models: fit on full filtered data with CV-tuned per-quantile iters
@@ -422,7 +547,7 @@ def train_price_model(
                 float(oof_band[2, i]),
             )
 
-    return models, cat_maps, metrics, oof_preds
+    return models, cat_maps, metrics, oof_preds, median_calibrator
 
 
 def predict_prices(
@@ -431,6 +556,7 @@ def predict_prices(
     listings_df: pd.DataFrame,
     conformal_q: float = 0.0,
     oof_preds: dict[str, tuple[float, float, float]] | None = None,
+    median_calibrator: IsotonicRegression | None = None,
 ) -> pd.DataFrame:
     """Predict fair price range for each listing.
 
@@ -444,6 +570,11 @@ def predict_prices(
     that dict get their out-of-fold CV predictions instead of in-sample
     model.predict output. This prevents the deal-scoring loop from comparing a
     listing's price against a "fair price" the model already memorized.
+
+    If *median_calibrator* is provided (an IsotonicRegression fit on
+    OOF ``predicted → actual``), it is applied to the median quantile for new
+    rows only — OOF predictions already have it baked in. Removes systematic
+    bias the bucket diagnostic surfaces (e.g. −27% on the cheap segment).
 
     The returned [low, median, high] is sorted per row to guarantee
     low ≤ median ≤ high (Chernozhukov et al. 2010 — independent quantile
@@ -460,6 +591,16 @@ def predict_prices(
     low = np.expm1(log_low)
     high = np.expm1(log_high)
 
+    # Apply isotonic calibration to the median for new rows. OOF preds (set
+    # below) skip this since they were already calibrated at training time.
+    # We track whether calibration ran so the band-assembly step below can
+    # bracket the median by min/max instead of naive-sorting (which would
+    # silently swap a calibrated median out of position when isotonic moves
+    # it outside the raw [low, high] range).
+    median_was_calibrated = median_calibrator is not None
+    if median_was_calibrated:
+        median = median_calibrator.predict(np.maximum(median, 0))
+
     # Override with OOF predictions for listings the model was trained on.
     if oof_preds and "olx_id" in listings_df.columns:
         olx_ids = listings_df["olx_id"].values
@@ -471,11 +612,22 @@ def predict_prices(
                 continue
             low[i], median[i], high[i] = entry
 
-    # Repair quantile crossing: sort [low, median, high] per row so the band
-    # always satisfies low ≤ median ≤ high. CQR widens symmetrically and
-    # doesn't touch the median, so crossings are still possible without this.
-    stacked = np.sort(np.stack([low, median, high]), axis=0)
-    low, median, high = stacked[0], stacked[1], stacked[2]
+    # Repair quantile crossing without losing the calibrated median.
+    # Two crossing sources: (1) independent quantile fits can produce raw
+    # low > raw high; (2) isotonic calibration can move the median outside
+    # [raw_low, raw_high]. A blind sort fixes (1) but breaks (2) — it would
+    # bury the calibrated median in the low or high slot. So we fix the band
+    # edges first, then bracket the median by min/max.
+    if median_was_calibrated:
+        fixed_low = np.minimum(low, high)
+        fixed_high = np.maximum(low, high)
+        low = np.minimum(fixed_low, median)
+        high = np.maximum(fixed_high, median)
+    else:
+        # Pre-isotonic behaviour — naive sort is fine when median sits
+        # naturally inside [low, high].
+        stacked = np.sort(np.stack([low, median, high]), axis=0)
+        low, median, high = stacked[0], stacked[1], stacked[2]
 
     return pd.DataFrame({
         "predicted_price": np.maximum(median, 0),
@@ -493,6 +645,7 @@ def save_model(
     cat_maps: dict[str, dict[str, int]],
     metrics: dict,
     oof_preds: dict[str, tuple[float, float, float]] | None = None,
+    median_calibrator: IsotonicRegression | None = None,
 ) -> None:
     """Save trained model bundle to disk and append metrics to history."""
     _MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -503,6 +656,7 @@ def save_model(
         "cat_maps": cat_maps,
         "metrics": metrics,
         "oof_preds": oof_preds or {},
+        "median_calibrator": median_calibrator,
         "saved_at": datetime.now(timezone.utc).isoformat(),
     }
     joblib.dump(bundle, _MODEL_PATH)
@@ -511,15 +665,17 @@ def save_model(
 
 def load_model(
     max_age_hours: float = _MODEL_MAX_AGE_HOURS,
-) -> tuple[dict, dict, dict, dict] | None:
+) -> tuple[dict, dict, dict, dict, IsotonicRegression | None] | None:
     """Load saved model if it exists, is fresh, and matches current schema.
 
-    Returns (models, cat_maps, metrics, oof_preds) or None.
+    Returns (models, cat_maps, metrics, oof_preds, median_calibrator) or None.
 
     Mismatches that cause rejection:
       - file age > max_age_hours
-      - schema_version != _SCHEMA_VERSION (e.g. log target was added)
-      - feature_names != _ALL_FEATURES (training features were renamed/added/removed)
+      - schema_version != _SCHEMA_VERSION (e.g. log target was added,
+        isotonic calibrator was added)
+      - feature_names != _ALL_FEATURES (training features were renamed/
+        added/removed)
 
     Returning None falls through to "no fresh model" — the dashboard then logs
     a warning and skips price predictions until the next CI training run.
@@ -540,6 +696,7 @@ def load_model(
             bundle["cat_maps"],
             bundle.get("metrics", {}),
             bundle.get("oof_preds", {}),
+            bundle.get("median_calibrator"),
         )
     except Exception:
         return None

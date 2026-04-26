@@ -127,18 +127,23 @@ def get_model_data(_active_df, _listings_df):
 
     saved = load_model()
     if saved is not None:
-        models, cat_maps, metrics, oof_preds = saved
+        models, cat_maps, metrics, oof_preds, calibrator = saved
     else:
         result = train_price_model(active)
         if result is None:
             return None
-        models, cat_maps, metrics, oof_preds = result
-        save_model(models, cat_maps, metrics, oof_preds=oof_preds)
+        models, cat_maps, metrics, oof_preds, calibrator = result
+        save_model(
+            models, cat_maps, metrics,
+            oof_preds=oof_preds, median_calibrator=calibrator,
+        )
 
     conformal_q = metrics.get("conformal_q", 0.0)
     price_df = predict_prices(
         models, cat_maps, active,
-        conformal_q=conformal_q, oof_preds=oof_preds,
+        conformal_q=conformal_q,
+        oof_preds=oof_preds,
+        median_calibrator=calibrator,
     )
     importance = compute_permutation_importance(models, cat_maps, active)
     fill_rate = compute_feature_completeness(active)
@@ -153,6 +158,7 @@ def get_model_data(_active_df, _listings_df):
         "metrics": metrics,
         "importance": importance,
         "oof_preds": oof_preds,
+        "calibrator": calibrator,
     }
 
 
@@ -524,10 +530,22 @@ with tab_price_model:
             _q_str = f"±{_q_pct:.1f}%"
         else:
             _q_str = f"{metrics.get('conformal_q', 0):.2f} (log)"
+        # Highlight when CQR is calibrated time-honestly (the trustworthy mode
+        # — random-KFold mixes time-adjacent rows and under-estimates the q).
+        _q_source = metrics.get("conformal_q_source", "random")
+        _q_source_str = (
+            "time-aware" if _q_source == "time"
+            else "[yellow]random-KFold (no first_seen_at)[/yellow]"
+        )
+        _calib_str = (
+            " | median: isotonic-calibrated"
+            if metrics.get("median_calibrated") else ""
+        )
         st.caption(
             f"Trained on **{metrics['n_samples']:,}** samples "
-            f"| Conformal Q = {_q_str} "
+            f"| Conformal Q = {_q_str} ({_q_source_str}) "
             f"| {metrics.get('cv_folds', 5)}-fold CV"
+            f"{_calib_str}"
         )
 
         # Row: Predicted vs Actual + Residuals

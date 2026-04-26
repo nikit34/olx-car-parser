@@ -97,6 +97,19 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: .venv/bin/python -m src.cli train-model
 
+      - name: Time-aware model backtest
+        # Rolling-window train/test using first_seen_at — produces
+        # data/price_backtest.json that the dashboard renders as the "Time
+        # backtest" panel. Honest measure of how the model performs on
+        # truly future listings (CV mixes time-adjacent rows and overstates
+        # quality). Slow (~5 min on 5k rows × 4 folds × 3 quantile fits) but
+        # opt-out via continue-on-error so it never blocks the data release.
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: .venv/bin/python -m src.cli eval-model --time-backtest --splits 5
+
       - name: Upload DB + model to GitHub Releases
         if: always()
         env:
@@ -112,3 +125,4 @@ jobs:
           [ -f data/price_model.joblib ]     && gh release upload latest-data data/price_model.joblib     --clobber || true
           [ -f data/price_metrics.json ]     && gh release upload latest-data data/price_metrics.json     --clobber || true
           [ -f data/price_importance.json ]  && gh release upload latest-data data/price_importance.json  --clobber || true
+          [ -f data/price_backtest.json ]    && gh release upload latest-data data/price_backtest.json    --clobber || true

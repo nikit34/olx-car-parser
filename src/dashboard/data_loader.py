@@ -418,8 +418,9 @@ def compute_signals(
     gb_cat_maps: dict = {}
     _gb_metrics: dict | None = None
     _gb_oof_preds: dict[str, tuple[float, float, float]] = {}
+    _gb_calibrator = None
     if saved is not None:
-        gb_models, gb_cat_maps, _gb_metrics, _gb_oof_preds = saved
+        gb_models, gb_cat_maps, _gb_metrics, _gb_oof_preds, _gb_calibrator = saved
     else:
         import logging as _logging
         _logging.getLogger(__name__).warning(
@@ -439,10 +440,13 @@ def compute_signals(
         # OOF preds (built during CV training) override model.predict for any
         # listing the model was trained on, so the deal-scoring loop compares
         # asking price against an out-of-fold "fair price" rather than an
-        # in-sample one.
+        # in-sample one. The calibrator only applies to non-OOF rows since
+        # OOF preds already have isotonic calibration baked in.
         price_df = predict_prices(
             gb_models, gb_cat_maps, active,
-            conformal_q=_conformal_q, oof_preds=_gb_oof_preds,
+            conformal_q=_conformal_q,
+            oof_preds=_gb_oof_preds,
+            median_calibrator=_gb_calibrator,
         )
         if "olx_id" in active.columns:
             olx_ids = active["olx_id"].reindex(price_df.index).values

@@ -4,6 +4,7 @@ import json
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.isotonic import IsotonicRegression
 
 from src.analytics.price_model import (
     train_price_model, predict_prices, save_model, load_model,
@@ -11,7 +12,7 @@ from src.analytics.price_model import (
 )
 
 
-def _sample_listings(n: int = 200) -> pd.DataFrame:
+def _sample_listings(n: int = 200, with_first_seen_at: bool = False) -> pd.DataFrame:
     """Generate synthetic listings with realistic price patterns."""
     rng = np.random.RandomState(42)
     years = rng.randint(2008, 2024, size=n)
@@ -45,7 +46,7 @@ def _sample_listings(n: int = 200) -> pd.DataFrame:
         if rhd[i] is True:
             price[i] *= 0.8
 
-    return pd.DataFrame({
+    out = pd.DataFrame({
         "olx_id": [f"t{i}" for i in range(n)],
         "brand": brands,
         "model": models,
@@ -69,13 +70,22 @@ def _sample_listings(n: int = 200) -> pd.DataFrame:
         "first_owner_selling": rng.choice([True, False, None], size=n, p=[0.20, 0.60, 0.20]),
         "urgency": rng.choice(["high", "medium", "low", None], size=n, p=[0.05, 0.15, 0.50, 0.30]),
     })
+    if with_first_seen_at:
+        base = pd.Timestamp("2026-01-01", tz="UTC")
+        out["first_seen_at"] = [
+            base + pd.Timedelta(days=int(d)) for d in rng.randint(0, 60, size=n)
+        ]
+    return out
 
 
 def test_train_returns_model_and_metrics():
-    df = _sample_listings()
+    # 400 rows so the time-aware CQR helper has enough data after the 80/20
+    # calibration split (it requires ≥100 train rows and ≥50 calibration rows
+    # post-filter, and bails early below 200 total).
+    df = _sample_listings(400, with_first_seen_at=True)
     result = train_price_model(df)
     assert result is not None
-    models, cat_maps, metrics, oof_preds = result
+    models, cat_maps, metrics, oof_preds, calibrator = result
     assert "brand" in cat_maps
     assert "model" in cat_maps
     assert "low" in models and "median" in models and "high" in models
@@ -92,6 +102,11 @@ def test_train_returns_model_and_metrics():
     # human-readable percent is also exposed.
     assert metrics.get("log_target") is True
     assert "conformal_q_pct" in metrics
+    # Time-aware CQR fields
+    assert "conformal_q_random" in metrics
+    assert metrics.get("conformal_q_source") == "time"  # first_seen_at present
+    assert metrics.get("conformal_q_time") is not None
+    assert metrics.get("median_calibrated") is True
     # OOF preds keyed by olx_id, one entry per training listing
     assert isinstance(oof_preds, dict)
     assert len(oof_preds) > 0
@@ -100,6 +115,19 @@ def test_train_returns_model_and_metrics():
     # OOF entries are already crossing-repaired and clamped
     assert lo <= med <= hi
     assert lo >= 0
+    # Median calibrator returned
+    assert isinstance(calibrator, IsotonicRegression)
+
+
+def test_train_falls_back_to_random_cqr_without_first_seen_at():
+    """No first_seen_at column → time-aware q is None, source falls back to random."""
+    df = _sample_listings(with_first_seen_at=False)
+    assert "first_seen_at" not in df.columns
+    _models, _maps, metrics, _oof, _calib = train_price_model(df)
+    assert metrics.get("conformal_q_source") == "random"
+    assert metrics.get("conformal_q_time") is None
+    # Active conformal_q equals the random one in this fallback path
+    assert metrics["conformal_q"] == metrics["conformal_q_random"]
 
 
 def test_train_returns_none_for_small_data():
@@ -110,7 +138,7 @@ def test_train_returns_none_for_small_data():
 
 def test_predictions_are_positive():
     df = _sample_listings()
-    models, cat_maps, _metrics, _oof = train_price_model(df)
+    models, cat_maps, _metrics, _oof, _calib = train_price_model(df)
     preds = predict_prices(models, cat_maps, df)
     assert (preds["predicted_price"] >= 0).all()
     assert (preds["fair_price_low"] >= 0).all()
@@ -121,13 +149,14 @@ def test_predictions_are_positive():
 def test_predictions_never_cross():
     """low ≤ median ≤ high must hold for every row, with or without OOF override."""
     df = _sample_listings(300)
-    models, cat_maps, metrics, oof_preds = train_price_model(df)
+    models, cat_maps, metrics, oof_preds, calibrator = train_price_model(df)
 
     # In-sample (uses OOF preds for every row)
     in_sample = predict_prices(
         models, cat_maps, df,
         conformal_q=metrics.get("conformal_q", 0.0),
         oof_preds=oof_preds,
+        median_calibrator=calibrator,
     )
     assert (in_sample["fair_price_low"] <= in_sample["predicted_price"]).all()
     assert (in_sample["predicted_price"] <= in_sample["fair_price_high"]).all()
@@ -140,6 +169,7 @@ def test_predictions_never_cross():
         models, cat_maps, fresh,
         conformal_q=metrics.get("conformal_q", 0.0),
         oof_preds=oof_preds,
+        median_calibrator=calibrator,
     )
     assert (oos["fair_price_low"] <= oos["predicted_price"]).all()
     assert (oos["predicted_price"] <= oos["fair_price_high"]).all()
@@ -148,7 +178,7 @@ def test_predictions_never_cross():
 def test_oof_preds_used_for_known_olx_ids():
     """Listings present in oof_preds get exactly the OOF values, not model.predict."""
     df = _sample_listings(150)
-    models, cat_maps, _metrics, oof_preds = train_price_model(df)
+    models, cat_maps, _metrics, oof_preds, calibrator = train_price_model(df)
 
     # Pick an olx_id that's in the OOF dict and predict on a single-row df.
     target_id = next(iter(oof_preds))
@@ -160,7 +190,9 @@ def test_oof_preds_used_for_known_olx_ids():
     expected_low, expected_median, expected_high = oof_preds[str(target_id)]
     preds = predict_prices(
         models, cat_maps, row,
-        conformal_q=0.0, oof_preds=oof_preds,
+        conformal_q=0.0,
+        oof_preds=oof_preds,
+        median_calibrator=calibrator,
     )
     # Round-trip through DataFrame.round(0) — compare with rounded expected too
     assert preds["predicted_price"].iloc[0] == round(expected_median)
@@ -168,9 +200,28 @@ def test_oof_preds_used_for_known_olx_ids():
     assert preds["fair_price_high"].iloc[0] == round(expected_high)
 
 
+def test_calibrator_changes_predictions_for_new_rows():
+    """Isotonic calibrator should actually shift the median for new rows.
+
+    Builds a row with no olx_id match (so it bypasses the OOF override) and
+    verifies the calibrated prediction differs from the raw model output for
+    at least some rows. Both can match if isotonic ends up identity, but
+    given heterogeneous training data that's vanishingly rare.
+    """
+    df = _sample_listings(400)
+    models, cat_maps, _metrics, _oof, calibrator = train_price_model(df)
+
+    fresh = df.head(50).copy()
+    fresh["olx_id"] = [f"new_{i}" for i in range(len(fresh))]
+    raw = predict_prices(models, cat_maps, fresh, median_calibrator=None)
+    cal = predict_prices(models, cat_maps, fresh, median_calibrator=calibrator)
+    # At least one row got nudged by the calibration map
+    assert not np.allclose(raw["predicted_price"], cal["predicted_price"])
+
+
 def test_newer_cars_predicted_higher():
     df = _sample_listings(500)
-    models, cat_maps, _metrics, _oof = train_price_model(df)
+    models, cat_maps, _metrics, _oof, _calib = train_price_model(df)
 
     old_car = pd.DataFrame([{
         "year": 2010, "mileage_km": 150000, "engine_cc": 1600,
@@ -192,7 +243,7 @@ def test_newer_cars_predicted_higher():
 
 def test_accident_cars_predicted_lower():
     df = _sample_listings(500)
-    models, cat_maps, _metrics, _oof = train_price_model(df)
+    models, cat_maps, _metrics, _oof, _calib = train_price_model(df)
 
     base = {
         "year": 2018, "mileage_km": 100000, "engine_cc": 1600,
@@ -217,7 +268,7 @@ def test_handles_missing_features():
 
     result = train_price_model(df)
     assert result is not None
-    models, cat_maps, _metrics, _oof = result
+    models, cat_maps, _metrics, _oof, _calib = result
 
     # Predict on row with missing features
     sparse = pd.DataFrame([{
@@ -237,7 +288,7 @@ def test_rare_categories_grouped():
 
     result = train_price_model(df)
     assert result is not None
-    models, cat_maps, _metrics, _oof = result
+    models, cat_maps, _metrics, _oof, _calib = result
     assert "__other__" in cat_maps["model"]
 
     unseen = pd.DataFrame([{
@@ -251,23 +302,33 @@ def test_rare_categories_grouped():
 
 
 def test_save_and_load_model(tmp_path, monkeypatch):
-    """Save/load round-trip produces identical predictions and oof_preds."""
+    """Save/load round-trip produces identical predictions, oof_preds, calibrator."""
     monkeypatch.setattr("src.analytics.price_model._MODEL_PATH", tmp_path / "model.joblib")
     monkeypatch.setattr("src.analytics.price_model._METRICS_PATH", tmp_path / "metrics.json")
 
     df = _sample_listings()
-    models, cat_maps, metrics, oof_preds = train_price_model(df)
-    save_model(models, cat_maps, metrics, oof_preds=oof_preds)
+    models, cat_maps, metrics, oof_preds, calibrator = train_price_model(df)
+    save_model(
+        models, cat_maps, metrics,
+        oof_preds=oof_preds, median_calibrator=calibrator,
+    )
 
     loaded = load_model(max_age_hours=1)
     assert loaded is not None
-    l_models, l_cat_maps, l_metrics, l_oof = loaded
+    l_models, l_cat_maps, l_metrics, l_oof, l_calib = loaded
 
-    preds_orig = predict_prices(models, cat_maps, df, oof_preds=oof_preds)
-    preds_loaded = predict_prices(l_models, l_cat_maps, df, oof_preds=l_oof)
+    preds_orig = predict_prices(
+        models, cat_maps, df,
+        oof_preds=oof_preds, median_calibrator=calibrator,
+    )
+    preds_loaded = predict_prices(
+        l_models, l_cat_maps, df,
+        oof_preds=l_oof, median_calibrator=l_calib,
+    )
     pd.testing.assert_frame_equal(preds_orig, preds_loaded)
     assert l_metrics["mae"] == metrics["mae"]
     assert l_oof == oof_preds
+    assert isinstance(l_calib, IsotonicRegression)
 
 
 def test_load_model_rejects_schema_mismatch(tmp_path, monkeypatch):
@@ -277,8 +338,11 @@ def test_load_model_rejects_schema_mismatch(tmp_path, monkeypatch):
     monkeypatch.setattr("src.analytics.price_model._METRICS_PATH", tmp_path / "metrics.json")
 
     df = _sample_listings()
-    models, cat_maps, metrics, oof_preds = train_price_model(df)
-    save_model(models, cat_maps, metrics, oof_preds=oof_preds)
+    models, cat_maps, metrics, oof_preds, calibrator = train_price_model(df)
+    save_model(
+        models, cat_maps, metrics,
+        oof_preds=oof_preds, median_calibrator=calibrator,
+    )
 
     # Hand-corrupt the schema_version field, simulating an artifact trained
     # against an older feature list.
@@ -296,8 +360,11 @@ def test_load_model_rejects_feature_mismatch(tmp_path, monkeypatch):
     monkeypatch.setattr("src.analytics.price_model._METRICS_PATH", tmp_path / "metrics.json")
 
     df = _sample_listings()
-    models, cat_maps, metrics, oof_preds = train_price_model(df)
-    save_model(models, cat_maps, metrics, oof_preds=oof_preds)
+    models, cat_maps, metrics, oof_preds, calibrator = train_price_model(df)
+    save_model(
+        models, cat_maps, metrics,
+        oof_preds=oof_preds, median_calibrator=calibrator,
+    )
 
     bundle = joblib.load(tmp_path / "model.joblib")
     bundle["feature_names"] = bundle["feature_names"] + ["fictional_feature"]
@@ -312,10 +379,10 @@ def test_metrics_history(tmp_path, monkeypatch):
     monkeypatch.setattr("src.analytics.price_model._METRICS_PATH", tmp_path / "metrics.json")
 
     df = _sample_listings()
-    models, cat_maps, metrics, oof_preds = train_price_model(df)
+    models, cat_maps, metrics, oof_preds, calibrator = train_price_model(df)
 
-    save_model(models, cat_maps, metrics, oof_preds=oof_preds)
-    save_model(models, cat_maps, metrics, oof_preds=oof_preds)
+    save_model(models, cat_maps, metrics, oof_preds=oof_preds, median_calibrator=calibrator)
+    save_model(models, cat_maps, metrics, oof_preds=oof_preds, median_calibrator=calibrator)
 
     history = load_metrics_history()
     assert len(history) == 2
