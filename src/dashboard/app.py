@@ -125,7 +125,11 @@ if filtered.empty:
 
 deals = filtered.copy()
 deals["est_profit_eur"] = (deals["predicted_price"] - deals["price_eur"]).round(0)
-deals["est_roi_pct"] = ((deals["predicted_price"] - deals["price_eur"]) / deals["price_eur"] * 100).round(1)
+# Guard against price_eur == 0 / NaN — both come up in the active set when a
+# listing was scraped before its price snapshot landed. Use NA so the ROI
+# column shows blank for those rows instead of crashing the page.
+_price = deals["price_eur"].where(deals["price_eur"] > 0, pd.NA)
+deals["est_roi_pct"] = ((deals["predicted_price"] - deals["price_eur"]) / _price * 100).round(1)
 
 st.caption(f"{len(deals)} deals sorted by flip score")
 
