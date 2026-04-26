@@ -197,6 +197,11 @@ def _get_config() -> dict:
         "max_workers": cfg.get("max_workers", 16),
         "max_tokens": cfg.get("max_tokens", 600),
         "max_chars": cfg.get("max_chars", 4000),
+        # Ollama fallback config — used when ANTHROPIC_AUTH_TOKEN is missing.
+        # Lets the remote run enrichment via the local fine-tuned car-parser
+        # model without needing API access. Settings can override.
+        "ollama_model": cfg.get("ollama_model", "car-parser-3b"),
+        "ollama_url": cfg.get("ollama_url", "http://localhost:11434"),
     }
 
 
@@ -223,19 +228,38 @@ def _get_client():
 
 
 def _llm_available() -> bool:
-    """True iff a token is configured and the SDK loads. Cached for the process."""
-    global _token_status
-    if _token_status is not None:
-        return _token_status
-    _token_status = _get_client() is not None
-    if not _token_status:
-        logger.warning("Claude enrichment disabled: ANTHROPIC_AUTH_TOKEN missing or SDK unavailable.")
-    return _token_status
+    """True iff EITHER Claude is reachable OR the local Ollama backend is up.
+
+    The two backends are tried in that order at call time; this helper
+    short-circuits the no-LLM-anywhere case so the enrich CLI can fail fast
+    with a useful message instead of hanging on N parallel timeouts.
+    """
+    if _get_client() is not None:
+        return True
+    return _ollama_available()
 
 
-# Backward-compat shim — older call sites in cli.py and tests reference this name.
+_ollama_status: bool | None = None
+
+
 def _ollama_available(_url: str = "") -> bool:
-    return _llm_available()
+    """True iff the local Ollama HTTP API answers and has the configured
+    model loaded. Result is cached per-process so we don't probe on every
+    enrichment call."""
+    global _ollama_status
+    if _ollama_status is not None:
+        return _ollama_status
+    cfg = _get_config()
+    url = _url or cfg.get("ollama_url", "http://localhost:11434")
+    try:
+        import httpx
+        resp = httpx.get(f"{url}/api/tags", timeout=2.0)
+        _ollama_status = resp.status_code == 200
+    except Exception:
+        _ollama_status = False
+    if not _ollama_status:
+        logger.debug("Ollama fallback unavailable at %s", url)
+    return _ollama_status
 
 
 # ---------------------------------------------------------------------------
@@ -243,11 +267,18 @@ def _ollama_available(_url: str = "") -> bool:
 # ---------------------------------------------------------------------------
 
 def _call_llm(text: str, cfg: dict) -> dict | None:
-    """Run one extraction round-trip. Returns the tool_use payload as dict, or None."""
+    """Run one extraction round-trip. Tries Claude first, falls back to a
+    local Ollama deployment if the API client isn't configured. Returns the
+    extracted payload as dict, or None."""
     client = _get_client()
-    if not client:
-        return None
+    if client is not None:
+        return _call_claude(client, text, cfg)
+    if _ollama_available():
+        return _call_ollama(text, cfg)
+    return None
 
+
+def _call_claude(client, text: str, cfg: dict) -> dict | None:
     try:
         import anthropic
     except ImportError:
@@ -291,6 +322,63 @@ def _call_llm(text: str, cfg: dict) -> dict | None:
             logger.warning("Claude connection error (attempt %d): %s", attempt + 1, e)
         except Exception as e:  # noqa: BLE001 — last-resort log so a worker never dies
             logger.debug("Claude enrichment failed: %s", e)
+            return None
+    return None
+
+
+def _call_ollama(text: str, cfg: dict) -> dict | None:
+    """Ollama JSON-mode fallback for the same extraction schema.
+
+    Uses /api/chat with format=json so the model returns parseable JSON
+    rather than free-form prose. Tool-use isn't part of the Ollama API, but
+    the system prompt already documents the schema so a JSON-mode response
+    matches it 1:1 for fine-tuned models like car-parser-3b.
+    """
+    import json as _json
+    try:
+        import httpx
+    except ImportError:
+        return None
+
+    url = cfg.get("ollama_url", "http://localhost:11434")
+    payload = {
+        "model": cfg.get("ollama_model", "car-parser-3b"),
+        "messages": [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": text[:cfg.get("max_chars", 4000)]},
+        ],
+        "format": "json",
+        "stream": False,
+        "options": {
+            "temperature": 0.0,
+            "num_predict": cfg.get("max_tokens", 600),
+        },
+    }
+    for attempt in range(2):
+        try:
+            resp = httpx.post(f"{url}/api/chat", json=payload, timeout=120.0)
+            if resp.status_code != 200:
+                logger.warning("Ollama HTTP %s (attempt %d)", resp.status_code, attempt + 1)
+                continue
+            content = resp.json().get("message", {}).get("content", "")
+            if not content:
+                return None
+            try:
+                parsed = _json.loads(content)
+            except _json.JSONDecodeError:
+                # Fine-tuned models occasionally wrap with ```json ... ```;
+                # try one strip pass before giving up.
+                stripped = content.strip().strip("`").lstrip("json").strip()
+                try:
+                    parsed = _json.loads(stripped)
+                except _json.JSONDecodeError:
+                    logger.debug("Ollama returned non-JSON: %s", content[:200])
+                    return None
+            return parsed if isinstance(parsed, dict) else None
+        except httpx.RequestError as e:
+            logger.warning("Ollama connection error (attempt %d): %s", attempt + 1, e)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Ollama enrichment failed: %s", e)
             return None
     return None
 
