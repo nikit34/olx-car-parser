@@ -45,7 +45,7 @@ _OTHER_CATEGORY = "__other__"
 # monotonic constraints + inverse-log sample weights
 # v5: LLM-extracted damage_severity (0-3) — replaces the rule-based score's
 # role as the primary damage feature. Keyword rules stay as a cheap backup.
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6  # v6: dynamic decile edges for per-bucket CQR
 # Fraction of the dataset (newest rows by first_seen_at) used as the
 # time-honest conformal calibration window. Random-KFold CQR mixes
 # time-adjacent rows across folds and over-estimates coverage on real future
@@ -485,7 +485,7 @@ def _time_aware_conformal_q(
     df: pd.DataFrame,
     best_iters_per_q: dict[str, int],
     calibration_frac: float = _TIME_CALIBRATION_FRAC,
-) -> tuple[float, dict[str, float]] | None:
+) -> tuple[float, dict[str, float], list[tuple[float, float, str]]] | None:
     """Compute conformal_q from a time-honest holdout, globally and per
     price bucket.
 
@@ -493,15 +493,18 @@ def _time_aware_conformal_q(
     of the data (sorted by ``first_seen_at``), predicts the newest fraction,
     and computes:
       - global q from all band-miss scores
-      - per-bucket q (predicted-price decile groupings) from the same scores
+      - bucket edges from the empirical decile distribution of the cal-set
+        predicted prices (10 bins by default; falls back to the static
+        5-bucket scheme on small data)
+      - per-bucket q from scores grouped by those edges
 
-    Per-bucket q closes the calibration gap that the marginal q hides — the
-    reliability curve showed coverage 77% in cheap deciles vs 84% in middle
-    deciles when using a single global q. With per-bucket q, every tier
-    delivers ~80% coverage independently.
+    Per-bucket q on dynamic deciles closes the within-bucket coverage gap
+    the static 5-bucket scheme leaves — reliability curve showed deciles
+    1-3 spanning 14pp of coverage even though they all sit inside the
+    static ``<€3k`` bucket.
 
-    Returns (global_q, per_bucket_q) or None if the data lacks
-    ``first_seen_at`` or is too small to split.
+    Returns (global_q, per_bucket_q, bucket_edges) or None if the data
+    lacks ``first_seen_at`` or is too small to split.
     """
     if "first_seen_at" not in df.columns:
         return None
@@ -543,10 +546,12 @@ def _time_aware_conformal_q(
     global_q = _conformal_q_from_scores(scores)
 
     # Per-bucket q. Bucketize by predicted median in price space (what the
-    # dashboard sees). Buckets defined inline to avoid a model_eval import
-    # cycle; they match the diagnostic buckets there.
+    # dashboard sees). Edges are dynamic deciles of the calibration-set
+    # predicted prices — closes the within-bucket coverage gap the static
+    # 5-bucket scheme leaves. Falls back to the static scheme on tiny sets.
     cal_pred_price = np.expm1(log_preds["median"])
-    bucket_labels = _bucketize_price(cal_pred_price)
+    bucket_edges = _compute_decile_edges(cal_pred_price)
+    bucket_labels = _bucketize_price(cal_pred_price, edges=bucket_edges)
     per_bucket: dict[str, float] = {}
     for label in set(bucket_labels):
         if label is None:
@@ -556,29 +561,92 @@ def _time_aware_conformal_q(
             continue  # too few rows for a reliable per-bucket q
         per_bucket[label] = _conformal_q_from_scores(scores[mask])
 
-    return global_q, per_bucket
+    return global_q, per_bucket, bucket_edges
 
 
-# Bucket boundaries kept in sync with src.analytics.model_eval._PRICE_BUCKETS.
-# Duplicated here to avoid a forward import (model_eval depends on this
-# module). If you change one, change the other.
-_BUCKET_EDGES = [
+# Default bucket boundaries used when no decile edges are stored in the
+# bundle (e.g. a tiny synthetic test set, or a v5 bundle predating decile
+# persistence). 5 fixed price ranges, kept in sync with
+# src.analytics.model_eval._PRICE_BUCKETS for the diagnostic side.
+_DEFAULT_BUCKET_EDGES: list[tuple[float, float, str]] = [
     (0, 3000, "<€3k"),
     (3000, 7000, "€3–7k"),
     (7000, 15000, "€7–15k"),
     (15000, 30000, "€15–30k"),
     (30000, float("inf"), "€30k+"),
 ]
+# How many dynamic deciles to compute when training data is large enough.
+# 10 is fine-grained enough to close the within-bucket coverage gap shown by
+# the reliability curve, while keeping ~480 samples per bin on the local DB
+# (enough for a stable 80th-percentile q estimate).
+_DECILE_BUCKETS = 10
+# Below this row count we fall back to the 5-bucket default — a fixed edge
+# set is more reliable than 10 deciles each holding 5–20 samples.
+_MIN_ROWS_FOR_DECILES = 200
 
 
-def _bucketize_price(values: np.ndarray) -> list[str | None]:
-    """Map an array of prices to the bucket labels used for class-conditional
-    CQR. Out-of-range values get None (caller falls back to global q)."""
+def _compute_decile_edges(
+    predicted_prices: np.ndarray,
+    n_bins: int = _DECILE_BUCKETS,
+) -> list[tuple[float, float, str]]:
+    """Build dynamic bucket edges from the empirical distribution of predicted
+    prices on the calibration set. Edges are emitted as (low, high, label)
+    triples matching the static-edge format so downstream lookup logic stays
+    identical.
+
+    Falls back to the static 5-bucket scheme when there are too few rows for
+    a stable decile estimate, or when many predictions tie at the same value
+    (which would collapse multiple deciles to identical edges).
+    """
+    valid = predicted_prices[~np.isnan(predicted_prices)]
+    if len(valid) < _MIN_ROWS_FOR_DECILES:
+        return list(_DEFAULT_BUCKET_EDGES)
+
+    # n_bins-1 internal edges → n_bins buckets. Skip the first/last quantiles
+    # because we want bucket extents to span (-inf, +inf) on the ends.
+    quantiles = np.linspace(1.0 / n_bins, 1.0 - 1.0 / n_bins, n_bins - 1)
+    edges = list(np.quantile(valid, quantiles))
+
+    # Collapse consecutive identical edges (happens when a price is hugely
+    # over-represented, e.g. dealers listing many cars at €9999). If we lose
+    # too many bins this way, fall back to the static scheme.
+    deduped: list[float] = []
+    for e in edges:
+        if not deduped or e > deduped[-1]:
+            deduped.append(float(e))
+    if len(deduped) < n_bins - 2:
+        return list(_DEFAULT_BUCKET_EDGES)
+
+    bounds = [-float("inf"), *deduped, float("inf")]
+    out: list[tuple[float, float, str]] = []
+    for i in range(len(bounds) - 1):
+        low, high = bounds[i], bounds[i + 1]
+        # Human-readable label using the actual € range. For the leftmost
+        # bin we render "<€X" and for the rightmost ">=€Y" so users
+        # reading metrics don't see "-inf" garbage.
+        if low == -float("inf"):
+            label = f"<€{high:,.0f}"
+        elif high == float("inf"):
+            label = f"≥€{low:,.0f}"
+        else:
+            label = f"€{low:,.0f}–{high:,.0f}"
+        out.append((low, high, label))
+    return out
+
+
+def _bucketize_price(
+    values: np.ndarray,
+    edges: list[tuple[float, float, str]] | None = None,
+) -> list[str | None]:
+    """Map an array of prices to bucket labels for class-conditional CQR.
+    Uses *edges* when supplied (e.g. dynamic deciles persisted in the model
+    bundle), or the static 5-bucket fallback otherwise."""
+    bucket_edges = edges if edges is not None else _DEFAULT_BUCKET_EDGES
     out: list[str | None] = []
     for v in values:
         label: str | None = None
         if not np.isnan(v):
-            for low, high, name in _BUCKET_EDGES:
+            for low, high, name in bucket_edges:
                 if low <= v < high:
                     label = name
                     break
@@ -590,13 +658,16 @@ def _per_row_conformal_q(
     predicted_price: np.ndarray,
     global_q: float,
     per_bucket_q: dict[str, float],
+    edges: list[tuple[float, float, str]] | None = None,
 ) -> np.ndarray:
     """Look up the per-row conformal_q based on the predicted-price bucket.
 
     Rows whose bucket has no calibrated q (small bucket, or predicted price
-    out of range) fall back to the global q.
+    out of range) fall back to the global q. Pass *edges* to use dynamic
+    decile boundaries persisted in the model bundle; without it the static
+    5-bucket scheme is used.
     """
-    labels = _bucketize_price(predicted_price)
+    labels = _bucketize_price(predicted_price, edges=edges)
     out = np.full(len(predicted_price), float(global_q))
     for i, label in enumerate(labels):
         if label is not None and label in per_bucket_q:
@@ -684,13 +755,16 @@ def _cv_metrics(
     conformal_q_log_random = _conformal_q_from_scores(scores)
 
     # Time-aware CQR — re-train on oldest 80% by first_seen_at, score the
-    # newest 20%. Honest answer to "how wide must the band be to cover 80% of
-    # *tomorrow's* listings". Returns (global_q, per_bucket_q). Falls back
-    # to random when the dataset has no first_seen_at column or is too small.
+    # newest 20%. Honest answer to "how wide must the band be to cover 80%
+    # of *tomorrow's* listings". Returns (global_q, per_bucket_q,
+    # bucket_edges) where bucket_edges are dynamic deciles of cal-set
+    # predicted prices. Falls back to random + static buckets when the
+    # dataset has no first_seen_at column or is too small to split.
     time_result = _time_aware_conformal_q(df, suggested)
     per_bucket_q: dict[str, float] = {}
+    bucket_edges: list[tuple[float, float, str]] = list(_DEFAULT_BUCKET_EDGES)
     if time_result is not None:
-        conformal_q_log_time, per_bucket_q = time_result
+        conformal_q_log_time, per_bucket_q, bucket_edges = time_result
         conformal_q_log = conformal_q_log_time
     else:
         conformal_q_log_time = None
@@ -726,6 +800,7 @@ def _cv_metrics(
     #   2. Bracket the band around the calibrated median by min/max
     per_row_q = _per_row_conformal_q(
         calibrated_median_price, conformal_q_log, per_bucket_q,
+        edges=bucket_edges,
     )
     raw_low_price = np.expm1(oof_log["low"] - per_row_q)
     raw_high_price = np.expm1(oof_log["high"] + per_row_q)
@@ -788,11 +863,16 @@ def _cv_metrics(
         "conformal_q_source": "time" if conformal_q_log_time is not None else "random",
         # Class-conditional q — one entry per price bucket where the cal slice
         # had ≥30 samples. predict_prices looks up each row's bucket and
-        # widens the band by that q (vs the marginal q above). Reliability
-        # curve gap of 5-7 pts between cheap and middle deciles closes here.
+        # widens the band by that q (vs the marginal q above). Buckets are
+        # dynamic deciles of the cal-set predicted prices, persisted as
+        # ``conformal_q_bucket_edges`` so predict_prices uses the same
+        # boundaries at inference.
         "conformal_q_per_bucket": {
             k: round(v, 4) for k, v in per_bucket_q.items()
         },
+        "conformal_q_bucket_edges": [
+            (low, high, label) for low, high, label in bucket_edges
+        ],
         # Approximate ± multiplicative band widening for human display:
         # a row's price band stretches by roughly (exp(q) − 1) × 100 % on
         # each side relative to the raw model band.
@@ -899,6 +979,7 @@ def predict_prices(
     median_calibrator: IsotonicRegression | None = None,
     text_pipeline: Pipeline | None = None,
     conformal_q_per_bucket: dict[str, float] | None = None,
+    conformal_q_bucket_edges: list[tuple[float, float, str]] | None = None,
 ) -> pd.DataFrame:
     """Predict fair price range for each listing.
 
@@ -908,7 +989,9 @@ def predict_prices(
     *conformal_q_per_bucket* is also supplied, each row's q is looked up by
     its predicted-price bucket — class-conditional CQR — and falls back to
     the marginal value for buckets the calibration window had too few rows
-    to estimate.
+    to estimate. *conformal_q_bucket_edges* are the bucket boundaries
+    (dynamic deciles persisted at train time). When None, the static
+    5-bucket scheme is used as a backward-compatible fallback.
 
     *text_pipeline* (TfidfVectorizer→TruncatedSVD) is applied to
     title+description to produce text_pc_* features. Required for v4
@@ -947,7 +1030,10 @@ def predict_prices(
     # value. predict-time lookup uses calibrated median so it matches what
     # the dashboard displays.
     if conformal_q_per_bucket:
-        per_row_q = _per_row_conformal_q(median, conformal_q, conformal_q_per_bucket)
+        per_row_q = _per_row_conformal_q(
+            median, conformal_q, conformal_q_per_bucket,
+            edges=conformal_q_bucket_edges,
+        )
         log_low = models["low"].predict(X_arr) - per_row_q
         log_high = models["high"].predict(X_arr) + per_row_q
     else:

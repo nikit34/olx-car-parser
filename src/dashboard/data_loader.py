@@ -444,6 +444,16 @@ def compute_signals(
         _per_bucket_q = (
             _gb_metrics.get("conformal_q_per_bucket", {}) if _gb_metrics else {}
         )
+        # Dynamic decile edges persisted at train time. Tuple format is
+        # (low, high, label). joblib round-trip preserves Python tuples
+        # but JSON serialisation in metrics_history may turn them into
+        # lists — normalise either way.
+        _bucket_edges_raw = (
+            _gb_metrics.get("conformal_q_bucket_edges") if _gb_metrics else None
+        )
+        _bucket_edges = (
+            [tuple(e) for e in _bucket_edges_raw] if _bucket_edges_raw else None
+        )
         # OOF preds (built during CV training) override model.predict for any
         # listing the model was trained on, so the deal-scoring loop compares
         # asking price against an out-of-fold "fair price" rather than an
@@ -459,6 +469,7 @@ def compute_signals(
             median_calibrator=_gb_calibrator,
             text_pipeline=_gb_text_pipeline,
             conformal_q_per_bucket=_per_bucket_q,
+            conformal_q_bucket_edges=_bucket_edges,
         )
         if "olx_id" in active.columns:
             olx_ids = active["olx_id"].reindex(price_df.index).values

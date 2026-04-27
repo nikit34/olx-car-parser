@@ -170,7 +170,7 @@ def test_damage_features_added_to_listings():
 
 def test_per_bucket_conformal_q_lookup():
     """_per_row_conformal_q uses bucket-specific q where available, falls
-    back to global for buckets without one."""
+    back to global for buckets without one. Default static-edge fallback."""
     from src.analytics.price_model import _per_row_conformal_q
     predicted = np.array([1500.0, 5000.0, 25000.0, 100000.0])
     per_bucket = {"<€3k": 0.10, "€3–7k": 0.08}  # cheap buckets only
@@ -179,6 +179,52 @@ def test_per_bucket_conformal_q_lookup():
     assert out[1] == 0.08  # €3–7k → bucket-specific
     assert out[2] == 0.05  # €15–30k → no bucket entry, falls back to global
     assert out[3] == 0.05  # €30k+ → no bucket entry, falls back to global
+
+
+def test_per_bucket_conformal_q_with_dynamic_edges():
+    """Dynamic edges from training preds override the static 5-bucket
+    fallback. Each row must look up the bucket in the persisted edge list."""
+    from src.analytics.price_model import _per_row_conformal_q
+    edges = [
+        (-float("inf"), 4000.0, "low"),
+        (4000.0, 12000.0, "mid"),
+        (12000.0, float("inf"), "high"),
+    ]
+    predicted = np.array([1500.0, 8000.0, 30000.0])
+    per_bucket = {"low": 0.20, "mid": 0.05}  # high has no entry
+    out = _per_row_conformal_q(
+        predicted, global_q=0.10, per_bucket_q=per_bucket, edges=edges,
+    )
+    assert out[0] == 0.20  # in "low" bucket
+    assert out[1] == 0.05  # in "mid" bucket
+    assert out[2] == 0.10  # "high" has no per-bucket q → global
+
+
+def test_compute_decile_edges_falls_back_on_small_data():
+    """Below the row threshold, decile computation returns the static 5-bucket
+    scheme — small synthetic test fixtures shouldn't get noisy 10-bin edges."""
+    from src.analytics.price_model import (
+        _compute_decile_edges, _DEFAULT_BUCKET_EDGES,
+    )
+    tiny = np.array([1000.0, 2000.0, 3000.0])
+    edges = _compute_decile_edges(tiny)
+    assert edges == list(_DEFAULT_BUCKET_EDGES)
+
+
+def test_compute_decile_edges_produces_n_bins_on_real_data():
+    """On enough rows, decile edges yield n_bins buckets covering (-inf, inf)."""
+    import numpy as np
+    from src.analytics.price_model import _compute_decile_edges
+    rng = np.random.RandomState(42)
+    prices = rng.lognormal(mean=9.0, sigma=0.6, size=2000)  # ~€8k median
+    edges = _compute_decile_edges(prices, n_bins=10)
+    assert len(edges) == 10
+    # Edges must tile the real line without gaps.
+    assert edges[0][0] == -float("inf")
+    assert edges[-1][1] == float("inf")
+    # And each bucket's high boundary equals the next bucket's low.
+    for i in range(len(edges) - 1):
+        assert edges[i][1] == edges[i + 1][0]
 
 
 def test_train_falls_back_to_random_cqr_without_first_seen_at():

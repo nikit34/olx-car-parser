@@ -142,6 +142,8 @@ def get_model_data(_active_df, _listings_df):
 
     conformal_q = metrics.get("conformal_q", 0.0)
     per_bucket_q = metrics.get("conformal_q_per_bucket", {})
+    _edges_raw = metrics.get("conformal_q_bucket_edges")
+    bucket_edges = [tuple(e) for e in _edges_raw] if _edges_raw else None
     price_df = predict_prices(
         models, cat_maps, active,
         conformal_q=conformal_q,
@@ -149,6 +151,7 @@ def get_model_data(_active_df, _listings_df):
         median_calibrator=calibrator,
         text_pipeline=text_pipeline,
         conformal_q_per_bucket=per_bucket_q,
+        conformal_q_bucket_edges=bucket_edges,
     )
     importance = compute_permutation_importance(
         models, cat_maps, active, text_pipeline=text_pipeline,
