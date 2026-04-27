@@ -543,7 +543,10 @@ class OlxScraper:
 
     def scrape_all(self, enrich_details: bool = True,
                    on_batch_ready=None,
-                   skip_enrichment_ids: set[str] | None = None) -> list[RawListing]:
+                   skip_enrichment_ids: set[str] | None = None,
+                   known_ids: set[str] | None = None,
+                   early_stop_known_ratio: float = 0.95,
+                   early_stop_consecutive: int = 3) -> list[RawListing]:
         """Scrape all listings.
 
         Args:
@@ -553,8 +556,21 @@ class OlxScraper:
                 Allows the caller to persist listings to DB incrementally.
             skip_enrichment_ids: olx_ids whose detail page we already have
                 covered via a canonical twin (cross-platform duplicates).
+            known_ids: olx_ids already in our DB. When *most* of a search
+                page is already-known listings (per ``early_stop_known_ratio``)
+                across ``early_stop_consecutive`` pages in a row, we stop —
+                OLX shows newest first, so the deep pages are 100% revisits.
+                On the production run this turns ~200 page fetches into ~30,
+                which is the difference between a 6-hour scrape and a
+                30-minute one.
+            early_stop_known_ratio: ≥ this fraction of a page being already
+                in ``known_ids`` counts as "this page is mostly known".
+            early_stop_consecutive: number of consecutive mostly-known pages
+                before we trigger early-stop (single-page false positives
+                happen when OLX surfaces older listings on top).
         """
         all_listings = []
+        consecutive_known = 0
         for page in range(1, self.config.max_pages + 1):
             page_listings = self.scrape_search_page(page)
             if page_listings is None:
@@ -578,6 +594,23 @@ class OlxScraper:
             if self._stop_event.is_set():
                 logger.warning("Stopping early — IP blocked. Got %d listings.", len(all_listings))
                 break
+
+            # Early-stop: when the deep pages are mostly already-known, OLX
+            # has nothing new to give us this cycle.
+            if known_ids:
+                known_count = sum(1 for l in page_listings if l.olx_id in known_ids)
+                ratio = known_count / max(len(page_listings), 1)
+                if ratio >= early_stop_known_ratio:
+                    consecutive_known += 1
+                    if consecutive_known >= early_stop_consecutive:
+                        logger.info(
+                            "Early-stop after page %d: %d pages in a row had "
+                            "≥%.0f%% already-known listings.",
+                            page, consecutive_known, early_stop_known_ratio * 100,
+                        )
+                        break
+                else:
+                    consecutive_known = 0
 
             self._delay()
 
@@ -882,8 +915,15 @@ class StandVirtualScraper:
 
     def scrape_all(self, enrich_details: bool = True,
                    on_batch_ready=None,
-                   skip_enrichment_ids: set[str] | None = None) -> list[RawListing]:
+                   skip_enrichment_ids: set[str] | None = None,
+                   known_ids: set[str] | None = None,
+                   early_stop_known_ratio: float = 0.95,
+                   early_stop_consecutive: int = 3) -> list[RawListing]:
+        """See OlxScraper.scrape_all for the early-stop semantics — this
+        method shares the same shape so the CLI can pass `known_ids` to both
+        scrapers uniformly."""
         all_listings = []
+        consecutive_known = 0
         for page in range(1, self.config.max_pages + 1):
             page_listings = self.scrape_search_page(page)
             if page_listings is None:
@@ -906,6 +946,21 @@ class StandVirtualScraper:
             if self._stop_event.is_set():
                 logger.warning("SV stopping early — blocked. Got %d listings.", len(all_listings))
                 break
+
+            if known_ids:
+                known_count = sum(1 for l in page_listings if l.olx_id in known_ids)
+                ratio = known_count / max(len(page_listings), 1)
+                if ratio >= early_stop_known_ratio:
+                    consecutive_known += 1
+                    if consecutive_known >= early_stop_consecutive:
+                        logger.info(
+                            "SV early-stop after page %d: %d consecutive pages "
+                            "with ≥%.0f%% already-known listings.",
+                            page, consecutive_known, early_stop_known_ratio * 100,
+                        )
+                        break
+                else:
+                    consecutive_known = 0
 
             self._delay()
 

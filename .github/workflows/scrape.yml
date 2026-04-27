@@ -17,10 +17,23 @@ permissions:
 env:
   WITH_LLM: ${{ github.event_name == 'schedule' && 'true' || inputs.with_llm }}
 
+# Single-runner self-hosted setup — only one scrape can hold the SQLite DB
+# at a time anyway, so we cancel any in-flight run when a new cron fires
+# instead of letting them queue up. Without this, runs were piling up: a
+# 6-hour scrape + 8-hour cron interval was barely making it; throw in any
+# slowdown and queue depth grew unbounded (we saw queued runs waiting 20+
+# hours).
+concurrency:
+  group: scrape-job
+  cancel-in-progress: true
+
 jobs:
   scrape:
     runs-on: [self-hosted, olx-scraper]
-    timeout-minutes: 720
+    # Lowered from 720 → 240 (4h). With early-stop in scrape_all, the
+    # steady-state run is ~20-30 minutes. 4h is generous for a slow LLM
+    # day; anything beyond that is stuck.
+    timeout-minutes: 240
 
     steps:
       - uses: actions/checkout@v4
@@ -67,13 +80,16 @@ jobs:
         run: .venv/bin/python -m src.cli scrape
 
       - name: Enrich with LLM
-        # always() so this runs even if Scrape failed/timed out/was canceled,
-        # picking up any listings that didn't make it through the inline LLM
-        # pipeline before shutdown (llm_extras IS NULL).
-        if: ${{ always() && env.WITH_LLM == 'true' }}
+        # Runs on success or scrape-side failure (timeout, exception) —
+        # NOT on cancellation. Cancellation means the concurrency rule
+        # killed us so a fresher run could start; spinning up enrich
+        # against a half-written DB just creates lock contention with
+        # the next run. With success() || failure() it still recovers
+        # from real scrape crashes that left llm_extras=NULL behind.
+        if: ${{ env.WITH_LLM == 'true' && (success() || failure()) }}
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: .venv/bin/python -m src.cli enrich --workers 3
+        run: .venv/bin/python -m src.cli enrich --workers 3 --active-only
 
       - name: Send Telegram alerts
         if: ${{ !cancelled() }}

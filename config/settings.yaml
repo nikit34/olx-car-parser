@@ -5,7 +5,11 @@ scraper:
   interval_hours: 6
   request_delay_min: 0.7
   request_delay_max: 1.5
-  max_pages: 999
+  # 200 covers OLX's full active inventory with margin (typical depth ≈
+  # 150 pages). The actual loop terminates earlier via the known-ids
+  # early-stop in scrape_all when the deep pages become mostly revisits —
+  # ~30 pages on a steady-state DB.
+  max_pages: 200
   private_only: true
   concurrency: 12
 

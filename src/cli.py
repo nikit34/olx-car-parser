@@ -248,9 +248,19 @@ def scrape(
     from src.storage.repository import get_enriched_hashes
     enriched_hashes = get_enriched_hashes(session)
     duplicate_ids = get_duplicate_ids(session)
+    # Already-known olx_ids drive scrape early-stop: when a search page is
+    # ≥95% revisits across 3 pages in a row, OLX has nothing new this cycle
+    # and we exit the pagination loop. Cuts a 999-page worst-case to ~30
+    # pages on a steady-state DB.
+    from src.models.listing import Listing as _Listing
+    known_ids: set[str] = {
+        olx_id for (olx_id,) in session.query(_Listing.olx_id).all()
+    }
     session.close()
-    log.info("Already enriched: %d listings, %d duplicates in DB",
-             len(enriched_hashes), len(duplicate_ids))
+    log.info(
+        "Already enriched: %d listings, %d duplicates, %d known olx_ids in DB",
+        len(enriched_hashes), len(duplicate_ids), len(known_ids),
+    )
 
     # --- Streaming pipeline: Scraper -> [LLM] -> DB ---
 
@@ -323,6 +333,7 @@ def scrape(
         raw_listings = scraper.scrape_all(
             on_batch_ready=_on_batch,
             skip_enrichment_ids=duplicate_ids,
+            known_ids=known_ids,
         )
 
     # --- Scrape StandVirtual (same pipeline) ---
@@ -339,6 +350,7 @@ def scrape(
         sv_listings = sv_scraper.scrape_all(
             on_batch_ready=_on_batch,
             skip_enrichment_ids=duplicate_ids,
+            known_ids=known_ids,
         )
     raw_listings.extend(sv_listings)
 
