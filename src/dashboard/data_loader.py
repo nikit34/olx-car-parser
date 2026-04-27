@@ -315,7 +315,12 @@ def compute_signals(
     - Urgency: seller desperation signals
     - Warranty: easier resale with warranty
     - Velocity: fast-selling segments
-    - Confidence: comparable listing count
+    - Sample confidence: comparable listing count
+    - Band confidence: how tight the model's own [low, high] band is — a
+      30% discount on a row whose band spans ±30% is noise; a 15% discount
+      on a row whose band spans ±5% is an actionable flip. Decile-CQR
+      surfaces this honestly per price tier (cheap segment legitimately
+      gets ±27% bands).
     """
     if listings_df.empty:
         return pd.DataFrame(), pd.DataFrame()
@@ -609,7 +614,7 @@ def compute_signals(
         else:
             velocity_mult = 1.0
 
-        # 8. Confidence — more comparable listings = more reliable estimate
+        # 8. Sample confidence — more comparable listings = more reliable estimate
         if sample >= 10:
             confidence_mult = 1.2
         elif sample >= 7:
@@ -619,10 +624,36 @@ def compute_signals(
         else:
             confidence_mult = 0.7
 
+        # 9. Band-width gate — when the model's [low, high] band is wide
+        # relative to its own median, the model is saying "I don't know".
+        # Decile-CQR surfaces this honestly: <€3k bin gets ±27% bands
+        # because salvage / commercial / orphan-brand cars cluster there.
+        # We don't drop those rows (the user might still want to see them)
+        # but we deprioritise them so tight-band high-confidence deals
+        # dominate the top of the list. None when the bundle didn't ship
+        # bands — gracefully no-op.
+        if (
+            fair_low is not None and fair_high is not None
+            and predicted and predicted > 0
+        ):
+            band_pct = (fair_high - fair_low) / predicted
+            if band_pct <= 0.15:
+                band_confidence_mult = 1.15
+            elif band_pct <= 0.25:
+                band_confidence_mult = 1.0
+            elif band_pct <= 0.40:
+                band_confidence_mult = 0.7
+            else:
+                band_confidence_mult = 0.4
+        else:
+            band_pct = None
+            band_confidence_mult = 1.0  # no band → don't penalise
+
         base_pct = undervaluation_pct if undervaluation_pct > 0 else discount_pct
         flip_score = round(
             base_pct * liquidity_mult * trend_mult * motivated_mult
-            * urgency_mult * warranty_mult * velocity_mult * confidence_mult, 1
+            * urgency_mult * warranty_mult * velocity_mult * confidence_mult
+            * band_confidence_mult, 1
         )
 
         # --- Build signal dict ---
@@ -657,6 +688,8 @@ def compute_signals(
             "warranty_mult": round(warranty_mult, 2),
             "velocity_mult": round(velocity_mult, 2),
             "confidence_mult": round(confidence_mult, 2),
+            "band_pct": round(band_pct * 100, 1) if band_pct is not None else None,
+            "band_confidence_mult": round(band_confidence_mult, 2),
             "avg_days_to_sell": days_to_sell,
             "price_trend_pct": trend_pct,
             "flip_score": flip_score,
