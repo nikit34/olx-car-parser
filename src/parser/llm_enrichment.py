@@ -49,6 +49,75 @@ _RHD_PATTERN = re.compile(
 
 
 # ---------------------------------------------------------------------------
+# Pre-LLM regex hints — for fields qwen3:4b returns null on too eagerly even
+# when the trigger word is in plain sight. The hints are appended to the user
+# message as a single line; the LLM is free to override if it disagrees, but
+# in practice it echoes them, which lifts mechanical_condition and
+# first_owner_selling out of the "I'm uncertain → null" trap.
+# ---------------------------------------------------------------------------
+
+_HINT_EXCELLENT = re.compile(
+    r"\b(impec[áa]vel|como\s+novo|estado\s+irrepreens[íi]vel|"
+    r"em\s+perfeito\s+estado|estado\s+perfeito|"
+    r"em\s+excelente\s+estado|excelente\s+estado|estado\s+excelente|"
+    r"em\s+[óo]timo\s+estado|[óo]timo\s+estado|"
+    r"rigorosamente\s+novo)\b",
+    re.IGNORECASE,
+)
+
+_HINT_GOOD = re.compile(
+    r"\b(em\s+bom\s+estado|bom\s+estado|bem\s+cuidad[oa]|"
+    r"bem\s+estimad[oa]|muito\s+estimad[oa]|tudo\s+a\s+funcionar)\b",
+    re.IGNORECASE,
+)
+
+_HINT_FIRST_OWNER = re.compile(
+    r"\b(1\s*dono|1[ºo]\s+dono|primeiro\s+dono|[úu]nico\s+dono|"
+    r"comprado\s+novo\s+por\s+mim|vendo\s+o\s+meu)\b",
+    re.IGNORECASE,
+)
+
+_HINT_DEALER = re.compile(
+    # Dealer/stand markers — when present, first_owner_selling=false even if
+    # the ad mentions "1 dono" (the dealer is reselling, not the original owner).
+    r"\bPVP\b|\bIVA\s+(?:discriminado|dedut[íi]vel)\b|"
+    r"intermedi[áa]rio\s+de\s+cr[ée]dito|\bstand\b|standcardeira|"
+    r"financiamento\s+at[ée]\s+\d+\s+meses",
+    re.IGNORECASE,
+)
+
+
+def _extract_hints(text: str) -> dict:
+    """Run the cheap regex pre-extract pass.  Only emits hints that are
+    *unambiguous* in the surface text — anything fuzzy gets left to the LLM."""
+    hints: dict = {}
+
+    if _HINT_EXCELLENT.search(text):
+        hints["mechanical_condition"] = "excellent"
+    elif _HINT_GOOD.search(text):
+        hints["mechanical_condition"] = "good"
+
+    is_dealer = bool(_HINT_DEALER.search(text))
+    if _HINT_FIRST_OWNER.search(text) and not is_dealer:
+        hints["first_owner_selling"] = True
+    elif is_dealer:
+        hints["first_owner_selling"] = False
+
+    return hints
+
+
+def _format_hints(hints: dict) -> str:
+    """Render the hint line appended to the user message. Empty when nothing
+    matched so we don't bloat the prompt for descriptions that hit no triggers."""
+    if not hints:
+        return ""
+    pairs = ", ".join(
+        f'{k}={json.dumps(v, ensure_ascii=False)}' for k, v in hints.items()
+    )
+    return f"\n\n[Hints (regex-extracted, override only if desc contradicts): {pairs}]"
+
+
+# ---------------------------------------------------------------------------
 # Rule-based damage_severity derivation (no LLM call)
 # ---------------------------------------------------------------------------
 # When a listing already has a populated `llm_extras` dict from a previous
@@ -173,62 +242,41 @@ _FIELD_NAMES = [
 
 
 _SYSTEM_PROMPT = """\
-Extract structured features from a Portuguese (pt-PT) car listing. Return ONE JSON object with all keys.
-
-NULL vs FALSE convention — read this twice:
-- For boolean fields whose name starts with `desc_mentions_*`, plus `right_hand_drive` and `taxi_fleet_rental`: the question is "does the description CONTAIN the trigger keyword?" If no keyword present → **false**, NOT null. null is wrong for these.
-- For `warranty` and `first_owner_selling`: same — **false** when the positive trigger is absent (treat as "no signal observed"), not null.
-- For string/integer/categorical fields (sub_model, trim_level, mileage_in_description_km, desc_mentions_num_owners, mechanical_condition, urgency): null when unstated. **BUT** if any trigger keyword listed in the field's rule appears verbatim in the text — even in a one-line listing — emit the corresponding value, never null. Trigger keyword present > "use null when unstated" ALWAYS.
+Extract structured features from a Portuguese (pt-PT) car listing as ONE JSON object. Trigger keyword present in text → emit the corresponding value, NEVER null (this overrides "use null when unstated").
 
 Field rules:
-sub_model: engine/body variant only (displacement+fuel+power code), e.g. "320d","1.6 TDI","2.0 TFSI","A 200","CLA 45". NOT a trim/package like "AMG Line","M Sport". NOT a bare model name like "DS3","Qashqai".
-trim_level: equipment line, e.g. "AMG Line","M Sport","S-Line","GTI","FR","Tekna". null if basic.
-mileage_in_description_km: integer km. "mil"=thousand ONLY as a separate word ("150 mil km"→150000; "89.500km"→89500; "4300 km"→4300; "127 mil km"→127000). A *service-interval* km ("revisão aos 60.000 km", "próxima revisão daqui a 20.000 kms") is NOT the car's mileage — keep null.
-desc_mentions_num_owners: integer count from "N dono(s)", "1º/2º/3º dono", "primeiro/segundo dono", "único dono"=1. Capitalisation does not matter ("1 DONO"=1). null if no owner-count phrase.
-desc_mentions_accident: true if "sinistro","acidente","batido","embate","toque (dianteiro/traseiro/lateral)" appears positively. "sem sinistros" → false explicitly. Otherwise false.
-desc_mentions_repair: true ONLY if damage/breakdown is mentioned: "avariado","imobilizado","partido","danificado","precisa reparação","necessita conserto". Routine maintenance ("óleo mudado","correia mudada","pastilhas novas","discos novos","pneus novos","revisão feita","bateria nova") is NOT repair — false. If desc says "não tem nada a fazer"/"não necessita de nada" → false.
-desc_mentions_customs_cleared: true if "desalfandegado","legalizado","por legalizar". "Importado" / "Nacional" alone → false.
-right_hand_drive: true ONLY for explicit RHD phrases: "mão inglesa","volante à direita","matrícula inglesa","condução à direita","RHD","right-hand drive". "importado","matrícula portuguesa","matrícula suíça" → false.
-urgency: "high" if "urgente","emigração","preço para despachar","preciso vender rápido"; "medium" if "aceito propostas","negociável","oportunidade","aceito retomas"; "low" otherwise (calm/detailed listing).
-warranty: true if "garantia" positively (e.g. "garantia da marca","X meses de garantia","com garantia"). "sem garantia" → false. No mention → false.
-tuning_or_mods: aftermarket mods only: ["reprogramação","stage 1","remap","coilovers","bodykit","escape desportivo aftermarket","downpipe","wrap"]. Factory sport packages ("Pacote Sport Chrono","AMG Line","S-Line","R-Line") are NOT mods. Empty list if none.
-taxi_fleet_rental: true if "ex-táxi","TVDE","Uber","Bolt","rent-a-car","frota","carro de empresa". Dealer ad alone (stand, comércio) → false. Private "carro de particular" → false.
-first_owner_selling:
-  • **true** — the text contains ANY first-owner phrase: "1 dono","1º dono","primeiro dono","único dono","1 dono desde novo","comprado novo por mim","vendo o meu carro". Capitalisation does not matter ("1 DONO" → true).
-  • **false** — explicit dealer/stand markers ("PVP","financiamento","intermediário de crédito","IVA discriminado","stand","standcardeira","com 24 meses de garantia total" template) OR no first-owner phrase observed. NEVER null for this field.
-mechanical_condition:
-  • **excellent** — ANY occurrence (anywhere in the text, with any qualifiers like "estado","geral","de conservação") of these word stems: "impecável","como novo","irrepreensível","perfeito","excelente","ótimo","rigorosamente novo". Examples that ARE excellent: "em excelente estado", "excelente estado geral", "em perfeito estado", "estado irrepreensível", "ótimo estado", "como novo, sempre assistido". Do NOT downgrade to "good" just because qualifiers like "geral" or "de conservação" appear.
-  • **good** — only when the strongest condition word is in this set: "bom estado","bem cuidado","bem estimado","muito estimado","tudo a funcionar". Never use "good" if the text contains "excelente"/"perfeito"/"impecável"/"ótimo"/"como novo".
-  • **fair** — "uso normal","precisa de pequenos retoques","ligeiros sinais de uso".
-  • **poor** — PARTS-CAR override OR "avariado","precisa reparações graves","mecânica em mau estado".
-  • **null** — condition genuinely not stated (dealer feature dump with no condition phrase, empty desc, etc.). Routine maintenance done ≠ excellent — only the explicit phrases above.
+sub_model: engine/body variant only (displacement+fuel+power), e.g. "320d","1.6 TDI","2.0 TFSI","A 200","CLA 45". NOT a trim/package, NOT a bare model name.
+trim_level: equipment line e.g. "AMG Line","M Sport","S-Line","GTI","FR","Tekna". null if basic.
+mileage_in_description_km: integer km. "mil"=thousand only as separate word ("150 mil km"→150000; "89.500km"→89500). Service-interval km ("revisão aos 60.000 km") is NOT current mileage.
+desc_mentions_num_owners: integer from "N dono(s)","1º/2º dono","primeiro/segundo dono","único dono"=1. Case-insensitive ("1 DONO"=1).
+desc_mentions_accident: true if "sinistro","acidente","batido","embate","toque" appears positively. "sem sinistros" or absent → false.
+desc_mentions_repair: true ONLY for damage/breakdown words ("avariado","imobilizado","partido","danificado","precisa reparação"). Routine maintenance ("óleo mudado","correia mudada","pastilhas novas","pneus novos","revisão feita","bateria nova") is NOT repair → false. Absent → false.
+desc_mentions_customs_cleared: true if "desalfandegado","legalizado","por legalizar". "Importado"/"Nacional" alone → false. Absent → false.
+right_hand_drive: true ONLY for explicit RHD phrases ("mão inglesa","volante à direita","matrícula inglesa","RHD"). "importado" / "matrícula portuguesa/suíça" → false. Absent → false.
+urgency: "high" if "urgente","emigração","preço para despachar"; "medium" if "aceito propostas","negociável","oportunidade","aceito retomas"; "low" otherwise.
+warranty: true if "garantia" positively ("garantia da marca","X meses de garantia"); "sem garantia" or absent → false.
+tuning_or_mods: aftermarket only: ["reprogramação","stage 1","remap","coilovers","bodykit","escape desportivo aftermarket","downpipe","wrap"]. Factory packages ("Sport Chrono","AMG Line","S-Line","R-Line") NOT mods. [] if none.
+taxi_fleet_rental: true if "ex-táxi","TVDE","Uber","Bolt","rent-a-car","frota","carro de empresa". Dealer ad / "particular" / absent → false.
+first_owner_selling: true if "1 dono","1º dono","primeiro dono","único dono","comprado novo por mim","vendo o meu" (case-insensitive). Dealer markers ("PVP","financiamento","stand","IVA discriminado") OR no first-owner phrase → false. NEVER null.
+mechanical_condition: "excellent" if text has any of "impecável","como novo","irrepreensível","perfeito","excelente","ótimo","rigorosamente novo" (with any qualifiers like "estado"/"geral"/"de conservação"); "good" only if ONLY weaker words present ("bom estado","bem cuidado","bem estimado","muito estimado","tudo a funcionar"); "fair" if "uso normal","ligeiros sinais"; "poor" if PARTS-CAR override OR "avariado". null if no condition phrase. Routine maintenance done ≠ excellent.
+damage_severity: 0=pristine ("como novo","impecável", warranty + 1 dono); 1=normal wear (DEFAULT for typical used-car); 2=accident OR significant repair ("sinistro","toque","necessita reparações","pintura fraca"); 3=salvage/parts/non-runner ("para peças","sucata","abate","salvado","motor fundido","imobilizado","não anda","sem matrícula"). When in doubt pick higher.
 
-damage_severity: 0 (pristine: "como novo","estado impecável", warranty mentioned, "primeiro dono comprado novo"); 1 (normal age-appropriate wear, no damage signals — DEFAULT for typical used-car language); 2 (needs significant repair OR accident history: "sinistro","embate","toque dianteiro/traseiro/lateral","necessita reparações","pintura fraca","amortecedores partidos","precisa óleo/correia"); 3 (salvage / parts-only / non-runner: "para peças","vender as peças","para sucata","para desmanchar","abate","salvado","motor fundido","imobilizado","não anda","sem matrícula","para exportação/utilização das peças"). When in doubt between two levels, pick the higher one.
-
-PARTS-CAR OVERRIDE — if description contains ANY of "para peças","vender as peças","venda de peças","para desmanchar","só peças","abate","salvado","avariado","imobilizado", you MUST set ALL FOUR: mechanical_condition="poor", desc_mentions_accident=true, desc_mentions_repair=true, damage_severity=3.
+PARTS-CAR OVERRIDE — text contains ANY of "para peças","vender as peças","venda de peças","para desmanchar","só peças","abate","salvado","avariado","imobilizado" → you MUST set: mechanical_condition="poor", desc_mentions_accident=true, desc_mentions_repair=true, damage_severity=3.
 
 Examples:
 
-Listing: "BMW Série 3 320d Pack M com 180.000 km, 1 dono, garantia até 2026, sem sinistros."
-→ sub_model="320d", trim_level="Pack M", desc_mentions_num_owners=1, desc_mentions_accident=false, desc_mentions_repair=false, mileage_in_description_km=180000, mechanical_condition="excellent", urgency="low", warranty=true, tuning_or_mods=[], first_owner_selling=true, damage_severity=0 (rest null).
+"BMW Série 3 320d Pack M com 180.000 km, 1 dono, garantia até 2026, sem sinistros."
+→ sub_model="320d", trim_level="Pack M", desc_mentions_num_owners=1, mileage_in_description_km=180000, mechanical_condition=null, warranty=true, first_owner_selling=true, damage_severity=0 (booleans false, lists []).
 
-Listing: "Vendo Audi A3 1.6 TDI S-Line, 150 mil km. Avariado motor, vendo para peças. Aceito propostas."
-→ sub_model="1.6 TDI", trim_level="S-Line", desc_mentions_accident=true, desc_mentions_repair=true, mileage_in_description_km=150000, mechanical_condition="poor", urgency="medium", tuning_or_mods=[], damage_severity=3 (rest null).
+"Vendo Audi A3 1.6 TDI S-Line, 150 mil km. Avariado motor, vendo para peças. Aceito propostas."
+→ sub_model="1.6 TDI", trim_level="S-Line", desc_mentions_accident=true, desc_mentions_repair=true, mileage_in_description_km=150000, mechanical_condition="poor", urgency="medium", damage_severity=3.
 
-Listing: "Seat Ibiza FR 1.4 TSI com 89.500km. Reprogramação stage 1, escape desportivo. Revisão feita, pneus novos."
-→ sub_model="1.4 TSI", trim_level="FR", desc_mentions_accident=false, desc_mentions_repair=false, mileage_in_description_km=89500, mechanical_condition="good", urgency="low", tuning_or_mods=["reprogramação","stage 1","escape desportivo"], damage_severity=1 (rest null).
+"Seat Ibiza FR 1.4 TSI com 89.500km. Reprogramação stage 1, escape desportivo. Revisão feita, pneus novos."
+→ sub_model="1.4 TSI", trim_level="FR", mileage_in_description_km=89500, tuning_or_mods=["reprogramação","stage 1","escape desportivo"], damage_severity=1.
 
-Listing: "Honda Civic 2009 com toque dianteiro esquerdo, mecânica boa, vendo para peças."
-→ desc_mentions_accident=true, desc_mentions_repair=true, mechanical_condition="poor", damage_severity=3 (rest null).
+"Vendo Honda Civic Impecável." → mechanical_condition="excellent", damage_severity=0 (the trigger word IS in the text — do not return null for short ads).
 
-Listing: "Vendo Honda Civic Impecável. Confortável e muito económico."
-→ mechanical_condition="excellent" (the word "Impecável" is the trigger; do NOT return null just because the listing is short), damage_severity=0 (rest null/false).
-
-Listing: "Mercedes E 53 AMG Full extras 16.000kms. Rigorosamente novo Garantia da Marca."
-→ sub_model="E 53", mileage_in_description_km=16000, mechanical_condition="excellent" (trigger: "Rigorosamente novo"), warranty=true, damage_severity=0 (rest null/false).
-
-Listing: "Em ótimo estado, sempre assistido na VW. IUC até 2026."
-→ mechanical_condition="excellent" (trigger: "ótimo estado"), damage_severity=0 (rest null/false).
+"Mercedes E 53 AMG. Rigorosamente novo. Garantia da Marca." → sub_model="E 53", mechanical_condition="excellent", warranty=true, damage_severity=0.
 """
 
 
@@ -441,10 +489,17 @@ def _call_ollama(text: str, cfg: dict) -> dict | None:
     url = _pick_ollama_url() or _resolve_ollama_url() \
         or cfg.get("ollama_url", "http://localhost:11434")
     client = _get_client(url)
+    truncated = text[:cfg.get("max_chars", 4000)]
+    # Regex pre-extract hints close the gap on the two fields where qwen3:4b
+    # punts to null even when the trigger word ("Impecável","1 dono") is
+    # right there. Appended to the user message rather than the system prompt
+    # because they're per-listing and would otherwise break system-prompt
+    # KV-cache reuse.
+    prompt_with_hints = truncated + _format_hints(_extract_hints(truncated))
     payload = {
         "model": cfg.get("ollama_model", "qwen3:4b-instruct"),
         "system": _SYSTEM_PROMPT,
-        "prompt": text[:cfg.get("max_chars", 4000)],
+        "prompt": prompt_with_hints,
         "format": "json",
         "stream": False,
         "keep_alive": "30m",
@@ -703,6 +758,19 @@ def correct_listing_data(listing) -> dict:
 
         if corrections.get("right_hand_drive") and not _RHD_PATTERN.search(description):
             corrections["right_hand_drive"] = False
+
+        # Regex hints override LLM on mechanical_condition + first_owner_selling.
+        # Empirically (golden 30): when a hint regex fires it agrees with the
+        # oracle 100 % of the time, while qwen3:4b still drifts in ~25 % of
+        # those same cases. Trusting the regex over the LLM here is a pure-
+        # upside override (no observed regressions). Title + desc both feed
+        # the regex so a "1 DONO" in the title isn't lost.
+        title = getattr(listing, "title", "") or ""
+        hints = _extract_hints(f"{title}\n{description}")
+        if "mechanical_condition" in hints:
+            corrections["mechanical_condition"] = hints["mechanical_condition"]
+        if "first_owner_selling" in hints:
+            corrections["first_owner_selling"] = hints["first_owner_selling"]
 
     return corrections
 

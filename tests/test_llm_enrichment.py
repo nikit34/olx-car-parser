@@ -13,6 +13,8 @@ import src.parser.llm_enrichment as llm_mod
 from src.parser.llm_enrichment import (
     _call_llm,
     _call_ollama,
+    _extract_hints,
+    _format_hints,
     _get_config,
     correct_listing_data,
     apply_corrections,
@@ -197,6 +199,46 @@ class TestCallLlm:
         unique = set(results)
         assert unique == {"http://192.168.1.77:11434", "http://192.168.1.69:11434"}, \
             f"expected both backends to receive traffic, got {unique}"
+
+    def test_hints_excellent_phrases(self):
+        # Each of these surface forms must lift mechanical_condition out of
+        # the null-default trap qwen3:4b falls into on short ads.
+        for phrase in [
+            "Vendo Honda Civic Impecável.",
+            "Em excelente estado geral, sempre bem cuidado.",
+            "Em perfeito estado. Bancos ventilados.",
+            "Estado irrepreensível, muito bem estimado.",
+            "Em ótimo estado, sempre assistido na VW.",
+            "Rigorosamente novo. Garantia da Marca.",
+            "Veículo como novo, livro de revisões.",
+        ]:
+            hints = _extract_hints(phrase)
+            assert hints.get("mechanical_condition") == "excellent", \
+                f"phrase {phrase!r} did not trigger excellent hint: {hints}"
+
+    def test_hints_first_owner_phrases(self):
+        for phrase in [
+            "1 DONO --- KMS REAIS",
+            "VIATURA NACIONAL 1 DONO SEMPRE ASSISTIDO",
+            "Único dono desde novo.",
+            "Comprado novo por mim em 2018.",
+        ]:
+            hints = _extract_hints(phrase)
+            assert hints.get("first_owner_selling") is True, \
+                f"phrase {phrase!r} did not trigger first_owner hint: {hints}"
+
+    def test_hints_dealer_overrides_first_owner(self):
+        # Dealer ad with "1 dono" mentioned in features list must NOT flag
+        # first_owner_selling — the dealer is the seller, not the original owner.
+        phrase = "Volkswagen Golf 2022. PVP 21.990€. 24 Meses Garantia Total. 1 dono no histórico."
+        hints = _extract_hints(phrase)
+        assert hints.get("first_owner_selling") is False
+
+    def test_hints_format_skips_empty(self):
+        assert _format_hints({}) == ""
+        out = _format_hints({"mechanical_condition": "excellent"})
+        assert "mechanical_condition" in out
+        assert '"excellent"' in out
 
     def test_pick_sticky_per_thread(self):
         # Same thread must always pick the same backend (so prompt-cache

@@ -357,13 +357,50 @@ def main() -> None:
         sys.exit("--models is required (or pass --sample-only to just sample)")
 
     oracle = load_oracle(listings)
+    # Mirror the production data flow — the `enrich` CLI runs raw LLM JSON
+    # through `correct_listing_data` before persisting, so the eval should
+    # score the *post-correction* values to reflect what the database
+    # actually holds. This is what surfaces wins from regex overrides.
+    from src.parser.llm_enrichment import correct_listing_data
+    listings_by_id = {l["olx_id"]: l for l in listings}
+
+    class _Stub:
+        """Minimal Listing-like wrapper so correct_listing_data can read
+        title/description/mileage_km from a raw sample dict."""
+        def __init__(self, listing_dict, llm_extras):
+            self.olx_id = listing_dict["olx_id"]
+            self.url = ""
+            self.title = listing_dict.get("title") or ""
+            self.description = listing_dict.get("description") or ""
+            self.mileage_km = None
+            self._llm_extras = llm_extras
+
+    def _apply_corrections(cand: dict[str, dict]) -> dict[str, dict]:
+        out = {}
+        for olx_id, raw in cand.items():
+            stub = _Stub(listings_by_id[olx_id], raw)
+            corr = correct_listing_data(stub)
+            # correct_listing_data uses real_mileage_km; eval scores
+            # mileage_in_description_km so map it back.
+            merged = dict(raw)
+            for k, v in corr.items():
+                if k == "real_mileage_km":
+                    merged.setdefault("mileage_in_description_km", v)
+                elif k.startswith("_"):
+                    continue
+                else:
+                    merged[k] = v
+            out[olx_id] = merged
+        return out
 
     scores = {}
     for model in args.models:
         cand = label_with_candidate(model, listings, workers=args.workers)
-        # Score only the listings that have an oracle label.
+        # Apply post-LLM corrections (regex overrides + post-rules) so the
+        # score reflects the production-final value, not the raw LLM output.
+        cand_corrected = _apply_corrections(cand)
         labeled_ids = set(oracle)
-        cand_subset = {k: v for k, v in cand.items() if k in labeled_ids}
+        cand_subset = {k: v for k, v in cand_corrected.items() if k in labeled_ids}
         scores[model] = score_candidate(oracle, cand_subset)
 
     print_table(scores)
