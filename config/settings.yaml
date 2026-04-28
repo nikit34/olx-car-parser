@@ -42,17 +42,19 @@ llm:
   # Legacy single-URL field kept for back-compat; ignored if ollama_urls is set.
   ollama_url: "http://192.168.1.77:11434"
   # Server slots: .77 NUM_PARALLEL=2 (3 OOMs Metal at 4096 ctx on M1 Air 8GB
-  # → Ollama silently caps ctx to 1536, head of system prompt gets truncated),
-  # .69 NUM_PARALLEL=2 (16 GB headroom). Sticky-per-thread balancer pins
-  # workers, weights below skew the pool toward the faster host.
-  # .69 (MX230 GPU) is ~2.8× slower per slot than .77; we run 4 workers on
-  # .77 and 2 on .69, matching their throughput within ~30%.
+  # → Ollama silently caps ctx to 1536, head of system prompt gets truncated).
+  # .69 must stay at NUM_PARALLEL=1 — its MX230 has only 4 GB VRAM, and
+  # NUM_PARALLEL=2 forces KvSize=8192 which trips "failure during GPU
+  # discovery" (CUDA discovery timeout) under load. Verified empirically
+  # 2026-04-28: 10 consecutive runner-start failures, model never loaded.
+  # Two workers oversubscribing one slot on .69 still fine — Ollama queues
+  # the second request internally.
   max_workers: 6
   # Weight per backend host (substring match against ollama_urls). Repeats
   # the URL in the assignment pool, so weight=2 gets twice as many sticky
   # workers as weight=1. With max_workers=6 and 2:1, we land at 4 workers
-  # on .77 and 2 on .69. Lower weights for slow boxes; omit a host to use
-  # weight 1 (uniform).
+  # on .77 (2 slots × 2 oversub) and 2 on .69 (1 slot × 2 oversub). The
+  # 2 oversub per slot smooths over individual call latency variance.
   ollama_weights:
     "192.168.1.77": 2
     "192.168.1.69": 1
