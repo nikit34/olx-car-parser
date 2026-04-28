@@ -320,6 +320,14 @@ def scrape(
                 skipped_llm += 1
                 db_queue.put((listing, None))
                 continue
+            # Listings that won't match a known generation flow into the
+            # unmatched table, where llm_extras is unused — sending them to
+            # Ollama is pure waste. ~18% of inline traffic on a steady-state
+            # DB. Cheap to recompute (lookup table), worth the early skip.
+            if not get_generation(listing.brand, listing.model or "", listing.year):
+                skipped_llm += 1
+                db_queue.put((listing, None))
+                continue
             h = _desc_hash(listing.description)
             if enriched_hashes.get(listing.olx_id) == h:
                 skipped_llm += 1

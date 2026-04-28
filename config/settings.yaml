@@ -38,10 +38,19 @@ llm:
   ollama_url: "http://192.168.1.77:11434"
   # Server slots: .77 NUM_PARALLEL=2 (3 OOMs Metal at 4096 ctx on M1 Air 8GB
   # → Ollama silently caps ctx to 1536, head of system prompt gets truncated),
-  # .69 NUM_PARALLEL=default. Sticky-per-thread balancer pins workers 1:1.
-  # .69 (MX230 GPU) is ~2.8× slower than .77, executor work-steals so faster
-  # host naturally serves more tasks — no manual skew needed.
-  max_workers: 4
+  # .69 NUM_PARALLEL=2 (16 GB headroom). Sticky-per-thread balancer pins
+  # workers, weights below skew the pool toward the faster host.
+  # .69 (MX230 GPU) is ~2.8× slower per slot than .77; we run 4 workers on
+  # .77 and 2 on .69, matching their throughput within ~30%.
+  max_workers: 6
+  # Weight per backend host (substring match against ollama_urls). Repeats
+  # the URL in the assignment pool, so weight=2 gets twice as many sticky
+  # workers as weight=1. With max_workers=6 and 2:1, we land at 4 workers
+  # on .77 and 2 on .69. Lower weights for slow boxes; omit a host to use
+  # weight 1 (uniform).
+  ollama_weights:
+    "192.168.1.77": 2
+    "192.168.1.69": 1
   max_tokens: 300    # 15-field JSON ≈ 230 tokens; 300 leaves slack and
                      # caps "model looping" failures within ~3 s wall time
   max_chars: 4000

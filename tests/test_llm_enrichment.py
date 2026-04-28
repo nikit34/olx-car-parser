@@ -70,6 +70,7 @@ class TestCallLlm:
         llm_mod._ollama_status = None
         llm_mod._resolved_ollama_url = None
         llm_mod._resolved_ollama_urls = None
+        llm_mod._resolved_assignment_pool = None
         llm_mod._thread_backend.clear()
         llm_mod._next_backend_idx[0] = 0
         # _get_client memoises onto thread-local; reset between tests so the

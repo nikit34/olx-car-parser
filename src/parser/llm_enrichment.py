@@ -297,6 +297,7 @@ def _get_config() -> dict:
         "ollama_model": cfg.get("ollama_model", "qwen3:4b-instruct"),
         "ollama_url": cfg.get("ollama_url", "http://localhost:11434"),
         "ollama_urls": [u for u in urls if u],
+        "ollama_weights": cfg.get("ollama_weights") or {},
         "max_workers": cfg.get("max_workers", 3),
         "max_tokens": cfg.get("max_tokens", 300),
         "max_chars": cfg.get("max_chars", 4000),
@@ -307,6 +308,7 @@ def _get_config() -> dict:
 _ollama_status: bool | None = None
 _resolved_ollama_url: str | None = None
 _resolved_ollama_urls: list[str] | None = None
+_resolved_assignment_pool: list[str] | None = None
 _resolve_lock = threading.Lock()
 
 # Maps thread native ID → assigned backend URL. First time a thread asks for
@@ -384,14 +386,50 @@ def _resolve_ollama_url() -> str | None:
     return healthy[0] if healthy else None
 
 
+def _build_assignment_pool() -> list[str]:
+    """Healthy backends expanded by weight, used for round-robin pinning.
+
+    Weights are read from ``ollama_weights`` in settings.yaml — keys are
+    substring-matched against backend URLs (so ``"192.168.1.77": 2`` covers
+    ``http://192.168.1.77:11434`` regardless of port). A backend with no
+    matching weight defaults to 1. Cached per process; cleared together
+    with the URL cache in :func:`_invalidate_ollama_url`.
+    """
+    global _resolved_assignment_pool
+    if _resolved_assignment_pool is not None:
+        return _resolved_assignment_pool
+    with _resolve_lock:
+        if _resolved_assignment_pool is not None:
+            return _resolved_assignment_pool
+        healthy = _resolve_all_ollama_urls()
+        weights = _get_config().get("ollama_weights") or {}
+        pool: list[str] = []
+        for url in healthy:
+            w = 1
+            for key, value in weights.items():
+                if key and key in url:
+                    try:
+                        w = max(int(value), 1)
+                    except (TypeError, ValueError):
+                        w = 1
+                    break
+            pool.extend([url] * w)
+        _resolved_assignment_pool = pool
+    return _resolved_assignment_pool
+
+
 def _pick_ollama_url() -> str | None:
     """Sticky-per-thread round-robin across healthy Ollama backends.
 
     Each ThreadPoolExecutor worker is pinned to one backend on its first
     call and keeps hitting it for the rest of its life. That way every
     backend retains its own KV-cache for our 1210-token system prompt
-    instead of paying re-prefill every time the load shifts. Distribution
-    is exact-uniform — first worker → backend[0], second → backend[1], etc.
+    instead of paying re-prefill every time the load shifts.
+
+    Backends listed in ``ollama_weights`` get repeated in the assignment
+    pool, so a 2:1 weight gives twice as many workers to the faster host.
+    Without weights, distribution is exact-uniform — first worker →
+    backend[0], second → backend[1], etc.
     """
     healthy = _resolve_all_ollama_urls()
     if not healthy:
@@ -400,20 +438,22 @@ def _pick_ollama_url() -> str | None:
     pinned = _thread_backend.get(tid)
     if pinned is not None and pinned in healthy:
         return pinned
+    pool = _build_assignment_pool() or healthy
     with _thread_backend_lock:
         # Re-check under lock to avoid double-assignment under contention.
         pinned = _thread_backend.get(tid)
         if pinned is None or pinned not in healthy:
-            pinned = healthy[_next_backend_idx[0] % len(healthy)]
+            pinned = pool[_next_backend_idx[0] % len(pool)]
             _next_backend_idx[0] += 1
             _thread_backend[tid] = pinned
     return pinned
 
 
 def _invalidate_ollama_url() -> None:
-    global _resolved_ollama_url, _resolved_ollama_urls, _ollama_status
+    global _resolved_ollama_url, _resolved_ollama_urls, _resolved_assignment_pool, _ollama_status
     _resolved_ollama_url = None
     _resolved_ollama_urls = None
+    _resolved_assignment_pool = None
     _ollama_status = None
     # Drop sticky pinning so the next probe re-distributes work among
     # whichever backends come back healthy.

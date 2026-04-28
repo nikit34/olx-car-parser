@@ -50,11 +50,27 @@ jobs:
 
       - name: Ensure Ollama is running
         if: env.WITH_LLM == 'true'
+        timeout-minutes: 5
         run: |
+          # Restart Ollama if it's down OR if the running instance was
+          # started with a different NUM_PARALLEL than we want — otherwise
+          # the env var below is silently ignored (the previous run's
+          # process is reused with whatever value it had at boot).
+          DESIRED_PARALLEL=2
+          NEEDS_RESTART=0
           if ! curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
+            NEEDS_RESTART=1
+          else
+            CURRENT=$(grep -o 'OLLAMA_NUM_PARALLEL:[0-9]*' /tmp/ollama.err.log 2>/dev/null | tail -1 | cut -d: -f2)
+            if [ "$CURRENT" != "$DESIRED_PARALLEL" ]; then
+              echo "Ollama running with NUM_PARALLEL=$CURRENT, want $DESIRED_PARALLEL — restarting"
+              NEEDS_RESTART=1
+            fi
+          fi
+          if [ "$NEEDS_RESTART" = "1" ]; then
             pkill -9 -f "Ollama" 2>/dev/null || true
             sleep 2
-            OLLAMA_NUM_PARALLEL=3 OLLAMA_FLASH_ATTENTION=1 \
+            OLLAMA_NUM_PARALLEL=$DESIRED_PARALLEL OLLAMA_FLASH_ATTENTION=1 \
               nohup /Applications/Ollama.app/Contents/Resources/ollama serve \
               > /tmp/ollama.out.log 2>/tmp/ollama.err.log &
             for i in $(seq 1 30); do
@@ -74,6 +90,13 @@ jobs:
       - name: Scrape
         env:
           PYTHONPATH: ${{ github.workspace }}
+        # Per-step timeout caps how long scrape can monopolise the budget.
+        # If LLM is the bottleneck and the inline pipeline backs up, the
+        # step gets SIGTERM'd at 90 min — cli._sigterm_handler drains the
+        # queue and saves what's enriched. Anything still pending is
+        # finished by the next step (`Enrich with LLM`), which now has its
+        # own 90-min slice instead of competing for the same 4h pool.
+        timeout-minutes: 90
         # scrape auto-detects Ollama: if reachable → inline LLM enrichment,
         # otherwise saves raw. When with_llm=false the previous step doesn't
         # start Ollama, so this naturally falls back to raw-only.
@@ -89,16 +112,19 @@ jobs:
         if: ${{ env.WITH_LLM == 'true' && (success() || failure()) }}
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: .venv/bin/python -m src.cli enrich --workers 3 --active-only
+        timeout-minutes: 90
+        run: .venv/bin/python -m src.cli enrich --workers 6 --active-only
 
       - name: Send Telegram alerts
         if: ${{ !cancelled() }}
         env:
           PYTHONPATH: ${{ github.workspace }}
+        timeout-minutes: 5
         run: .venv/bin/python -m src.cli alerts
 
       - name: Checkpoint WAL
         if: always()
+        timeout-minutes: 5
         run: |
           sqlite3 data/olx_cars.db "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null || \
             .venv/bin/python -c "import sqlite3; sqlite3.connect('data/olx_cars.db').execute('PRAGMA wal_checkpoint(TRUNCATE)')"
@@ -109,6 +135,7 @@ jobs:
         # a stale model and just skips predictions if training fails here.
         if: ${{ !cancelled() }}
         continue-on-error: true
+        timeout-minutes: 30
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: .venv/bin/python -m src.cli train-model
@@ -122,6 +149,7 @@ jobs:
         # opt-out via continue-on-error so it never blocks the data release.
         if: ${{ !cancelled() }}
         continue-on-error: true
+        timeout-minutes: 30
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: .venv/bin/python -m src.cli eval-model --time-backtest --splits 5
