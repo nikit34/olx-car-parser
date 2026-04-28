@@ -281,8 +281,11 @@ def scrape(
     if llm_enabled:
         # Bounded queue provides back-pressure: the scraper blocks on put()
         # once Ollama can't keep up, rather than buffering tens of thousands
-        # of descriptions in RAM. 500 ≈ one hour of LLM headroom on M1 8 GB.
-        llm_in = multiprocessing.Queue(maxsize=500)
+        # of descriptions in RAM. 2000 ≈ four hours of LLM headroom — large
+        # enough that scrape almost always finishes before the queue fills,
+        # so the scrape and LLM phases stop competing for the same wall
+        # budget. Each queued item is (id, title, desc) ≈ 3 KB → ~6 MB peak.
+        llm_in = multiprocessing.Queue(maxsize=2000)
         llm_out = multiprocessing.Queue()
         llm_shutdown = multiprocessing.Event()
         num_workers = llm_workers if llm_workers is not None else llm_cfg.get("max_workers", 6)

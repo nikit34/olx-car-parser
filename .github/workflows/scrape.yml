@@ -129,30 +129,34 @@ jobs:
           sqlite3 data/olx_cars.db "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null || \
             .venv/bin/python -c "import sqlite3; sqlite3.connect('data/olx_cars.db').execute('PRAGMA wal_checkpoint(TRUNCATE)')"
 
-      - name: Train price model
-        # Runs even if earlier steps partially failed — training only needs
-        # whatever got persisted to the DB.  Non-fatal: dashboard tolerates
-        # a stale model and just skips predictions if training fails here.
+      - name: Train price model + time-aware backtest
+        # Both commands read the same DB but write disjoint files
+        # (price_model.joblib + metrics vs price_backtest.json), so we
+        # run them in parallel and wait for both. Saves the ~5-10 min
+        # backtest tail. Each is wrapped in `set +e` so one failing
+        # doesn't kill the other; we collect exit codes and surface
+        # them as warnings (non-fatal: dashboard tolerates stale data).
         if: ${{ !cancelled() }}
         continue-on-error: true
-        timeout-minutes: 30
+        timeout-minutes: 35
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: .venv/bin/python -m src.cli train-model
-
-      - name: Time-aware model backtest
-        # Rolling-window train/test using first_seen_at — produces
-        # data/price_backtest.json that the dashboard renders as the "Time
-        # backtest" panel. Honest measure of how the model performs on
-        # truly future listings (CV mixes time-adjacent rows and overstates
-        # quality). Slow (~5 min on 5k rows × 4 folds × 3 quantile fits) but
-        # opt-out via continue-on-error so it never blocks the data release.
-        if: ${{ !cancelled() }}
-        continue-on-error: true
-        timeout-minutes: 30
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-        run: .venv/bin/python -m src.cli eval-model --time-backtest --splits 5
+        run: |
+          set +e
+          .venv/bin/python -m src.cli train-model > /tmp/train.log 2>&1 &
+          TRAIN_PID=$!
+          .venv/bin/python -m src.cli eval-model --time-backtest --splits 5 > /tmp/backtest.log 2>&1 &
+          BT_PID=$!
+          wait $TRAIN_PID
+          TRAIN_RC=$?
+          wait $BT_PID
+          BT_RC=$?
+          echo "===== train-model (rc=$TRAIN_RC) ====="
+          cat /tmp/train.log
+          echo "===== eval-model time-backtest (rc=$BT_RC) ====="
+          cat /tmp/backtest.log
+          if [ $TRAIN_RC -ne 0 ]; then echo "::warning::train-model failed (rc=$TRAIN_RC)"; fi
+          if [ $BT_RC -ne 0 ]; then echo "::warning::eval-model failed (rc=$BT_RC)"; fi
 
       - name: Upload DB + model to GitHub Releases
         if: always()

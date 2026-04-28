@@ -105,7 +105,7 @@ class TestCallLlm:
         opts = body["options"]
         assert opts["temperature"] == 0.0
         assert opts["top_k"] == 1
-        assert opts["num_ctx"] == 4096
+        assert opts["num_ctx"] == 3072
         assert opts["stop"] == ["}\n{", "} {"]
 
     def test_http_error_returns_none(self):
