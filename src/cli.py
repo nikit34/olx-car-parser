@@ -623,9 +623,15 @@ def enrich(
                 listing.llm_extras = "{}"
                 continue
             if result:
-                listing.llm_extras = json.dumps(result, ensure_ascii=False)
                 listing._llm_extras = result
                 corrections = correct_listing_data(listing)
+                # damage_severity is derived deterministically inside
+                # correct_listing_data — fold it back into extras so the next
+                # enrich run's needs_damage_backfill filter recognizes the
+                # row as already done.
+                if "damage_severity" in corrections:
+                    result["damage_severity"] = corrections["damage_severity"]
+                listing.llm_extras = json.dumps(result, ensure_ascii=False)
                 for field, value in corrections.items():
                     if hasattr(listing, field):
                         setattr(listing, field, value)

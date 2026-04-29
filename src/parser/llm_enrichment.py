@@ -1,9 +1,11 @@
 """Enrich listing data using a local Ollama model.
 
-Extracts 15 structured fields from title + description text:
-sub_model, trim_level, mileage, accident/repair flags, condition,
-urgency, warranty, tuning, taxi/fleet, first owner, customs, RHD,
-damage_severity.
+Extracts 3 structured fields from title + description text:
+sub_model, trim_level, mileage_in_description_km. damage_severity is
+derived deterministically by ``_derive_damage_severity`` (regex), not
+asked from the LLM — the 2026-04 ablation showed no model-quality
+benefit from any of the LLM-extracted condition / urgency / warranty /
+flag fields, so they were removed to free Ollama throughput.
 """
 
 import json
@@ -18,103 +20,6 @@ import yaml
 logger = logging.getLogger(__name__)
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "settings.yaml"
-
-
-# ---------------------------------------------------------------------------
-# Post-rules — run *after* the LLM emits its JSON, to make the result robust
-# to known model mistakes without needing a retrain.  Each pattern is derived
-# from failures observed on the golden eval set at /tmp/olx_golden/.
-# ---------------------------------------------------------------------------
-
-_PARTS_CAR_PATTERN = re.compile(
-    r"para\s+pe[çc]as|vender\s+as\s+pe[çc]as|venda\s+de\s+pe[çc]as|"
-    r"para\s+desmanchar|s[óo]\s+pe[çc]as|abate|salvado|"
-    r"\bavariado\b|\bimobilizado\b",
-    re.IGNORECASE,
-)
-
-_DAMAGE_PATTERN = re.compile(
-    r"\bavariado\b|\bimobilizado\b|\bpartido\b|\bdanificado\b|\bestragado\b|"
-    r"fuga\s+de|para\s+pe[çc]as|salvado|sinistro|acidente|batido|"
-    r"precisa\s+de\s+(?:reparo|arranjo|conserto)|necessita\s+de\s+repara|"
-    r"\brepara(?:r|do|da|dos|das)\b|\bsubstitu(?:ir|ido|ida|idos|idas)\b",
-    re.IGNORECASE,
-)
-
-_RHD_PATTERN = re.compile(
-    r"m[ãa]o\s+inglesa|volante\s+[àa]\s+direita|matr[ií]cula\s+inglesa|"
-    r"condu[çc][ãa]o\s+[àa]\s+direita|\bRHD\b|right[\s-]hand\s+drive",
-    re.IGNORECASE,
-)
-
-
-# ---------------------------------------------------------------------------
-# Pre-LLM regex hints — for fields qwen3:4b returns null on too eagerly even
-# when the trigger word is in plain sight. The hints are appended to the user
-# message as a single line; the LLM is free to override if it disagrees, but
-# in practice it echoes them, which lifts mechanical_condition and
-# first_owner_selling out of the "I'm uncertain → null" trap.
-# ---------------------------------------------------------------------------
-
-_HINT_EXCELLENT = re.compile(
-    r"\b(impec[áa]vel|como\s+novo|estado\s+irrepreens[íi]vel|"
-    r"em\s+perfeito\s+estado|estado\s+perfeito|"
-    r"em\s+excelente\s+estado|excelente\s+estado|estado\s+excelente|"
-    r"em\s+[óo]timo\s+estado|[óo]timo\s+estado|"
-    r"rigorosamente\s+novo)\b",
-    re.IGNORECASE,
-)
-
-_HINT_GOOD = re.compile(
-    r"\b(em\s+bom\s+estado|bom\s+estado|bem\s+cuidad[oa]|"
-    r"bem\s+estimad[oa]|muito\s+estimad[oa]|tudo\s+a\s+funcionar)\b",
-    re.IGNORECASE,
-)
-
-_HINT_FIRST_OWNER = re.compile(
-    r"\b(1\s*dono|1[ºo]\s+dono|primeiro\s+dono|[úu]nico\s+dono|"
-    r"comprado\s+novo\s+por\s+mim|vendo\s+o\s+meu)\b",
-    re.IGNORECASE,
-)
-
-_HINT_DEALER = re.compile(
-    # Dealer/stand markers — when present, first_owner_selling=false even if
-    # the ad mentions "1 dono" (the dealer is reselling, not the original owner).
-    r"\bPVP\b|\bIVA\s+(?:discriminado|dedut[íi]vel)\b|"
-    r"intermedi[áa]rio\s+de\s+cr[ée]dito|\bstand\b|standcardeira|"
-    r"financiamento\s+at[ée]\s+\d+\s+meses",
-    re.IGNORECASE,
-)
-
-
-def _extract_hints(text: str) -> dict:
-    """Run the cheap regex pre-extract pass.  Only emits hints that are
-    *unambiguous* in the surface text — anything fuzzy gets left to the LLM."""
-    hints: dict = {}
-
-    if _HINT_EXCELLENT.search(text):
-        hints["mechanical_condition"] = "excellent"
-    elif _HINT_GOOD.search(text):
-        hints["mechanical_condition"] = "good"
-
-    is_dealer = bool(_HINT_DEALER.search(text))
-    if _HINT_FIRST_OWNER.search(text) and not is_dealer:
-        hints["first_owner_selling"] = True
-    elif is_dealer:
-        hints["first_owner_selling"] = False
-
-    return hints
-
-
-def _format_hints(hints: dict) -> str:
-    """Render the hint line appended to the user message. Empty when nothing
-    matched so we don't bloat the prompt for descriptions that hit no triggers."""
-    if not hints:
-        return ""
-    pairs = ", ".join(
-        f'{k}={json.dumps(v, ensure_ascii=False)}' for k, v in hints.items()
-    )
-    return f"\n\n[Hints (regex-extracted, override only if desc contradicts): {pairs}]"
 
 
 # ---------------------------------------------------------------------------
@@ -226,57 +131,30 @@ def _derive_damage_severity(extras: dict, title: str, description: str) -> int:
 # ---------------------------------------------------------------------------
 
 _FIELD_NAMES = [
-    "sub_model", "trim_level", "desc_mentions_num_owners",
-    "desc_mentions_accident", "desc_mentions_repair",
-    "mileage_in_description_km", "desc_mentions_customs_cleared",
-    "right_hand_drive", "mechanical_condition", "urgency",
-    "warranty", "tuning_or_mods", "taxi_fleet_rental",
-    "first_owner_selling",
-    # 0-3 severity inferred from the description as a whole — replaces the
-    # rule-based damage_score for the price model. Captures "para peças",
-    # "sem matrícula", "sinistro com toque", and similar phrasings the
-    # boolean accident/repair flags miss because they fire as a whole only
-    # on the most explicit mentions.
-    "damage_severity",
+    "sub_model", "trim_level", "mileage_in_description_km",
 ]
 
 
 _SYSTEM_PROMPT = """\
-Extract structured features from a Portuguese (pt-PT) car listing as ONE JSON object. Trigger keyword present in text → emit the corresponding value, NEVER null (this overrides "use null when unstated").
+Extract structured features from a Portuguese (pt-PT) car listing as ONE JSON object. Use null when a field cannot be determined from the text.
 
 Field rules:
 sub_model: engine/body variant only (displacement+fuel+power), e.g. "320d","1.6 TDI","2.0 TFSI","A 200","CLA 45". NOT a trim/package, NOT a bare model name.
 trim_level: equipment line e.g. "AMG Line","M Sport","S-Line","GTI","FR","Tekna". null if basic.
 mileage_in_description_km: integer km. "mil"=thousand only as separate word ("150 mil km"→150000; "89.500km"→89500). Service-interval km ("revisão aos 60.000 km") is NOT current mileage.
-desc_mentions_num_owners: integer from "N dono(s)","1º/2º dono","primeiro/segundo dono","único dono"=1. Case-insensitive ("1 DONO"=1).
-desc_mentions_accident: true if "sinistro","acidente","batido","embate","toque" appears positively. "sem sinistros" or absent → false.
-desc_mentions_repair: true ONLY for damage/breakdown words ("avariado","imobilizado","partido","danificado","precisa reparação"). Routine maintenance ("óleo mudado","correia mudada","pastilhas novas","pneus novos","revisão feita","bateria nova") is NOT repair → false. Absent → false.
-desc_mentions_customs_cleared: true if "desalfandegado","legalizado","por legalizar". "Importado"/"Nacional" alone → false. Absent → false.
-right_hand_drive: true ONLY for explicit RHD phrases ("mão inglesa","volante à direita","matrícula inglesa","RHD"). "importado" / "matrícula portuguesa/suíça" → false. Absent → false.
-urgency: "high" if "urgente","emigração","preço para despachar"; "medium" if "aceito propostas","negociável","oportunidade","aceito retomas"; "low" otherwise.
-warranty: true if "garantia" positively ("garantia da marca","X meses de garantia"); "sem garantia" or absent → false.
-tuning_or_mods: aftermarket only: ["reprogramação","stage 1","remap","coilovers","bodykit","escape desportivo aftermarket","downpipe","wrap"]. Factory packages ("Sport Chrono","AMG Line","S-Line","R-Line") NOT mods. [] if none.
-taxi_fleet_rental: true if "ex-táxi","TVDE","Uber","Bolt","rent-a-car","frota","carro de empresa". Dealer ad / "particular" / absent → false.
-first_owner_selling: true if "1 dono","1º dono","primeiro dono","único dono","comprado novo por mim","vendo o meu" (case-insensitive). Dealer markers ("PVP","financiamento","stand","IVA discriminado") OR no first-owner phrase → false. NEVER null.
-mechanical_condition: "excellent" if text has any of "impecável","como novo","irrepreensível","perfeito","excelente","ótimo","rigorosamente novo" (with any qualifiers like "estado"/"geral"/"de conservação"); "good" only if ONLY weaker words present ("bom estado","bem cuidado","bem estimado","muito estimado","tudo a funcionar"); "fair" if "uso normal","ligeiros sinais"; "poor" if PARTS-CAR override OR "avariado". null if no condition phrase. Routine maintenance done ≠ excellent.
-damage_severity: 0=pristine ("como novo","impecável", warranty + 1 dono); 1=normal wear (DEFAULT for typical used-car); 2=accident OR significant repair ("sinistro","toque","necessita reparações","pintura fraca"); 3=salvage/parts/non-runner ("para peças","sucata","abate","salvado","motor fundido","imobilizado","não anda","sem matrícula"). When in doubt pick higher.
-
-PARTS-CAR OVERRIDE — text contains ANY of "para peças","vender as peças","venda de peças","para desmanchar","só peças","abate","salvado","avariado","imobilizado" → you MUST set: mechanical_condition="poor", desc_mentions_accident=true, desc_mentions_repair=true, damage_severity=3.
 
 Examples:
 
-"BMW Série 3 320d Pack M com 180.000 km, 1 dono, garantia até 2026, sem sinistros."
-→ sub_model="320d", trim_level="Pack M", desc_mentions_num_owners=1, mileage_in_description_km=180000, mechanical_condition=null, warranty=true, first_owner_selling=true, damage_severity=0 (booleans false, lists []).
+"BMW Série 3 320d Pack M com 180.000 km, 1 dono, garantia até 2026."
+→ {"sub_model":"320d","trim_level":"Pack M","mileage_in_description_km":180000}
 
-"Vendo Audi A3 1.6 TDI S-Line, 150 mil km. Avariado motor, vendo para peças. Aceito propostas."
-→ sub_model="1.6 TDI", trim_level="S-Line", desc_mentions_accident=true, desc_mentions_repair=true, mileage_in_description_km=150000, mechanical_condition="poor", urgency="medium", damage_severity=3.
+"Audi A3 1.6 TDI S-Line, 150 mil km."
+→ {"sub_model":"1.6 TDI","trim_level":"S-Line","mileage_in_description_km":150000}
 
-"Seat Ibiza FR 1.4 TSI com 89.500km. Reprogramação stage 1, escape desportivo. Revisão feita, pneus novos."
-→ sub_model="1.4 TSI", trim_level="FR", mileage_in_description_km=89500, tuning_or_mods=["reprogramação","stage 1","escape desportivo"], damage_severity=1.
+"Seat Ibiza FR 1.4 TSI com 89.500km."
+→ {"sub_model":"1.4 TSI","trim_level":"FR","mileage_in_description_km":89500}
 
-"Vendo Honda Civic Impecável." → mechanical_condition="excellent", damage_severity=0 (the trigger word IS in the text — do not return null for short ads).
-
-"Mercedes E 53 AMG. Rigorosamente novo. Garantia da Marca." → sub_model="E 53", mechanical_condition="excellent", warranty=true, damage_severity=0.
+"Vendo Honda Civic Impecável." → {"sub_model":null,"trim_level":null,"mileage_in_description_km":null}
 """
 
 
@@ -506,15 +384,15 @@ def _call_ollama(text: str, cfg: dict) -> dict | None:
       - keep_alive holds the model in RAM between bursts so we don't pay the
         5 s reload cost on the M1 8 GB box.
     format=json constrains the output to parseable JSON; the system prompt
-    already documents the 15-field schema, so any instruction-tuned model
+    documents the 3-field schema, so any instruction-tuned model
     (e.g. qwen3:4b-instruct) matches it without a separate tool wrapper.
 
     Inference options are tuned for latency on M1 8 GB without quality loss:
-      - num_ctx 4096 = budget for system(1210, measured) + desc(≤1200) +
-        reply(≤300). 2048 silently truncates the head of the system prompt
-        when the description is long, which kills extraction quality.
-      - num_predict 300 hard-caps generation; 15 fields × ~12 tokens + JSON
-        wrapping ≈ 230, so 300 is a comfortable ceiling and cuts the rare
+      - num_ctx 2048 = budget for system(~280) + desc(≤1200) + reply(≤80).
+        Halved from 4096 after the 2026-04 prompt slim — system shrank
+        from 1210 → ~280 tokens.
+      - num_predict 80 hard-caps generation; 3 fields × ~12 tokens + JSON
+        wrapping ≈ 50, so 80 is a comfortable ceiling and cuts the rare
         "model loops" failure mode short.
       - top_k=1 + top_p=1 + repeat_penalty=1 disable every per-token
         sampling check; with temperature=0 the result is identical (greedy)
@@ -530,16 +408,10 @@ def _call_ollama(text: str, cfg: dict) -> dict | None:
         or cfg.get("ollama_url", "http://localhost:11434")
     client = _get_client(url)
     truncated = text[:cfg.get("max_chars", 4000)]
-    # Regex pre-extract hints close the gap on the two fields where qwen3:4b
-    # punts to null even when the trigger word ("Impecável","1 dono") is
-    # right there. Appended to the user message rather than the system prompt
-    # because they're per-listing and would otherwise break system-prompt
-    # KV-cache reuse.
-    prompt_with_hints = truncated + _format_hints(_extract_hints(truncated))
     payload = {
         "model": cfg.get("ollama_model", "qwen3:4b-instruct"),
         "system": _SYSTEM_PROMPT,
-        "prompt": prompt_with_hints,
+        "prompt": truncated,
         "format": "json",
         "stream": False,
         "keep_alive": "30m",
@@ -548,8 +420,8 @@ def _call_ollama(text: str, cfg: dict) -> dict | None:
             "top_k": 1,
             "top_p": 1.0,
             "repeat_penalty": 1.0,
-            "num_ctx": cfg.get("num_ctx", 4096),
-            "num_predict": cfg.get("max_tokens", 300),
+            "num_ctx": cfg.get("num_ctx", 2048),
+            "num_predict": cfg.get("max_tokens", 80),
             "stop": ["}\n{", "} {"],
         },
     }
@@ -609,14 +481,6 @@ def _call_llm(text: str, cfg: dict) -> dict | None:
 # Public API
 # ---------------------------------------------------------------------------
 
-_EXTRAS_KEY_ALIASES = {
-    "desc_mentions_num_owners": "num_owners",
-    "desc_mentions_accident": "had_accident",
-    "desc_mentions_repair": "needs_repair",
-    "desc_mentions_customs_cleared": "customs_cleared",
-}
-
-
 def enrich_from_description(description: str, title: str = "") -> dict | None:
     """Extract structured data from title + description via the local LLM.
 
@@ -631,28 +495,7 @@ def enrich_from_description(description: str, title: str = "") -> dict | None:
 
     cfg = _get_config()
     text = f"{title}\n{description}" if title else description
-    result = _call_llm(text, cfg)
-    return normalize_llm_extras(result) if result else None
-
-
-def normalize_llm_extras(extras: dict | None) -> dict | None:
-    """Normalize legacy and current extraction keys to the current schema."""
-    if not extras:
-        return extras
-    normalized = dict(extras)
-    for new_key, old_key in _EXTRAS_KEY_ALIASES.items():
-        if new_key not in normalized and old_key in normalized:
-            normalized[new_key] = normalized[old_key]
-    return normalized
-
-
-def _get_extra(extras: dict, key: str):
-    legacy_key = _EXTRAS_KEY_ALIASES.get(key)
-    if key in extras:
-        return extras.get(key)
-    if legacy_key:
-        return extras.get(legacy_key)
-    return extras.get(key)
+    return _call_llm(text, cfg)
 
 
 def enrich_listings_batch(listings: list, batch_size: int = 50) -> int:
@@ -676,7 +519,7 @@ def enrich_listings_batch(listings: list, batch_size: int = 50) -> int:
 
         result = enrich_from_description(listing.description, getattr(listing, "title", ""))
         if result:
-            listing._llm_extras = normalize_llm_extras(result)
+            listing._llm_extras = result
             enriched += 1
             failures = 0
         else:
@@ -694,15 +537,19 @@ def enrich_listings_batch(listings: list, batch_size: int = 50) -> int:
 # ---------------------------------------------------------------------------
 
 def correct_listing_data(listing) -> dict:
-    """Cross-check listing attributes against LLM-extracted data and return corrections."""
+    """Cross-check listing attributes against LLM-extracted data and return corrections.
+
+    Schema-v7-slim: LLM only returns sub_model, trim_level,
+    mileage_in_description_km. damage_severity is derived deterministically
+    via ``_derive_damage_severity`` (regex over title+description, with any
+    legacy llm_extras flags taken into account when present).
+    """
     extras = getattr(listing, "_llm_extras", None)
     if extras is None:
         return {}
-    extras = normalize_llm_extras(extras)
 
     corrections = {}
 
-    # --- Mileage cross-check ---
     desc_km = extras.get("mileage_in_description_km")
     attr_km = listing.mileage_km
 
@@ -730,87 +577,11 @@ def correct_listing_data(listing) -> dict:
     if trim and isinstance(trim, str) and trim.strip():
         corrections["trim_level"] = trim.strip()
 
-    num_owners = _get_extra(extras, "desc_mentions_num_owners")
-    if num_owners and isinstance(num_owners, (int, float)) and num_owners > 0:
-        corrections["desc_mentions_num_owners"] = int(num_owners)
-
-    needs_repair = _get_extra(extras, "desc_mentions_repair")
-    if needs_repair is not None:
-        corrections["desc_mentions_repair"] = bool(needs_repair)
-
-    had_accident = _get_extra(extras, "desc_mentions_accident")
-    if had_accident is not None:
-        corrections["desc_mentions_accident"] = bool(had_accident)
-
-    customs = _get_extra(extras, "desc_mentions_customs_cleared")
-    if customs is not None:
-        corrections["desc_mentions_customs_cleared"] = bool(customs)
-
-    rhd = extras.get("right_hand_drive")
-    if rhd is not None:
-        corrections["right_hand_drive"] = bool(rhd)
-
-    urgency = extras.get("urgency")
-    if urgency in ("high", "medium", "low"):
-        corrections["urgency"] = urgency
-
-    warranty = extras.get("warranty")
-    if warranty is not None:
-        corrections["warranty"] = bool(warranty)
-
-    tuning = extras.get("tuning_or_mods")
-    if tuning and isinstance(tuning, list) and len(tuning) > 0:
-        corrections["tuning_or_mods"] = json.dumps(tuning, ensure_ascii=False)
-
-    taxi = extras.get("taxi_fleet_rental")
-    if taxi is not None:
-        corrections["taxi_fleet_rental"] = bool(taxi)
-
-    first_owner = extras.get("first_owner_selling")
-    if first_owner is not None:
-        corrections["first_owner_selling"] = bool(first_owner)
-
-    mech = extras.get("mechanical_condition")
-    if mech in ("excellent", "good", "fair", "poor"):
-        corrections["mechanical_condition"] = mech
-
-    severity = extras.get("damage_severity")
-    if severity is not None and isinstance(severity, (int, float)):
-        sev_int = int(severity)
-        if 0 <= sev_int <= 3:
-            corrections["damage_severity"] = sev_int
-
-    if corrections.get("desc_mentions_accident") and not corrections.get("desc_mentions_repair"):
-        corrections["desc_mentions_repair"] = True
-
+    title = getattr(listing, "title", "") or ""
     description = getattr(listing, "description", "") or ""
-    if description:
-        if _PARTS_CAR_PATTERN.search(description):
-            corrections["mechanical_condition"] = "poor"
-            corrections["desc_mentions_accident"] = True
-            corrections["desc_mentions_repair"] = True
-            # Belt-and-suspenders: any parts-car phrase in the raw text
-            # forces severity 3, even if the LLM under-rated it.
-            corrections["damage_severity"] = 3
-        else:
-            if corrections.get("desc_mentions_repair") and not _DAMAGE_PATTERN.search(description):
-                corrections["desc_mentions_repair"] = False
-
-        if corrections.get("right_hand_drive") and not _RHD_PATTERN.search(description):
-            corrections["right_hand_drive"] = False
-
-        # Regex hints override LLM on mechanical_condition + first_owner_selling.
-        # Empirically (golden 30): when a hint regex fires it agrees with the
-        # oracle 100 % of the time, while qwen3:4b still drifts in ~25 % of
-        # those same cases. Trusting the regex over the LLM here is a pure-
-        # upside override (no observed regressions). Title + desc both feed
-        # the regex so a "1 DONO" in the title isn't lost.
-        title = getattr(listing, "title", "") or ""
-        hints = _extract_hints(f"{title}\n{description}")
-        if "mechanical_condition" in hints:
-            corrections["mechanical_condition"] = hints["mechanical_condition"]
-        if "first_owner_selling" in hints:
-            corrections["first_owner_selling"] = hints["first_owner_selling"]
+    corrections["damage_severity"] = _derive_damage_severity(
+        extras, title, description,
+    )
 
     return corrections
 
@@ -830,11 +601,10 @@ def apply_corrections(listings: list) -> int:
 
         if corrections.get("real_mileage_km") and corrections.get("real_mileage_km") != getattr(listing, "mileage_km", None):
             logger.info(
-                "Corrected %s: real_mileage=%s, desc_mentions_repair=%s, desc_mentions_accident=%s",
+                "Corrected %s: real_mileage=%s, damage_severity=%s",
                 listing.olx_id,
                 corrections.get("real_mileage_km"),
-                corrections.get("desc_mentions_repair"),
-                corrections.get("desc_mentions_accident"),
+                corrections.get("damage_severity"),
             )
 
     logger.info("Applied corrections to %d / %d listings", corrected, len(listings))

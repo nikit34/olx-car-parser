@@ -58,19 +58,17 @@ llm:
   ollama_weights:
     "192.168.1.77": 2
     "192.168.1.69": 1
-  max_tokens: 300    # 15-field JSON ≈ 230 tokens; 300 leaves slack and
-                     # caps "model looping" failures within ~3 s wall time
-  # Trimmed from 4000 → 2500 to fit a tighter num_ctx (below). Real ads
-  # are ≤2500 chars in 99%+ of cases; longer ones get truncated at the
-  # tail (which is usually contact details / boilerplate, not features).
-  max_chars: 2500
-  # Real measured budget: system≈1582 (few-shot + damage rules + 15 fields),
-  # description ≤ ~750 tokens (max_chars 2500 ÷ ~3.3 chars/token pt-PT),
-  # reply ≤ 300 → ~2630 tokens. 3072 leaves ~440 tokens of margin and
-  # cuts prefill compute ~25 % vs the previous 4096 ctx (no model retrain
-  # needed, prompt unchanged so accuracy is unchanged). 2048 was the
-  # previous floor that silently dropped the head of the system prompt.
-  num_ctx: 3072
+  max_tokens: 80     # 3-field JSON ≈ 50 tokens (sub_model + trim_level +
+                     # mileage_in_description_km); 80 leaves slack and caps
+                     # "model looping" failures within <1 s wall time.
+  max_chars: 2500    # Tail of long ads is usually contact boilerplate, not
+                     # features — safe to truncate.
+  # System(~280) + description(≤750 @ ~3.3 chars/token pt-PT) + reply(≤80)
+  # ≈ 1110 tokens. 2048 leaves ~900 tokens of margin and cuts prefill
+  # compute ~33 % vs the previous 3072. The 2026-04 prompt slim shrank the
+  # system block from 1582 → ~280 tokens, so the previous 3072 floor is no
+  # longer needed.
+  num_ctx: 2048
 
 alerts:
   telegram_bot_token: "8651422044:AAEf93eodK6d4F7fn1FVH-vh0H5JX-gb92s"

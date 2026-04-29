@@ -13,8 +13,6 @@ import src.parser.llm_enrichment as llm_mod
 from src.parser.llm_enrichment import (
     _call_llm,
     _call_ollama,
-    _extract_hints,
-    _format_hints,
     _get_config,
     correct_listing_data,
     apply_corrections,
@@ -38,18 +36,7 @@ class FakeListing:
 VALID_LLM_JSON = {
     "sub_model": "320d",
     "trim_level": None,
-    "desc_mentions_num_owners": 2,
-    "desc_mentions_accident": False,
-    "desc_mentions_repair": True,
     "mileage_in_description_km": 180000,
-    "desc_mentions_customs_cleared": None,
-    "right_hand_drive": None,
-    "mechanical_condition": "good",
-    "urgency": "low",
-    "warranty": None,
-    "tuning_or_mods": None,
-    "taxi_fleet_rental": None,
-    "first_owner_selling": None,
 }
 
 
@@ -90,7 +77,8 @@ class TestCallLlm:
             result = _call_llm("Vendo carro com 100km", cfg)
 
         assert result is not None
-        assert result["desc_mentions_accident"] is False
+        assert result["sub_model"] == "320d"
+        assert result["mileage_in_description_km"] == 180000
         # Confirm we hit /api/generate (NOT /api/chat) so the system prompt
         # stays byte-identical across calls and Ollama can reuse its KV-cache
         # slot for the instruction prefix. format=json keeps the output
@@ -105,7 +93,7 @@ class TestCallLlm:
         opts = body["options"]
         assert opts["temperature"] == 0.0
         assert opts["top_k"] == 1
-        assert opts["num_ctx"] == 3072
+        assert opts["num_ctx"] == 2048
         assert opts["stop"] == ["}\n{", "} {"]
 
     def test_http_error_returns_none(self):
@@ -201,46 +189,6 @@ class TestCallLlm:
         assert unique == {"http://192.168.1.77:11434", "http://192.168.1.69:11434"}, \
             f"expected both backends to receive traffic, got {unique}"
 
-    def test_hints_excellent_phrases(self):
-        # Each of these surface forms must lift mechanical_condition out of
-        # the null-default trap qwen3:4b falls into on short ads.
-        for phrase in [
-            "Vendo Honda Civic Impecável.",
-            "Em excelente estado geral, sempre bem cuidado.",
-            "Em perfeito estado. Bancos ventilados.",
-            "Estado irrepreensível, muito bem estimado.",
-            "Em ótimo estado, sempre assistido na VW.",
-            "Rigorosamente novo. Garantia da Marca.",
-            "Veículo como novo, livro de revisões.",
-        ]:
-            hints = _extract_hints(phrase)
-            assert hints.get("mechanical_condition") == "excellent", \
-                f"phrase {phrase!r} did not trigger excellent hint: {hints}"
-
-    def test_hints_first_owner_phrases(self):
-        for phrase in [
-            "1 DONO --- KMS REAIS",
-            "VIATURA NACIONAL 1 DONO SEMPRE ASSISTIDO",
-            "Único dono desde novo.",
-            "Comprado novo por mim em 2018.",
-        ]:
-            hints = _extract_hints(phrase)
-            assert hints.get("first_owner_selling") is True, \
-                f"phrase {phrase!r} did not trigger first_owner hint: {hints}"
-
-    def test_hints_dealer_overrides_first_owner(self):
-        # Dealer ad with "1 dono" mentioned in features list must NOT flag
-        # first_owner_selling — the dealer is the seller, not the original owner.
-        phrase = "Volkswagen Golf 2022. PVP 21.990€. 24 Meses Garantia Total. 1 dono no histórico."
-        hints = _extract_hints(phrase)
-        assert hints.get("first_owner_selling") is False
-
-    def test_hints_format_skips_empty(self):
-        assert _format_hints({}) == ""
-        out = _format_hints({"mechanical_condition": "excellent"})
-        assert "mechanical_condition" in out
-        assert '"excellent"' in out
-
     def test_pick_sticky_per_thread(self):
         # Same thread must always pick the same backend (so prompt-cache
         # stays warm on its assigned host, instead of bouncing every call).
@@ -319,79 +267,25 @@ class TestCorrectListingData:
         corrections = correct_listing_data(listing)
         assert corrections["real_mileage_km"] == 95000
 
-    def test_num_owners_from_description(self):
+    def test_sub_model_and_trim_passed_through(self):
         listing = FakeListing()
-        listing._llm_extras = {"desc_mentions_num_owners": 2}
+        listing._llm_extras = {"sub_model": "320d", "trim_level": "M Sport"}
         corrections = correct_listing_data(listing)
-        assert corrections["desc_mentions_num_owners"] == 2
+        assert corrections["sub_model"] == "320d"
+        assert corrections["trim_level"] == "M Sport"
 
-    def test_num_owners_missing(self):
-        listing = FakeListing()
-        listing._llm_extras = {"desc_mentions_num_owners": None}
-        corrections = correct_listing_data(listing)
-        assert "desc_mentions_num_owners" not in corrections
-
-    def test_needs_repair_from_extras(self):
-        # Post-rules require a damage keyword in the description for
-        # desc_mentions_repair=True to pass through — otherwise the flag is
-        # assumed to be an over-flag on routine maintenance phrases.
-        listing = FakeListing(description="BMW 320d avariado, precisa reparar")
-        listing._llm_extras = {"desc_mentions_repair": True}
-        corrections = correct_listing_data(listing)
-        assert corrections["desc_mentions_repair"] is True
-
-    def test_needs_repair_reverted_without_damage_keywords(self):
-        # Same flag but a clean description — post-rules assume the LLM
-        # conflated maintenance with damage and revert the flag.
-        listing = FakeListing(description="BMW 320d em estado impecável, revisão feita")
-        listing._llm_extras = {"desc_mentions_repair": True}
-        corrections = correct_listing_data(listing)
-        assert corrections["desc_mentions_repair"] is False
-
-    def test_parts_car_override_forces_triple(self):
-        # Parts-car listings must always come back with all three flags set,
-        # regardless of what the LLM returned.
+    def test_damage_severity_derived_from_text(self):
+        # Parts-car phrasing in description → severity 3 even when extras are empty.
         listing = FakeListing(description="Vendo unicamente para peças, motor avariado")
-        listing._llm_extras = {
-            "desc_mentions_repair": False,
-            "desc_mentions_accident": False,
-            "mechanical_condition": "good",
-        }
+        listing._llm_extras = {}
         corrections = correct_listing_data(listing)
-        assert corrections["desc_mentions_repair"] is True
-        assert corrections["desc_mentions_accident"] is True
-        assert corrections["mechanical_condition"] == "poor"
+        assert corrections["damage_severity"] == 3
 
-    def test_rhd_reverted_without_explicit_phrase(self):
-        # Generic "importado" must not be accepted as RHD evidence.
-        listing = FakeListing(description="Nissan Qashqai importado da Bélgica, legalizado")
-        listing._llm_extras = {"right_hand_drive": True}
+    def test_damage_severity_default_normal_wear(self):
+        listing = FakeListing(description="Vendo Honda Civic 2018 com 90000km, sempre assistido")
+        listing._llm_extras = {}
         corrections = correct_listing_data(listing)
-        assert corrections["right_hand_drive"] is False
-
-    def test_rhd_kept_with_explicit_phrase(self):
-        listing = FakeListing(description="Carro com matrícula inglesa, documentação em dia")
-        listing._llm_extras = {"right_hand_drive": True}
-        corrections = correct_listing_data(listing)
-        assert corrections["right_hand_drive"] is True
-
-    def test_needs_repair_not_set_when_null(self):
-        listing = FakeListing()
-        listing._llm_extras = {"desc_mentions_repair": None}
-        corrections = correct_listing_data(listing)
-        assert "desc_mentions_repair" not in corrections
-
-    def test_accident_explicit_false(self):
-        listing = FakeListing()
-        listing._llm_extras = {"desc_mentions_accident": False}
-        corrections = correct_listing_data(listing)
-        assert corrections["desc_mentions_accident"] is False
-
-    def test_customs_cleared(self):
-        listing = FakeListing(origin="Importado")
-        listing._llm_extras = {"desc_mentions_customs_cleared": True}
-        corrections = correct_listing_data(listing)
-        assert corrections["desc_mentions_customs_cleared"] is True
+        assert corrections["damage_severity"] == 1
 
     def test_no_extras_returns_empty(self):
         listing = FakeListing()
@@ -405,15 +299,17 @@ class TestCorrectListingData:
 
 class TestApplyCorrections:
     def test_applies_to_listings_with_extras(self):
-        # Description has a damage keyword ("partido") but NOT a parts-car
-        # trigger — so desc_mentions_repair stays True while accident=False
-        # is preserved (the parts-car override would otherwise force both).
-        listing = FakeListing(description="BMW 320d com para-choques partido, resto bem")
-        listing._llm_extras = {"desc_mentions_repair": True, "desc_mentions_accident": False}
+        listing = FakeListing(description="BMW 320d 2018 com 180000km, sempre assistido")
+        listing._llm_extras = {
+            "sub_model": "320d",
+            "trim_level": "M Sport",
+            "mileage_in_description_km": 180000,
+        }
         count = apply_corrections([listing])
         assert count == 1
-        assert listing._corrections["desc_mentions_repair"] is True
-        assert listing._corrections["desc_mentions_accident"] is False
+        assert listing._corrections["sub_model"] == "320d"
+        assert listing._corrections["trim_level"] == "M Sport"
+        assert listing._corrections["real_mileage_km"] == 180000
 
     def test_skips_listings_without_extras(self):
         listing = FakeListing()
