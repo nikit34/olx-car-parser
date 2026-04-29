@@ -349,24 +349,6 @@ def test_newer_cars_predicted_higher():
     assert pred_new > pred_old
 
 
-def test_accident_cars_predicted_lower():
-    df = _sample_listings(500)
-    models, cat_maps, _metrics, _oof, _calib, _text = train_price_model(df)
-
-    base = {
-        "year": 2018, "mileage_km": 100000, "engine_cc": 1600,
-        "brand": "Volkswagen", "model": "Golf",
-        "fuel_type": "Diesel", "transmission": "Manual",
-        "segment": "Citadino", "horsepower": 110,
-    }
-    clean = pd.DataFrame([{**base, "desc_mentions_accident": False}])
-    damaged = pd.DataFrame([{**base, "desc_mentions_accident": True}])
-
-    pred_clean = predict_prices(models, cat_maps, clean)["predicted_price"].iloc[0]
-    pred_damaged = predict_prices(models, cat_maps, damaged)["predicted_price"].iloc[0]
-    assert pred_clean > pred_damaged
-
-
 def test_handles_missing_features():
     """Model should handle NaN in optional features."""
     df = _sample_listings()

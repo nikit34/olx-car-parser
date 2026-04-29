@@ -45,7 +45,7 @@ _OTHER_CATEGORY = "__other__"
 # monotonic constraints + inverse-log sample weights
 # v5: LLM-extracted damage_severity (0-3) — replaces the rule-based score's
 # role as the primary damage feature. Keyword rules stay as a cheap backup.
-_SCHEMA_VERSION = 6  # v6: dynamic decile edges for per-bucket CQR
+_SCHEMA_VERSION = 7  # v7: drop near-zero LLM/text features (ablation 2026-04)
 # Fraction of the dataset (newest rows by first_seen_at) used as the
 # time-honest conformal calibration window. Random-KFold CQR mixes
 # time-adjacent rows across folds and over-estimates coverage on real future
@@ -190,42 +190,36 @@ _TEXT_FEATURE_NAMES = [f"text_pc_{i}" for i in range(_N_TEXT_COMPONENTS)]
 
 NUMERIC_FEATURES = [
     "year", "mileage_km", "engine_cc", "horsepower",
-    "desc_mentions_num_owners", "avg_days_to_sell",
+    "avg_days_to_sell",
     "photo_count", "description_length", "seats",
-    "tuning_or_mods_count",
-    # LLM-inferred damage severity (0=pristine, 1=normal wear, 2=needs
-    # repair / accident history, 3=salvage/parts). Backfilled by
-    # `python -m src.cli enrich` for any row whose llm_extras lacks the
-    # field. Captures phrasings the boolean accident/repair flags miss
-    # ("para peças", "sem matrícula", "toque dianteiro", etc.).
-    "damage_severity",
-    # Rule-based damage severity score (0/0.4/0.7/1.0). Independent backstop
-    # for the LLM-extracted accident/repair flags below.
-    "damage_score",
     # NOTE: price-history features (num_price_drops, max_drop_pct,
     # price_drop_velocity, days_since_last_drop) are intentionally excluded.
     # They are post-hoc — known only after observing the listing for days —
     # and create circular logic: model learns "listings that dropped are
     # cheaper" instead of explaining price from the car's own attributes.
-    # That nukes the flip-score signal for exactly the deals we care about
-    # (motivated sellers who slashed prices). Dashboard still displays them
-    # as separate indicators; they just don't feed the model.
-] + _TEXT_FEATURE_NAMES
-
-BOOL_FEATURES = [
-    "desc_mentions_accident", "desc_mentions_repair",
-    "desc_mentions_customs_cleared", "right_hand_drive",
-    "taxi_fleet_rental", "warranty", "first_owner_selling",
-    # Explicit rule flags so the model can learn the cliff at "para peças"
-    # / "salvado" without relying on damage_score's continuous interpolation.
-    "title_has_parts_only", "title_has_severe_damage",
+    # Dashboard still displays them as separate indicators.
+    #
+    # NOTE: LLM-extracted damage_severity and rule-based damage_score were
+    # dropped in schema v7 — the 2026-04 ablation showed median permutation
+    # importance ≤ 0.002 and removing them gave +0.7 % MAPE drift inside
+    # CV noise while improving tail pinball. Helpers stay (cheap, used by
+    # the dashboard for display) but the columns no longer feed the model.
+    # text_pc_0..7 (TF-IDF→SVD on title+description) dropped for the same
+    # reason — none of the 8 components ranked above 0.003.
 ]
+
+BOOL_FEATURES: list[str] = []
+# All boolean LLM/rule signals were dropped in schema v7 — see ablation
+# note above. desc_mentions_*, right_hand_drive, taxi_fleet_rental,
+# warranty, first_owner_selling, title_has_parts_only,
+# title_has_severe_damage all sat at near-zero permutation importance.
 
 CATEGORICAL_FEATURES = [
     "brand", "model", "fuel_type", "transmission", "segment",
-    "urgency", "generation", "mechanical_condition",
+    "generation",
     "color", "district", "drive_type", "sub_model", "trim_level",
     "doors",
+    # urgency and mechanical_condition (LLM-inferred) dropped in v7.
 ]
 
 _ALL_FEATURES = NUMERIC_FEATURES + BOOL_FEATURES + CATEGORICAL_FEATURES
@@ -241,17 +235,6 @@ _ALL_FEATURES = NUMERIC_FEATURES + BOOL_FEATURES + CATEGORICAL_FEATURES
 _MONOTONE_BY_FEATURE: dict[str, int] = {
     "year": 1,
     "mileage_km": -1,
-    "desc_mentions_num_owners": -1,
-    "damage_severity": -1,  # 0=pristine → high price, 3=salvage → low price
-    "damage_score": -1,
-    "desc_mentions_accident": -1,
-    "desc_mentions_repair": -1,
-    "right_hand_drive": -1,
-    "taxi_fleet_rental": -1,
-    "warranty": 1,
-    "first_owner_selling": 1,
-    "title_has_parts_only": -1,
-    "title_has_severe_damage": -1,
 }
 
 
