@@ -33,14 +33,19 @@ llm:
   # Production inference pool — both hosts handle traffic in parallel
   # via sticky-per-thread round-robin in _pick_ollama_url(). The dev Mac
   # is intentionally NOT in this list; it orchestrates but never inferences.
-  # Both hosts must run Ollama with OLLAMA_HOST=0.0.0.0 so they're LAN-reachable.
-  #   192.168.1.77 — MacBook Air M1, 8 GB (the GH-Actions scraper itself)
-  #   192.168.1.69 — Windows, 16 GB (LAN partner; 7B+ headroom)
+  #   localhost      — runner's own Ollama (was 192.168.1.77; switched to
+  #                    localhost because the runner's DHCP-assigned IP was
+  #                    drifting and self-references via the LAN IP started
+  #                    failing with EHOSTUNREACH whenever the route
+  #                    table didn't include the new IP).
+  #   192.168.1.69   — Windows partner, 16 GB (7B+ headroom). Must run
+  #                    Ollama with OLLAMA_HOST=0.0.0.0 + Windows Firewall
+  #                    rule on TCP 11434 inbound.
   ollama_urls:
-    - "http://192.168.1.77:11434"
+    - "http://localhost:11434"
     - "http://192.168.1.69:11434"
   # Legacy single-URL field kept for back-compat; ignored if ollama_urls is set.
-  ollama_url: "http://192.168.1.77:11434"
+  ollama_url: "http://localhost:11434"
   # Server slots: .77 NUM_PARALLEL=2 (3 OOMs Metal at 4096 ctx on M1 Air 8GB
   # → Ollama silently caps ctx to 1536, head of system prompt gets truncated).
   # .69 must stay at NUM_PARALLEL=1 — its MX230 has only 4 GB VRAM, and
@@ -56,7 +61,7 @@ llm:
   # on .77 (2 slots × 2 oversub) and 2 on .69 (1 slot × 2 oversub). The
   # 2 oversub per slot smooths over individual call latency variance.
   ollama_weights:
-    "192.168.1.77": 2
+    "localhost": 2
     "192.168.1.69": 1
   max_tokens: 80     # 3-field JSON ≈ 50 tokens (sub_model + trim_level +
                      # mileage_in_description_km); 80 leaves slack and caps

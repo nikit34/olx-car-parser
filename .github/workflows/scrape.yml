@@ -52,29 +52,18 @@ jobs:
         if: env.WITH_LLM == 'true'
         timeout-minutes: 5
         run: |
-          # macOS Ollama.app is a menu-bar GUI app managed by launchd. When we
-          # `pkill Ollama`, launchd auto-relaunches the .app within ~1 s — and
-          # if our `nohup ollama serve` lost the race, port 11434 is already
-          # held by an auto-relaunched instance that didn't see our env vars.
-          # Result: localhost-only bind, LAN enrich fails ("No route to host").
-          #
-          # Fix: use `launchctl setenv` to inject env vars into the user GUI
-          # session BEFORE killing Ollama. Then the auto-relaunch picks them
-          # up. This persists for the rest of the login session, so subsequent
-          # cron runs benefit even if the workflow file isn't re-read.
+          # Settings.yaml points the runner at http://localhost:11434, so
+          # any binding that includes 127.0.0.1 (default) works. We no
+          # longer wrestle with OLLAMA_HOST=0.0.0.0 — see commit log: the
+          # menu-bar app's launchd auto-relaunch lost env vars and the
+          # DHCP-assigned IP drifted, both producing EHOSTUNREACH on the
+          # old hardcoded 192.168.1.77 URL.
           DESIRED_PARALLEL=2
-
-          # Always (re)assert the env vars at the GUI session level — cheap,
-          # idempotent, and survives Ollama.app self-relaunches.
-          launchctl setenv OLLAMA_HOST 0.0.0.0:11434
           launchctl setenv OLLAMA_NUM_PARALLEL "$DESIRED_PARALLEL"
           launchctl setenv OLLAMA_FLASH_ATTENTION 1
 
           NEEDS_RESTART=0
           if ! curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
-            NEEDS_RESTART=1
-          elif ! curl -sf --max-time 3 http://192.168.1.77:11434/api/tags >/dev/null 2>&1; then
-            echo "Ollama bound to localhost only — recycling so launchd reloads it with new env"
             NEEDS_RESTART=1
           else
             CURRENT=$(grep -o 'OLLAMA_NUM_PARALLEL:[0-9]*' /tmp/ollama.err.log 2>/dev/null | tail -1 | cut -d: -f2)
@@ -84,12 +73,9 @@ jobs:
             fi
           fi
           if [ "$NEEDS_RESTART" = "1" ]; then
-            # Kill BOTH the menu-bar app and any spawned ollama serve. launchd
-            # will relaunch the .app, which reads launchctl setenv values.
             pkill -9 -f "Ollama.app" 2>/dev/null || true
             pkill -9 -f "ollama serve" 2>/dev/null || true
             sleep 3
-            # Help launchd along by re-opening the .app explicitly.
             open -a /Applications/Ollama.app 2>/dev/null || true
             for i in $(seq 1 30); do
               curl -sf http://localhost:11434/api/tags >/dev/null 2>&1 && break
@@ -100,16 +86,36 @@ jobs:
             PARALLEL=$(grep -o 'OLLAMA_NUM_PARALLEL:[0-9]*' /tmp/ollama.err.log | tail -1 || echo "unknown")
             echo "Ollama is running ($PARALLEL)"
             curl -s http://localhost:11434/api/tags | python3 -c "import sys,json; tags=json.load(sys.stdin); print('Models:', [m['name'] for m in tags.get('models',[])])"
-            if curl -sf --max-time 3 http://192.168.1.77:11434/api/tags >/dev/null 2>&1; then
-              echo "LAN binding OK (192.168.1.77:11434 reachable)"
-            else
-              echo "::warning::Ollama still localhost-only — check launchctl getenv OLLAMA_HOST and macOS firewall"
-              launchctl getenv OLLAMA_HOST || true
-              lsof -nP -iTCP:11434 -sTCP:LISTEN || true
-            fi
           else
             echo "::error::Ollama failed to start after 30s"
             exit 1
+          fi
+
+      - name: Probe LAN partner Ollama (192.168.1.69)
+        # Diagnostic-only — sticky routing falls back to localhost if .69
+        # is unreachable, so the build keeps moving. Logs the actual
+        # network state so the next regression isn't a guessing game:
+        # ifconfig (which IP we have on Wi-Fi), netstat -rn (do we have
+        # a route to .69's subnet), arp (has .69 ever responded), and
+        # finally a curl with verbose output.
+        if: env.WITH_LLM == 'true'
+        timeout-minutes: 2
+        continue-on-error: true
+        run: |
+          echo "=== runner own IP ==="
+          ipconfig getifaddr en0 2>/dev/null || true
+          ipconfig getifaddr en1 2>/dev/null || true
+          echo "=== route to 192.168.1.69 ==="
+          route -n get 192.168.1.69 2>&1 | head -10 || true
+          echo "=== ARP cache for 192.168.1.69 ==="
+          arp -n 192.168.1.69 2>&1 || true
+          echo "=== ping .69 ==="
+          ping -c 2 -W 2000 192.168.1.69 2>&1 | head -8 || true
+          echo "=== curl Ollama on .69 ==="
+          if curl -sf --max-time 5 http://192.168.1.69:11434/api/tags >/dev/null 2>&1; then
+            echo "✓ Ollama on 192.168.1.69:11434 reachable"
+          else
+            echo "::warning::192.168.1.69:11434 unreachable — enrich falls back to localhost"
           fi
 
       - name: Scrape
