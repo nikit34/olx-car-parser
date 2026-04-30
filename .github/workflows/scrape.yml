@@ -52,13 +52,21 @@ jobs:
         if: env.WITH_LLM == 'true'
         timeout-minutes: 5
         run: |
-          # Restart Ollama if it's down OR if the running instance was
-          # started with a different NUM_PARALLEL than we want — otherwise
-          # the env var below is silently ignored (the previous run's
-          # process is reused with whatever value it had at boot).
+          # Restart Ollama when:
+          #  - it's down, OR
+          #  - it's bound to localhost only (LAN unreachable — settings.yaml
+          #    points enrich at http://192.168.1.77:11434, so 127.0.0.1-only
+          #    binding silently kills LLM enrichment), OR
+          #  - the running instance has a different NUM_PARALLEL than we want.
+          # Without an explicit OLLAMA_HOST=0.0.0.0 the menu-bar Ollama.app
+          # defaults to 127.0.0.1, which is what regressed Apr 28 — the app
+          # got auto-restarted by an OS update and came back localhost-only.
           DESIRED_PARALLEL=2
           NEEDS_RESTART=0
           if ! curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
+            NEEDS_RESTART=1
+          elif ! curl -sf --max-time 3 http://192.168.1.77:11434/api/tags >/dev/null 2>&1; then
+            echo "Ollama bound to localhost only (LAN unreachable) — restarting with OLLAMA_HOST=0.0.0.0"
             NEEDS_RESTART=1
           else
             CURRENT=$(grep -o 'OLLAMA_NUM_PARALLEL:[0-9]*' /tmp/ollama.err.log 2>/dev/null | tail -1 | cut -d: -f2)
@@ -70,7 +78,8 @@ jobs:
           if [ "$NEEDS_RESTART" = "1" ]; then
             pkill -9 -f "Ollama" 2>/dev/null || true
             sleep 2
-            OLLAMA_NUM_PARALLEL=$DESIRED_PARALLEL OLLAMA_FLASH_ATTENTION=1 \
+            OLLAMA_HOST=0.0.0.0:11434 \
+              OLLAMA_NUM_PARALLEL=$DESIRED_PARALLEL OLLAMA_FLASH_ATTENTION=1 \
               nohup /Applications/Ollama.app/Contents/Resources/ollama serve \
               > /tmp/ollama.out.log 2>/tmp/ollama.err.log &
             for i in $(seq 1 30); do
@@ -82,6 +91,11 @@ jobs:
             PARALLEL=$(grep -o 'OLLAMA_NUM_PARALLEL:[0-9]*' /tmp/ollama.err.log | tail -1 || echo "unknown")
             echo "Ollama is running ($PARALLEL)"
             curl -s http://localhost:11434/api/tags | python3 -c "import sys,json; tags=json.load(sys.stdin); print('Models:', [m['name'] for m in tags.get('models',[])])"
+            if curl -sf --max-time 3 http://192.168.1.77:11434/api/tags >/dev/null 2>&1; then
+              echo "LAN binding OK (192.168.1.77:11434 reachable)"
+            else
+              echo "::warning::Ollama still localhost-only after restart — check OLLAMA_HOST env or firewall"
+            fi
           else
             echo "::error::Ollama failed to start after 30s"
             exit 1
