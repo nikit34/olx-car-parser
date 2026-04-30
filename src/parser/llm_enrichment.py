@@ -268,18 +268,24 @@ def _build_assignment_pool() -> list[str]:
     """Healthy backends expanded by weight, used for round-robin pinning.
 
     Weights are read from ``ollama_weights`` in settings.yaml — keys are
-    substring-matched against backend URLs (so ``"192.168.1.77": 2`` covers
-    ``http://192.168.1.77:11434`` regardless of port). A backend with no
+    substring-matched against backend URLs (so ``"localhost": 2`` covers
+    ``http://localhost:11434`` regardless of port). A backend with no
     matching weight defaults to 1. Cached per process; cleared together
     with the URL cache in :func:`_invalidate_ollama_url`.
     """
     global _resolved_assignment_pool
     if _resolved_assignment_pool is not None:
         return _resolved_assignment_pool
+    # Resolve URLs OUTSIDE the lock — `_resolve_all_ollama_urls` holds the
+    # same `_resolve_lock` internally, so calling it under our acquisition
+    # would deadlock on a non-reentrant Lock. Manifested only after a
+    # cache-clear (e.g. in tests after `_invalidate_ollama_url`); in steady
+    # state production something else seeded the cache before us, so the
+    # nested call took the early-return path.
+    healthy = _resolve_all_ollama_urls()
     with _resolve_lock:
         if _resolved_assignment_pool is not None:
             return _resolved_assignment_pool
-        healthy = _resolve_all_ollama_urls()
         weights = _get_config().get("ollama_weights") or {}
         pool: list[str] = []
         for url in healthy:
