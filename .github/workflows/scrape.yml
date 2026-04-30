@@ -222,12 +222,14 @@ jobs:
       - name: Train price model + time-aware backtest
         # Both commands read the same DB but write disjoint files
         # (price_model.joblib + metrics vs price_backtest.json), so we
-        # run them in parallel and wait for both. Saves the ~5-10 min
-        # backtest tail. Each is wrapped in `set +e` so one failing
-        # doesn't kill the other; we collect exit codes and surface
-        # them as warnings (non-fatal: dashboard tolerates stale data).
+        # run them in parallel. train-model is the critical one — if it
+        # fails, downstream predicted_price is empty and the upload step
+        # would otherwise re-publish the stale on-disk bundle (which is
+        # how a schema-mismatched model lived on a self-hosted runner
+        # for weeks unnoticed). Backtest is best-effort: a failure there
+        # only loses one dashboard panel.
+        id: train_model
         if: ${{ !cancelled() }}
-        continue-on-error: true
         timeout-minutes: 35
         env:
           PYTHONPATH: ${{ github.workspace }}
@@ -245,14 +247,51 @@ jobs:
           cat /tmp/train.log
           echo "===== eval-model time-backtest (rc=$BT_RC) ====="
           cat /tmp/backtest.log
-          if [ $TRAIN_RC -ne 0 ]; then echo "::warning::train-model failed (rc=$TRAIN_RC)"; fi
-          if [ $BT_RC -ne 0 ]; then echo "::warning::eval-model failed (rc=$BT_RC)"; fi
+          if [ $BT_RC -ne 0 ]; then echo "::warning::eval-model failed (rc=$BT_RC) — non-fatal"; fi
+          # Surface to the upload step so we don't re-publish a stale
+          # bundle when training failed.
+          echo "train_rc=$TRAIN_RC" >> "$GITHUB_OUTPUT"
+          if [ $TRAIN_RC -ne 0 ]; then
+            echo "::error::train-model failed (rc=$TRAIN_RC) — see log above"
+            exit $TRAIN_RC
+          fi
+
+      - name: Verify fresh bundle is loadable
+        # Last-mile contract check between save_model (just ran) and
+        # load_model (what dashboard/alerts/eval-model use). If schema or
+        # feature_names drift between writer and reader, load_model returns
+        # None and downstream predicted_price silently goes empty — exactly
+        # the 2026-04 regression we just fixed. Freshness window is tight
+        # (1h) since the file was written seconds ago.
+        if: ${{ !cancelled() && steps.train_model.outputs.train_rc == '0' }}
+        timeout-minutes: 2
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          .venv/bin/python -c "
+          from src.analytics.price_model import load_model, _SCHEMA_VERSION, _ALL_FEATURES
+          import joblib, sys
+          bundle = joblib.load('data/price_model.joblib')
+          print(f'on-disk schema={bundle.get(\"schema_version\")}, n_features={len(bundle.get(\"feature_names\", []))}')
+          print(f'code expects schema={_SCHEMA_VERSION}, n_features={len(_ALL_FEATURES)}')
+          loaded = load_model(max_age_hours=1)
+          if loaded is None:
+              print('::error::load_model rejected the just-saved bundle — schema/feature contract broken')
+              sys.exit(1)
+          print('load_model accepted the fresh bundle')
+          "
 
       - name: Upload DB + model to GitHub Releases
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+          # Only re-publish model artifacts if this run actually trained them.
+          # Without this gate the self-hosted runner kept reuploading whatever
+          # data/price_model.joblib happened to be on disk — including a
+          # schema-mismatched bundle that was rejected by load_model and
+          # zeroed out predicted_price downstream.
+          TRAIN_RC: ${{ steps.train_model.outputs.train_rc }}
         run: |
           gh release view latest-data 2>/dev/null || \
             gh release create latest-data \
@@ -260,7 +299,11 @@ jobs:
               --notes "Auto-updated database + price model from scraper" \
               --latest=false
           gh release upload latest-data data/olx_cars.db --clobber
-          [ -f data/price_model.joblib ]     && gh release upload latest-data data/price_model.joblib     --clobber || true
-          [ -f data/price_metrics.json ]     && gh release upload latest-data data/price_metrics.json     --clobber || true
-          [ -f data/price_importance.json ]  && gh release upload latest-data data/price_importance.json  --clobber || true
-          [ -f data/price_backtest.json ]    && gh release upload latest-data data/price_backtest.json    --clobber || true
+          if [ "$TRAIN_RC" = "0" ]; then
+            [ -f data/price_model.joblib ]     && gh release upload latest-data data/price_model.joblib     --clobber || true
+            [ -f data/price_metrics.json ]     && gh release upload latest-data data/price_metrics.json     --clobber || true
+            [ -f data/price_importance.json ]  && gh release upload latest-data data/price_importance.json  --clobber || true
+            [ -f data/price_backtest.json ]    && gh release upload latest-data data/price_backtest.json    --clobber || true
+          else
+            echo "::warning::Skipping model upload — train-model rc=${TRAIN_RC:-<unset>} (preserves last-known-good artifact in release)"
+          fi

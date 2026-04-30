@@ -476,6 +476,40 @@ def test_load_model_rejects_feature_mismatch(tmp_path, monkeypatch):
     assert load_model(max_age_hours=1) is None
 
 
+def test_load_model_rejects_stale_bundle(tmp_path, monkeypatch):
+    """A bundle older than max_age_hours is rejected so consumers fall through
+    to "no fresh model" instead of serving predictions from an obsolete fit.
+
+    Regression: the 2026-04 incident where a v4-schema bundle survived on the
+    self-hosted runner because CI hid train-model failures behind
+    `continue-on-error: true` and re-uploaded the stale on-disk file every
+    cron. Freshness is the last barrier when schema/feature checks happen to
+    match an old format.
+    """
+    import os
+    import time
+    monkeypatch.setattr("src.analytics.price_model._MODEL_PATH", tmp_path / "model.joblib")
+    monkeypatch.setattr("src.analytics.price_model._METRICS_PATH", tmp_path / "metrics.json")
+
+    df = _sample_listings()
+    models, cat_maps, metrics, oof_preds, calibrator, text_pipeline = train_price_model(df)
+    save_model(
+        models, cat_maps, metrics,
+        oof_preds=oof_preds,
+        median_calibrator=calibrator,
+        text_pipeline=text_pipeline,
+    )
+
+    # Backdate mtime by 2 hours; load_model with max_age_hours=1 must reject.
+    two_hours_ago = time.time() - 2 * 3600
+    os.utime(tmp_path / "model.joblib", (two_hours_ago, two_hours_ago))
+
+    assert load_model(max_age_hours=1) is None
+    # Generous window still accepts the same file — proves the rejection
+    # was about freshness, not corruption from utime.
+    assert load_model(max_age_hours=24) is not None
+
+
 def test_metrics_history(tmp_path, monkeypatch):
     """Each save appends to metrics history."""
     monkeypatch.setattr("src.analytics.price_model._MODEL_PATH", tmp_path / "model.joblib")
