@@ -1,6 +1,6 @@
 """CRUD operations for listings and price snapshots."""
 
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timedelta, timezone
 
 
 def _utcnow() -> datetime:
@@ -24,8 +24,12 @@ def upsert_listing(session: Session, data: dict) -> Listing:
     """Insert or update a listing by olx_id. Returns the Listing object."""
     listing = session.query(Listing).filter_by(olx_id=data["olx_id"]).first()
     now = _utcnow()
-    # Use the site-parsed date if available, fall back to scrape time
+    # Use the site-parsed date if available, fall back to scrape time.
+    # Drop future-dated posted_at: SV pages mix in warranty/inspection dates
+    # that the parser used to misread, and any value past now is implausible.
     posted_at = data.pop("posted_at", None)
+    if posted_at and posted_at > now + timedelta(days=1):
+        posted_at = None
     seen_at = posted_at or now
 
     if listing:
@@ -106,20 +110,41 @@ def get_duplicate_ids(session: Session) -> set[str]:
     return {r[0] for r in rows}
 
 
-def mark_inactive(session: Session, active_olx_ids: set[str]):
-    """Mark listings not seen in this scrape as inactive."""
+def mark_inactive(session: Session, source: str, active_olx_ids: set[str]) -> int:
+    """Mark listings of one source not seen in this scrape as inactive.
+
+    Source-scoped: an OLX outage (anti-bot, broken selector, network) must
+    not sweep StandVirtual rows and vice-versa. Refuses to do anything if
+    *active_olx_ids* is empty — that almost certainly means the scrape
+    failed completely, and deactivating every row of that source is the
+    wrong default.
+    """
     import logging
+    from sqlalchemy import or_
     log = logging.getLogger(__name__)
+    if not active_olx_ids:
+        log.warning(
+            "mark_inactive(%s): empty scraped_ids, refusing to deactivate", source,
+        )
+        return 0
+    # Legacy rows predate the `source` column and stored NULL; treat them
+    # as OLX (the only source that existed at the time).
+    if source == "olx":
+        source_filter = or_(Listing.source == "olx", Listing.source.is_(None))
+    else:
+        source_filter = Listing.source == source
     now = _utcnow()
     count = session.query(Listing).filter(
         Listing.is_active == True,
+        source_filter,
         ~Listing.olx_id.in_(active_olx_ids),
     ).update({
         "is_active": False,
         "deactivated_at": now,
         "deactivation_reason": "sold",
     }, synchronize_session="evaluate")
-    log.info("Marked %d listings as inactive", count)
+    log.info("Marked %d %s listings as inactive", count, source)
+    return count
 
 
 def backfill_deactivated_at(session: Session) -> int:

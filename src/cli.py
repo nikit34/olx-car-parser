@@ -367,7 +367,42 @@ def scrape(
 
     # Collect scraped IDs now; mark_inactive runs after DB worker finishes
     # to avoid "database is locked" from concurrent SQLite writers.
-    scraped_ids = set(raw_by_id.keys())
+    # Group by source so an OLX outage can't sweep SV rows (and vice-versa) —
+    # mark_inactive is source-scoped.
+    scraped_by_source: dict[str, set[str]] = {}
+    for olx_id, raw in raw_by_id.items():
+        src = getattr(raw, "source", None) or "olx"
+        scraped_by_source.setdefault(src, set()).add(olx_id)
+
+    def _mark_inactive_safely(session) -> None:
+        """Per-source mark_inactive with anomaly gate.
+
+        Skips a source whose scrape returned <10% of its currently-active
+        rows — that's almost always a partial/blocked scrape, not real
+        market churn (real per-cycle churn is ≤1–2%).
+        """
+        from src.models.listing import Listing as _Listing
+        from sqlalchemy import or_ as _or_
+        for src, ids in scraped_by_source.items():
+            if not ids:
+                log.warning("No %s listings scraped — skipping mark_inactive(%s)", src, src)
+                continue
+            if src == "olx":
+                src_filter = _or_(_Listing.source == "olx", _Listing.source.is_(None))
+            else:
+                src_filter = _Listing.source == src
+            active_count = session.query(_Listing).filter(
+                _Listing.is_active == True, src_filter,
+            ).count()
+            if active_count > 100 and len(ids) < active_count * 0.10:
+                log.warning(
+                    "Refusing mark_inactive(%s): scraped %d, active %d "
+                    "(%.1f%%, gate 10%%). Likely partial scrape — skip.",
+                    src, len(ids), active_count,
+                    len(ids) / max(active_count, 1) * 100,
+                )
+                continue
+            mark_inactive(session, src, ids)
 
     # --- SIGTERM handler: graceful shutdown on timeout ---
     def _sigterm_handler(signum, frame):
@@ -395,10 +430,10 @@ def scrape(
             merger.join(timeout=10)
         db_queue.put(None)
         db_thread.join(timeout=30)
-        if scraped_ids:
+        if any(scraped_by_source.values()):
             try:
                 s = get_session()
-                mark_inactive(s, scraped_ids)
+                _mark_inactive_safely(s)
                 s.commit()
                 s.close()
             except Exception as e:
@@ -452,9 +487,13 @@ def scrape(
 
     # 5. Mark inactive, dedup & market stats (single session, no contention)
     final_session = get_session()
-    if scraped_ids:
-        log.info("Marking inactive listings (%d scraped IDs)...", len(scraped_ids))
-        mark_inactive(final_session, scraped_ids)
+    total_scraped = sum(len(v) for v in scraped_by_source.values())
+    if total_scraped:
+        log.info(
+            "Marking inactive listings per source: %s",
+            {s: len(v) for s, v in scraped_by_source.items()},
+        )
+        _mark_inactive_safely(final_session)
         final_session.commit()
     log.info("Final deduplication...")
     dedup_count = deduplicate_cross_platform(final_session)

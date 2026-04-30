@@ -475,9 +475,13 @@ class OlxScraper:
             # Breadcrumbs: Carros > Brand > Model (no location in standvirtual breadcrumbs)
 
         # Posted/updated date (SV has it as plain text: "29 de março de 2026 às 22:17").
-        # Pre-filter by the Portuguese "de" separator to skip the vast majority
-        # of <p> tags without parsing each one.
-        for p in soup.find_all("p", string=re.compile(r"\d+\s+de\s+\w+\s+de\s+\d{4}"), limit=5):
+        # Require the "às HH:MM" time portion — warranty/inspection lines
+        # ("Garantia até 12 de junho de 2027") share the date format but never
+        # carry a time, and were previously poisoning first_seen_at.
+        _SV_POSTED_RE = re.compile(
+            r"\d+\s+de\s+\w+\s+de\s+\d{4}\s+às\s+\d{1,2}:\d{2}"
+        )
+        for p in soup.find_all("p", string=_SV_POSTED_RE, limit=5):
             parsed = _parse_pt_date(p.get_text(strip=True))
             if parsed:
                 details["posted_at"] = parsed

@@ -120,6 +120,35 @@ class TestStandVirtualDetailParsing:
         d = scraper.scrape_standvirtual_detail(url)
         assert d["seller_type"] == "Profissional"
 
+    def test_posted_at_ignores_warranty_date(self, scraper):
+        """SV pages mix the post date with warranty/inspection dates that
+        share the Portuguese date format. Only entries with 'às HH:MM' are
+        the real posted_at — warranty lines without a time must be skipped.
+        """
+        html = SV_DETAIL_HTML.replace(
+            "</body>",
+            "<p>Garantia até 12 de junho de 2031</p>"
+            "<p>Inspeção válida até 5 de janeiro de 2030</p>"
+            "<p>29 de março de 2026 às 22:17</p>"
+            "</body>",
+        )
+        self._patch_fetch(scraper, html)
+        url = "https://www.standvirtual.com/carros/anuncio/test-IDabc.html"
+        d = scraper.scrape_standvirtual_detail(url)
+        assert d["posted_at"] == datetime(2026, 3, 29, 22, 17)
+
+    def test_posted_at_absent_when_only_warranty_dates(self, scraper):
+        """If the page has no time-bearing date at all, posted_at stays unset
+        rather than falling back to a warranty/inspection date."""
+        html = SV_DETAIL_HTML.replace(
+            "</body>",
+            "<p>Garantia até 12 de junho de 2031</p></body>",
+        )
+        self._patch_fetch(scraper, html)
+        url = "https://www.standvirtual.com/carros/anuncio/test-IDabc.html"
+        d = scraper.scrape_standvirtual_detail(url)
+        assert "posted_at" not in d
+
 
 # ---------------------------------------------------------------------------
 # Search page: standvirtual URLs accepted

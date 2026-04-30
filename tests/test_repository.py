@@ -1,6 +1,6 @@
 """Integration tests for repository CRUD (in-memory SQLite)."""
 
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 from src.models.listing import Listing, PriceSnapshot, MarketStats, UnmatchedListing
 from src.storage.repository import (
@@ -45,6 +45,16 @@ class TestUpsertListing:
         db_session.commit()
         assert listing.is_active is True
 
+    def test_drops_future_posted_at(self, db_session, sample_listing_data):
+        """A posted_at far in the future (warranty/inspection date that
+        slipped past the parser) must not become first_seen_at — fall back
+        to scrape time instead."""
+        future = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=365 * 5)
+        listing = upsert_listing(db_session, {**sample_listing_data, "posted_at": future})
+        db_session.commit()
+        assert listing.first_seen_at < future
+        assert listing.last_seen_at < future
+
 
 class TestUpsertUnmatched:
     def test_insert_unmatched(self, db_session):
@@ -81,17 +91,70 @@ class TestPriceSnapshot:
 
 class TestMarkInactive:
     def test_marks_unseen_inactive(self, db_session, sample_listing_data):
-        upsert_listing(db_session, sample_listing_data)
-        upsert_listing(db_session, {**sample_listing_data, "olx_id": "test-002", "url": "https://olx.pt/test-002"})
+        upsert_listing(db_session, {**sample_listing_data, "source": "olx"})
+        upsert_listing(db_session, {
+            **sample_listing_data, "olx_id": "test-002",
+            "url": "https://olx.pt/test-002", "source": "olx",
+        })
         db_session.commit()
 
-        mark_inactive(db_session, {"test-001"})
+        mark_inactive(db_session, "olx", {"test-001"})
         db_session.commit()
 
         l1 = db_session.query(Listing).filter_by(olx_id="test-001").one()
         l2 = db_session.query(Listing).filter_by(olx_id="test-002").one()
         assert l1.is_active is True
         assert l2.is_active is False
+
+    def test_does_not_touch_other_sources(self, db_session, sample_listing_data):
+        """An OLX scrape must not deactivate StandVirtual rows even if
+        the SV ids aren't in active_olx_ids — bug from 2026-05 where a
+        single global mark_inactive wiped one source whenever the other
+        scrape returned 0 results."""
+        upsert_listing(db_session, {**sample_listing_data, "olx_id": "olx-1",
+                                    "url": "https://olx.pt/olx-1", "source": "olx"})
+        upsert_listing(db_session, {**sample_listing_data, "olx_id": "sv-1",
+                                    "url": "https://standvirtual.com/sv-1",
+                                    "source": "standvirtual"})
+        db_session.commit()
+
+        # Simulate a successful OLX scrape that just didn't see olx-1.
+        mark_inactive(db_session, "olx", {"olx-other"})
+        db_session.commit()
+
+        olx_row = db_session.query(Listing).filter_by(olx_id="olx-1").one()
+        sv_row = db_session.query(Listing).filter_by(olx_id="sv-1").one()
+        assert olx_row.is_active is False
+        # SV must remain active — its scrape wasn't part of this call.
+        assert sv_row.is_active is True
+
+    def test_empty_scraped_ids_is_noop(self, db_session, sample_listing_data):
+        """If a source's scrape returned zero ids the call must not
+        deactivate everything — empty set means "scrape failed", not
+        "everything sold"."""
+        upsert_listing(db_session, {**sample_listing_data, "source": "olx"})
+        db_session.commit()
+
+        updated = mark_inactive(db_session, "olx", set())
+        db_session.commit()
+
+        assert updated == 0
+        l = db_session.query(Listing).filter_by(olx_id="test-001").one()
+        assert l.is_active is True
+
+    def test_legacy_null_source_treated_as_olx(self, db_session, sample_listing_data):
+        """Old rows predate the source column and stored NULL. They must
+        be deactivated by an OLX scrape (NULL-source listings only ever
+        came from OLX before SV support was added)."""
+        listing = upsert_listing(db_session, sample_listing_data)
+        listing.source = None  # legacy row
+        db_session.commit()
+
+        mark_inactive(db_session, "olx", {"olx-other"})
+        db_session.commit()
+
+        legacy = db_session.query(Listing).filter_by(olx_id="test-001").one()
+        assert legacy.is_active is False
 
 
 class TestComputeMarketStats:
