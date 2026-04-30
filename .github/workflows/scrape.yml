@@ -137,13 +137,15 @@ jobs:
         # Runs the v2 ResNet50 classifier on listings' photos and stores
         # photo_damage_p in llm_extras. Photo signal feeds the alerts
         # step's _blocking_deal_reason — so this MUST run before alerts.
-        # --limit 500 keeps each run bounded (~30 min); newest listings
-        # are processed first so deals from this scrape get verified
-        # immediately rather than 3 days later.
+        # --limit 500 keeps each run bounded; newest listings are
+        # processed first so deals from this scrape get verified
+        # immediately rather than 3 days later. Empirically ~10s/listing
+        # on the runner (apollo.olxcdn slower than local), so 500 needs
+        # ~85 min — timeout matches enrich's slot.
         if: ${{ !cancelled() }}
         env:
           PYTHONPATH: ${{ github.workspace }}
-        timeout-minutes: 45
+        timeout-minutes: 90
         continue-on-error: true
         run: |
           if [ ! -f data/damage_classifier_v2.pt ]; then
