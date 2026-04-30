@@ -109,7 +109,15 @@ class OlxScraper:
             headers={
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.5",
-                "Accept-Encoding": "gzip, deflate, br",
+                # NB: do NOT advertise `br`. OLX flipped its encoder to
+                # Brotli around 2026-04-20 for clients that opt in, and
+                # httpx without the optional `brotli` extra silently
+                # returns the compressed bytes as `r.text` — BeautifulSoup
+                # then sees binary garbage and reports "no listing cards
+                # found", which the production scraper logged for ~10
+                # days while OLX listings quietly went stale. gzip +
+                # deflate cover everything we actually need.
+                "Accept-Encoding": "gzip, deflate",
             },
         )
         self._consecutive_403 = 0
