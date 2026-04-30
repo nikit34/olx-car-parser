@@ -45,6 +45,26 @@ The project runs on two LAN machines, not on this dev Mac. This skill is the map
 
 This dev Mac (M1, 32 GB) **orchestrates but never inferences**. Don't add `localhost` of *this* machine to `ollama_urls` — that's a different "localhost" than the one the runner sees, and the LLM enrichment is supposed to run on the runner, not here.
 
+## When a host doesn't ping / SSH-connect
+
+DHCP on this LAN reshuffles IPs — `anastasiasair2` has bounced .74 ↔ .77 multiple times. **Never declare a host down without an ARP scan first.**
+
+```bash
+# 1. Sanity-check own LAN
+ipconfig getifaddr en0   # should be 192.168.1.x
+
+# 2. Sweep + ARP
+for i in $(seq 1 254); do (ping -c 1 -W 200 192.168.1.$i &>/dev/null && echo "192.168.1.$i alive") & done; wait
+arp -a | grep -v incomplete
+```
+
+Match by hostname in ARP output:
+- `anastasiasair2.home` → the scrape Mac (was .77, may be .74 today)
+- `dell.home` → the Windows LLM box (.69)
+- `mac.home` → this dev Mac (don't SSH to self)
+
+SSH to the resolved IP and update this skill's "Hosts" section if the address has drifted.
+
 ## Quick health check (both hosts)
 
 ```bash
