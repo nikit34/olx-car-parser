@@ -22,7 +22,8 @@ build/
 
 
 # Local IDE/agent state
-.claude/
+.claude/*
+!.claude/skills/
 .cursor/
 .playwright-mcp/
 .DS_Store
