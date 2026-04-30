@@ -188,11 +188,11 @@ jobs:
         # Runs the v2 ResNet50 classifier on listings' photos and stores
         # photo_damage_p in llm_extras. Photo signal feeds the alerts
         # step's _blocking_deal_reason — so this MUST run before alerts.
-        # --limit 500 keeps each run bounded; newest listings are
-        # processed first so deals from this scrape get verified
-        # immediately rather than 3 days later. Empirically ~10s/listing
-        # on the runner (apollo.olxcdn slower than local), so 500 needs
-        # ~85 min — timeout matches enrich's slot.
+        # No --limit: SQL ORDER BY puts text-flagged (damage_severity≥2 or
+        # desc_mentions_accident) listings first, so the high-signal rows
+        # always finish even if the step's 90 min cap kicks in mid-batch.
+        # Steady state (after backlog drains) only adds ~50-200 photo
+        # checks per cron, well under the timeout.
         if: ${{ !cancelled() }}
         env:
           PYTHONPATH: ${{ github.workspace }}
@@ -203,7 +203,7 @@ jobs:
             echo "::warning::Skipping verify-photos — weights missing"
             exit 0
           fi
-          .venv/bin/python -m src.cli verify-photos --limit 500
+          .venv/bin/python -m src.cli verify-photos
 
       - name: Send Telegram alerts
         if: ${{ !cancelled() }}

@@ -656,7 +656,6 @@ def enrich(
 @app.command("verify-photos")
 def verify_photos(
     threshold: float = typer.Option(0.20, help="P(damaged) threshold (0.20 = production default, F1=0.818 R=100%% on gold)."),
-    limit: int = typer.Option(0, help="Max listings to process (0 = all)."),
     only_text_flagged: bool = typer.Option(
         False, help="Process only listings with text damage_severity >= 2 "
                     "(verifier mode). Off = scan all listings (full coverage)."),
@@ -697,6 +696,17 @@ def verify_photos(
         Listing.llm_extras, "$.photo_damage_p",
     ).is_(None)
     from sqlalchemy import or_
+    # Priority order:
+    #  1. Listings with text-derived damage_severity >= 2 — alerts already
+    #     see them as suspect; photo verifier confirms or downgrades.
+    #  2. desc_mentions_accident — same logic, smaller bucket.
+    #  3. Newest first — drain the steady-state backlog of normal listings.
+    # On the production DB (2698 pending) this floats ~120 high-signal
+    # rows to the front, so a single cron's --limit budget pays maximal
+    # alert-quality dividend before grinding through clean dealer photos.
+    text_sev_ge2_order = sa_func.json_extract(
+        Listing.llm_extras, "$.damage_severity",
+    ) >= 2
     q = (
         session.query(Listing)
         .filter(
@@ -708,18 +718,17 @@ def verify_photos(
             Listing.llm_extras.isnot(None),
             needs_photo,
         )
-        # Newest listings first — they reach the alerts step in the same
-        # cron run, so the photo signal can veto bad deals immediately
-        # rather than ~3 days later when backfill catches up.
-        .order_by(Listing.first_seen_at.desc())
+        .order_by(
+            text_sev_ge2_order.desc(),
+            Listing.desc_mentions_accident.desc(),
+            Listing.first_seen_at.desc(),
+        )
     )
     if only_text_flagged:
         text_sev_ge2 = sa_func.json_extract(
             Listing.llm_extras, "$.damage_severity",
         ) >= 2
         q = q.filter(text_sev_ge2)
-    if limit:
-        q = q.limit(limit)
     pending = q.all()
     if not pending:
         log.info("Nothing to verify.")
