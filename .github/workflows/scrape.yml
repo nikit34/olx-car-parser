@@ -52,36 +52,45 @@ jobs:
         if: env.WITH_LLM == 'true'
         timeout-minutes: 5
         run: |
-          # Restart Ollama when:
-          #  - it's down, OR
-          #  - it's bound to localhost only (LAN unreachable — settings.yaml
-          #    points enrich at http://192.168.1.77:11434, so 127.0.0.1-only
-          #    binding silently kills LLM enrichment), OR
-          #  - the running instance has a different NUM_PARALLEL than we want.
-          # Without an explicit OLLAMA_HOST=0.0.0.0 the menu-bar Ollama.app
-          # defaults to 127.0.0.1, which is what regressed Apr 28 — the app
-          # got auto-restarted by an OS update and came back localhost-only.
+          # macOS Ollama.app is a menu-bar GUI app managed by launchd. When we
+          # `pkill Ollama`, launchd auto-relaunches the .app within ~1 s — and
+          # if our `nohup ollama serve` lost the race, port 11434 is already
+          # held by an auto-relaunched instance that didn't see our env vars.
+          # Result: localhost-only bind, LAN enrich fails ("No route to host").
+          #
+          # Fix: use `launchctl setenv` to inject env vars into the user GUI
+          # session BEFORE killing Ollama. Then the auto-relaunch picks them
+          # up. This persists for the rest of the login session, so subsequent
+          # cron runs benefit even if the workflow file isn't re-read.
           DESIRED_PARALLEL=2
+
+          # Always (re)assert the env vars at the GUI session level — cheap,
+          # idempotent, and survives Ollama.app self-relaunches.
+          launchctl setenv OLLAMA_HOST 0.0.0.0:11434
+          launchctl setenv OLLAMA_NUM_PARALLEL "$DESIRED_PARALLEL"
+          launchctl setenv OLLAMA_FLASH_ATTENTION 1
+
           NEEDS_RESTART=0
           if ! curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
             NEEDS_RESTART=1
           elif ! curl -sf --max-time 3 http://192.168.1.77:11434/api/tags >/dev/null 2>&1; then
-            echo "Ollama bound to localhost only (LAN unreachable) — restarting with OLLAMA_HOST=0.0.0.0"
+            echo "Ollama bound to localhost only — recycling so launchd reloads it with new env"
             NEEDS_RESTART=1
           else
             CURRENT=$(grep -o 'OLLAMA_NUM_PARALLEL:[0-9]*' /tmp/ollama.err.log 2>/dev/null | tail -1 | cut -d: -f2)
             if [ "$CURRENT" != "$DESIRED_PARALLEL" ]; then
-              echo "Ollama running with NUM_PARALLEL=$CURRENT, want $DESIRED_PARALLEL — restarting"
+              echo "Ollama NUM_PARALLEL=$CURRENT, want $DESIRED_PARALLEL — recycling"
               NEEDS_RESTART=1
             fi
           fi
           if [ "$NEEDS_RESTART" = "1" ]; then
-            pkill -9 -f "Ollama" 2>/dev/null || true
-            sleep 2
-            OLLAMA_HOST=0.0.0.0:11434 \
-              OLLAMA_NUM_PARALLEL=$DESIRED_PARALLEL OLLAMA_FLASH_ATTENTION=1 \
-              nohup /Applications/Ollama.app/Contents/Resources/ollama serve \
-              > /tmp/ollama.out.log 2>/tmp/ollama.err.log &
+            # Kill BOTH the menu-bar app and any spawned ollama serve. launchd
+            # will relaunch the .app, which reads launchctl setenv values.
+            pkill -9 -f "Ollama.app" 2>/dev/null || true
+            pkill -9 -f "ollama serve" 2>/dev/null || true
+            sleep 3
+            # Help launchd along by re-opening the .app explicitly.
+            open -a /Applications/Ollama.app 2>/dev/null || true
             for i in $(seq 1 30); do
               curl -sf http://localhost:11434/api/tags >/dev/null 2>&1 && break
               sleep 1
@@ -94,7 +103,9 @@ jobs:
             if curl -sf --max-time 3 http://192.168.1.77:11434/api/tags >/dev/null 2>&1; then
               echo "LAN binding OK (192.168.1.77:11434 reachable)"
             else
-              echo "::warning::Ollama still localhost-only after restart — check OLLAMA_HOST env or firewall"
+              echo "::warning::Ollama still localhost-only — check launchctl getenv OLLAMA_HOST and macOS firewall"
+              launchctl getenv OLLAMA_HOST || true
+              lsof -nP -iTCP:11434 -sTCP:LISTEN || true
             fi
           else
             echo "::error::Ollama failed to start after 30s"
