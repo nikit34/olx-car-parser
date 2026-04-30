@@ -656,6 +656,7 @@ def enrich(
 @app.command("verify-photos")
 def verify_photos(
     threshold: float = typer.Option(0.20, help="P(damaged) threshold (0.20 = production default, F1=0.818 R=100%% on gold)."),
+    workers: int = typer.Option(4, help="Concurrent listing workers — overlaps photo fetch I/O with classifier inference. Default 4; use 1 for sequential."),
     only_text_flagged: bool = typer.Option(
         False, help="Process only listings with text damage_severity >= 2 "
                     "(verifier mode). Off = scan all listings (full coverage)."),
@@ -735,51 +736,74 @@ def verify_photos(
         return
     log.info("Pending: %d listings.", len(pending))
 
-    flagged = downgraded = no_photos = errors = 0
-    t0 = time.monotonic()
-    for i, listing in enumerate(pending, 1):
-        photo_urls = fetch_photos(listing.url)
-        listing_dir = cache_dir / listing.olx_id
-        photo_paths = []
-        for j, url in enumerate(photo_urls, 1):
-            p = listing_dir / f"{listing.olx_id}_{j}.jpg"
-            if download_photo(url, p):
-                photo_paths.append(p)
+    # Worker pool: each thread fetches photos + downloads + runs classifier
+    # for one listing at a time, then returns the result. The main thread
+    # owns the SQLAlchemy session — listings are looked up by olx_id and
+    # llm_extras updated in batch commits, never inside a worker (Session
+    # isn't thread-safe and ORM attribute lazy-loads expire on commit).
+    #
+    # Snapshot (olx_id, url) on the main thread so workers don't touch
+    # ORM state at all.
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    listing_by_id = {l.olx_id: l for l in pending}
+    work_items = [(l.olx_id, l.url) for l in pending]
 
-        if not photo_paths:
-            no_photos += 1
-            max_p = 0.0
-            n_photos = 0
-        else:
-            try:
-                pred = clf.predict_listing(listing.olx_id, photo_paths)
-                max_p = pred.max_p
-                n_photos = len(pred.photos)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("Classifier failed on %s: %s", listing.olx_id, exc)
+    def _verify_one(olx_id: str, url: str) -> tuple[str, float, int, str | None]:
+        """Returns ``(olx_id, max_p, n_photos, error_msg)``."""
+        try:
+            photo_urls = fetch_photos(url)
+            listing_dir = cache_dir / olx_id
+            photo_paths = []
+            for j, purl in enumerate(photo_urls, 1):
+                p = listing_dir / f"{olx_id}_{j}.jpg"
+                if download_photo(purl, p):
+                    photo_paths.append(p)
+            if not photo_paths:
+                return olx_id, 0.0, 0, None
+            pred = clf.predict_listing(olx_id, photo_paths)
+            return olx_id, pred.max_p, len(pred.photos), None
+        except Exception as exc:  # noqa: BLE001
+            return olx_id, 0.0, 0, str(exc)
+
+    flagged = downgraded = no_photos = errors = 0
+    processed = 0
+    t0 = time.monotonic()
+
+    with ThreadPoolExecutor(max_workers=max(workers, 1)) as pool:
+        futures = {
+            pool.submit(_verify_one, olx_id, url): olx_id
+            for olx_id, url in work_items
+        }
+        for fut in as_completed(futures):
+            olx_id, max_p, n_photos, err = fut.result()
+            processed += 1
+            if err:
+                log.warning("Classifier failed on %s: %s", olx_id, err)
                 errors += 1
                 continue
-
-        is_damaged = max_p >= threshold
-        if is_damaged:
-            flagged += 1
-        if not is_damaged and (json.loads(listing.llm_extras or "{}").get("damage_severity") or 0) >= 2:
-            downgraded += 1
-
-        try:
-            extras = json.loads(listing.llm_extras) if listing.llm_extras else {}
-        except (json.JSONDecodeError, TypeError):
-            extras = {}
-        extras["photo_damage_p"] = round(max_p, 4)
-        extras["photo_damage_n_photos"] = n_photos
-        if not dry_run:
-            listing.llm_extras = json.dumps(extras, ensure_ascii=False)
-
-        if i % 25 == 0:
+            if n_photos == 0:
+                no_photos += 1
+            listing = listing_by_id[olx_id]
+            try:
+                extras = json.loads(listing.llm_extras) if listing.llm_extras else {}
+            except (json.JSONDecodeError, TypeError):
+                extras = {}
+            text_sev = extras.get("damage_severity") or 0
+            extras["photo_damage_p"] = round(max_p, 4)
+            extras["photo_damage_n_photos"] = n_photos
             if not dry_run:
-                session.commit()
-            log.info("Verify progress: %d/%d  flagged=%d  no_photos=%d  errs=%d",
-                     i, len(pending), flagged, no_photos, errors)
+                listing.llm_extras = json.dumps(extras, ensure_ascii=False)
+            if max_p >= threshold:
+                flagged += 1
+            elif text_sev >= 2:
+                downgraded += 1
+
+            if processed % 25 == 0:
+                if not dry_run:
+                    session.commit()
+                rate = processed / max(time.monotonic() - t0, 1e-3)
+                log.info("Verify progress: %d/%d  flagged=%d  no_photos=%d  errs=%d  (%.1f listing/s)",
+                         processed, len(pending), flagged, no_photos, errors, rate)
 
     if not dry_run:
         session.commit()
