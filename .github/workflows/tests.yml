@@ -17,7 +17,9 @@ jobs:
         run: pip install -r requirements.txt pytest
       - name: Run unit + integration tests
         # Skip smoke marker — those tests hit live Ollama backends
-        # (localhost + 192.168.1.69) which aren't available on the
-        # GitHub-hosted Ubuntu runner. Smoke tests run on the self-
-        # hosted Mac runner during the Scrape OLX workflow.
+        # (localhost + 192.168.1.69) that the GitHub-hosted Ubuntu
+        # runner doesn't have. Smoke is gated on the self-hosted Mac
+        # runner inside the Scrape OLX workflow's "Run Ollama smoke
+        # tests" step, which fails the cron run early if the LAN
+        # routing breaks again.
         run: pytest tests/ -v --tb=short -m "not smoke"

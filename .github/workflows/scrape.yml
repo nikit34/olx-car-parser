@@ -97,7 +97,8 @@ jobs:
         # network state so the next regression isn't a guessing game:
         # ifconfig (which IP we have on Wi-Fi), netstat -rn (do we have
         # a route to .69's subnet), arp (has .69 ever responded), and
-        # finally a curl with verbose output.
+        # finally a curl with verbose output. Runs BEFORE smoke so that
+        # if smoke trips, the diagnostic data is already in the log.
         if: env.WITH_LLM == 'true'
         timeout-minutes: 2
         continue-on-error: true
@@ -117,6 +118,25 @@ jobs:
           else
             echo "::warning::192.168.1.69:11434 unreachable — enrich falls back to localhost"
           fi
+
+      - name: Run Ollama smoke tests
+        # Live integration suite (tests/test_ollama_integration.py) — verifies
+        # localhost reachable, model present on every healthy backend, sticky
+        # pool weighted 2:1 with both online (collapses to localhost-only when
+        # .69 is offline — that's a skip, not a fail), and cross-backend
+        # overlap during fan-out. Runs only here on the self-hosted Mac
+        # (where Ollama lives); the GitHub-hosted Ubuntu Tests job filters
+        # smoke out via -m "not smoke".
+        # Fails fast: if the local Ollama or routing layer is broken there's
+        # no point burning 2 h on Scrape + Enrich. The earlier diagnostic
+        # step (above) is already in the log to root-cause from.
+        if: env.WITH_LLM == 'true'
+        timeout-minutes: 5
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          .venv/bin/pip install -q pytest
+          .venv/bin/pytest tests/test_ollama_integration.py -m smoke -v --tb=short
 
       - name: Scrape
         env:
