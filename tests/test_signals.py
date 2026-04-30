@@ -108,3 +108,35 @@ class TestComputeSignals:
             signals, _ = compute_signals(listings, sample_history_df)
 
         assert "maint-1" in signals["olx_id"].values
+
+    def test_drops_zero_and_negative_prices(self, sample_history_df, generations_data):
+        listings = pd.DataFrame([
+            {"olx_id": "junk-zero", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2015, "price_eur": 0, "mileage_km": 150000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "junk-neg", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2015, "price_eur": -1, "mileage_km": 150000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-1", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2015, "price_eur": 12000, "mileage_km": 160000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-2", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2016, "price_eur": 14000, "mileage_km": 110000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-3", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2017, "price_eur": 15000, "mileage_km": 90000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-4", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2014, "price_eur": 11000, "mileage_km": 175000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-5", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2013, "price_eur": 10000, "mileage_km": 190000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+        ])
+
+        with patch("src.models.generations.load_generations", return_value=generations_data):
+            signals, _ = compute_signals(listings, sample_history_df)
+
+        if not signals.empty:
+            assert "junk-zero" not in signals["olx_id"].values
+            assert "junk-neg" not in signals["olx_id"].values

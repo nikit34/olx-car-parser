@@ -338,7 +338,7 @@ def compute_signals(
     active = prepare_active_for_model(listings_df, turnover=turnover)
 
     # --- Generation-level stats ---
-    priced_gen = active[active["price_eur"].notna() & active["generation"].notna()]
+    priced_gen = active[(active["price_eur"] > 0) & active["generation"].notna()]
     gen_stats = (
         priced_gen
         .groupby(["brand", "model", "generation"])
@@ -348,7 +348,7 @@ def compute_signals(
     )
 
     # --- Model-level fallback stats (includes cars without generation) ---
-    priced_all = active[active["price_eur"].notna()]
+    priced_all = active[active["price_eur"] > 0]
     model_stats = (
         priced_all
         .groupby(["brand", "model"])
@@ -514,10 +514,10 @@ def compute_signals(
 
     # --- Score each listing ---
     for _, listing in active.iterrows():
-        if pd.isna(listing.get("price_eur")):
+        price = listing.get("price_eur")
+        if pd.isna(price) or price <= 0:
             continue
 
-        price = listing["price_eur"]
         year = listing.get("year")
         mileage = listing.get("mileage_km")
         brand = listing["brand"]
