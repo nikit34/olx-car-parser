@@ -10,6 +10,7 @@ from src.parser.scraper import (
     OlxScraper,
     RawListing,
     ScraperConfig,
+    ScraperParseError,
     StandVirtualScraper,
     _extract_brand_from_title,
     _extract_brand_from_url,
@@ -329,4 +330,71 @@ class TestParsePtDate:
         scraper._fetch = lambda url, retries=3: (url, html)
         d = scraper.scrape_listing_detail("https://www.olx.pt/d/anuncio/test-IDxyz.html")
         assert d["posted_at"] == datetime(2026, 2, 15, 0, 0)
+        scraper.close()
+
+
+# ---------------------------------------------------------------------------
+# Loud-failure detection in scrape_all
+# ---------------------------------------------------------------------------
+
+class TestScrapeAllLoudFailure:
+    """Two consecutive empty pages with zero collected listings = loud raise.
+    Modelled on the 2026-04-20 OLX outage: SERP HTTP 200, parser sees 0
+    cards because of an unhandled Brotli response, and the scraper would
+    silently exit successful for ten days. We want exit code != 0 instead.
+    """
+
+    def test_olx_two_empty_pages_from_start_raises(self):
+        scraper = OlxScraper(ScraperConfig(max_pages=5, delay_min=0, delay_max=0))
+        scraper.scrape_search_page = lambda page=1: []  # noqa: E731 — every page parses to []
+        with pytest.raises(ScraperParseError, match="OLX SERP parser returned 0 cards"):
+            scraper.scrape_all(enrich_details=False)
+        scraper.close()
+
+    def test_olx_empty_after_collected_just_stops(self):
+        """Empty page after we already collected listings = end of pagination,
+        NOT a parse failure. Returns silently without raising."""
+        scraper = OlxScraper(ScraperConfig(max_pages=5, delay_min=0, delay_max=0))
+        page_returns = iter([
+            [RawListing(olx_id="x1", url="https://www.olx.pt/d/anuncio/a-IDx1.html",
+                        title="A", price_eur=1000, source="olx")],
+            [],   # second page empty after first had results — normal end
+        ])
+        scraper.scrape_search_page = lambda page=1: next(page_returns)
+        scraper._enrich_batch = lambda listings, skip_ids=None: (len(listings), 0)
+        result = scraper.scrape_all(enrich_details=True)
+        assert len(result) == 1
+        assert result[0].olx_id == "x1"
+        scraper.close()
+
+    def test_olx_redirect_to_last_page_just_stops(self):
+        """`scrape_search_page` returning ``None`` = OLX redirected past the
+        last valid page. Legitimate end, not a failure."""
+        scraper = OlxScraper(ScraperConfig(max_pages=5, delay_min=0, delay_max=0))
+        scraper.scrape_search_page = lambda page=1: None
+        result = scraper.scrape_all(enrich_details=False)
+        assert result == []
+        scraper.close()
+
+    def test_olx_one_empty_then_data_does_not_raise(self):
+        """One empty page followed by a non-empty one is tolerated — covers
+        a transient parse glitch that resolves on retry."""
+        scraper = OlxScraper(ScraperConfig(max_pages=5, delay_min=0, delay_max=0))
+        page_returns = iter([
+            [],
+            [RawListing(olx_id="y1", url="https://www.olx.pt/d/anuncio/b-IDy1.html",
+                        title="B", price_eur=2000, source="olx")],
+            [],
+        ])
+        scraper.scrape_search_page = lambda page=1: next(page_returns)
+        scraper._enrich_batch = lambda listings, skip_ids=None: (len(listings), 0)
+        result = scraper.scrape_all(enrich_details=True)
+        assert len(result) == 1
+        scraper.close()
+
+    def test_standvirtual_two_empty_pages_from_start_raises(self):
+        scraper = StandVirtualScraper(ScraperConfig(max_pages=5, delay_min=0, delay_max=0))
+        scraper.scrape_search_page = lambda page=1: []  # noqa: E731
+        with pytest.raises(ScraperParseError, match="StandVirtual SERP parser returned 0 cards"):
+            scraper.scrape_all(enrich_details=False)
         scraper.close()

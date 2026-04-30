@@ -19,6 +19,20 @@ from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
+
+class ScraperParseError(RuntimeError):
+    """Raised when the SERP parser returns 0 cards across multiple pages
+    and we haven't collected any listings yet — almost certainly a source-
+    side change (HTML restructured, encoding flipped, bot wall added).
+
+    The 2026-04 OLX outage was exactly this failure mode: ``Accept-Encoding:
+    br`` started getting Brotli responses that httpx couldn't decode, the
+    parser silently saw binary garbage, and the loop returned ``[]`` page
+    after page for ten days while StandVirtual kept working. Loud-fail so
+    the cron exits non-zero and a human notices the next morning instead
+    of when the OLX-side database has gone fully stale.
+    """
+
 USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
@@ -579,13 +593,33 @@ class OlxScraper:
         """
         all_listings = []
         consecutive_known = 0
+        consecutive_empty = 0
         for page in range(1, self.config.max_pages + 1):
             page_listings = self.scrape_search_page(page)
             if page_listings is None:
+                # Redirect past last page — legitimate end of results.
                 break
             if not page_listings:
-                logger.info("No more listings at page %d, stopping", page)
-                break
+                consecutive_empty += 1
+                # If we already collected listings, an empty page is the
+                # natural end of pagination and we just stop. If we
+                # haven't, two empty pages in a row mean the parser is
+                # not finding anything in HTML it definitely got back —
+                # loud-fail the cron so a human notices.
+                if all_listings:
+                    logger.info("No more listings at page %d, stopping", page)
+                    break
+                if consecutive_empty >= 2:
+                    msg = (
+                        f"OLX SERP parser returned 0 cards on pages 1-{page} "
+                        f"and collected 0 listings — source likely changed "
+                        f"(HTML restructure / encoding flip / bot wall)"
+                    )
+                    logger.error("::error::%s", msg)
+                    raise ScraperParseError(msg)
+                self._delay()
+                continue
+            consecutive_empty = 0
 
             if enrich_details:
                 ok, fail = self._enrich_batch(page_listings, skip_ids=skip_enrichment_ids)
@@ -932,13 +966,27 @@ class StandVirtualScraper:
         scrapers uniformly."""
         all_listings = []
         consecutive_known = 0
+        consecutive_empty = 0
         for page in range(1, self.config.max_pages + 1):
             page_listings = self.scrape_search_page(page)
             if page_listings is None:
                 break
             if not page_listings:
-                logger.info("SV: no more listings at page %d, stopping", page)
-                break
+                consecutive_empty += 1
+                if all_listings:
+                    logger.info("SV: no more listings at page %d, stopping", page)
+                    break
+                if consecutive_empty >= 2:
+                    msg = (
+                        f"StandVirtual SERP parser returned 0 cards on pages "
+                        f"1-{page} and collected 0 listings — source likely "
+                        f"changed (HTML restructure / encoding flip / bot wall)"
+                    )
+                    logger.error("::error::%s", msg)
+                    raise ScraperParseError(msg)
+                self._delay()
+                continue
+            consecutive_empty = 0
 
             if enrich_details:
                 ok, fail = self._enrich_batch(page_listings, skip_ids=skip_enrichment_ids)
