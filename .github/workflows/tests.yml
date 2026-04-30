@@ -15,5 +15,9 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         run: pip install -r requirements.txt pytest
-      - name: Run all tests
-        run: pytest tests/ -v --tb=short
+      - name: Run unit + integration tests
+        # Skip smoke marker — those tests hit live Ollama backends
+        # (localhost + 192.168.1.69) which aren't available on the
+        # GitHub-hosted Ubuntu runner. Smoke tests run on the self-
+        # hosted Mac runner during the Scrape OLX workflow.
+        run: pytest tests/ -v --tb=short -m "not smoke"
