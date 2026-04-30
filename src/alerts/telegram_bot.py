@@ -80,6 +80,22 @@ def _format_deal(deal: dict) -> str:
     if warnings:
         lines.append(f"📝 Из описания: {', '.join(warnings)}")
 
+    # Photo classifier signal (set by `verify-photos` CLI, lives inside
+    # llm_extras JSON). Borderline cases pass _blocking_deal_reason but
+    # are still worth flagging visually in the alert.
+    photo_p = deal.get("photo_damage_p")
+    if photo_p is None:
+        raw_extras = deal.get("llm_extras")
+        if isinstance(raw_extras, str) and raw_extras.strip():
+            try:
+                photo_p = json.loads(raw_extras).get("photo_damage_p")
+            except (TypeError, ValueError):
+                photo_p = None
+        elif isinstance(raw_extras, dict):
+            photo_p = raw_extras.get("photo_damage_p")
+    if isinstance(photo_p, (int, float)) and photo_p >= 0.10:
+        lines.append(f"📷 Photo classifier: p_damaged={photo_p:.2f}")
+
     if url:
         lines.append(f"\n<a href=\"{url}\">Open on OLX</a>")
 

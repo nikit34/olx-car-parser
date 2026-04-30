@@ -653,6 +653,138 @@ def enrich(
     log.info("Enriched %d listings (%d failed).", enriched, failed)
 
 
+@app.command("verify-photos")
+def verify_photos(
+    threshold: float = typer.Option(0.20, help="P(damaged) threshold (0.20 = production default, F1=0.818 R=100%% on gold)."),
+    limit: int = typer.Option(0, help="Max listings to process (0 = all)."),
+    only_text_flagged: bool = typer.Option(
+        False, help="Process only listings with text damage_severity >= 2 "
+                    "(verifier mode). Off = scan all listings (full coverage)."),
+    cache_dir: Path = typer.Option(
+        Path("/tmp/photo_verify/cache"), help="Local photo cache directory."),
+    dry_run: bool = typer.Option(
+        False, help="Print what would change without writing to DB."),
+):
+    """Run the v2 damage classifier on listings' photos and store ``photo_damage_p`` in llm_extras.
+
+    Non-destructive: keeps the text-derived ``damage_severity`` column intact.
+    Adds two JSON keys:
+      • ``photo_damage_p`` — max P(damaged) across photos
+      • ``photo_damage_n_photos`` — photos checked
+
+    Coverage: both OLX (``apollo.olxcdn.com`` URL scrape) and StandVirtual
+    (``__NEXT_DATA__`` JSON). Listings from other sources are skipped.
+    """
+    import sqlite3
+    import time
+    from src.parser.photo_damage import DamageClassifier
+    # Reuse the proven photo fetch + download from the script
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from scripts.photo_verify_damage import fetch_photos, download_photo
+
+    init_db()
+    session = get_session()
+    from src.models.listing import Listing
+    from sqlalchemy import or_, func as sa_func
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    log.info("Loading classifier (threshold=%.2f)...", threshold)
+    clf = DamageClassifier(threshold=threshold)
+    log.info("Device: %s, classes: %s", clf.device, clf.classes)
+
+    # Pending: active StandVirtual listings missing photo_damage_p in llm_extras.
+    needs_photo = sa_func.json_extract(
+        Listing.llm_extras, "$.photo_damage_p",
+    ).is_(None)
+    from sqlalchemy import or_
+    q = (
+        session.query(Listing)
+        .filter(
+            Listing.is_active == True,  # noqa: E712
+            or_(
+                Listing.url.like("%standvirtual%"),
+                Listing.url.like("%olx.pt%"),
+            ),
+            Listing.llm_extras.isnot(None),
+            needs_photo,
+        )
+        # Newest listings first — they reach the alerts step in the same
+        # cron run, so the photo signal can veto bad deals immediately
+        # rather than ~3 days later when backfill catches up.
+        .order_by(Listing.first_seen_at.desc())
+    )
+    if only_text_flagged:
+        text_sev_ge2 = sa_func.json_extract(
+            Listing.llm_extras, "$.damage_severity",
+        ) >= 2
+        q = q.filter(text_sev_ge2)
+    if limit:
+        q = q.limit(limit)
+    pending = q.all()
+    if not pending:
+        log.info("Nothing to verify.")
+        return
+    log.info("Pending: %d listings.", len(pending))
+
+    flagged = downgraded = no_photos = errors = 0
+    t0 = time.monotonic()
+    for i, listing in enumerate(pending, 1):
+        photo_urls = fetch_photos(listing.url)
+        listing_dir = cache_dir / listing.olx_id
+        photo_paths = []
+        for j, url in enumerate(photo_urls, 1):
+            p = listing_dir / f"{listing.olx_id}_{j}.jpg"
+            if download_photo(url, p):
+                photo_paths.append(p)
+
+        if not photo_paths:
+            no_photos += 1
+            max_p = 0.0
+            n_photos = 0
+        else:
+            try:
+                pred = clf.predict_listing(listing.olx_id, photo_paths)
+                max_p = pred.max_p
+                n_photos = len(pred.photos)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Classifier failed on %s: %s", listing.olx_id, exc)
+                errors += 1
+                continue
+
+        is_damaged = max_p >= threshold
+        if is_damaged:
+            flagged += 1
+        if not is_damaged and (json.loads(listing.llm_extras or "{}").get("damage_severity") or 0) >= 2:
+            downgraded += 1
+
+        try:
+            extras = json.loads(listing.llm_extras) if listing.llm_extras else {}
+        except (json.JSONDecodeError, TypeError):
+            extras = {}
+        extras["photo_damage_p"] = round(max_p, 4)
+        extras["photo_damage_n_photos"] = n_photos
+        if not dry_run:
+            listing.llm_extras = json.dumps(extras, ensure_ascii=False)
+
+        if i % 25 == 0:
+            if not dry_run:
+                session.commit()
+            log.info("Verify progress: %d/%d  flagged=%d  no_photos=%d  errs=%d",
+                     i, len(pending), flagged, no_photos, errors)
+
+    if not dry_run:
+        session.commit()
+    elapsed = time.monotonic() - t0
+    log.info(
+        "Done in %.1f min  flagged=%d  text_overcalls_downgrade_candidates=%d  "
+        "no_photos=%d  errors=%d  (%.1fs/listing)",
+        elapsed / 60, flagged, downgraded, no_photos, errors,
+        elapsed / max(len(pending), 1),
+    )
+    if dry_run:
+        log.info("Dry-run — no DB writes. Re-run without --dry-run to persist.")
+
+
 @app.command()
 def stats():
     """Show current market stats."""

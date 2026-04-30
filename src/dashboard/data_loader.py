@@ -208,14 +208,17 @@ def _normalized_text_list(value) -> list[str]:
     return [str(item).strip().lower() for item in value if item not in (None, "")]
 
 
+_PHOTO_DAMAGE_BLOCKING_THRESHOLD = 0.20
+
+
 def _blocking_deal_reason(listing: pd.Series) -> str | None:
     """Return a hard-stop reason for listings that should not be shown as deals.
 
-    Relies on two signals: desc_mentions_accident (DB column) and
-    mechanical_condition (from llm_extras JSON).  The LLM prompt sets
-    mechanical_condition="poor" for parts cars / breakdowns, so the old
-    free-text checks (suspicious_signs, reason_for_sale, issues) are
-    no longer needed.
+    Three signals: ``desc_mentions_accident`` (DB column), ``mechanical_condition``
+    (from llm_extras JSON), and ``photo_damage_p`` (from llm_extras JSON, set
+    by ``verify-photos`` CLI). The photo signal at threshold 0.20 has F1=0.818
+    and recall=100% on the gold-labeled holdout, so it is a strong veto for
+    visible damage that text-derivation missed.
     """
     desc_mentions_accident = listing.get("desc_mentions_accident")
     if pd.notna(desc_mentions_accident) and bool(desc_mentions_accident):
@@ -227,6 +230,10 @@ def _blocking_deal_reason(listing: pd.Series) -> str | None:
 
     if str(extras.get("mechanical_condition") or "").strip().lower() == "poor":
         return "poor mechanical condition"
+
+    photo_p = extras.get("photo_damage_p")
+    if isinstance(photo_p, (int, float)) and photo_p >= _PHOTO_DAMAGE_BLOCKING_THRESHOLD:
+        return f"photo damage detected (p={photo_p:.2f})"
 
     return None
 

@@ -115,6 +115,43 @@ jobs:
         timeout-minutes: 90
         run: .venv/bin/python -m src.cli enrich --workers 6 --active-only
 
+      - name: Ensure damage classifier weights present
+        # Weights live in the persistent data/ dir alongside the DB.
+        # First time on a fresh runner: pull them from the latest-data
+        # release. Subsequent runs see the cached file and skip download.
+        # If the release lacks the asset, the next step's weights check
+        # will skip verify-photos with a warning.
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+        run: |
+          if [ -f data/damage_classifier_v2.pt ]; then
+            echo "Weights already present at data/damage_classifier_v2.pt"
+          else
+            gh release download latest-data --pattern damage_classifier_v2.pt --dir data/ \
+              || echo "::warning::damage_classifier_v2.pt not in latest-data release; verify-photos will be skipped"
+          fi
+
+      - name: Verify photos with damage classifier
+        # Runs the v2 ResNet50 classifier on listings' photos and stores
+        # photo_damage_p in llm_extras. Photo signal feeds the alerts
+        # step's _blocking_deal_reason — so this MUST run before alerts.
+        # --limit 500 keeps each run bounded (~30 min); newest listings
+        # are processed first so deals from this scrape get verified
+        # immediately rather than 3 days later.
+        if: ${{ !cancelled() }}
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        timeout-minutes: 45
+        continue-on-error: true
+        run: |
+          if [ ! -f data/damage_classifier_v2.pt ]; then
+            echo "::warning::Skipping verify-photos — weights missing"
+            exit 0
+          fi
+          .venv/bin/python -m src.cli verify-photos --limit 500
+
       - name: Send Telegram alerts
         if: ${{ !cancelled() }}
         env:
