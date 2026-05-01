@@ -61,6 +61,33 @@ FLAG_MIN_PHOTOS = 2
 FLAG_PHOTO_THRESHOLD = 0.30
 
 
+def is_listing_flagged(extras: dict | None) -> bool:
+    """Listing-level damage decision with backward-compat fallback.
+
+    Reads ``photo_damage_flagged`` (the multi-photo agreement field added
+    by ``verify-photos`` per issue #2 — production-validated in #1 to drop
+    flag rate by 70.6 % vs the old max-rule) when present. For listings
+    predating that field, falls back to the v2 max-rule
+    (``photo_damage_p >= DEFAULT_THRESHOLD``) so the 6 271 legacy rows
+    don't all silently drop out of the deal-blocking path.
+
+    Returns ``False`` for listings with no photo_damage data at all
+    (``verify-photos`` hasn't classified them yet, or extras is empty).
+    """
+    if not extras:
+        return False
+    new = extras.get("photo_damage_flagged")
+    if new is not None:
+        return bool(new)
+    # Legacy listing (pre-#2 cron): fall back to the v2 max-rule so the
+    # behaviour for old rows is exactly what consumers had before.
+    p = extras.get("photo_damage_p") or 0.0
+    try:
+        return float(p) >= DEFAULT_THRESHOLD
+    except (TypeError, ValueError):
+        return False
+
+
 @dataclass
 class PhotoPrediction:
     path: Path

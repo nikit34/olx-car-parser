@@ -208,18 +208,24 @@ def _normalized_text_list(value) -> list[str]:
     return [str(item).strip().lower() for item in value if item not in (None, "")]
 
 
-_PHOTO_DAMAGE_BLOCKING_THRESHOLD = 0.20
-
-
 def _blocking_deal_reason(listing: pd.Series) -> str | None:
     """Return a hard-stop reason for listings that should not be shown as deals.
 
     Three signals: ``desc_mentions_accident`` (DB column), ``mechanical_condition``
-    (from llm_extras JSON), and ``photo_damage_p`` (from llm_extras JSON, set
-    by ``verify-photos`` CLI). The photo signal at threshold 0.20 has F1=0.818
-    and recall=100% on the gold-labeled holdout, so it is a strong veto for
-    visible damage that text-derivation missed.
+    (from llm_extras JSON), and the photo-damage flag (from llm_extras JSON,
+    set by ``verify-photos`` CLI). The photo decision now uses the multi-photo
+    agreement rule via :func:`is_listing_flagged` (issue #8): new listings read
+    ``photo_damage_flagged`` (issue #2 — production-validated in #1 at -70.6 %
+    flag rate vs the old max-rule), and legacy rows that predate #2 fall back
+    to the v2 max-rule (``photo_damage_p >= 0.20``) inside the helper so we
+    don't have to backfill the 6 271 pre-#2 listings.
+
+    ``photo_damage_p`` is still read separately for the display string so the
+    user sees the raw per-listing max score, even though the boolean
+    decision now consults the new field when set.
     """
+    from src.parser.photo_damage import is_listing_flagged
+
     desc_mentions_accident = listing.get("desc_mentions_accident")
     if pd.notna(desc_mentions_accident) and bool(desc_mentions_accident):
         return "description mentions accident"
@@ -231,9 +237,11 @@ def _blocking_deal_reason(listing: pd.Series) -> str | None:
     if str(extras.get("mechanical_condition") or "").strip().lower() == "poor":
         return "poor mechanical condition"
 
-    photo_p = extras.get("photo_damage_p")
-    if isinstance(photo_p, (int, float)) and photo_p >= _PHOTO_DAMAGE_BLOCKING_THRESHOLD:
-        return f"photo damage detected (p={photo_p:.2f})"
+    if is_listing_flagged(extras):
+        photo_p = extras.get("photo_damage_p")
+        if isinstance(photo_p, (int, float)):
+            return f"photo damage detected (p={photo_p:.2f})"
+        return "photo damage detected"
 
     return None
 

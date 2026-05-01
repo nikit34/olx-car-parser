@@ -54,11 +54,13 @@ if "torchvision" not in sys.modules:
     sys.modules["torchvision.transforms"] = _tv_transforms
 
 from src.parser.photo_damage import (  # noqa: E402
+    DEFAULT_THRESHOLD,
     FLAG_MIN_PHOTOS,
     FLAG_PHOTO_THRESHOLD,
     DamageClassifier,
     ListingPrediction,
     PhotoPrediction,
+    is_listing_flagged,
 )
 
 
@@ -170,3 +172,70 @@ class TestModuleConstants:
         assert n_above >= FLAG_MIN_PHOTOS
         # Sanity-check we are exercising a real method, not a fake.
         assert hasattr(DamageClassifier, "predict_listing")
+
+
+class TestIsListingFlagged:
+    """``is_listing_flagged`` is the single source of truth for the
+    listing-level damage decision in alerts + dashboard (issue #8).
+
+    For listings written by the post-#2 cron, ``photo_damage_flagged``
+    is authoritative — the helper just trusts it. For the 6 271 legacy
+    rows that have ``photo_damage_p`` but no ``photo_damage_flagged``
+    (we explicitly chose not to backfill — see #8), the helper falls
+    back to the v2 max-rule so blocking behaviour is identical to what
+    consumers had before.
+    """
+
+    def test_new_field_true_flags(self):
+        """Post-#2 listing flagged under multi-photo agreement → blocked."""
+        extras = {"photo_damage_flagged": True, "photo_damage_p": 0.42}
+        assert is_listing_flagged(extras) is True
+
+    def test_new_field_false_does_not_flag(self):
+        """Post-#2 listing where multi-photo agreement *cleared* the listing
+        despite a single high p_max — the whole point of #2."""
+        # max_p=0.95 alone would have flagged under the v2 rule; the new
+        # boolean wins when present, so the helper must not regress.
+        extras = {"photo_damage_flagged": False, "photo_damage_p": 0.95}
+        assert is_listing_flagged(extras) is False
+
+    def test_legacy_p_above_threshold_flags(self):
+        """Pre-#2 listing with no flagged field, ``p`` ≥ 0.20 → fall back
+        to v2 max-rule and flag, so blocking parity is preserved for the
+        ~6 k legacy rows we declined to backfill."""
+        extras = {"photo_damage_p": 0.42}
+        assert is_listing_flagged(extras) is True
+        # Boundary: exactly the v2 threshold flags too.
+        assert is_listing_flagged({"photo_damage_p": DEFAULT_THRESHOLD}) is True
+
+    def test_legacy_p_below_threshold_does_not_flag(self):
+        """Pre-#2 listing under v2 threshold → not flagged."""
+        extras = {"photo_damage_p": 0.05}
+        assert is_listing_flagged(extras) is False
+
+    def test_empty_extras_does_not_flag(self):
+        """``verify-photos`` hasn't run yet, or extras is empty/None — we
+        absolutely must not block listings just because photo data is
+        missing (alerts would silently disappear)."""
+        assert is_listing_flagged({}) is False
+        assert is_listing_flagged(None) is False
+
+    def test_explicit_zero_does_not_flag(self):
+        """``photo_damage_p`` = 0 (verify-photos ran, found no damage)
+        must not flag under the legacy fallback path."""
+        assert is_listing_flagged({"photo_damage_p": 0.0}) is False
+
+    def test_new_field_overrides_legacy_p(self):
+        """When *both* fields are present, the new boolean wins. Otherwise
+        a row written by the new cron with high p_max but cleared by
+        multi-photo agreement would still get blocked — defeats #2."""
+        extras = {"photo_damage_flagged": False, "photo_damage_p": 0.99}
+        assert is_listing_flagged(extras) is False
+
+        extras = {"photo_damage_flagged": True, "photo_damage_p": 0.01}
+        assert is_listing_flagged(extras) is True
+
+    def test_garbage_p_does_not_crash(self):
+        """Defensive: malformed ``photo_damage_p`` (string from a bad
+        json roundtrip, etc.) must not raise — return False instead."""
+        assert is_listing_flagged({"photo_damage_p": "not-a-number"}) is False

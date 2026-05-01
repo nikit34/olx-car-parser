@@ -109,6 +109,121 @@ class TestComputeSignals:
 
         assert "maint-1" in signals["olx_id"].values
 
+    def test_excludes_listings_flagged_by_new_multi_photo_rule(self, sample_history_df, generations_data):
+        """Issue #8 migration: when ``photo_damage_flagged`` is set on a
+        post-#2 listing, the dashboard must block it (the boolean wins over
+        any p_max display value), wired through ``_blocking_deal_reason``.
+
+        Without this, the production user-facing flag rate would still be
+        the v2 max-rule rate (~32.8 %) instead of the new ~9.6 % validated
+        in #1's production-validation comment.
+        """
+        listings = pd.DataFrame([
+            {"olx_id": "new-flagged", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2015, "price_eur": 3000, "mileage_km": 150000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True,
+             "llm_extras": json.dumps({
+                 # New cron writes both fields; the boolean is authoritative.
+                 "photo_damage_p": 0.42,
+                 "photo_damage_flagged": True,
+             })},
+            {"olx_id": "comp-1", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2015, "price_eur": 12000, "mileage_km": 160000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-2", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2016, "price_eur": 14000, "mileage_km": 110000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-3", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2017, "price_eur": 15000, "mileage_km": 90000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-4", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2014, "price_eur": 11000, "mileage_km": 175000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-5", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2013, "price_eur": 10000, "mileage_km": 190000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+        ])
+
+        with patch("src.models.generations.load_generations", return_value=generations_data):
+            signals, _ = compute_signals(listings, sample_history_df)
+
+        assert signals.empty or "new-flagged" not in signals["olx_id"].values
+
+    def test_keeps_listings_cleared_by_new_multi_photo_rule(self, sample_history_df, generations_data):
+        """Inverse of the previous test: ``photo_damage_flagged=False``
+        with a high p_max — the v2 max-rule would have blocked this, but
+        the new multi-photo agreement *cleared* it (one weirdly-lit photo).
+        Issue #8 says the new boolean wins, so this listing must surface.
+        """
+        listings = pd.DataFrame([
+            {"olx_id": "new-cleared", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2015, "price_eur": 8000, "mileage_km": 150000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True,
+             "llm_extras": json.dumps({
+                 # max p above v2 threshold but multi-photo rule cleared it.
+                 "photo_damage_p": 0.95,
+                 "photo_damage_flagged": False,
+             })},
+            {"olx_id": "comp-1", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2015, "price_eur": 12000, "mileage_km": 160000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-2", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2016, "price_eur": 14000, "mileage_km": 110000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-3", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2017, "price_eur": 15000, "mileage_km": 90000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-4", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2014, "price_eur": 11000, "mileage_km": 175000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-5", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2013, "price_eur": 10000, "mileage_km": 190000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+        ])
+
+        with patch("src.models.generations.load_generations", return_value=generations_data):
+            signals, _ = compute_signals(listings, sample_history_df)
+
+        # The whole point of issue #8: trust the new field even when p is high.
+        assert "new-cleared" in signals["olx_id"].values
+
+    def test_legacy_listings_keep_v2_max_rule(self, sample_history_df, generations_data):
+        """Pre-#2 listings only have ``photo_damage_p`` (we didn't backfill
+        the 6 271 legacy rows — see #8 spec). For those, the helper must
+        fall back to ``photo_damage_p >= 0.20`` so blocking parity is
+        preserved. Otherwise legacy damaged cars would silently start
+        passing the deal filter.
+        """
+        listings = pd.DataFrame([
+            {"olx_id": "legacy-damaged", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2015, "price_eur": 3000, "mileage_km": 150000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True,
+             "llm_extras": json.dumps({
+                 # No photo_damage_flagged → fall back to v2 max-rule.
+                 "photo_damage_p": 0.5,
+             })},
+            {"olx_id": "comp-1", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2015, "price_eur": 12000, "mileage_km": 160000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-2", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2016, "price_eur": 14000, "mileage_km": 110000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-3", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2017, "price_eur": 15000, "mileage_km": 90000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-4", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2014, "price_eur": 11000, "mileage_km": 175000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+            {"olx_id": "comp-5", "url": "", "brand": "Volkswagen", "model": "Golf",
+             "year": 2013, "price_eur": 10000, "mileage_km": 190000, "engine_cc": 1600,
+             "fuel_type": "Diesel", "is_active": True},
+        ])
+
+        with patch("src.models.generations.load_generations", return_value=generations_data):
+            signals, _ = compute_signals(listings, sample_history_df)
+
+        assert signals.empty or "legacy-damaged" not in signals["olx_id"].values
+
     def test_drops_zero_and_negative_prices(self, sample_history_df, generations_data):
         listings = pd.DataFrame([
             {"olx_id": "junk-zero", "url": "", "brand": "Volkswagen", "model": "Golf",
