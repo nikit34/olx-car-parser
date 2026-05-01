@@ -21,13 +21,10 @@ import joblib
 import numpy as np
 import pandas as pd
 import lightgbm as lgb
-from sklearn.decomposition import TruncatedSVD
-from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.inspection import permutation_importance
 from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import make_scorer, mean_pinball_loss
 from sklearn.model_selection import KFold
-from sklearn.pipeline import Pipeline
 
 
 _MODEL_DIR = Path(__file__).resolve().parent.parent.parent / "data"
@@ -45,147 +42,18 @@ _OTHER_CATEGORY = "__other__"
 # monotonic constraints + inverse-log sample weights
 # v5: LLM-extracted damage_severity (0-3) — replaces the rule-based score's
 # role as the primary damage feature. Keyword rules stay as a cheap backup.
-_SCHEMA_VERSION = 7  # v7: drop near-zero LLM/text features (ablation 2026-04)
+# v7: drop near-zero LLM/text features (ablation 2026-04). The columns
+# stopped feeding the model, but the TF-IDF→SVD pipeline and damage-keyword
+# scan kept running on every train/predict for nothing.
+# v8: drop the dead pipeline + helpers entirely. Bundle no longer carries
+# `text_pipeline`; `_prepare_X` stops fitting a TF-IDF/SVD on every call.
+_SCHEMA_VERSION = 8
 # Fraction of the dataset (newest rows by first_seen_at) used as the
 # time-honest conformal calibration window. Random-KFold CQR mixes
 # time-adjacent rows across folds and over-estimates coverage on real future
 # listings — backtest showed 80% nominal coverage delivering 61–69% on
 # tomorrow's data. Calibrating on a held-out time-tail closes that gap.
 _TIME_CALIBRATION_FRAC = 0.2
-# Number of TruncatedSVD components projected from the TF-IDF matrix of
-# title+description. Captures trim levels, condition phrases, urgency cues
-# the structured features miss ("AMG Line", "FULL EXTRAS", "URGENTE",
-# "para peças"). 8 is a moderate setting — enough signal, low overfit risk.
-_N_TEXT_COMPONENTS = 8
-
-
-# --- Damage / salvage rule signals ----------------------------------------
-# Independent backstop for the LLM extraction (which sometimes misses obvious
-# salvage cars). Hits any one of these → damage_score = 1.0 / 0.7 / 0.4 and
-# the corresponding boolean flag fires. Portuguese first, English fallback
-# for the rare bilingual listing.
-_PARTS_ONLY_KEYWORDS = (
-    "para peças", "para pecas", "para sucata", "para desmontar",
-    "for parts", "salvage", "para peças/sucata",
-)
-_SEVERE_DAMAGE_KEYWORDS = (
-    "não anda", "nao anda", "não funciona", "nao funciona",
-    "motor fundido", "motor avariado", "motor avariada",
-    "salvado", "destruído", "destruido", "batido", "acidentado",
-    "non-runner", "non runner", "engine seized",
-)
-_REPAIR_NEEDED_KEYWORDS = (
-    "para reparar", "necessita de reparação", "necessita de reparacao",
-    "needs repair", "to fix", "necessita de obras",
-)
-
-
-def _damage_signals(title: str, description: str) -> tuple[float, bool, bool]:
-    """Return (damage_score, has_parts_only, has_severe_damage).
-
-    score 1.0 = parts-only / salvage explicitly stated
-    score 0.7 = severe damage signal (engine, accident)
-    score 0.4 = needs repair, less severe
-    score 0.0 = no signal
-    """
-    text = (str(title or "") + " " + str(description or "")).lower()
-    has_parts = any(kw in text for kw in _PARTS_ONLY_KEYWORDS)
-    has_severe = any(kw in text for kw in _SEVERE_DAMAGE_KEYWORDS)
-    has_repair = any(kw in text for kw in _REPAIR_NEEDED_KEYWORDS)
-    if has_parts:
-        score = 1.0
-    elif has_severe:
-        score = 0.7
-    elif has_repair:
-        score = 0.4
-    else:
-        score = 0.0
-    return score, has_parts, has_severe
-
-
-def _add_damage_signals(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute damage_score / title_has_parts_only / title_has_severe_damage.
-
-    Idempotent — won't recompute if the columns already exist (some callers
-    enrich at the data-loader layer for dashboard filtering).
-    """
-    if {"damage_score", "title_has_parts_only", "title_has_severe_damage"}.issubset(df.columns):
-        return df
-
-    out = df.copy()
-    title = out.get("title", pd.Series("", index=out.index)).fillna("")
-    desc = out.get("description", pd.Series("", index=out.index)).fillna("")
-    triples = [_damage_signals(t, d) for t, d in zip(title.astype(str), desc.astype(str))]
-    out["damage_score"] = [t[0] for t in triples]
-    out["title_has_parts_only"] = [t[1] for t in triples]
-    out["title_has_severe_damage"] = [t[2] for t in triples]
-    return out
-
-
-# --- Free-text features (TF-IDF → SVD) ------------------------------------
-
-def _build_text_pipeline(n_components: int = _N_TEXT_COMPONENTS) -> Pipeline:
-    """TF-IDF (1-2 grams) + TruncatedSVD pipeline for title+description.
-
-    sublinear_tf damps the impact of repeated words; min_df=3 drops very
-    rare tokens; max_df=0.95 drops near-stopwords. Lowercase+default ASCII
-    accent handling — Portuguese accents are kept as-is since they often
-    carry semantic weight ("não" vs "nao").
-    """
-    return Pipeline([
-        ("tfidf", TfidfVectorizer(
-            ngram_range=(1, 2), min_df=3, max_df=0.95,
-            max_features=10000, sublinear_tf=True, lowercase=True,
-        )),
-        ("svd", TruncatedSVD(n_components=n_components, random_state=42)),
-    ])
-
-
-def _text_corpus(df: pd.DataFrame) -> list[str]:
-    title = df.get("title", pd.Series("", index=df.index)).fillna("")
-    desc = df.get("description", pd.Series("", index=df.index)).fillna("")
-    return (title.astype(str) + " | " + desc.astype(str)).tolist()
-
-
-def _add_text_features(
-    df: pd.DataFrame,
-    pipeline: Pipeline | None,
-    n_components: int = _N_TEXT_COMPONENTS,
-) -> tuple[pd.DataFrame, Pipeline | None]:
-    """Add text_pc_0..text_pc_{n-1} columns, fitting a fresh pipeline if none
-    is supplied. Caller handles persistence of the fitted pipeline.
-
-    Returns ``(df, None)`` when the corpus is too sparse for TF-IDF to fit
-    (empty/degenerate descriptions, common on small test fixtures). In that
-    case all text_pc columns are zero — the LightGBM model will simply
-    ignore them, which is the correct degenerate behavior.
-    """
-    corpus = _text_corpus(df)
-    pcs: np.ndarray
-    if pipeline is None:
-        pipeline = _build_text_pipeline(n_components)
-        try:
-            pcs = pipeline.fit_transform(corpus)
-        except (ValueError, Exception):
-            # Empty vocabulary, single-row corpus, etc. — degrade to zeros
-            # and signal "no usable pipeline" so callers don't try to reuse
-            # it (saves an unfitted Pipeline from getting persisted).
-            pipeline = None
-            pcs = np.zeros((len(corpus), n_components))
-    else:
-        try:
-            pcs = pipeline.transform(corpus)
-        except (ValueError, Exception):
-            pcs = np.zeros((len(corpus), n_components))
-
-    out = df.copy()
-    for i in range(n_components):
-        col = f"text_pc_{i}"
-        out[col] = pcs[:, i] if i < pcs.shape[1] else 0.0
-    return out, pipeline
-
-
-_TEXT_FEATURE_NAMES = [f"text_pc_{i}" for i in range(_N_TEXT_COMPONENTS)]
 
 
 NUMERIC_FEATURES = [
@@ -202,10 +70,10 @@ NUMERIC_FEATURES = [
     # NOTE: LLM-extracted damage_severity and rule-based damage_score were
     # dropped in schema v7 — the 2026-04 ablation showed median permutation
     # importance ≤ 0.002 and removing them gave +0.7 % MAPE drift inside
-    # CV noise while improving tail pinball. Helpers stay (cheap, used by
-    # the dashboard for display) but the columns no longer feed the model.
-    # text_pc_0..7 (TF-IDF→SVD on title+description) dropped for the same
-    # reason — none of the 8 components ranked above 0.003.
+    # CV noise while improving tail pinball. text_pc_0..7 (TF-IDF→SVD on
+    # title+description) dropped for the same reason — none of the 8
+    # components ranked above 0.003. The TF-IDF pipeline + damage-keyword
+    # scan are gone in v8 (no callers, no consumers).
 ]
 
 BOOL_FEATURES: list[str] = []
@@ -295,20 +163,13 @@ def _encode_categoricals(
 def _prepare_X(
     df: pd.DataFrame,
     cat_maps: dict[str, dict[str, int]] | None = None,
-    text_pipeline: Pipeline | None = None,
-) -> tuple[np.ndarray, dict[str, dict[str, int]], Pipeline]:
+) -> tuple[np.ndarray, dict[str, dict[str, int]]]:
     """Prepare feature matrix from listings DataFrame.
 
-    Returns (X_arr, cat_maps, text_pipeline). Both fitted artefacts are
-    returned so the caller can persist them in the bundle (cat_maps for
-    ordinal encoding of categoricals, text_pipeline for TF-IDF→SVD of
-    title+description). If either is passed in, it's reused instead of
-    refit — that's how CV folds avoid leakage and predict_prices reuses
-    the saved bundle.
+    Returns (X_arr, cat_maps). cat_maps is the ordinal-encoding mapping
+    fitted on this dataframe; pass it back in to reuse the encoding for
+    new rows (CV folds, calibration slice, ``predict_prices``).
     """
-    df = _add_damage_signals(df)
-    df, fitted_text_pipeline = _add_text_features(df, text_pipeline)
-
     X = df.reindex(columns=_ALL_FEATURES).copy()
 
     for col in BOOL_FEATURES:
@@ -321,7 +182,7 @@ def _prepare_X(
 
     X, maps = _encode_categoricals(X, cat_maps)
     X_arr = X[_ALL_FEATURES].values.astype(float)
-    return X_arr, maps, fitted_text_pipeline
+    return X_arr, maps
 
 
 _LGB_PARAMS = dict(
@@ -503,8 +364,8 @@ def _time_aware_conformal_q(
     if len(train) < 100 or len(cal) < 50:
         return None
 
-    X_train, cat_maps, text_pipeline = _prepare_X(train)
-    X_cal, _, _ = _prepare_X(cal, cat_maps, text_pipeline)
+    X_train, cat_maps = _prepare_X(train)
+    X_cal, _ = _prepare_X(cal, cat_maps)
     y_train_price = train["price_eur"].astype(float).values
     y_train_log = np.log1p(np.maximum(y_train_price, 0))
     y_cal_log = np.log1p(np.maximum(cal["price_eur"].astype(float).values, 0))
@@ -695,9 +556,9 @@ def _cv_metrics(
     for train_idx, val_idx in kf.split(df):
         train_df = df.iloc[train_idx]
         val_df = df.iloc[val_idx]
-        # Encode categoricals + fit text pipeline on train only — no leakage
-        X_train, cat_maps_fold, text_pipeline_fold = _prepare_X(train_df)
-        X_val, _, _ = _prepare_X(val_df, cat_maps_fold, text_pipeline_fold)
+        # Encode categoricals on train only — no leakage into the val fold.
+        X_train, cat_maps_fold = _prepare_X(train_df)
+        X_val, _ = _prepare_X(val_df, cat_maps_fold)
         y_train_log = y_log[train_idx]
         y_val_log = y_log[val_idx]
         sw_train = sample_weight_all[train_idx]
@@ -884,19 +745,16 @@ def train_price_model(
     dict,
     dict[str, tuple[float, float, float]],
     IsotonicRegression | None,
-    Pipeline | None,
 ] | None:
     """Train quantile regression models: median, low (10th), high (90th).
 
-    Returns (models, category_maps, metrics, oof_preds, median_calibrator,
-    text_pipeline) or None if insufficient data.
+    Returns (models, category_maps, metrics, oof_preds, median_calibrator)
+    or None if insufficient data.
 
     - ``oof_preds``: dict olx_id → (low, median, high) of cross-validated,
       calibrated, crossing-repaired predictions in price space.
     - ``median_calibrator``: IsotonicRegression for median post-calibration
       on new rows; OOF preds already have it baked in.
-    - ``text_pipeline``: fitted TfidfVectorizer→TruncatedSVD pipeline that
-      produces text_pc_0..text_pc_{n-1} from title+description for new rows.
     """
     needed = {"price_eur", "year", "mileage_km"}
     if not needed.issubset(listings_df.columns):
@@ -924,7 +782,7 @@ def train_price_model(
     metrics["filter_stats"] = filter_stats
 
     # Final models: fit on full filtered data with CV-tuned per-quantile iters
-    X_arr, cat_maps, text_pipeline = _prepare_X(df)
+    X_arr, cat_maps = _prepare_X(df)
     cat_indices = [_ALL_FEATURES.index(c) for c in CATEGORICAL_FEATURES]
 
     models = {}
@@ -950,7 +808,7 @@ def train_price_model(
                 float(oof_band[2, i]),
             )
 
-    return models, cat_maps, metrics, oof_preds, median_calibrator, text_pipeline
+    return models, cat_maps, metrics, oof_preds, median_calibrator
 
 
 def predict_prices(
@@ -960,7 +818,6 @@ def predict_prices(
     conformal_q: float = 0.0,
     oof_preds: dict[str, tuple[float, float, float]] | None = None,
     median_calibrator: IsotonicRegression | None = None,
-    text_pipeline: Pipeline | None = None,
     conformal_q_per_bucket: dict[str, float] | None = None,
     conformal_q_bucket_edges: list[tuple[float, float, str]] | None = None,
 ) -> pd.DataFrame:
@@ -976,10 +833,6 @@ def predict_prices(
     (dynamic deciles persisted at train time). When None, the static
     5-bucket scheme is used as a backward-compatible fallback.
 
-    *text_pipeline* (TfidfVectorizer→TruncatedSVD) is applied to
-    title+description to produce text_pc_* features. Required for v4
-    bundles; passing None silently produces zero text features.
-
     *oof_preds* — dict olx_id → (low, median, high) of out-of-fold CV
     predictions, shipped with the bundle. Listings whose olx_id is in this
     dict get OOF preds instead of in-sample model.predict (prevents the
@@ -990,7 +843,7 @@ def predict_prices(
     calibrated). The band assembly below brackets the calibrated median by
     min/max so isotonic-induced crossings don't leak into the [low, high].
     """
-    X_arr, _, _ = _prepare_X(listings_df, cat_maps, text_pipeline)
+    X_arr, _ = _prepare_X(listings_df, cat_maps)
 
     # Model output is in log1p(price) space.
     log_median = models["median"].predict(X_arr)
@@ -1071,7 +924,6 @@ def save_model(
     metrics: dict,
     oof_preds: dict[str, tuple[float, float, float]] | None = None,
     median_calibrator: IsotonicRegression | None = None,
-    text_pipeline: Pipeline | None = None,
 ) -> None:
     """Save trained model bundle to disk and append metrics to history."""
     _MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -1083,7 +935,6 @@ def save_model(
         "metrics": metrics,
         "oof_preds": oof_preds or {},
         "median_calibrator": median_calibrator,
-        "text_pipeline": text_pipeline,
         "saved_at": datetime.now(timezone.utc).isoformat(),
     }
     joblib.dump(bundle, _MODEL_PATH)
@@ -1093,12 +944,12 @@ def save_model(
 def load_model(
     max_age_hours: float = _MODEL_MAX_AGE_HOURS,
 ) -> tuple[
-    dict, dict, dict, dict, IsotonicRegression | None, Pipeline | None,
+    dict, dict, dict, dict, IsotonicRegression | None,
 ] | None:
     """Load saved model if it exists, is fresh, and matches current schema.
 
-    Returns (models, cat_maps, metrics, oof_preds, median_calibrator,
-    text_pipeline) or None.
+    Returns (models, cat_maps, metrics, oof_preds, median_calibrator) or
+    None.
 
     Mismatches that cause rejection:
       - file age > max_age_hours
@@ -1127,7 +978,6 @@ def load_model(
             bundle.get("metrics", {}),
             bundle.get("oof_preds", {}),
             bundle.get("median_calibrator"),
-            bundle.get("text_pipeline"),
         )
     except Exception:
         return None
@@ -1208,7 +1058,6 @@ def compute_permutation_importance(
     cat_maps: dict[str, dict[str, int]],
     listings_df: pd.DataFrame,
     n_repeats: int = 10,
-    text_pipeline: Pipeline | None = None,
 ) -> pd.DataFrame:
     """Permutation importance for each feature across all three quantile models.
 
@@ -1229,7 +1078,7 @@ def compute_permutation_importance(
     ].copy()
 
     y_log = np.log1p(np.maximum(df["price_eur"].values.astype(float), 0))
-    X_arr, _, _ = _prepare_X(df, cat_maps, text_pipeline)
+    X_arr, _ = _prepare_X(df, cat_maps)
 
     rows = []
     for name, alpha in _QUANTILES.items():

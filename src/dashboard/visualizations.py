@@ -127,17 +127,16 @@ def get_model_data(_active_df, _listings_df):
 
     saved = load_model()
     if saved is not None:
-        models, cat_maps, metrics, oof_preds, calibrator, text_pipeline = saved
+        models, cat_maps, metrics, oof_preds, calibrator = saved
     else:
         result = train_price_model(active)
         if result is None:
             return None
-        models, cat_maps, metrics, oof_preds, calibrator, text_pipeline = result
+        models, cat_maps, metrics, oof_preds, calibrator = result
         save_model(
             models, cat_maps, metrics,
             oof_preds=oof_preds,
             median_calibrator=calibrator,
-            text_pipeline=text_pipeline,
         )
 
     conformal_q = metrics.get("conformal_q", 0.0)
@@ -149,12 +148,11 @@ def get_model_data(_active_df, _listings_df):
         conformal_q=conformal_q,
         oof_preds=oof_preds,
         median_calibrator=calibrator,
-        text_pipeline=text_pipeline,
         conformal_q_per_bucket=per_bucket_q,
         conformal_q_bucket_edges=bucket_edges,
     )
     importance = compute_permutation_importance(
-        models, cat_maps, active, text_pipeline=text_pipeline,
+        models, cat_maps, active,
     )
     fill_rate = compute_feature_completeness(active)
 
@@ -169,7 +167,6 @@ def get_model_data(_active_df, _listings_df):
         "importance": importance,
         "oof_preds": oof_preds,
         "calibrator": calibrator,
-        "text_pipeline": text_pipeline,
     }
 
 

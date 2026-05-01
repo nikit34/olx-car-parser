@@ -224,6 +224,23 @@ class TestHealMassSweeps:
         ).count()
         assert sv_inactive == 50
 
+    def test_skips_sweeps_after_cutoff(self, db_session):
+        """Post-fix sweeps must be left alone — once mark_inactive is
+        source-scoped, a 500+ row batch is genuine churn (or a separate
+        bug), not the source-blind regression. Auto-reverting it would
+        silently resurrect truly sold rows."""
+        from datetime import datetime
+        from src.models.listing import Listing
+        from src.storage.repository import _HEAL_CUTOFF
+        # Anything at-or-after the cutoff is out of scope for the healer.
+        post_fix_ts = _HEAL_CUTOFF + timedelta(days=14)
+        self._seed(db_session, 600, "olx", post_fix_ts)
+
+        restored = heal_mass_sweeps(db_session, threshold=500)
+        assert restored == 0
+        still_inactive = db_session.query(Listing).filter_by(is_active=False).count()
+        assert still_inactive == 600
+
 
 class TestComputeMarketStats:
     def test_computes_stats(self, db_session, sample_listing_data):

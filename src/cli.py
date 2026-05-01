@@ -434,7 +434,9 @@ def scrape(
                 except Empty:
                     break
                 if item is not None:
-                    olx_id, _ = item
+                    # llm_in carries (olx_id, title, description) — unpack
+                    # tolerantly so the drain works regardless of payload arity.
+                    olx_id, *_ = item
                     raw = raw_by_id.get(olx_id)
                     if raw:
                         db_queue.put((raw, None))
@@ -482,7 +484,7 @@ def scrape(
             except Empty:
                 break
             if item is not None:
-                olx_id, _ = item
+                olx_id, *_ = item
                 raw = raw_by_id.get(olx_id)
                 if raw:
                     db_queue.put((raw, None))
@@ -734,9 +736,7 @@ def verify_photos(
     import sqlite3
     import time
     from src.parser.photo_damage import DamageClassifier
-    # Reuse the proven photo fetch + download from the script
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from scripts.photo_verify_damage import fetch_photos, download_photo
+    from src.parser.photo_fetch import fetch_photos, download_photo
 
     init_db()
     session = get_session()
@@ -984,17 +984,16 @@ def train_model():
         console.print("[red]Training failed: insufficient data after filtering.[/red]")
         raise typer.Exit(1)
 
-    models, cat_maps, metrics, oof_preds, calibrator, text_pipeline = result
+    models, cat_maps, metrics, oof_preds, calibrator = result
     save_model(
         models, cat_maps, metrics,
         oof_preds=oof_preds,
         median_calibrator=calibrator,
-        text_pipeline=text_pipeline,
     )
 
     console.print("Computing permutation importance...")
     importance_df = compute_permutation_importance(
-        models, cat_maps, active, text_pipeline=text_pipeline,
+        models, cat_maps, active,
     )
     save_importance(importance_df)
 
@@ -1048,7 +1047,7 @@ def eval_model(
             "Run [bold]train-model[/bold] first."
         )
         raise typer.Exit(1)
-    _models, _maps, metrics, oof_preds, _calibrator, _text_pipeline = saved
+    _models, _maps, metrics, oof_preds, _calibrator = saved
 
     if not oof_preds:
         console.print(

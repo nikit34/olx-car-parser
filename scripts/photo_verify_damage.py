@@ -17,101 +17,15 @@ Usage:
 
 import argparse
 import json
-import re
 import sqlite3
 import sys
 import time
 from pathlib import Path
 
-import httpx
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-
-def fetch_photos_standvirtual(url: str) -> list[str]:
-    """Extract photo URLs from a StandVirtual listing page (``__NEXT_DATA__``)."""
-    try:
-        r = httpx.get(url, follow_redirects=True, timeout=30,
-                      headers={"User-Agent": "Mozilla/5.0"})
-        r.raise_for_status()
-    except httpx.HTTPError:
-        return []
-    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.+?)</script>',
-                  r.text, re.DOTALL)
-    if not m:
-        return []
-    try:
-        data = json.loads(m.group(1))
-        ad = data["props"]["pageProps"]["advert"]
-        return [p["url"] for p in ad["images"]["photos"]]
-    except (KeyError, json.JSONDecodeError):
-        return []
-
-
-# OLX serves photos via ``ireland.apollo.olxcdn.com`` with size variants —
-# ``;s=4080x3072`` is the original, ``;s=1000x700`` is medium. The 1000x700
-# variant is a good balance: ~50–150 KB/photo, classifier resizes to 224
-# anyway. Listing-own photos always have ≥1000-px variants; small thumbnails
-# of related listings only appear at ≤516-px sizes.
-_OLX_PHOTO_RE = re.compile(
-    r"apollo\.olxcdn\.com[:\d]*/v1/files/([\w-]+)-PT/image"
-    r"(?:;s=(\d+)x(\d+))?"
-)
-
-
-def fetch_photos_olx(url: str) -> list[str]:
-    """Extract photo URLs from an OLX listing page.
-
-    Scans the rendered HTML for ``apollo.olxcdn.com`` photo URLs, dedupes by
-    photo ID (preserving page order), filters out related-listing thumbnails
-    (require at least one 1000-px+ size variant), and returns 1000x700-sized
-    URLs.
-    """
-    try:
-        r = httpx.get(url, follow_redirects=True, timeout=30,
-                      headers={"User-Agent": "Mozilla/5.0"})
-        r.raise_for_status()
-    except httpx.HTTPError:
-        return []
-
-    sizes_by_id: dict[str, set[int]] = {}
-    order: list[str] = []
-    for m in _OLX_PHOTO_RE.finditer(r.text):
-        pid = m.group(1)
-        if pid not in sizes_by_id:
-            sizes_by_id[pid] = set()
-            order.append(pid)
-        if m.group(2):
-            sizes_by_id[pid].add(int(m.group(2)))
-
-    return [
-        f"https://ireland.apollo.olxcdn.com:443/v1/files/{pid}-PT/image;s=1000x700"
-        for pid in order
-        if any(w >= 1000 for w in sizes_by_id[pid])
-    ]
-
-
-def fetch_photos(url: str) -> list[str]:
-    """Dispatch by URL host: OLX or StandVirtual."""
-    if "olx.pt" in url:
-        return fetch_photos_olx(url)
-    if "standvirtual.com" in url:
-        return fetch_photos_standvirtual(url)
-    return []
-
-
-def download_photo(url: str, dest: Path) -> bool:
-    if dest.exists():
-        return True
-    try:
-        r = httpx.get(url, follow_redirects=True, timeout=30)
-        r.raise_for_status()
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(r.content)
-        return True
-    except httpx.HTTPError:
-        return False
+from src.parser.photo_fetch import fetch_photos, download_photo  # noqa: E402, F401
 
 
 def decide(text_sev: int, max_p: float, n_photos: int, threshold: float) -> tuple[str, int]:

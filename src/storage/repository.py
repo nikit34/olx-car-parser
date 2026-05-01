@@ -147,6 +147,16 @@ def mark_inactive(session: Session, source: str, active_olx_ids: set[str]) -> in
     return count
 
 
+# Bug-fix cutoff for `heal_mass_sweeps`. Commit 92cfa8c on this date made
+# `mark_inactive` source-scoped and added the <10 % anomaly gate, so any
+# >threshold-row sweep deactivated on/after this timestamp is *real*
+# market churn (or a separate bug) — auto-reverting it would silently
+# resurrect genuinely sold rows. Healer scope is therefore frozen to
+# pre-cutoff sweeps; the only follow-up needed if a future bug regresses
+# this is a fresh, dated cutoff.
+_HEAL_CUTOFF = datetime(2026, 5, 1)
+
+
 def heal_mass_sweeps(session: Session, threshold: int = 500) -> int:
     """Reverse mass-deactivation sweeps left by the source-blind mark_inactive.
 
@@ -158,6 +168,11 @@ def heal_mass_sweeps(session: Session, threshold: int = 500) -> int:
     hundreds-to-thousands of rows. Real per-cycle churn is ~50–200 per
     source, so a threshold of 500 cleanly separates "buggy sweep" from
     "normal mark_inactive batch".
+
+    Bounded by ``_HEAL_CUTOFF`` so post-fix sweeps are never auto-undone.
+    Once the buggy code is gone any 500+ row deactivation in a single
+    timestamp is genuine churn (or a different bug worth investigating
+    by hand), not something to silently resurrect.
 
     Runs at the start of every scrape so any historical sweep is
     auto-recovered. Idempotent — once healed, the query finds nothing
@@ -174,6 +189,7 @@ def heal_mass_sweeps(session: Session, threshold: int = 500) -> int:
             Listing.is_active == False,  # noqa: E712
             Listing.deactivation_reason == "sold",
             Listing.deactivated_at.isnot(None),
+            Listing.deactivated_at < _HEAL_CUTOFF,
         )
         .group_by(Listing.source, Listing.deactivated_at)
         .having(func.count(Listing.id) > threshold)

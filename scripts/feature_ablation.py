@@ -80,7 +80,7 @@ def run(active: pd.DataFrame, label: str, drop: set[str] | None = None) -> dict:
         elapsed = time.time() - t0
         if result is None:
             raise RuntimeError("train_price_model returned None")
-        models, cat_maps, metrics, _, _, text_pipeline = result
+        models, cat_maps, metrics, _, _ = result
         metrics = dict(metrics)
         metrics["_label"] = label
         metrics["_elapsed_s"] = round(elapsed, 1)

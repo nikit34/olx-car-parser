@@ -371,10 +371,10 @@ def time_backtest(
         if len(train) < 100 or len(test) < 50:
             continue
 
-        X_train, cat_maps, text_pipeline = _prepare_X(train)
+        X_train, cat_maps = _prepare_X(train)
         y_train_price = train["price_eur"].astype(float).values
         y_train_log = np.log1p(np.maximum(y_train_price, 0))
-        X_test, _, _ = _prepare_X(test, cat_maps, text_pipeline)
+        X_test, _ = _prepare_X(test, cat_maps)
         y_test = test["price_eur"].astype(float).values
         from src.analytics.price_model import _compute_sample_weights
         sample_weight = _compute_sample_weights(y_train_price)

@@ -97,11 +97,10 @@ def test_train_returns_model_and_metrics():
     # 400 rows so the time-aware CQR helper has enough data after the 80/20
     # calibration split (it requires ≥100 train rows and ≥50 calibration rows
     # post-filter, and bails early below 200 total).
-    from sklearn.pipeline import Pipeline
     df = _sample_listings(400, with_first_seen_at=True)
     result = train_price_model(df)
     assert result is not None
-    models, cat_maps, metrics, oof_preds, calibrator, text_pipeline = result
+    models, cat_maps, metrics, oof_preds, calibrator = result
     assert "brand" in cat_maps
     assert "model" in cat_maps
     assert "low" in models and "median" in models and "high" in models
@@ -129,8 +128,6 @@ def test_train_returns_model_and_metrics():
     assert "conformal_q_per_bucket" in metrics
     assert isinstance(metrics["conformal_q_per_bucket"], dict)
     assert "n_features" in metrics
-    # Text pipeline returned
-    assert isinstance(text_pipeline, Pipeline)
     # OOF preds keyed by olx_id, one entry per training listing
     assert isinstance(oof_preds, dict)
     assert len(oof_preds) > 0
@@ -141,31 +138,6 @@ def test_train_returns_model_and_metrics():
     assert lo >= 0
     # Median calibrator returned
     assert isinstance(calibrator, IsotonicRegression)
-
-
-def test_damage_signals_extract_severity():
-    """_damage_signals classifies parts/severe/repair/clean correctly."""
-    from src.analytics.price_model import _damage_signals
-    assert _damage_signals("Carro para peças", "")[0] == 1.0
-    assert _damage_signals("", "Vendo carro para peças/sucata")[0] == 1.0
-    assert _damage_signals("BMW", "Não anda, motor fundido")[0] == 0.7
-    assert _damage_signals("", "Para reparar — necessita de obras")[0] == 0.4
-    assert _damage_signals("Renault Clio 2018", "Excelente estado")[0] == 0.0
-    score, parts, severe = _damage_signals("Salvado", "para peças")
-    assert score == 1.0 and parts is True
-
-
-def test_damage_features_added_to_listings():
-    """_add_damage_signals computes the three damage columns deterministically."""
-    from src.analytics.price_model import _add_damage_signals
-    df = pd.DataFrame({
-        "title": ["Para peças", "Carro novo", "Não anda"],
-        "description": ["", "1 dono", "Motor fundido"],
-    })
-    out = _add_damage_signals(df)
-    assert list(out["damage_score"]) == [1.0, 0.0, 0.7]
-    assert list(out["title_has_parts_only"]) == [True, False, False]
-    assert list(out["title_has_severe_damage"]) == [False, False, True]
 
 
 def test_per_bucket_conformal_q_lookup():
@@ -231,7 +203,7 @@ def test_train_falls_back_to_random_cqr_without_first_seen_at():
     """No first_seen_at column → time-aware q is None, source falls back to random."""
     df = _sample_listings(with_first_seen_at=False)
     assert "first_seen_at" not in df.columns
-    _models, _maps, metrics, _oof, _calib, _text = train_price_model(df)
+    _models, _maps, metrics, _oof, _calib = train_price_model(df)
     assert metrics.get("conformal_q_source") == "random"
     assert metrics.get("conformal_q_time") is None
     # Active conformal_q equals the random one in this fallback path
@@ -246,7 +218,7 @@ def test_train_returns_none_for_small_data():
 
 def test_predictions_are_positive():
     df = _sample_listings()
-    models, cat_maps, _metrics, _oof, _calib, _text = train_price_model(df)
+    models, cat_maps, _metrics, _oof, _calib = train_price_model(df)
     preds = predict_prices(models, cat_maps, df)
     assert (preds["predicted_price"] >= 0).all()
     assert (preds["fair_price_low"] >= 0).all()
@@ -257,7 +229,7 @@ def test_predictions_are_positive():
 def test_predictions_never_cross():
     """low ≤ median ≤ high must hold for every row, with or without OOF override."""
     df = _sample_listings(300)
-    models, cat_maps, metrics, oof_preds, calibrator, text_pipeline = train_price_model(df)
+    models, cat_maps, metrics, oof_preds, calibrator = train_price_model(df)
 
     # In-sample (uses OOF preds for every row)
     in_sample = predict_prices(
@@ -286,7 +258,7 @@ def test_predictions_never_cross():
 def test_oof_preds_used_for_known_olx_ids():
     """Listings present in oof_preds get exactly the OOF values, not model.predict."""
     df = _sample_listings(150)
-    models, cat_maps, _metrics, oof_preds, calibrator, text_pipeline = train_price_model(df)
+    models, cat_maps, _metrics, oof_preds, calibrator = train_price_model(df)
 
     # Pick an olx_id that's in the OOF dict and predict on a single-row df.
     target_id = next(iter(oof_preds))
@@ -317,7 +289,7 @@ def test_calibrator_changes_predictions_for_new_rows():
     given heterogeneous training data that's vanishingly rare.
     """
     df = _sample_listings(400)
-    models, cat_maps, _metrics, _oof, calibrator, text_pipeline = train_price_model(df)
+    models, cat_maps, _metrics, _oof, calibrator = train_price_model(df)
 
     fresh = df.head(50).copy()
     fresh["olx_id"] = [f"new_{i}" for i in range(len(fresh))]
@@ -329,7 +301,7 @@ def test_calibrator_changes_predictions_for_new_rows():
 
 def test_newer_cars_predicted_higher():
     df = _sample_listings(500)
-    models, cat_maps, _metrics, _oof, _calib, _text = train_price_model(df)
+    models, cat_maps, _metrics, _oof, _calib = train_price_model(df)
 
     old_car = pd.DataFrame([{
         "year": 2010, "mileage_km": 150000, "engine_cc": 1600,
@@ -358,7 +330,7 @@ def test_handles_missing_features():
 
     result = train_price_model(df)
     assert result is not None
-    models, cat_maps, _metrics, _oof, _calib, _text = result
+    models, cat_maps, _metrics, _oof, _calib = result
 
     # Predict on row with missing features
     sparse = pd.DataFrame([{
@@ -378,7 +350,7 @@ def test_rare_categories_grouped():
 
     result = train_price_model(df)
     assert result is not None
-    models, cat_maps, _metrics, _oof, _calib, _text = result
+    models, cat_maps, _metrics, _oof, _calib = result
     assert "__other__" in cat_maps["model"]
 
     unseen = pd.DataFrame([{
@@ -393,41 +365,36 @@ def test_rare_categories_grouped():
 
 def test_save_and_load_model(tmp_path, monkeypatch):
     """Save/load round-trip produces identical predictions, oof_preds,
-    calibrator, and text_pipeline."""
-    from sklearn.pipeline import Pipeline
+    and calibrator."""
     monkeypatch.setattr("src.analytics.price_model._MODEL_PATH", tmp_path / "model.joblib")
     monkeypatch.setattr("src.analytics.price_model._METRICS_PATH", tmp_path / "metrics.json")
 
     df = _sample_listings()
-    models, cat_maps, metrics, oof_preds, calibrator, text_pipeline = train_price_model(df)
+    models, cat_maps, metrics, oof_preds, calibrator = train_price_model(df)
     save_model(
         models, cat_maps, metrics,
         oof_preds=oof_preds,
         median_calibrator=calibrator,
-        text_pipeline=text_pipeline,
     )
 
     loaded = load_model(max_age_hours=1)
     assert loaded is not None
-    l_models, l_cat_maps, l_metrics, l_oof, l_calib, l_text = loaded
+    l_models, l_cat_maps, l_metrics, l_oof, l_calib = loaded
 
     preds_orig = predict_prices(
         models, cat_maps, df,
         oof_preds=oof_preds,
         median_calibrator=calibrator,
-        text_pipeline=text_pipeline,
     )
     preds_loaded = predict_prices(
         l_models, l_cat_maps, df,
         oof_preds=l_oof,
         median_calibrator=l_calib,
-        text_pipeline=l_text,
     )
     pd.testing.assert_frame_equal(preds_orig, preds_loaded)
     assert l_metrics["mae"] == metrics["mae"]
     assert l_oof == oof_preds
     assert isinstance(l_calib, IsotonicRegression)
-    assert isinstance(l_text, Pipeline)
 
 
 def test_load_model_rejects_schema_mismatch(tmp_path, monkeypatch):
@@ -437,12 +404,11 @@ def test_load_model_rejects_schema_mismatch(tmp_path, monkeypatch):
     monkeypatch.setattr("src.analytics.price_model._METRICS_PATH", tmp_path / "metrics.json")
 
     df = _sample_listings()
-    models, cat_maps, metrics, oof_preds, calibrator, text_pipeline = train_price_model(df)
+    models, cat_maps, metrics, oof_preds, calibrator = train_price_model(df)
     save_model(
         models, cat_maps, metrics,
         oof_preds=oof_preds,
         median_calibrator=calibrator,
-        text_pipeline=text_pipeline,
     )
 
     # Hand-corrupt the schema_version field, simulating an artifact trained
@@ -461,12 +427,11 @@ def test_load_model_rejects_feature_mismatch(tmp_path, monkeypatch):
     monkeypatch.setattr("src.analytics.price_model._METRICS_PATH", tmp_path / "metrics.json")
 
     df = _sample_listings()
-    models, cat_maps, metrics, oof_preds, calibrator, text_pipeline = train_price_model(df)
+    models, cat_maps, metrics, oof_preds, calibrator = train_price_model(df)
     save_model(
         models, cat_maps, metrics,
         oof_preds=oof_preds,
         median_calibrator=calibrator,
-        text_pipeline=text_pipeline,
     )
 
     bundle = joblib.load(tmp_path / "model.joblib")
@@ -492,12 +457,11 @@ def test_load_model_rejects_stale_bundle(tmp_path, monkeypatch):
     monkeypatch.setattr("src.analytics.price_model._METRICS_PATH", tmp_path / "metrics.json")
 
     df = _sample_listings()
-    models, cat_maps, metrics, oof_preds, calibrator, text_pipeline = train_price_model(df)
+    models, cat_maps, metrics, oof_preds, calibrator = train_price_model(df)
     save_model(
         models, cat_maps, metrics,
         oof_preds=oof_preds,
         median_calibrator=calibrator,
-        text_pipeline=text_pipeline,
     )
 
     # Backdate mtime by 2 hours; load_model with max_age_hours=1 must reject.
@@ -516,15 +480,15 @@ def test_metrics_history(tmp_path, monkeypatch):
     monkeypatch.setattr("src.analytics.price_model._METRICS_PATH", tmp_path / "metrics.json")
 
     df = _sample_listings()
-    models, cat_maps, metrics, oof_preds, calibrator, text_pipeline = train_price_model(df)
+    models, cat_maps, metrics, oof_preds, calibrator = train_price_model(df)
 
     save_model(
         models, cat_maps, metrics,
-        oof_preds=oof_preds, median_calibrator=calibrator, text_pipeline=text_pipeline,
+        oof_preds=oof_preds, median_calibrator=calibrator,
     )
     save_model(
         models, cat_maps, metrics,
-        oof_preds=oof_preds, median_calibrator=calibrator, text_pipeline=text_pipeline,
+        oof_preds=oof_preds, median_calibrator=calibrator,
     )
 
     history = load_metrics_history()
