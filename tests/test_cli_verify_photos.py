@@ -44,7 +44,13 @@ class _StubListingPred:
 
 
 class _StubClassifier:
-    """Predict ``p_damaged = idx / 10`` for each downloaded photo path."""
+    """Predict ``p_damaged = idx / 10`` for each downloaded photo path.
+
+    Listing-level ``is_damaged`` mirrors the real multi-photo agreement
+    rule (issue #2): True iff at least 2 photos have p ≥ 0.30. With the
+    ``idx / 10`` scoring scheme that means listings with ≥4 photos are
+    automatically flagged (idx 3 → p=0.30, idx 4 → p=0.40, …).
+    """
 
     device = "cpu"
     classes = ["clean", "damaged"]
@@ -61,7 +67,11 @@ class _StubClassifier:
             prob = round(idx / 10.0, 4)
             photos.append(_StubPhotoPred(Path(p), prob, prob >= self.threshold))
         max_p = max((ph.p_damaged for ph in photos), default=0.0)
-        return _StubListingPred(olx_id, photos, max_p, max_p >= self.threshold)
+        # Match production listing rule from src.parser.photo_damage:
+        # ≥ FLAG_MIN_PHOTOS photos at p ≥ FLAG_PHOTO_THRESHOLD.
+        n_above = sum(1 for ph in photos if ph.p_damaged >= 0.30)
+        is_damaged = n_above >= 2
+        return _StubListingPred(olx_id, photos, max_p, is_damaged)
 
 
 def _seed_listing(session, olx_id: str, url: str, llm_extras: dict | None = None):
@@ -110,8 +120,15 @@ def _run_verify(session, monkeypatch, tmp_path, *,
     # session from conftest.py rather than touching data/olx_cars.db.
     monkeypatch.setattr(cli_module, "init_db", lambda *a, **kw: None)
     monkeypatch.setattr(cli_module, "get_session", lambda: session)
+    # Patch ``DamageClassifier`` on whichever module object is currently in
+    # ``sys.modules`` — could be our bare stub from this file's import-time
+    # ``setdefault``, OR the *real* module if test_photo_damage.py ran first
+    # and force-loaded it (it pops the cached stub to populate constants).
+    # Either way, ``cli.verify_photos`` resolves ``from src.parser.photo_damage
+    # import DamageClassifier`` against ``sys.modules`` at call time.
     monkeypatch.setattr(
-        _photo_damage_stub, "DamageClassifier", _StubClassifier, raising=False,
+        sys.modules["src.parser.photo_damage"],
+        "DamageClassifier", _StubClassifier, raising=False,
     )
     monkeypatch.setattr(
         "src.parser.photo_fetch.fetch_photos", fake_fetch_photos,
@@ -244,3 +261,58 @@ class TestVerifyPhotosPerPhotoArray:
         assert extras["photo_damage_p"] == 0.95
         assert extras["photo_damage_n_photos"] == 7
         assert "photo_damages" not in extras
+
+
+class TestVerifyPhotosFlaggedField:
+    """Issue #2: ``verify-photos`` writes a listing-level
+    ``photo_damage_flagged`` boolean under the multi-photo agreement rule.
+
+    The stub classifier scores ``p_damaged = idx / 10`` so:
+      • a 4-photo listing has 2 photos at p ≥ 0.30 (idx 3, 4) → flagged
+      • a 2-photo listing has 0 photos at p ≥ 0.30 → not flagged
+    """
+
+    def test_writes_flagged_true_when_two_photos_cross_threshold(
+        self, db_session, monkeypatch, tmp_path,
+    ):
+        olx_id = "olx-flag-001"
+        _seed_listing(
+            db_session,
+            olx_id=olx_id,
+            url=f"https://standvirtual.com/test/{olx_id}",
+        )
+        _run_verify(
+            db_session, monkeypatch, tmp_path,
+            photo_urls_by_listing={
+                olx_id: [f"{olx_id}#{i}" for i in range(1, 5)],
+            },
+        )
+        listing = db_session.query(Listing).filter_by(olx_id=olx_id).one()
+        extras = json.loads(listing.llm_extras)
+        # 4 photos → idx 3 (p=0.3) and idx 4 (p=0.4) both ≥ 0.30 → flagged.
+        assert extras["photo_damage_flagged"] is True
+        # max_p semantics unchanged — still the peak per-photo score.
+        assert extras["photo_damage_p"] == pytest.approx(0.4, rel=1e-3)
+
+    def test_writes_flagged_false_when_only_one_photo_crosses(
+        self, db_session, monkeypatch, tmp_path,
+    ):
+        """2-photo listing: max p=0.20 < 0.30, so 0 photos cross the
+        per-photo threshold and the listing must not be flagged — the
+        audit's main FP mode reduced to its smallest reproducer."""
+        olx_id = "olx-flag-002"
+        _seed_listing(
+            db_session,
+            olx_id=olx_id,
+            url=f"https://standvirtual.com/test/{olx_id}",
+        )
+        _run_verify(
+            db_session, monkeypatch, tmp_path,
+            photo_urls_by_listing={
+                olx_id: [f"{olx_id}#{i}" for i in range(1, 3)],
+            },
+        )
+        listing = db_session.query(Listing).filter_by(olx_id=olx_id).one()
+        extras = json.loads(listing.llm_extras)
+        assert extras["photo_damage_flagged"] is False
+        assert extras["photo_damage_p"] == pytest.approx(0.2, rel=1e-3)

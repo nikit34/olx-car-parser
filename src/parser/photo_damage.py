@@ -38,6 +38,28 @@ def _resolve_default_weights() -> Path:
 DEFAULT_WEIGHTS = _resolve_default_weights()
 DEFAULT_THRESHOLD = 0.20
 
+# Listing-level multi-photo agreement rule (issue #2, audit context #1).
+#
+# The audit on a 100-listing flagged sample (#1) showed ~87% FP rate when
+# flagging on ``max(p_damaged) >= 0.20``. The dominant failure mode is one
+# weirdly-lit photo (sun glare on dark glossy panels, harsh reflections,
+# OOD interior/engine-bay shots) hitting p≈0.99 on an otherwise pristine
+# car. Raising the per-photo threshold alone only fixes ~7/20 audited FPs;
+# the principled fix is requiring agreement across multiple photos so that
+# a single anomalous shot can't condemn a 50-photo dealer listing.
+#
+# ``DamageClassifier.predict_listing`` uses these to set ``is_damaged``:
+#
+#     is_damaged = sum(p.p_damaged >= FLAG_PHOTO_THRESHOLD for p in photos)
+#                  >= FLAG_MIN_PHOTOS
+#
+# ``max_p`` semantics are unchanged — still ``max(p.p_damaged for p in photos)``
+# — so downstream consumers that read ``photo_damage_p`` from ``llm_extras``
+# (alerts, dashboard) keep working unchanged. ``DEFAULT_THRESHOLD`` is also
+# untouched; it still gates single-photo callers and ``PhotoPrediction.is_damaged``.
+FLAG_MIN_PHOTOS = 2
+FLAG_PHOTO_THRESHOLD = 0.30
+
 
 @dataclass
 class PhotoPrediction:
@@ -125,4 +147,11 @@ class DamageClassifier:
     ) -> ListingPrediction:
         photos = self.predict_photos_batch(photo_paths)
         max_p = max((p.p_damaged for p in photos), default=0.0)
-        return ListingPrediction(olx_id, photos, max_p, max_p >= self.threshold)
+        # Listing-level rule: require multi-photo agreement (issue #2). The
+        # per-photo ``self.threshold`` (used by ``PhotoPrediction.is_damaged``
+        # and single-photo callers) is intentionally separate from the
+        # listing aggregation rule — see ``FLAG_MIN_PHOTOS`` /
+        # ``FLAG_PHOTO_THRESHOLD`` docstring above.
+        n_above = sum(1 for p in photos if p.p_damaged >= FLAG_PHOTO_THRESHOLD)
+        is_damaged = n_above >= FLAG_MIN_PHOTOS
+        return ListingPrediction(olx_id, photos, max_p, is_damaged)

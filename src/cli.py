@@ -726,12 +726,17 @@ def verify_photos(
     """Run the v2 damage classifier on listings' photos and store ``photo_damage_p`` in llm_extras.
 
     Non-destructive: keeps the text-derived ``damage_severity`` column intact.
-    Adds three JSON keys:
+    Adds four JSON keys:
       • ``photo_damage_p`` — max P(damaged) across photos
       • ``photo_damage_n_photos`` — photos checked
       • ``photo_damages`` — per-photo ``[{"idx": int, "p": float}, ...]``;
         ``idx`` is 1-based and matches the ``fetch_photos(url)`` ordering so
         the originating URL is recoverable by re-running fetch (issue #4).
+      • ``photo_damage_flagged`` — listing-level damaged decision under the
+        multi-photo agreement rule (issue #2): True iff at least
+        ``FLAG_MIN_PHOTOS`` photos exceed ``FLAG_PHOTO_THRESHOLD``. Decoupled
+        from ``photo_damage_p`` so alerts/dashboard threshold logic on the
+        max-score keeps working untouched (additive field).
 
     Coverage: both OLX (``apollo.olxcdn.com`` URL scrape) and StandVirtual
     (``__NEXT_DATA__`` JSON). Listings from other sources are skipped.
@@ -809,8 +814,8 @@ def verify_photos(
 
     def _verify_one(
         olx_id: str, url: str
-    ) -> tuple[str, float, int, list[dict], str | None]:
-        """Returns ``(olx_id, max_p, n_photos, per_photo, error_msg)``.
+    ) -> tuple[str, float, int, list[dict], bool, str | None]:
+        """Returns ``(olx_id, max_p, n_photos, per_photo, flagged, error_msg)``.
 
         ``per_photo`` is a list of ``{"idx": int, "p": float}`` ordered by
         ``idx`` ascending. ``idx`` is 1-based and aligned to the
@@ -818,6 +823,11 @@ def verify_photos(
         URL by re-running fetch (deterministic ordering, see issue #4).
         Photos that failed to download are skipped — their ``idx`` is simply
         absent from the array.
+
+        ``flagged`` is the listing-level multi-photo agreement decision
+        (``ListingPrediction.is_damaged``, see issue #2). Decoupled from
+        ``max_p`` so existing consumers that threshold on the max-score keep
+        working unchanged.
         """
         try:
             photo_urls = fetch_photos(url)
@@ -831,16 +841,16 @@ def verify_photos(
                 if download_photo(purl, p):
                     indexed_paths.append((j, p))
             if not indexed_paths:
-                return olx_id, 0.0, 0, [], None
+                return olx_id, 0.0, 0, [], False, None
             photo_paths = [p for _, p in indexed_paths]
             pred = clf.predict_listing(olx_id, photo_paths)
             per_photo = [
                 {"idx": idx, "p": round(float(photo.p_damaged), 4)}
                 for (idx, _), photo in zip(indexed_paths, pred.photos)
             ]
-            return olx_id, pred.max_p, len(pred.photos), per_photo, None
+            return olx_id, pred.max_p, len(pred.photos), per_photo, bool(pred.is_damaged), None
         except Exception as exc:  # noqa: BLE001
-            return olx_id, 0.0, 0, [], str(exc)
+            return olx_id, 0.0, 0, [], False, str(exc)
 
     flagged = downgraded = no_photos = errors = 0
     processed = 0
@@ -852,7 +862,7 @@ def verify_photos(
             for olx_id, url in work_items
         }
         for fut in as_completed(futures):
-            olx_id, max_p, n_photos, per_photo, err = fut.result()
+            olx_id, max_p, n_photos, per_photo, flagged_pred, err = fut.result()
             processed += 1
             if err:
                 log.warning("Classifier failed on %s: %s", olx_id, err)
@@ -872,9 +882,16 @@ def verify_photos(
             # untouched for backward compat with alerts/dashboard. Sorted by
             # idx ascending so downstream consumers don't have to.
             extras["photo_damages"] = sorted(per_photo, key=lambda d: d["idx"])
+            # Listing-level multi-photo agreement decision (issue #2). New,
+            # additive field — alerts/dashboard still threshold on
+            # ``photo_damage_p`` (max across photos) and keep working
+            # unchanged.
+            extras["photo_damage_flagged"] = bool(flagged_pred)
             if not dry_run:
                 listing.llm_extras = json.dumps(extras, ensure_ascii=False)
-            if max_p >= threshold:
+            # Count under the new rule so the on-screen tally matches what
+            # downstream consumers see in ``photo_damage_flagged``.
+            if flagged_pred:
                 flagged += 1
             elif text_sev >= 2:
                 downgraded += 1
