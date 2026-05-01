@@ -740,10 +740,21 @@ def verify_photos(
 
     Coverage: both OLX (``apollo.olxcdn.com`` URL scrape) and StandVirtual
     (``__NEXT_DATA__`` JSON). Listings from other sources are skipped.
+
+    Pipeline (issue #3): per-listing photos are first run through a CLIP
+    zero-shot exterior / non-exterior filter; only exterior photos are scored
+    by the damage classifier. The audit (#1) showed the v2 classifier was
+    trained on full-vehicle exterior shots and confidently mis-fires on
+    interiors / engine bays / wheel close-ups / dashboards / seats / trunks.
+    Filtered photos contribute ``photo_damage_n_exterior`` (additive field).
+    Listings whose every photo is filtered out persist as the same empty
+    record as the no-photos path (``photo_damage_n_photos=len(original)``,
+    ``photo_damage_n_exterior=0``, no flag).
     """
     import sqlite3
     import time
     from src.parser.photo_damage import DamageClassifier
+    from src.parser.photo_viewpoint import ExteriorFilter
     from src.parser.photo_fetch import fetch_photos, download_photo
 
     init_db()
@@ -755,6 +766,9 @@ def verify_photos(
     log.info("Loading classifier (threshold=%.2f)...", threshold)
     clf = DamageClassifier(threshold=threshold)
     log.info("Device: %s, classes: %s", clf.device, clf.classes)
+    log.info("Loading CLIP exterior filter (issue #3 OOD pre-filter)...")
+    exterior_filter = ExteriorFilter()
+    log.info("CLIP filter device: %s", exterior_filter.device)
 
     # Pending: active StandVirtual listings missing photo_damage_p in llm_extras.
     needs_photo = sa_func.json_extract(
@@ -814,15 +828,22 @@ def verify_photos(
 
     def _verify_one(
         olx_id: str, url: str
-    ) -> tuple[str, float, int, list[dict], bool, str | None]:
-        """Returns ``(olx_id, max_p, n_photos, per_photo, flagged, error_msg)``.
+    ) -> tuple[str, float, int, int, list[dict], bool, str | None]:
+        """Returns ``(olx_id, max_p, n_photos, n_exterior, per_photo, flagged, error_msg)``.
+
+        ``n_photos`` is the count of photos that successfully downloaded —
+        same as the legacy semantics so ``photo_damage_n_photos`` keeps
+        meaning "how many photos did we try to score on this listing".
+        ``n_exterior`` is the subset of those that passed the CLIP filter
+        and were actually fed to the damage classifier (issue #3).
 
         ``per_photo`` is a list of ``{"idx": int, "p": float}`` ordered by
         ``idx`` ascending. ``idx`` is 1-based and aligned to the
         ``fetch_photos(url)`` enumeration so consumers can recover the source
-        URL by re-running fetch (deterministic ordering, see issue #4).
-        Photos that failed to download are skipped — their ``idx`` is simply
-        absent from the array.
+        URL by re-running fetch (deterministic ordering, see issue #4). The
+        array contains entries only for *exterior* photos — non-exterior
+        ones are dropped before scoring. Their original ``idx`` is preserved
+        (not renumbered), so a re-fetch can still join URLs by idx.
 
         ``flagged`` is the listing-level multi-photo agreement decision
         (``ListingPrediction.is_damaged``, see issue #2). Decoupled from
@@ -841,16 +862,34 @@ def verify_photos(
                 if download_photo(purl, p):
                     indexed_paths.append((j, p))
             if not indexed_paths:
-                return olx_id, 0.0, 0, [], False, None
-            photo_paths = [p for _, p in indexed_paths]
+                return olx_id, 0.0, 0, 0, [], False, None
+            # CLIP pre-filter: drop OOD viewpoints before damage scoring.
+            # Single forward pass over all of the listing's photos — same
+            # CLIP model instance is reused across listings.
+            all_paths = [p for _, p in indexed_paths]
+            mask = exterior_filter.is_exterior_batch(all_paths)
+            exterior_indexed = [
+                ip for ip, keep in zip(indexed_paths, mask) if keep
+            ]
+            n_total = len(indexed_paths)
+            n_exterior = len(exterior_indexed)
+            if not exterior_indexed:
+                # Every photo was OOD — same persistence shape as no_photos
+                # but ``n_photos`` keeps the original count so the listing
+                # records "we did look at N photos, none were exterior".
+                return olx_id, 0.0, n_total, 0, [], False, None
+            photo_paths = [p for _, p in exterior_indexed]
             pred = clf.predict_listing(olx_id, photo_paths)
             per_photo = [
                 {"idx": idx, "p": round(float(photo.p_damaged), 4)}
-                for (idx, _), photo in zip(indexed_paths, pred.photos)
+                for (idx, _), photo in zip(exterior_indexed, pred.photos)
             ]
-            return olx_id, pred.max_p, len(pred.photos), per_photo, bool(pred.is_damaged), None
+            return (
+                olx_id, pred.max_p, n_total, n_exterior,
+                per_photo, bool(pred.is_damaged), None,
+            )
         except Exception as exc:  # noqa: BLE001
-            return olx_id, 0.0, 0, [], False, str(exc)
+            return olx_id, 0.0, 0, 0, [], False, str(exc)
 
     flagged = downgraded = no_photos = errors = 0
     processed = 0
@@ -862,7 +901,8 @@ def verify_photos(
             for olx_id, url in work_items
         }
         for fut in as_completed(futures):
-            olx_id, max_p, n_photos, per_photo, flagged_pred, err = fut.result()
+            (olx_id, max_p, n_photos, n_exterior,
+             per_photo, flagged_pred, err) = fut.result()
             processed += 1
             if err:
                 log.warning("Classifier failed on %s: %s", olx_id, err)
@@ -878,9 +918,17 @@ def verify_photos(
             text_sev = extras.get("damage_severity") or 0
             extras["photo_damage_p"] = round(max_p, 4)
             extras["photo_damage_n_photos"] = n_photos
+            # CLIP exterior pre-filter count (issue #3) — how many of the
+            # ``n_photos`` downloaded actually got fed to the damage
+            # classifier. ``n_exterior <= n_photos``; equal means no
+            # filtering happened on this listing, zero means every photo
+            # was OOD (interiors / engine bay / wheel close-up / etc.).
+            extras["photo_damage_n_exterior"] = n_exterior
             # Per-photo scores (issue #4) — keep listing-level fields above
             # untouched for backward compat with alerts/dashboard. Sorted by
-            # idx ascending so downstream consumers don't have to.
+            # idx ascending so downstream consumers don't have to. After
+            # issue #3 only exterior photos appear here; their ``idx`` is
+            # the original 1-based position in ``fetch_photos(url)``.
             extras["photo_damages"] = sorted(per_photo, key=lambda d: d["idx"])
             # Listing-level multi-photo agreement decision (issue #2). New,
             # additive field — alerts/dashboard still threshold on

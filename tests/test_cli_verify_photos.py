@@ -24,6 +24,14 @@ _photo_damage_stub = types.ModuleType("src.parser.photo_damage")
 _photo_damage_stub.DamageClassifier = None  # set per test
 sys.modules.setdefault("src.parser.photo_damage", _photo_damage_stub)
 
+# ``src.parser.photo_viewpoint`` imports transformers/torch/PIL at module
+# load (issue #3 CLIP pre-filter). Same shim approach as photo_damage. The
+# ``ExteriorFilter`` attribute is replaced per-test with a stub so we can
+# control exactly which photos pass the filter without touching CLIP.
+_photo_viewpoint_stub = types.ModuleType("src.parser.photo_viewpoint")
+_photo_viewpoint_stub.ExteriorFilter = None  # set per test
+sys.modules.setdefault("src.parser.photo_viewpoint", _photo_viewpoint_stub)
+
 from src import cli as cli_module  # noqa: E402
 from src.models.listing import Listing  # noqa: E402
 
@@ -93,12 +101,47 @@ def _seed_listing(session, olx_id: str, url: str, llm_extras: dict | None = None
     return listing
 
 
+class _StubExteriorFilter:
+    """Deterministic CLIP pre-filter stub.
+
+    By default keeps every photo — preserves pre-#3 behaviour for tests that
+    don't care about filtering. Tests that *do* care set
+    ``_StubExteriorFilter.ood_indices`` (per-olx_id sets of 1-based indices
+    that should be classified as non-exterior) before calling ``_run_verify``.
+    """
+
+    device = "cpu"
+    # Class-level so tests can configure without instantiation:
+    # {olx_id: {idx, idx, ...}}
+    ood_indices: dict[str, set[int]] = {}
+
+    def __init__(self, *_a, **_kw):
+        pass
+
+    def is_exterior_batch(self, paths):
+        results: list[bool] = []
+        for p in paths:
+            stem = Path(p).stem
+            # Filenames are ``<olx_id>_<idx>.jpg``; recover both.
+            olx_id, idx_str = stem.rsplit("_", 1)
+            idx = int(idx_str)
+            ood = idx in self.ood_indices.get(olx_id, set())
+            results.append(not ood)
+        return results
+
+    def is_exterior(self, path):
+        return self.is_exterior_batch([path])[0]
+
+
 def _run_verify(session, monkeypatch, tmp_path, *,
                 photo_urls_by_listing: dict[str, list[str]],
                 fail_indices: dict[str, set[int]] | None = None,
+                ood_indices: dict[str, set[int]] | None = None,
                 threshold: float = 0.2):
-    """Drive the typer command with stubbed photo IO + classifier."""
+    """Drive the typer command with stubbed photo IO + classifier + CLIP."""
     fail_indices = fail_indices or {}
+    # Reset the class-level OOD map per call so tests don't leak state.
+    _StubExteriorFilter.ood_indices = ood_indices or {}
 
     def fake_fetch_photos(url):
         for olx_id, urls in photo_urls_by_listing.items():
@@ -129,6 +172,13 @@ def _run_verify(session, monkeypatch, tmp_path, *,
     monkeypatch.setattr(
         sys.modules["src.parser.photo_damage"],
         "DamageClassifier", _StubClassifier, raising=False,
+    )
+    # Same pattern for the issue #3 CLIP pre-filter — patch whichever module
+    # object is in ``sys.modules`` (bare stub from this file's setdefault, or
+    # the real module if test_photo_viewpoint.py loaded it first).
+    monkeypatch.setattr(
+        sys.modules["src.parser.photo_viewpoint"],
+        "ExteriorFilter", _StubExteriorFilter, raising=False,
     )
     monkeypatch.setattr(
         "src.parser.photo_fetch.fetch_photos", fake_fetch_photos,
@@ -316,3 +366,132 @@ class TestVerifyPhotosFlaggedField:
         extras = json.loads(listing.llm_extras)
         assert extras["photo_damage_flagged"] is False
         assert extras["photo_damage_p"] == pytest.approx(0.2, rel=1e-3)
+
+
+class TestVerifyPhotosExteriorFilter:
+    """Issue #3: ``verify-photos`` runs photos through a CLIP exterior
+    pre-filter and writes ``photo_damage_n_exterior`` (additive). Photos
+    classified as non-exterior (interior / engine bay / wheel close-up /
+    etc.) are skipped so the v2 damage classifier — trained on full-vehicle
+    exterior shots only — never scores OOD viewpoints.
+
+    The stub ``ExteriorFilter`` filters out indices declared in
+    ``ood_indices`` per olx_id; everything else passes through.
+    """
+
+    def test_writes_n_exterior_when_no_filtering(
+        self, db_session, monkeypatch, tmp_path,
+    ):
+        """Default stub keeps every photo → ``n_exterior == n_photos`` and
+        the per-photo array contains all 4 idx values, unchanged from #4."""
+        olx_id = "olx-ext-001"
+        _seed_listing(
+            db_session,
+            olx_id=olx_id,
+            url=f"https://standvirtual.com/test/{olx_id}",
+        )
+        _run_verify(
+            db_session, monkeypatch, tmp_path,
+            photo_urls_by_listing={
+                olx_id: [f"{olx_id}#{i}" for i in range(1, 5)],
+            },
+        )
+        listing = db_session.query(Listing).filter_by(olx_id=olx_id).one()
+        extras = json.loads(listing.llm_extras)
+        assert extras["photo_damage_n_photos"] == 4
+        assert extras["photo_damage_n_exterior"] == 4
+        # Per-photo array unchanged: every idx still present.
+        assert [d["idx"] for d in extras["photo_damages"]] == [1, 2, 3, 4]
+
+    def test_filters_ood_photos_keeps_original_idx(
+        self, db_session, monkeypatch, tmp_path,
+    ):
+        """4-photo listing where idx 2 and 4 are OOD (e.g. interior +
+        wheel close-up). Only idx 1 and 3 reach the damage classifier.
+
+        Crucially the persisted ``idx`` values stay 1 and 3 — NOT
+        renumbered to 1 and 2. That preserves the issue #4 invariant that
+        consumers can recover photo URLs by re-running ``fetch_photos(url)``
+        and joining by 1-based position.
+        """
+        olx_id = "olx-ext-002"
+        _seed_listing(
+            db_session,
+            olx_id=olx_id,
+            url=f"https://standvirtual.com/test/{olx_id}",
+        )
+        _run_verify(
+            db_session, monkeypatch, tmp_path,
+            photo_urls_by_listing={
+                olx_id: [f"{olx_id}#{i}" for i in range(1, 5)],
+            },
+            ood_indices={olx_id: {2, 4}},
+        )
+        listing = db_session.query(Listing).filter_by(olx_id=olx_id).one()
+        extras = json.loads(listing.llm_extras)
+        # n_photos = downloaded count (4); n_exterior = post-CLIP (2).
+        assert extras["photo_damage_n_photos"] == 4
+        assert extras["photo_damage_n_exterior"] == 2
+        # Stub classifier scores p = idx/10. Original idx preserved so
+        # idx=1 → 0.1, idx=3 → 0.3. The dropped idx 2/4 are absent.
+        assert extras["photo_damages"] == [
+            {"idx": 1, "p": 0.1},
+            {"idx": 3, "p": 0.3},
+        ]
+        # max_p reflects the kept photos only (peak among idx 1, 3 = 0.3).
+        assert extras["photo_damage_p"] == pytest.approx(0.3, rel=1e-3)
+
+    def test_all_photos_filtered_out_writes_empty_record(
+        self, db_session, monkeypatch, tmp_path,
+    ):
+        """Every photo OOD (e.g. dealer dumped 3 interior shots) → same
+        persisted shape as the no-photos path semantically: max_p=0,
+        empty per-photo array, not flagged. ``n_photos`` keeps the
+        original download count so the listing still records "we did
+        attempt N photos here, none survived the filter"."""
+        olx_id = "olx-ext-003"
+        _seed_listing(
+            db_session,
+            olx_id=olx_id,
+            url=f"https://standvirtual.com/test/{olx_id}",
+        )
+        _run_verify(
+            db_session, monkeypatch, tmp_path,
+            photo_urls_by_listing={
+                olx_id: [f"{olx_id}#{i}" for i in range(1, 4)],
+            },
+            ood_indices={olx_id: {1, 2, 3}},
+        )
+        listing = db_session.query(Listing).filter_by(olx_id=olx_id).one()
+        extras = json.loads(listing.llm_extras)
+        # We tried 3 photos; CLIP filter rejected all of them.
+        assert extras["photo_damage_n_photos"] == 3
+        assert extras["photo_damage_n_exterior"] == 0
+        assert extras["photo_damages"] == []
+        assert extras["photo_damage_p"] == 0.0
+        assert extras["photo_damage_flagged"] is False
+
+    def test_n_exterior_present_when_no_photos_downloaded(
+        self, db_session, monkeypatch, tmp_path,
+    ):
+        """Even when every download fails (so the CLIP filter is never
+        invoked), ``photo_damage_n_exterior`` must still be written so
+        downstream consumers can rely on the field's presence."""
+        olx_id = "olx-ext-004"
+        _seed_listing(
+            db_session,
+            olx_id=olx_id,
+            url=f"https://standvirtual.com/test/{olx_id}",
+        )
+        _run_verify(
+            db_session, monkeypatch, tmp_path,
+            photo_urls_by_listing={
+                olx_id: [f"{olx_id}#{i}" for i in range(1, 3)],
+            },
+            fail_indices={olx_id: {1, 2}},
+        )
+        listing = db_session.query(Listing).filter_by(olx_id=olx_id).one()
+        extras = json.loads(listing.llm_extras)
+        assert extras["photo_damage_n_photos"] == 0
+        assert extras["photo_damage_n_exterior"] == 0
+        assert extras["photo_damages"] == []
