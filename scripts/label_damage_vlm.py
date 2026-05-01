@@ -185,6 +185,14 @@ def main() -> int:
     # cron verify-photos slot.
     ap.add_argument("--max-listings", type=int, default=100,
                     help="Stop after this many listings (default 100, 0=all)")
+    # 8 GB Mac Air gets ~70 s/photo on qwen2.5vl:3b, much slower than the
+    # POC's claim. Without a cap, full mining set (~1800 photos) takes 36 h.
+    # The audit (#1) showed FP signal concentrates in the top-scoring photo
+    # per listing — labelling the 5 highest-v2-score photos per listing
+    # captures the FP cluster at 1/4 the wall-clock.
+    ap.add_argument("--max-photos-per-listing", type=int, default=0,
+                    help="Cap photos per listing (default 0=all, "
+                         "sorted by v2_p_damaged desc when capped)")
     args = ap.parse_args()
 
     if not args.manifest.exists():
@@ -217,6 +225,12 @@ def main() -> int:
             if not unlabelled:
                 n_listings_done += 1
                 continue
+            # Sort by v2 score desc so the most-suspect photos label first.
+            # That way an early --max-photos-per-listing cap still captures
+            # the FP signal that drove the listing-level flag.
+            unlabelled.sort(key=lambda p: -float(p.get("v2_p_damaged") or 0.0))
+            if args.max_photos_per_listing > 0:
+                unlabelled = unlabelled[:args.max_photos_per_listing]
             print(f"\n[{n_listings_done + 1}/{cap}] {oid} "
                   f"({len(unlabelled)}/{len(photos)} photos to label)")
             for p in unlabelled:
