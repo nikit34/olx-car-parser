@@ -726,9 +726,12 @@ def verify_photos(
     """Run the v2 damage classifier on listings' photos and store ``photo_damage_p`` in llm_extras.
 
     Non-destructive: keeps the text-derived ``damage_severity`` column intact.
-    Adds two JSON keys:
+    Adds three JSON keys:
       • ``photo_damage_p`` — max P(damaged) across photos
       • ``photo_damage_n_photos`` — photos checked
+      • ``photo_damages`` — per-photo ``[{"idx": int, "p": float}, ...]``;
+        ``idx`` is 1-based and matches the ``fetch_photos(url)`` ordering so
+        the originating URL is recoverable by re-running fetch (issue #4).
 
     Coverage: both OLX (``apollo.olxcdn.com`` URL scrape) and StandVirtual
     (``__NEXT_DATA__`` JSON). Listings from other sources are skipped.
@@ -804,22 +807,40 @@ def verify_photos(
     listing_by_id = {l.olx_id: l for l in pending}
     work_items = [(l.olx_id, l.url) for l in pending]
 
-    def _verify_one(olx_id: str, url: str) -> tuple[str, float, int, str | None]:
-        """Returns ``(olx_id, max_p, n_photos, error_msg)``."""
+    def _verify_one(
+        olx_id: str, url: str
+    ) -> tuple[str, float, int, list[dict], str | None]:
+        """Returns ``(olx_id, max_p, n_photos, per_photo, error_msg)``.
+
+        ``per_photo`` is a list of ``{"idx": int, "p": float}`` ordered by
+        ``idx`` ascending. ``idx`` is 1-based and aligned to the
+        ``fetch_photos(url)`` enumeration so consumers can recover the source
+        URL by re-running fetch (deterministic ordering, see issue #4).
+        Photos that failed to download are skipped — their ``idx`` is simply
+        absent from the array.
+        """
         try:
             photo_urls = fetch_photos(url)
             listing_dir = cache_dir / olx_id
-            photo_paths = []
+            # Track the (idx, path) pairs we successfully downloaded so we
+            # can stitch per-photo scores back to their original position
+            # even when some downloads fail in the middle of the sequence.
+            indexed_paths: list[tuple[int, Path]] = []
             for j, purl in enumerate(photo_urls, 1):
                 p = listing_dir / f"{olx_id}_{j}.jpg"
                 if download_photo(purl, p):
-                    photo_paths.append(p)
-            if not photo_paths:
-                return olx_id, 0.0, 0, None
+                    indexed_paths.append((j, p))
+            if not indexed_paths:
+                return olx_id, 0.0, 0, [], None
+            photo_paths = [p for _, p in indexed_paths]
             pred = clf.predict_listing(olx_id, photo_paths)
-            return olx_id, pred.max_p, len(pred.photos), None
+            per_photo = [
+                {"idx": idx, "p": round(float(photo.p_damaged), 4)}
+                for (idx, _), photo in zip(indexed_paths, pred.photos)
+            ]
+            return olx_id, pred.max_p, len(pred.photos), per_photo, None
         except Exception as exc:  # noqa: BLE001
-            return olx_id, 0.0, 0, str(exc)
+            return olx_id, 0.0, 0, [], str(exc)
 
     flagged = downgraded = no_photos = errors = 0
     processed = 0
@@ -831,7 +852,7 @@ def verify_photos(
             for olx_id, url in work_items
         }
         for fut in as_completed(futures):
-            olx_id, max_p, n_photos, err = fut.result()
+            olx_id, max_p, n_photos, per_photo, err = fut.result()
             processed += 1
             if err:
                 log.warning("Classifier failed on %s: %s", olx_id, err)
@@ -847,6 +868,10 @@ def verify_photos(
             text_sev = extras.get("damage_severity") or 0
             extras["photo_damage_p"] = round(max_p, 4)
             extras["photo_damage_n_photos"] = n_photos
+            # Per-photo scores (issue #4) — keep listing-level fields above
+            # untouched for backward compat with alerts/dashboard. Sorted by
+            # idx ascending so downstream consumers don't have to.
+            extras["photo_damages"] = sorted(per_photo, key=lambda d: d["idx"])
             if not dry_run:
                 listing.llm_extras = json.dumps(extras, ensure_ascii=False)
             if max_p >= threshold:
