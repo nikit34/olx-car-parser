@@ -147,6 +147,69 @@ def mark_inactive(session: Session, source: str, active_olx_ids: set[str]) -> in
     return count
 
 
+def heal_mass_sweeps(session: Session, threshold: int = 500) -> int:
+    """Reverse mass-deactivation sweeps left by the source-blind mark_inactive.
+
+    Until 2026-05, ``mark_inactive`` ignored ``Listing.source``: a single
+    failed OLX (or SV) scrape would mark every row of that source ``sold``
+    in one bulk UPDATE. All those rows share an identical
+    ``deactivated_at`` (one ``_utcnow()`` call applied to the whole batch),
+    so the bug's fingerprint is a ``(source, deactivated_at)`` bucket of
+    hundreds-to-thousands of rows. Real per-cycle churn is ~50–200 per
+    source, so a threshold of 500 cleanly separates "buggy sweep" from
+    "normal mark_inactive batch".
+
+    Runs at the start of every scrape so any historical sweep is
+    auto-recovered. Idempotent — once healed, the query finds nothing
+    and the function is a fast no-op.
+
+    Returns the number of rows restored.
+    """
+    import logging
+    log = logging.getLogger(__name__)
+
+    bad_buckets = (
+        session.query(Listing.source, Listing.deactivated_at, func.count(Listing.id))
+        .filter(
+            Listing.is_active == False,  # noqa: E712
+            Listing.deactivation_reason == "sold",
+            Listing.deactivated_at.isnot(None),
+        )
+        .group_by(Listing.source, Listing.deactivated_at)
+        .having(func.count(Listing.id) > threshold)
+        .all()
+    )
+    if not bad_buckets:
+        return 0
+
+    total_restored = 0
+    for source, ts, count in bad_buckets:
+        log.warning(
+            "Auto-healing buggy mark_inactive sweep: source=%s deactivated_at=%s rows=%d",
+            source, ts, count,
+        )
+        restored = session.query(Listing).filter(
+            Listing.is_active == False,  # noqa: E712
+            Listing.source.is_(source) if source is None else Listing.source == source,
+            Listing.deactivated_at == ts,
+            Listing.deactivation_reason == "sold",
+        ).update({
+            "is_active": True,
+            "deactivated_at": None,
+            "deactivation_reason": None,
+        }, synchronize_session=False)
+        total_restored += restored
+
+    session.commit()
+    log.warning(
+        "Auto-healed %d rows across %d buggy sweep events. "
+        "Next scrape will re-confirm live rows; truly sold ones get "
+        "re-deactivated correctly by the now source-scoped mark_inactive.",
+        total_restored, len(bad_buckets),
+    )
+    return total_restored
+
+
 def backfill_deactivated_at(session: Session) -> int:
     """Backfill deactivated_at from last_seen_at for old inactive listings."""
     import logging

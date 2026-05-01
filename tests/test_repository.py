@@ -8,6 +8,7 @@ from src.storage.repository import (
     add_price_snapshot,
     upsert_unmatched,
     mark_inactive,
+    heal_mass_sweeps,
     compute_market_stats,
     deduplicate_cross_platform,
     get_listings_df,
@@ -155,6 +156,73 @@ class TestMarkInactive:
 
         legacy = db_session.query(Listing).filter_by(olx_id="test-001").one()
         assert legacy.is_active is False
+
+
+class TestHealMassSweeps:
+    def _seed(self, db_session, n, source, ts, reason="sold"):
+        from src.models.listing import Listing
+        for i in range(n):
+            db_session.add(Listing(
+                olx_id=f"{source}-{i}",
+                url=f"https://example.com/{source}-{i}",
+                brand="VW", model="Golf", year=2015,
+                source=source, is_active=False,
+                deactivated_at=ts, deactivation_reason=reason,
+            ))
+        db_session.commit()
+
+    def test_restores_cluster_above_threshold(self, db_session):
+        from datetime import datetime
+        from src.models.listing import Listing
+        sweep_ts = datetime(2026, 4, 1, 12, 0, 0, 123456)
+        self._seed(db_session, 600, "olx", sweep_ts)
+
+        restored = heal_mass_sweeps(db_session, threshold=500)
+        assert restored == 600
+
+        rows = db_session.query(Listing).filter_by(source="olx").all()
+        assert all(r.is_active for r in rows)
+        assert all(r.deactivated_at is None for r in rows)
+        assert all(r.deactivation_reason is None for r in rows)
+
+    def test_leaves_normal_churn_alone(self, db_session):
+        """A normal mark_inactive batch (~50–200 rows / cycle) must not
+        trip the healer."""
+        from datetime import datetime
+        from src.models.listing import Listing
+        normal_ts = datetime(2026, 4, 1, 12, 0, 0, 123456)
+        self._seed(db_session, 80, "olx", normal_ts)
+
+        restored = heal_mass_sweeps(db_session, threshold=500)
+        assert restored == 0
+        assert db_session.query(Listing).filter_by(is_active=False).count() == 80
+
+    def test_idempotent(self, db_session):
+        from datetime import datetime
+        sweep_ts = datetime(2026, 4, 1, 12, 0, 0, 123456)
+        self._seed(db_session, 600, "olx", sweep_ts)
+
+        first = heal_mass_sweeps(db_session, threshold=500)
+        second = heal_mass_sweeps(db_session, threshold=500)
+        assert first == 600
+        assert second == 0
+
+    def test_only_heals_one_source_per_bucket(self, db_session):
+        """Two different sources happening to share the same
+        deactivated_at must each be evaluated separately."""
+        from datetime import datetime
+        from src.models.listing import Listing
+        ts = datetime(2026, 4, 1, 12, 0, 0, 123456)
+        self._seed(db_session, 600, "olx", ts)
+        self._seed(db_session, 50, "standvirtual", ts)
+
+        restored = heal_mass_sweeps(db_session, threshold=500)
+        # Only the OLX cluster (600) is above threshold
+        assert restored == 600
+        sv_inactive = db_session.query(Listing).filter_by(
+            source="standvirtual", is_active=False,
+        ).count()
+        assert sv_inactive == 50
 
 
 class TestComputeMarketStats:

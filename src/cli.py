@@ -20,11 +20,11 @@ _LOCK_PATH = Path(__file__).resolve().parent.parent / "data" / "scrape.lock"
 
 from src.parser.scraper import OlxScraper, StandVirtualScraper, ScraperConfig, SV_BASE_URL
 from src.storage.database import get_session, init_db
-from src.models.generations import get_generation
+from src.models.generations import get_generation, infer_model_from_title
 from src.storage.repository import (
     add_price_snapshot, compute_market_stats, deduplicate_cross_platform,
-    get_duplicate_ids, get_listings_df, mark_inactive, upsert_listing,
-    upsert_unmatched,
+    get_duplicate_ids, get_listings_df, heal_mass_sweeps, mark_inactive,
+    upsert_listing, upsert_unmatched,
 )
 
 app = typer.Typer(help="OLX.pt Car Parser — scrape, store, analyze")
@@ -150,6 +150,15 @@ def _db_worker(db_queue: Queue, result: dict):
         else:
             corrections = {}
 
+        # StandVirtual detail pages frequently leave model="" (the
+        # data-testid="model" container isn't always populated). The title
+        # ("Peugeot 308 SW 1.6 HDi …") still carries the model — recover it
+        # via the brand→known-models lexicon before generation lookup.
+        if not raw.model and raw.brand and raw.title:
+            inferred = infer_model_from_title(raw.brand, raw.title)
+            if inferred:
+                raw.model = inferred
+
         data = {
             "olx_id": raw.olx_id, "url": raw.url, "title": raw.title,
             "brand": raw.brand, "model": raw.model or "", "year": raw.year,
@@ -232,6 +241,14 @@ def scrape(
 
     init_db()
     session = get_session()
+
+    # Self-heal historical mark_inactive sweeps before doing anything else.
+    # Cheap when there's nothing to heal (one indexed GROUP BY) and the
+    # only way to recover from the source-blind bug that wiped 4500 OLX
+    # rows in a single cycle.
+    healed = heal_mass_sweeps(session)
+    if healed:
+        log.warning("Auto-healed %d falsely-deactivated rows before scrape.", healed)
 
     cfg = _load_scraper_config()
     config = ScraperConfig(

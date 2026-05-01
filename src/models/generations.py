@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -70,4 +71,45 @@ def get_generation(brand: str, model: str, year: int | None) -> str | None:
     for g in gens:
         if g["year_from"] <= year <= g["year_to"]:
             return g["name"]
+    return None
+
+
+_known_models_cache: dict[str, list[str]] = {}
+
+
+def get_known_models_for_brand(brand: str) -> list[str]:
+    """All canonical + alias model names known for *brand*, longest-first.
+
+    Used as a last-resort lexicon when the scraper detail page leaves
+    ``model`` empty (StandVirtual frequently does), so we can scan the
+    title for a known model name and recover the row.
+    """
+    if not brand:
+        return []
+    if brand in _known_models_cache:
+        return _known_models_cache[brand]
+    data = load_generations()
+    brand_aliases = _get_brand_aliases()
+    model_aliases = _get_model_aliases()
+    models: set[str] = set()
+    for b in (brand, brand_aliases.get(brand, brand)):
+        models.update(data.get(b, {}).keys())
+        models.update(model_aliases.get(b, {}).keys())
+    out = sorted(models, key=len, reverse=True)
+    _known_models_cache[brand] = out
+    return out
+
+
+def infer_model_from_title(brand: str, title: str) -> str | None:
+    """Return a known *brand* model name found in *title*, or None.
+
+    Word-boundary match so short model codes like ``"320"`` don't fire
+    inside ``"2.0"`` or ``"3000"``. Longest-first so ``"Mégane Sport
+    Tourer"`` wins over ``"Mégane"``.
+    """
+    if not brand or not title:
+        return None
+    for m in get_known_models_for_brand(brand):
+        if re.search(rf"\b{re.escape(m)}\b", title, flags=re.IGNORECASE):
+            return m
     return None

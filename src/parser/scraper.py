@@ -44,9 +44,9 @@ USER_AGENTS = [
 BASE_URL = "https://www.olx.pt/carros-motos-e-barcos/carros/"
 
 KNOWN_BRANDS = [
-    "Alfa Romeo", "Audi", "BMW", "Chevrolet", "Citroen", "Citroën", "Dacia", "DS",
-    "Fiat", "Ford", "Honda", "Hyundai", "Jaguar", "Jeep", "Kia",
-    "Land Rover", "Lexus", "Mazda", "Mercedes-Benz", "Mini", "Mitsubishi",
+    "Alfa Romeo", "Audi", "BMW", "Chevrolet", "Chrysler", "Citroen", "Citroën",
+    "Cupra", "Dacia", "DS", "Fiat", "Ford", "Honda", "Hyundai", "Jaguar", "Jeep",
+    "Kia", "Land Rover", "Lexus", "Mazda", "Mercedes-Benz", "Mini", "Mitsubishi",
     "Nissan", "Opel", "Peugeot", "Porsche", "Renault", "Seat", "Skoda",
     "Smart", "Subaru", "Suzuki", "Tesla", "Toyota", "Volkswagen", "Volvo",
 ]
@@ -749,9 +749,14 @@ def _extract_brand_from_url(url: str) -> str:
 
 
 def _extract_brand_from_title(title: str) -> str:
+    # Word-boundary match: "ds" used to substring-match in "DSG" (the dual-
+    # clutch transmission), and since DS is a real brand sorted at the end
+    # of KNOWN_BRANDS, every Cupra/VW listing with DSG was getting tagged
+    # brand=DS. We saw "DS Formentor" / "DS Passat Variant" etc. piling up
+    # in unmatched_listings as a result.
     title_lower = title.lower()
     for brand in sorted(KNOWN_BRANDS, key=len, reverse=True):
-        if brand.lower() in title_lower:
+        if re.search(rf"\b{re.escape(brand.lower())}\b", title_lower):
             return brand
     abbrevs = {"vw": "Volkswagen", "merc": "Mercedes-Benz", "mb": "Mercedes-Benz"}
     for abbrev, brand in abbrevs.items():
