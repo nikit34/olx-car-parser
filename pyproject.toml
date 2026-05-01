@@ -24,6 +24,8 @@ dependencies = [
     "torch>=2.1",
     "torchvision>=0.16",
     "pillow>=10.0",
+    # CLIP zero-shot exterior pre-filter for verify-photos (issue #3).
+    "transformers>=4.40",
 ]
 
 [project.optional-dependencies]
