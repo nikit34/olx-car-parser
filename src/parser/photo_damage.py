@@ -115,12 +115,20 @@ class DamageClassifier:
             transforms.ToTensor(),
             transforms.Normalize(mean, std),
         ])
+        # MPS isn't thread-safe — verify-photos runs N worker threads that
+        # each call ``predict_listing`` concurrently. Without serialization,
+        # overlapping forward passes on a single MPS-resident model crash
+        # the runner with ``Trace/BPT trap: 5`` (SIGTRAP, exit 133).
+        # Photo I/O still parallelises across threads; only the inference
+        # block is locked.
+        import threading
+        self._inference_lock = threading.Lock()
 
     def predict_photo(self, path: Path | str) -> PhotoPrediction:
         path = Path(path)
         img = Image.open(path).convert("RGB")
         x = self.tf(img).unsqueeze(0).to(self.device)
-        with torch.no_grad():
+        with self._inference_lock, torch.no_grad():
             prob = torch.softmax(self.model(x), dim=1)[0]
         p_damaged = float(prob[1].item())
         return PhotoPrediction(path, p_damaged, p_damaged >= self.threshold)
@@ -134,7 +142,7 @@ class DamageClassifier:
             chunk = paths[i:i + batch_size]
             tensors = torch.stack([self.tf(Image.open(p).convert("RGB")) for p in chunk])
             tensors = tensors.to(self.device)
-            with torch.no_grad():
+            with self._inference_lock, torch.no_grad():
                 probs = torch.softmax(self.model(tensors), dim=1)[:, 1].tolist()
             out.extend(
                 PhotoPrediction(p, float(prob), float(prob) >= self.threshold)

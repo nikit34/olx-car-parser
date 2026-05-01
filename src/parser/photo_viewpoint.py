@@ -76,6 +76,13 @@ class ExteriorFilter:
         self._exterior_prompts = list(_EXTERIOR_PROMPTS)
         self._non_exterior_prompts = list(_NON_EXTERIOR_PROMPTS)
         self._n_exterior = len(self._exterior_prompts)
+        # MPS isn't thread-safe — verify-photos runs N worker threads that
+        # each call ``is_exterior_batch`` concurrently, and the resulting
+        # overlapping forward passes crashed the runner with
+        # ``Trace/BPT trap: 5`` (SIGTRAP, exit 133). Serialize inference
+        # under a single lock; photo I/O still parallelises across threads.
+        import threading
+        self._inference_lock = threading.Lock()
 
     def is_exterior(self, image_path: Path) -> bool:
         """Scalar path: True iff the photo's exterior similarity wins."""
@@ -96,7 +103,7 @@ class ExteriorFilter:
         images = [Image.open(p).convert("RGB") for p in paths]
         prompts = self._exterior_prompts + self._non_exterior_prompts
 
-        with torch.no_grad():
+        with self._inference_lock, torch.no_grad():
             inp = self.processor(
                 text=prompts,
                 images=images,
