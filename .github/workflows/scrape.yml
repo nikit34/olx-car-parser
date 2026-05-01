@@ -151,7 +151,16 @@ jobs:
         # scrape auto-detects Ollama: if reachable → inline LLM enrichment,
         # otherwise saves raw. When with_llm=false the previous step doesn't
         # start Ollama, so this naturally falls back to raw-only.
-        run: .venv/bin/python -m src.cli scrape
+        # Bump fd limit: the macOS self-hosted runner is launched with the
+        # default 256 soft cap, which httpx connection pools (concurrency=5
+        # × OLX + SV + Ollama keep-alive) + SQLite saturate around the
+        # 90-min mark — every new socket then EAGAINs and the step burns
+        # the rest of its budget on `Resource temporarily unavailable`
+        # warnings without making progress. 4096 is well under the host's
+        # `kern.maxfilesperproc=32768` ceiling.
+        run: |
+          ulimit -n 4096
+          .venv/bin/python -m src.cli scrape
 
       - name: Enrich with LLM
         # Runs on success or scrape-side failure (timeout, exception) —
@@ -164,7 +173,9 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
         timeout-minutes: 90
-        run: .venv/bin/python -m src.cli enrich --workers 6 --active-only
+        run: |
+          ulimit -n 4096
+          .venv/bin/python -m src.cli enrich --workers 6 --active-only
 
       - name: Ensure damage classifier weights present
         # Weights live in the persistent data/ dir alongside the DB.
@@ -199,6 +210,7 @@ jobs:
         timeout-minutes: 90
         continue-on-error: true
         run: |
+          ulimit -n 4096
           if [ ! -f data/damage_classifier_v2.pt ]; then
             echo "::warning::Skipping verify-photos — weights missing"
             exit 0
