@@ -47,9 +47,26 @@ import httpx
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# Reuse the exact same prompt as the POC and gold-comparison scripts so
-# the VLM behaviour (and any field-meaning drift) stays in one place.
-from scripts.photo_damage_poc import VLM_SYSTEM  # noqa: E402
+# Prompt inlined from scripts/photo_damage_poc.py (an untracked POC).
+# Keeping this script self-contained — runner checkouts under _work/ only
+# see tracked files, so importing the POC blew up with
+# ``No module named 'scripts.photo_damage_poc'``.
+VLM_SYSTEM = """\
+You are inspecting one photo of a used car listing in Portugal. Output ONE JSON object only.
+
+Schema:
+  visible_damage: bool — true if the photo shows ANY of: dents, scratches deeper than buffing, broken/cracked panels or lights, rust, peeling paint, missing parts, deflated tyres, deployed airbags, bent frame, fluid leaks under car, smashed glass.
+  severity: int 0-3
+    0 = no visible damage / clean panels
+    1 = minor cosmetic (small scratches, light scuffs, minor paint chips)
+    2 = significant cosmetic or moderate mechanical (clear dents, rust patches, cracked plastic, mismatched paint)
+    3 = major / structural / non-runner (smashed panels, bent frame, deployed airbags, fire damage, salvage)
+  damage_areas: list of short labels e.g. ["front bumper","left fender","rear quarter"], [] if none.
+  evidence: 1-2 short sentences in English describing what you see.
+  is_studio_or_dealer: bool — true if the shot is a clean dealer / studio photo with controlled lighting / showroom floor (suggests minor selection bias toward presentable cars).
+
+If the photo is too blurry / dark / cropped to assess, set visible_damage=false, severity=0, evidence="image not assessable".
+"""
 
 OLLAMA_URL = "http://localhost:11434"
 DEFAULT_MODEL = "qwen2.5vl:3b"
