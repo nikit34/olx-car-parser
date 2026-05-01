@@ -893,6 +893,7 @@ def verify_photos(
 
     flagged = downgraded = no_photos = errors = 0
     processed = 0
+    updated_count = 0
     t0 = time.monotonic()
 
     with ThreadPoolExecutor(max_workers=max(workers, 1)) as pool:
@@ -937,6 +938,13 @@ def verify_photos(
             extras["photo_damage_flagged"] = bool(flagged_pred)
             if not dry_run:
                 listing.llm_extras = json.dumps(extras, ensure_ascii=False)
+            # Count real writes (vs. error/skip rows). Used by the
+            # post-loop sanity guard below to detect "step ran but produced
+            # zero output" failure modes that ``continue-on-error: true``
+            # would otherwise hide from the workflow's run summary
+            # (see issue #7, masking pattern from runs 25220681021 /
+            # 25222655513 — fixed in b13e6c8 / 2e649c8).
+            updated_count += 1
             # Count under the new rule so the on-screen tally matches what
             # downstream consumers see in ``photo_damage_flagged``.
             if flagged_pred:
@@ -962,6 +970,24 @@ def verify_photos(
     )
     if dry_run:
         log.info("Dry-run — no DB writes. Re-run without --dry-run to persist.")
+
+    # Sanity guard (issue #7): the workflow step has ``continue-on-error:
+    # true`` because verify-photos is a slow, opt-in enrichment that
+    # shouldn't block train/upload. The downside is it also masks real
+    # zero-output failures — runs 25220681021 (transformers ImportError,
+    # fixed in b13e6c8) and 25222655513 (MPS thread-safety SIGTRAP, fixed
+    # in 2e649c8) both completed "successfully" while writing nothing,
+    # caught only by manually inspecting llm_extras counts in the DB.
+    # When there's a non-trivial pending queue but every listing produced
+    # an error, raise typer.Exit(2) and emit a workflow ``::warning::`` so
+    # the failure surfaces in the run summary even though the step keeps
+    # going. Skip the check on dry-run (zero writes is the point).
+    if not dry_run and len(pending) >= 50 and updated_count == 0:
+        print(
+            f"::warning::verify-photos processed 0 of {len(pending)} pending "
+            "listings — likely a startup crash; check logs."
+        )
+        raise typer.Exit(2)
 
 
 @app.command()

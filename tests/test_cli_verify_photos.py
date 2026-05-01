@@ -137,7 +137,9 @@ def _run_verify(session, monkeypatch, tmp_path, *,
                 photo_urls_by_listing: dict[str, list[str]],
                 fail_indices: dict[str, set[int]] | None = None,
                 ood_indices: dict[str, set[int]] | None = None,
-                threshold: float = 0.2):
+                threshold: float = 0.2,
+                classifier_cls=None,
+                dry_run: bool = False):
     """Drive the typer command with stubbed photo IO + classifier + CLIP."""
     fail_indices = fail_indices or {}
     # Reset the class-level OOD map per call so tests don't leak state.
@@ -171,7 +173,7 @@ def _run_verify(session, monkeypatch, tmp_path, *,
     # import DamageClassifier`` against ``sys.modules`` at call time.
     monkeypatch.setattr(
         sys.modules["src.parser.photo_damage"],
-        "DamageClassifier", _StubClassifier, raising=False,
+        "DamageClassifier", classifier_cls or _StubClassifier, raising=False,
     )
     # Same pattern for the issue #3 CLIP pre-filter — patch whichever module
     # object is in ``sys.modules`` (bare stub from this file's setdefault, or
@@ -194,7 +196,7 @@ def _run_verify(session, monkeypatch, tmp_path, *,
         workers=1,
         only_text_flagged=False,
         cache_dir=tmp_path / "cache",
-        dry_run=False,
+        dry_run=dry_run,
     )
 
 
@@ -495,3 +497,110 @@ class TestVerifyPhotosExteriorFilter:
         assert extras["photo_damage_n_photos"] == 0
         assert extras["photo_damage_n_exterior"] == 0
         assert extras["photo_damages"] == []
+
+
+class _AlwaysFailingClassifier:
+    """Classifier whose every ``predict_listing`` call raises.
+
+    Reproduces the issue #7 masking pattern at the unit level: the import
+    /init succeeds (so the step "ran"), but every listing produces an
+    error and zero ``photo_damage_p`` writes happen. Standalone the run
+    looks like a successful run with N errors; in CI ``continue-on-error:
+    true`` swallows the per-step exit and the whole workflow is green.
+    """
+
+    device = "cpu"
+    classes = ["clean", "damaged"]
+
+    def __init__(self, threshold: float = 0.2, **_kwargs):
+        self.threshold = threshold
+
+    def predict_listing(self, olx_id, photo_paths):
+        raise RuntimeError(f"simulated classifier failure on {olx_id}")
+
+
+class TestVerifyPhotosZeroOutputGuard:
+    """Issue #7: verify-photos must exit non-zero with a workflow
+    ``::warning::`` when it processes a non-trivial pending queue
+    (≥50 listings) but writes zero ``photo_damage_p`` updates. Catches
+    the masking pattern that hid two production bugs (transformers
+    ImportError in run 25220681021, MPS thread-safety SIGTRAP in run
+    25222655513) by burying their failure inside ``continue-on-error:
+    true`` step results."""
+
+    def test_warns_and_exits_when_zero_updates_against_50_pending(
+        self, db_session, monkeypatch, tmp_path, capsys,
+    ):
+        photo_urls = {}
+        for i in range(60):
+            olx_id = f"olx-fail-{i:03d}"
+            _seed_listing(
+                db_session,
+                olx_id=olx_id,
+                url=f"https://standvirtual.com/test/{olx_id}",
+            )
+            photo_urls[olx_id] = [f"{olx_id}#1"]
+
+        # typer.Exit is click.exceptions.Exit (RuntimeError subclass), not
+        # SystemExit — typer's runner converts it to a process exit code,
+        # but called directly in-process it propagates as the click type.
+        import click
+        with pytest.raises(click.exceptions.Exit) as exc_info:
+            _run_verify(
+                db_session, monkeypatch, tmp_path,
+                photo_urls_by_listing=photo_urls,
+                classifier_cls=_AlwaysFailingClassifier,
+            )
+        assert exc_info.value.exit_code == 2
+
+        captured = capsys.readouterr()
+        assert "::warning::" in captured.out
+        assert "verify-photos processed 0" in captured.out
+        # Listings should have no photo_damage_p — the guard fired
+        # because every classifier call raised before extras was updated.
+        for olx_id in photo_urls:
+            listing = db_session.query(Listing).filter_by(olx_id=olx_id).one()
+            extras = json.loads(listing.llm_extras)
+            assert "photo_damage_p" not in extras
+
+    def test_no_warning_when_pending_is_empty(
+        self, db_session, monkeypatch, tmp_path, capsys,
+    ):
+        """Empty pending queue is a legitimate no-op (everything's already
+        verified). The guard MUST NOT trip — would otherwise spam warnings
+        on every steady-state cron after the backlog is drained."""
+        # No listings seeded → pending == [] → command returns early.
+        _run_verify(
+            db_session, monkeypatch, tmp_path,
+            photo_urls_by_listing={},
+            classifier_cls=_AlwaysFailingClassifier,
+        )
+        captured = capsys.readouterr()
+        assert "::warning::" not in captured.out
+
+    def test_no_warning_when_dry_run_writes_nothing(
+        self, db_session, monkeypatch, tmp_path, capsys,
+    ):
+        """Dry-run by definition writes nothing — the guard MUST be
+        suppressed there or every dry-run smoke test would emit a false
+        ``::warning::``."""
+        photo_urls = {}
+        for i in range(60):
+            olx_id = f"olx-dry-{i:03d}"
+            _seed_listing(
+                db_session,
+                olx_id=olx_id,
+                url=f"https://standvirtual.com/test/{olx_id}",
+            )
+            photo_urls[olx_id] = [f"{olx_id}#1"]
+
+        # Dry-run + always-failing classifier: no SystemExit raised even
+        # though the queue is large and zero writes happen.
+        _run_verify(
+            db_session, monkeypatch, tmp_path,
+            photo_urls_by_listing=photo_urls,
+            classifier_cls=_AlwaysFailingClassifier,
+            dry_run=True,
+        )
+        captured = capsys.readouterr()
+        assert "::warning::" not in captured.out
