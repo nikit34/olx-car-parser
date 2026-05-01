@@ -159,16 +159,40 @@ def already_labelled_keys(labels_path: Path) -> set[tuple[str, int]]:
 
 
 def group_by_listing(rows: list[dict]) -> list[tuple[str, list[dict]]]:
-    """Preserve manifest order while grouping photos under each olx_id."""
+    """Group photos under each olx_id, interleaved by score bucket.
+
+    Mining writes the manifest sorted by score bucket (0.20-0.35 first,
+    >=0.90 last). Iterating in that order means a tight ``--max-listings``
+    cap labels only the lowest bucket. Interleaving (round-robin across
+    buckets) guarantees that even a 100-listing run touches all five
+    score ranges, so the labelled set keeps the FP-distribution mix the
+    audit (#1) found problematic across the whole flagged spectrum.
+    """
+    by_bucket: dict[str, list[tuple[str, list[dict]]]] = {}
     seen: dict[str, list[dict]] = {}
-    order: list[str] = []
+    bucket_of: dict[str, str] = {}
+    order_in_bucket: dict[str, list[str]] = {}
     for r in rows:
         oid = r["olx_id"]
+        bucket = r.get("score_bucket", "?")
         if oid not in seen:
             seen[oid] = []
-            order.append(oid)
+            bucket_of[oid] = bucket
+            order_in_bucket.setdefault(bucket, []).append(oid)
         seen[oid].append(r)
-    return [(oid, seen[oid]) for oid in order]
+
+    # Sort bucket keys descending so high-confidence FPs (where the audit
+    # found the worst classifier blind spots) get visited first within
+    # each round-robin tick.
+    bucket_order = sorted(order_in_bucket.keys(), reverse=True)
+    queues = [list(order_in_bucket[b]) for b in bucket_order]
+
+    interleaved: list[str] = []
+    while any(queues):
+        for q in queues:
+            if q:
+                interleaved.append(q.pop(0))
+    return [(oid, seen[oid]) for oid in interleaved]
 
 
 def main() -> int:
