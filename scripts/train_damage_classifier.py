@@ -30,6 +30,15 @@ def main():
                     help="ce = CrossEntropy; weighted = inverse-frequency CE; "
                          "focal = focal loss (gamma=2)")
     ap.add_argument("--focal-gamma", type=float, default=2.0)
+    # Fine-tune mode: load existing classifier weights as the starting
+    # point instead of ImageNet-pretrained backbone alone. Used by the
+    # v3 retrain (issue #5) where the new VLM-labelled mined-FP set is
+    # too small (200-300 photos, severely class-imbalanced) to train
+    # from scratch — but more than enough to nudge a v2 starting point
+    # in the right direction.
+    ap.add_argument("--init-weights", type=Path, default=None,
+                    help="Optional path to a damage_classifier_*.pt to "
+                         "warm-start from. Backbone field must match.")
     args = ap.parse_args()
 
     import torch
@@ -82,6 +91,20 @@ def main():
         model = models.efficientnet_b3(
             weights=models.EfficientNet_B3_Weights.DEFAULT)
         model.classifier[1] = nn.Linear(model.classifier[1].in_features, 2)
+
+    if args.init_weights is not None:
+        ckpt = torch.load(args.init_weights, map_location="cpu", weights_only=False)
+        ckpt_backbone = ckpt.get("backbone")
+        if ckpt_backbone and ckpt_backbone != args.backbone:
+            raise SystemExit(
+                f"--init-weights backbone mismatch: ckpt={ckpt_backbone} "
+                f"vs --backbone {args.backbone}"
+            )
+        missing, unexpected = model.load_state_dict(
+            ckpt["state_dict"], strict=False,
+        )
+        print(f"Warm-started from {args.init_weights}; "
+              f"missing={len(missing)} unexpected={len(unexpected)}")
 
     model = model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr,
