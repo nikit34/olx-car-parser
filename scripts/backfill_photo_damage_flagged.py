@@ -27,7 +27,10 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import time
 from collections import Counter
+
+from sqlalchemy.exc import OperationalError
 
 from src.parser.damage_decision import (
     DEFAULT_THRESHOLD,
@@ -36,6 +39,11 @@ from src.parser.damage_decision import (
 )
 from src.storage.database import init_db, get_session
 from src.models.listing import Listing
+
+
+_BATCH_SIZE = 200
+_RETRY_MAX = 6
+_RETRY_BASE_S = 2.0
 
 
 def _decide_from_per_photo(per_photo: list[dict]) -> bool:
@@ -138,10 +146,41 @@ def main() -> int:
     if not args.apply or not to_write:
         return 0
 
-    for listing, extras in to_write:
-        listing.llm_extras = json.dumps(extras, ensure_ascii=False)
-    session.commit()
-    log.info("Committed %d rows", len(to_write))
+    # Commit in batches with exponential-backoff retries on "database is
+    # locked" — the scrape worker on this host writes through the same
+    # SQLite file, and a single 5k-row UPDATE blocks new listings from
+    # landing for the duration of the commit. 200-row batches keep each
+    # transaction short enough that scrape inserts can interleave.
+    written = 0
+    for i in range(0, len(to_write), _BATCH_SIZE):
+        chunk = to_write[i:i + _BATCH_SIZE]
+        for listing, extras in chunk:
+            listing.llm_extras = json.dumps(extras, ensure_ascii=False)
+        for attempt in range(_RETRY_MAX):
+            try:
+                session.commit()
+                written += len(chunk)
+                break
+            except OperationalError as e:
+                if "locked" not in str(e).lower():
+                    raise
+                session.rollback()
+                wait = _RETRY_BASE_S * (2 ** attempt)
+                log.warning(
+                    "DB locked on batch %d-%d, retry %d/%d in %.1fs",
+                    i, i + len(chunk), attempt + 1, _RETRY_MAX, wait,
+                )
+                time.sleep(wait)
+                # Re-stage the updates after rollback (rollback drops the
+                # pending UPDATEs from the unit-of-work).
+                for listing, extras in chunk:
+                    listing.llm_extras = json.dumps(extras, ensure_ascii=False)
+        else:
+            log.error("Gave up on batch %d after %d retries", i, _RETRY_MAX)
+            return 1
+        if (i // _BATCH_SIZE) % 5 == 0:
+            log.info("Committed %d / %d", written, len(to_write))
+    log.info("Committed %d rows total", written)
     return 0
 
 
