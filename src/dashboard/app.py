@@ -16,7 +16,7 @@ from data_loader import load_all, _force_next_check
 st.set_page_config(page_title="Car Deals", layout="wide")
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300)
 def load_data():
     return load_all()
 
@@ -159,6 +159,86 @@ _price = deals["price_eur"].where(deals["price_eur"] > 0, pd.NA)
 deals["est_roi_pct"] = ((deals["predicted_price"] - deals["price_eur"]) / _price * 100).round(1)
 
 st.caption(f"{len(deals)} deals sorted by flip score")
+
+# ---------------------------------------------------------------------------
+# Market analytics — price vs mileage scatter for the selected model.
+# Uses listings_df (full active set) so the chart isn't limited to rows that
+# already have a flip-score prediction.
+# ---------------------------------------------------------------------------
+if len(selected_models) == 1 and not listings_df.empty:
+    _model = selected_models[0]
+    market = listings_df.copy()
+    if "is_active" in market.columns:
+        market = market[market["is_active"]]
+    market = market[market["model"] == _model]
+    if selected_brands:
+        market = market[market["brand"].isin(selected_brands)]
+    market = market[
+        (market["year"].between(year_range[0], year_range[1]) | market["year"].isna())
+        & (market["price_eur"].between(price_range[0], price_range[1]) | market["price_eur"].isna())
+    ]
+    if selected_fuels:
+        market = market[market["fuel_type"].map(_fuel_group).isin(selected_fuels)]
+
+    with st.expander(f"Market — {_model} (price vs mileage)", expanded=True):
+        # Sub-filter: engine displacement. Default to the full range present
+        # in the filtered set; users tighten it to compare like-for-like
+        # configurations (e.g. 1.6 TDI vs 2.0 TDI).
+        cc_series = market["engine_cc"].dropna()
+        cc_min = int(cc_series.min()) if not cc_series.empty else 0
+        cc_max = int(cc_series.max()) if not cc_series.empty else 0
+        if cc_min and cc_max and cc_min < cc_max:
+            cc_range = st.slider(
+                "Engine displacement (cc)",
+                min_value=cc_min, max_value=cc_max,
+                value=(cc_min, cc_max), step=100,
+                key=f"market_cc_{_model}",
+            )
+            market = market[
+                market["engine_cc"].between(cc_range[0], cc_range[1])
+                | market["engine_cc"].isna()
+            ]
+
+        plot_data = market[
+            market["mileage_km"].notna()
+            & market["price_eur"].notna()
+            & (market["price_eur"] > 0)
+        ].copy()
+
+        if plot_data.empty:
+            st.info("Not enough data to plot — relax filters or pick a different model.")
+        else:
+            plot_data["fuel_group"] = plot_data["fuel_type"].map(_fuel_group)
+            import plotly.express as px
+
+            hover_cols = [c for c in ("brand", "year", "fuel_type", "engine_cc",
+                                       "horsepower", "transmission", "city", "url")
+                          if c in plot_data.columns]
+            fig = px.scatter(
+                plot_data,
+                x="mileage_km", y="price_eur",
+                color="year" if plot_data["year"].notna().any() else None,
+                symbol="fuel_group" if plot_data["fuel_group"].nunique() > 1 else None,
+                hover_data=hover_cols,
+                color_continuous_scale="Turbo",
+            )
+            fig.update_traces(marker=dict(size=9, opacity=0.75, line=dict(width=0.5, color="#222")))
+            fig.update_layout(
+                xaxis_title="Mileage (km)",
+                yaxis_title="Price (EUR)",
+                xaxis=dict(tickformat=","),
+                yaxis=dict(tickformat=","),
+                height=480,
+                margin=dict(l=10, r=10, t=30, b=10),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            _med_price = int(plot_data["price_eur"].median())
+            _med_km = int(plot_data["mileage_km"].median())
+            st.caption(
+                f"{len(plot_data)} active listings · "
+                f"median price {_med_price:,} EUR · median mileage {_med_km:,} km"
+            )
 
 # --- Cards ---
 for _, deal in deals.iterrows():
