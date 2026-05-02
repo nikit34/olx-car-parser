@@ -3,6 +3,7 @@
 import numpy as np
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 
 import sys as _sys
 from pathlib import Path as _Path
@@ -160,86 +161,6 @@ deals["est_roi_pct"] = ((deals["predicted_price"] - deals["price_eur"]) / _price
 
 st.caption(f"{len(deals)} deals sorted by flip score")
 
-# ---------------------------------------------------------------------------
-# Market analytics — price vs mileage scatter for the selected model.
-# Uses listings_df (full active set) so the chart isn't limited to rows that
-# already have a flip-score prediction.
-# ---------------------------------------------------------------------------
-if len(selected_models) == 1 and not listings_df.empty:
-    _model = selected_models[0]
-    market = listings_df.copy()
-    if "is_active" in market.columns:
-        market = market[market["is_active"]]
-    market = market[market["model"] == _model]
-    if selected_brands:
-        market = market[market["brand"].isin(selected_brands)]
-    market = market[
-        (market["year"].between(year_range[0], year_range[1]) | market["year"].isna())
-        & (market["price_eur"].between(price_range[0], price_range[1]) | market["price_eur"].isna())
-    ]
-    if selected_fuels:
-        market = market[market["fuel_type"].map(_fuel_group).isin(selected_fuels)]
-
-    with st.expander(f"Market — {_model} (price vs mileage)", expanded=True):
-        # Sub-filter: engine displacement. Default to the full range present
-        # in the filtered set; users tighten it to compare like-for-like
-        # configurations (e.g. 1.6 TDI vs 2.0 TDI).
-        cc_series = market["engine_cc"].dropna()
-        cc_min = int(cc_series.min()) if not cc_series.empty else 0
-        cc_max = int(cc_series.max()) if not cc_series.empty else 0
-        if cc_min and cc_max and cc_min < cc_max:
-            cc_range = st.slider(
-                "Engine displacement (cc)",
-                min_value=cc_min, max_value=cc_max,
-                value=(cc_min, cc_max), step=100,
-                key=f"market_cc_{_model}",
-            )
-            market = market[
-                market["engine_cc"].between(cc_range[0], cc_range[1])
-                | market["engine_cc"].isna()
-            ]
-
-        plot_data = market[
-            market["mileage_km"].notna()
-            & market["price_eur"].notna()
-            & (market["price_eur"] > 0)
-        ].copy()
-
-        if plot_data.empty:
-            st.info("Not enough data to plot — relax filters or pick a different model.")
-        else:
-            plot_data["fuel_group"] = plot_data["fuel_type"].map(_fuel_group)
-            import plotly.express as px
-
-            hover_cols = [c for c in ("brand", "year", "fuel_type", "engine_cc",
-                                       "horsepower", "transmission", "city", "url")
-                          if c in plot_data.columns]
-            fig = px.scatter(
-                plot_data,
-                x="mileage_km", y="price_eur",
-                color="year" if plot_data["year"].notna().any() else None,
-                symbol="fuel_group" if plot_data["fuel_group"].nunique() > 1 else None,
-                hover_data=hover_cols,
-                color_continuous_scale="Turbo",
-            )
-            fig.update_traces(marker=dict(size=9, opacity=0.75, line=dict(width=0.5, color="#222")))
-            fig.update_layout(
-                xaxis_title="Mileage (km)",
-                yaxis_title="Price (EUR)",
-                xaxis=dict(tickformat=","),
-                yaxis=dict(tickformat=","),
-                height=480,
-                margin=dict(l=10, r=10, t=30, b=10),
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-            _med_price = int(plot_data["price_eur"].median())
-            _med_km = int(plot_data["mileage_km"].median())
-            st.caption(
-                f"{len(plot_data)} active listings · "
-                f"median price {_med_price:,} EUR · median mileage {_med_km:,} km"
-            )
-
 # --- Cards ---
 for _, deal in deals.iterrows():
     with st.container():
@@ -360,5 +281,92 @@ for _, deal in deals.iterrows():
                             if c_url and isinstance(c_url, str):
                                 c_label = "SV" if "standvirtual" in c_url else "OLX"
                                 st.link_button(c_label, c_url, key=f"seg_{deal['olx_id']}_{comp['olx_id']}")
+
+        # --- Market chart: price vs mileage for the same configuration ---
+        # Lazy-loaded behind a checkbox: building a plotly figure for every
+        # card on every rerun would slow the page noticeably with ~100
+        # deals. Compares against listings_df (full active set), not just
+        # other rows that scored as flips.
+        if st.checkbox("Market — price vs mileage", key=f"chk_{deal['olx_id']}", value=False):
+            if listings_df.empty:
+                st.info("No listings loaded.")
+            else:
+                market = listings_df.copy()
+                if "is_active" in market.columns:
+                    market = market[market["is_active"]]
+                market = market[
+                    (market["brand"] == deal["brand"])
+                    & (market["model"] == deal["model"])
+                ]
+                deal_fuel_group = _fuel_group(deal.get("fuel_type"))
+                if deal_fuel_group != "Unknown":
+                    market = market[market["fuel_type"].map(_fuel_group) == deal_fuel_group]
+                deal_cc = deal.get("engine_cc")
+                cc_window = 200
+                if pd.notna(deal_cc) and deal_cc:
+                    cc_int = int(deal_cc)
+                    market = market[
+                        market["engine_cc"].between(cc_int - cc_window, cc_int + cc_window)
+                        | market["engine_cc"].isna()
+                    ]
+                market = market[
+                    market["mileage_km"].notna()
+                    & market["price_eur"].notna()
+                    & (market["price_eur"] > 0)
+                ].copy()
+
+                if len(market) < 2:
+                    st.info("Not enough comparable listings (need ≥2).")
+                else:
+                    market["is_this"] = market["olx_id"] == deal["olx_id"]
+                    market_others = market[~market["is_this"]]
+                    market_self = market[market["is_this"]]
+
+                    hover_cols = [c for c in ("year", "engine_cc", "horsepower",
+                                               "transmission", "city", "url")
+                                  if c in market.columns]
+                    fig = px.scatter(
+                        market_others,
+                        x="mileage_km", y="price_eur",
+                        color="year" if market_others["year"].notna().any() else None,
+                        hover_data=hover_cols,
+                        color_continuous_scale="Turbo",
+                    )
+                    fig.update_traces(marker=dict(size=9, opacity=0.65,
+                                                  line=dict(width=0.5, color="#222")))
+                    if not market_self.empty:
+                        fig.add_scatter(
+                            x=market_self["mileage_km"],
+                            y=market_self["price_eur"],
+                            mode="markers",
+                            marker=dict(size=18, symbol="star", color="#FF3B30",
+                                        line=dict(width=1.5, color="#000")),
+                            name="This listing",
+                            hovertext=[f"This listing — {int(deal['price_eur']):,} EUR"],
+                            hoverinfo="text",
+                        )
+                    fig.update_layout(
+                        xaxis_title="Mileage (km)",
+                        yaxis_title="Price (EUR)",
+                        xaxis=dict(tickformat=","),
+                        yaxis=dict(tickformat=","),
+                        height=420,
+                        margin=dict(l=10, r=10, t=10, b=10),
+                        showlegend=False,
+                    )
+                    st.plotly_chart(fig, use_container_width=True,
+                                    key=f"chart_{deal['olx_id']}")
+
+                    _med_p = int(market["price_eur"].median())
+                    _med_k = int(market["mileage_km"].median())
+                    _cc_label = (
+                        f"{int(deal_cc) - cc_window}–{int(deal_cc) + cc_window} cc"
+                        if pd.notna(deal_cc) and deal_cc
+                        else "any cc"
+                    )
+                    st.caption(
+                        f"{len(market)} active comps · {deal_fuel_group} · {_cc_label} · "
+                        f"median price {_med_p:,} EUR · median mileage {_med_k:,} km"
+                    )
 
         st.divider()
