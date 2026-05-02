@@ -51,6 +51,31 @@ if selected_brands:
 
 selected_models = st.sidebar.multiselect("Model", options=available_models) if available_models else []
 
+
+def _fuel_group(value) -> str:
+    if value is None or (isinstance(value, float) and pd.isna(value)) or str(value).strip() == "":
+        return "Unknown"
+    fl = str(value).lower()
+    if "diesel" in fl:
+        return "Diesel"
+    if "eléctrico" in fl or "electr" in fl:
+        return "Electric"
+    if "plug" in fl:
+        return "Plug-in Hybrid"
+    if "híbrido" in fl or "hybrid" in fl:
+        return "Hybrid"
+    if "gpl" in fl or "lpg" in fl:
+        return "GPL"
+    return "Petrol"
+
+
+fuel_groups_in_data = (
+    sorted(set(_fuel_group(v) for v in signals_df["fuel_type"].tolist()))
+    if not signals_df.empty and "fuel_type" in signals_df.columns
+    else []
+)
+selected_fuels = st.sidebar.multiselect("Fuel type", options=fuel_groups_in_data)
+
 year_min = int(listings_df["year"].min()) if listings_df["year"].notna().any() else 2000
 year_max = int(listings_df["year"].max()) if listings_df["year"].notna().any() else 2026
 year_range = st.sidebar.slider("Year", min_value=year_min, max_value=year_max, value=(year_min, year_max))
@@ -103,6 +128,8 @@ if not filtered.empty:
         filtered = filtered[filtered["brand"].isin(selected_brands)]
     if selected_models:
         filtered = filtered[filtered["model"].isin(selected_models)]
+    if selected_fuels:
+        filtered = filtered[filtered["fuel_type"].map(_fuel_group).isin(selected_fuels)]
     filtered = filtered[
         (filtered["year"].between(year_range[0], year_range[1]) | filtered["year"].isna()) &
         (filtered["price_eur"].between(price_range[0], price_range[1]) | filtered["price_eur"].isna())

@@ -325,10 +325,20 @@ def scrape(
     # Scraper callback: sends each listing to LLM or directly to DB
     sent_to_llm = 0
     skipped_llm = 0
+    skipped_no_photos = 0
 
     def _on_batch(batch):
-        nonlocal sent_to_llm, skipped_llm
+        nonlocal sent_to_llm, skipped_llm, skipped_no_photos
         for listing in batch:
+            # Drop listings the detail page confirmed have zero photos —
+            # they're typically reposts of expired ads or low-effort scams,
+            # and they pollute the dashboard with cards that have nothing
+            # to show. We only skip on a definite 0; None means the gallery
+            # selector didn't fire (detail-fetch failed / page restructure)
+            # so we can't tell.
+            if listing.photo_count == 0:
+                skipped_no_photos += 1
+                continue
             raw_by_id[listing.olx_id] = listing
             if not llm_enabled:
                 db_queue.put((listing, None))
@@ -355,7 +365,8 @@ def scrape(
                 continue
             llm_in.put((listing.olx_id, listing.title, listing.description))
             sent_to_llm += 1
-        log.info("Page done: %d listings -> %d sent to LLM, %d skipped", len(batch), sent_to_llm, skipped_llm)
+        log.info("Page done: %d listings -> %d sent to LLM, %d skipped, %d dropped (no photos)",
+                 len(batch), sent_to_llm, skipped_llm, skipped_no_photos)
 
     with OlxScraper(config) as scraper:
         raw_listings = scraper.scrape_all(
