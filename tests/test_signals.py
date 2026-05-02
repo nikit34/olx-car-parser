@@ -421,6 +421,50 @@ class TestBlockingDealReason:
             signals, _ = compute_signals(listings, sample_history_df)
         assert signals.empty or "title-pecas" not in signals["olx_id"].values
 
+    def test_blocks_salvage_phrasing_in_description_only(
+        self, sample_history_df, generations_data, patched_gb_model,
+    ):
+        """The audit's JmUNP / JmutI / JmR3C all had the salvage tell only
+        in the description ("não pega", "junta queimada", "avaria no motor"
+        respectively); the original title-only scan missed them. Putting
+        the phrase only in description should still hard-block."""
+        listings = pd.DataFrame(
+            [{"olx_id": "desc-junta", "url": "",
+              "title": "Fiat Punto 1.2",
+              "description": "Bom carro mas a junta queimada, vende-se barato.",
+              "brand": "Volkswagen", "model": "Golf",
+              "year": 2015, "price_eur": 3000, "mileage_km": 150000, "engine_cc": 1600,
+              "fuel_type": "Diesel", "is_active": True}]
+            + _golf_comparables(),
+        )
+        with patched_gb_model(), patch(
+            "src.models.generations.load_generations",
+            return_value=generations_data,
+        ):
+            signals, _ = compute_signals(listings, sample_history_df)
+        assert signals.empty or "desc-junta" not in signals["olx_id"].values
+
+    def test_blocks_non_runner_phrasing_in_description(
+        self, sample_history_df, generations_data, patched_gb_model,
+    ):
+        """JmUNP-style: title is innocuous, description says "não pega,
+        só de reboque". Must hard-block."""
+        listings = pd.DataFrame(
+            [{"olx_id": "desc-runner", "url": "",
+              "title": "Peugeot 508 SW 2013",
+              "description": "Vendo carro. Não pega, só de reboque.",
+              "brand": "Volkswagen", "model": "Golf",
+              "year": 2015, "price_eur": 1000, "mileage_km": 200000, "engine_cc": 1600,
+              "fuel_type": "Diesel", "is_active": True}]
+            + _golf_comparables(),
+        )
+        with patched_gb_model(), patch(
+            "src.models.generations.load_generations",
+            return_value=generations_data,
+        ):
+            signals, _ = compute_signals(listings, sample_history_df)
+        assert signals.empty or "desc-runner" not in signals["olx_id"].values
+
     def test_keeps_severity_2_listings(
         self, sample_history_df, generations_data, patched_gb_model,
     ):

@@ -529,10 +529,15 @@ def get_listings_df(session: Session) -> pd.DataFrame:
             "photo_count": l.photo_count, "description_length": l.description_length,
             "city": l.city, "district": l.district,
             "seller_type": l.seller_type, "is_active": l.is_active,
-            # description text itself is intentionally excluded — it can be
-            # hundreds of KB × thousands of rows and no consumer of this df
-            # needs the raw text. Anything that wants to gate on presence
-            # uses the separately-stored description_length column.
+            # ``description`` was previously excluded for memory reasons,
+            # but the dashboard's hard-block scan needs to see phrases like
+            # "junta queimada" / "só reboque" that often live only in the
+            # description, never the title. Active descriptions on a
+            # 18k-listing release total ~3–4 MB raw — well below the
+            # threshold that motivated the original exclusion. Inactive
+            # rows also keep the field; downstream consumers that don't
+            # need it ignore the column.
+            "description": l.description,
             "llm_extras": l.llm_extras,
             "first_seen_at": l.first_seen_at,
             "last_seen_at": l.last_seen_at,

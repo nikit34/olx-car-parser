@@ -40,27 +40,38 @@ CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "settin
 # that explicitly mark the listing as parts-only / scrap.
 _PARTS_ONLY_HARD_PATTERN = re.compile(
     r"para\s+pe[çc]as|vender\s+as\s+pe[çc]as|venda\s+de\s+pe[çc]as|"
+    r"vende[-\s]se\s+a?\s*pe[çc]as|"
     r"para\s+sucata|para\s+desmanchar|s[óo]\s+pe[çc]as|abate|"
     r"para\s+exporta(?:r|[çc][ãa]o).{0,40}pe[çc]as|"
     r"sem\s+matr[ií]cula|sem\s+documentos",
     re.IGNORECASE,
 )
 
-# Severe mechanical / structural damage that's not "selling for parts" —
-# the car is whole but seriously broken. Used to land on severity 2-3
-# depending on whether mechanical_condition was also flagged "poor".
-# 2026-05-02 audit additions: ``junta queimada`` (blown head gasket — Fiat
-# Punto JmutI was selling at €1500 with this in the description and got a
-# flip_score of 54 under the old blocker) and ``só reboque`` / ``apenas
-# reboque`` (non-runner phrasing the original regex missed). Both surface
-# as severity 2 by default; if mechanical_condition was also flagged
-# "poor" the same path bumps to 3 (see ``_derive_damage_severity`` step 2).
+# Non-runner phrasings — car physically does not move under its own power.
+# These are unconditionally severity 3: mechanical_condition might say
+# "good" because the body is fine, but a tow-only car has no flip thesis.
+# JmUNP (Peugeot 508 SW) hit top-30 at flip_score 69 because the original
+# severe-damage path returned 2 unless mechanical_condition was also
+# "poor", and the LLM had marked it "fair". Also covers "só reboque" /
+# "apenas reboque" / "engine seized" — see 2026-05-02 audit notes.
+_NON_RUNNER_HARD_PATTERN = re.compile(
+    r"n[ãa]o\s+pega|n[ãa]o\s+anda|n[ãa]o\s+funciona|"
+    r"non[\s-]runner|engine\s+seized|"
+    r"(?:s[óo]|apenas)\s+(?:de\s+|com\s+)?reboque",
+    re.IGNORECASE,
+)
+
+# Severe mechanical / structural damage that's not "selling for parts" and
+# not (necessarily) a non-runner — the car is whole and may run but is
+# seriously broken. Lands on severity 2 (or 3 if condition is also "poor").
+# 2026-05-02 audit addition: ``junta queimada`` — Fiat Punto JmutI was
+# selling at €350 with that in the description and surfaced at flip_score
+# 54 under the old blocker.
 _SEVERE_DAMAGE_PATTERN = re.compile(
     r"motor\s+(?:fundido|avariad[oa])|caixa\s+avariad[oa]|"
-    r"transmiss[ãa]o\s+avariad[oa]|n[ãa]o\s+anda|n[ãa]o\s+funciona|"
-    r"n[ãa]o\s+pega|non[\s-]runner|engine\s+seized|capotamento|"
+    r"transmiss[ãa]o\s+avariad[oa]|capotamento|"
     r"junta\s+(?:de\s+cabe[çc]a\s+)?queimada|"
-    r"(?:s[óo]|apenas)\s+(?:de\s+|com\s+)?reboque",
+    r"avaria\s+(?:no|do)\s+motor",
     re.IGNORECASE,
 )
 
@@ -89,14 +100,17 @@ def _derive_damage_severity(extras: dict, title: str, description: str) -> int:
 
     Decision order (first match wins):
       1. Explicit parts-only / no-plates phrasing → 3 (salvage)
-      2. Severe mechanical text → 2 (and 3 if condition is also "poor")
-      3. desc_mentions_accident OR desc_mentions_repair → 2
-      4. mechanical_condition == "excellent" + no damage flags → 0
-      5. mechanical_condition == "poor" → 2
-      6. fall through → 1 (normal age-appropriate wear)
+      2. Non-runner phrasing (não pega, só reboque, …) → 3 unconditionally
+      3. Severe mechanical text → 2 (and 3 if condition is also "poor")
+      4. desc_mentions_accident OR desc_mentions_repair → 2
+      5. mechanical_condition == "excellent" + no damage flags → 0
+      6. mechanical_condition == "poor" → 2
+      7. fall through → 1 (normal age-appropriate wear)
     """
     text = f"{title or ''} {description or ''}"
     if _PARTS_ONLY_HARD_PATTERN.search(text):
+        return 3
+    if _NON_RUNNER_HARD_PATTERN.search(text):
         return 3
     if _SEVERE_DAMAGE_PATTERN.search(text):
         return 3 if extras.get("mechanical_condition") == "poor" else 2

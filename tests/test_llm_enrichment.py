@@ -466,12 +466,53 @@ class TestDeriveDamageSeverity:
         from src.parser.llm_enrichment import _derive_damage_severity
         # Whole car, broken — severity 2
         assert _derive_damage_severity(
-            {"mechanical_condition": "fair"}, "BMW", "Motor fundido, não anda.",
+            {"mechanical_condition": "fair"}, "BMW", "Motor fundido.",
         ) == 2
         # And condition=poor on top → severity 3
         assert _derive_damage_severity(
-            {"mechanical_condition": "poor"}, "BMW", "Motor fundido, não anda.",
+            {"mechanical_condition": "poor"}, "BMW", "Motor fundido.",
         ) == 3
+
+    def test_non_runner_returns_3_unconditionally(self):
+        """``não pega`` / ``só reboque`` are non-runner — severity 3 even
+        when mechanical_condition is "fair" or "good" (the body might be
+        fine, but a car you have to tow has no flip thesis). Audit
+        cases: Peugeot 508 JmUNP ("não pega, só de reboque", condition
+        "fair") and Citroën C5 8Q0kOc ("não pega").
+        """
+        from src.parser.llm_enrichment import _derive_damage_severity
+        assert _derive_damage_severity(
+            {"mechanical_condition": "fair"}, "Peugeot 508 SW", "Não pega.",
+        ) == 3
+        assert _derive_damage_severity(
+            {"mechanical_condition": "good"}, "Citroën C5", "Só de reboque.",
+        ) == 3
+        assert _derive_damage_severity(
+            {}, "BMW", "Engine seized, parted out engine.",
+        ) == 3
+
+    def test_junta_queimada_returns_2(self):
+        """Blown head gasket — fixable with money, so severity 2 by
+        default (3 only if condition is also "poor"). Fiat Punto JmutI
+        from the audit."""
+        from src.parser.llm_enrichment import _derive_damage_severity
+        assert _derive_damage_severity(
+            {}, "Fiat Punto", "Junta queimada, vende-se barato.",
+        ) == 2
+        assert _derive_damage_severity(
+            {"mechanical_condition": "poor"}, "Fiat Punto",
+            "Junta queimada.",
+        ) == 3
+
+    def test_avaria_no_motor_returns_2(self):
+        """Passat JmR3C: "avaria no motor" — severity 2."""
+        from src.parser.llm_enrichment import _derive_damage_severity
+        assert _derive_damage_severity(
+            {}, "VW Passat", "Avaria no motor, vende-se a peças ou inteiro.",
+        ) == 3  # "vende-se a peças" hits parts-only path first
+        assert _derive_damage_severity(
+            {}, "VW Passat", "Avaria no motor.",
+        ) == 2
 
     def test_accident_or_repair_flag_returns_2(self):
         from src.parser.llm_enrichment import _derive_damage_severity

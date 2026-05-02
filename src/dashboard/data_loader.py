@@ -252,22 +252,29 @@ def _normalized_text_list(value) -> list[str]:
 
 
 # Salvage / non-runner phrases that should hard-block a deal even when
-# enrichment hasn't run (i.e. damage_severity is NULL). Description text is
-# excluded from the dashboard df by repository.py:532 to keep memory bounded,
-# so this scan runs over the title only — coverage isn't perfect but the
-# regex catches the cases sellers loudly advertise in the headline. The
-# phrase set is the union of llm_enrichment._PARTS_ONLY_HARD_PATTERN and
-# _SEVERE_DAMAGE_PATTERN plus "junta queimada" / "só reboque" which the
-# 2026-05-02 audit found in resale-bait listings the original patterns
-# missed (Fiat Punto JmutI, Peugeot 508 JmUNP).
-_HARD_BLOCK_TITLE_PATTERN = re.compile(
-    r"para\s+pe[çc]as|para\s+sucata|para\s+desmanchar|s[óo]\s+pe[çc]as|"
+# enrichment is stale (i.e. ``damage_severity`` was set under the old
+# regex). Scans title + description: the 2026-05-02 audit cases JmUNP /
+# JmutI / JmR3C all had the giveaway phrase only in the description, so a
+# title-only scan would miss them. Title-or-description match is cheap on
+# the active subset — ~3 MB of text on the 18 k-row release.
+#
+# The phrase set is the union of ``llm_enrichment._PARTS_ONLY_HARD_PATTERN``,
+# ``_NON_RUNNER_HARD_PATTERN``, and ``_SEVERE_DAMAGE_PATTERN``. We re-list
+# them rather than import to avoid an enrichment-module import on every
+# dashboard refresh; staleness is acceptable because both modules are
+# touched in lock-step.
+_HARD_BLOCK_TEXT_PATTERN = re.compile(
+    r"para\s+pe[çc]as|vender\s+as\s+pe[çc]as|venda\s+de\s+pe[çc]as|"
+    r"vende[-\s]se\s+a?\s*pe[çc]as|"
+    r"para\s+sucata|para\s+desmanchar|s[óo]\s+pe[çc]as|abate|"
     r"sem\s+documentos|sem\s+matr[ií]cula|"
     r"motor\s+(?:fundido|avariad[oa])|caixa\s+avariad[oa]|"
+    r"transmiss[ãa]o\s+avariad[oa]|capotamento|"
+    r"avaria\s+(?:no|do)\s+motor|"
     r"junta\s+(?:de\s+cabe[çc]a\s+)?queimada|"
     r"n[ãa]o\s+pega|n[ãa]o\s+anda|n[ãa]o\s+funciona|"
     r"(?:s[óo]|apenas)\s+(?:de\s+|com\s+)?reboque|"
-    r"non[\s-]runner",
+    r"non[\s-]runner|engine\s+seized",
     re.IGNORECASE,
 )
 
@@ -311,11 +318,13 @@ def _blocking_deal_reason(listing: pd.Series) -> str | None:
     if pd.notna(right_hand_drive) and bool(right_hand_drive):
         return "right-hand drive (PT market mismatch)"
 
-    title = listing.get("title")
-    if isinstance(title, str) and title:
-        m = _HARD_BLOCK_TITLE_PATTERN.search(title)
+    title = listing.get("title") or ""
+    description = listing.get("description") or ""
+    haystack = f"{title} {description}" if isinstance(title, str) and isinstance(description, str) else ""
+    if haystack.strip():
+        m = _HARD_BLOCK_TEXT_PATTERN.search(haystack)
         if m:
-            return f"salvage phrasing in title: '{m.group(0).lower()}'"
+            return f"salvage phrasing in text: '{m.group(0).lower()}'"
 
     extras = _load_llm_extras(listing.get("llm_extras"))
     if not extras:
