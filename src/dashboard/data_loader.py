@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -11,6 +12,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 DB_PATH = PROJECT_ROOT / "data" / "olx_cars.db"
+
+# Read-time mileage sanity ceiling — mirrors the write-time cap in
+# :func:`src.parser.llm_enrichment.correct_listing_data`. Any odometer above
+# this is a parse error in the LLM's km extraction (the loudest 2026-05-02
+# case was Honda Civic JmuYR at 278_000_000 km, "278 mil km" mis-read).
+_SANITY_MAX_MILEAGE_KM = 1_000_000
 
 
 _CHECK_INTERVAL_SECONDS = 2 * 3600  # check for new release every 2 hours
@@ -208,27 +215,71 @@ def _normalized_text_list(value) -> list[str]:
     return [str(item).strip().lower() for item in value if item not in (None, "")]
 
 
+# Salvage / non-runner phrases that should hard-block a deal even when
+# enrichment hasn't run (i.e. damage_severity is NULL). Description text is
+# excluded from the dashboard df by repository.py:532 to keep memory bounded,
+# so this scan runs over the title only — coverage isn't perfect but the
+# regex catches the cases sellers loudly advertise in the headline. The
+# phrase set is the union of llm_enrichment._PARTS_ONLY_HARD_PATTERN and
+# _SEVERE_DAMAGE_PATTERN plus "junta queimada" / "só reboque" which the
+# 2026-05-02 audit found in resale-bait listings the original patterns
+# missed (Fiat Punto JmutI, Peugeot 508 JmUNP).
+_HARD_BLOCK_TITLE_PATTERN = re.compile(
+    r"para\s+pe[çc]as|para\s+sucata|para\s+desmanchar|s[óo]\s+pe[çc]as|"
+    r"sem\s+documentos|sem\s+matr[ií]cula|"
+    r"motor\s+(?:fundido|avariad[oa])|caixa\s+avariad[oa]|"
+    r"junta\s+(?:de\s+cabe[çc]a\s+)?queimada|"
+    r"n[ãa]o\s+pega|n[ãa]o\s+anda|n[ãa]o\s+funciona|"
+    r"(?:s[óo]|apenas)\s+(?:de\s+|com\s+)?reboque|"
+    r"non[\s-]runner",
+    re.IGNORECASE,
+)
+
+
 def _blocking_deal_reason(listing: pd.Series) -> str | None:
     """Return a hard-stop reason for listings that should not be shown as deals.
 
-    Three signals: ``desc_mentions_accident`` (DB column), ``mechanical_condition``
-    (from llm_extras JSON), and the photo-damage flag (from llm_extras JSON,
-    set by ``verify-photos`` CLI). The photo decision now uses the multi-photo
-    agreement rule via :func:`is_listing_flagged` (issue #8): new listings read
-    ``photo_damage_flagged`` (issue #2 — production-validated in #1 at -70.6 %
-    flag rate vs the old max-rule), and legacy rows that predate #2 fall back
-    to the v2 max-rule (``photo_damage_p >= 0.20``) inside the helper so we
-    don't have to backfill the 6 271 pre-#2 listings.
+    Five signals, evaluated in decreasing order of certainty:
 
-    ``photo_damage_p`` is still read separately for the display string so the
-    user sees the raw per-listing max score, even though the boolean
-    decision now consults the new field when set.
+    1. ``desc_mentions_accident`` (DB column).
+    2. ``damage_severity >= 3`` (DB column, derived in
+       :func:`src.parser.llm_enrichment._derive_damage_severity`) — covers
+       parts-only / non-runner / salvage phrasings without an LLM round-trip.
+    3. ``right_hand_drive`` (DB column) — the PT market doesn't accept RHD
+       cars at any meaningful resale price, so they never qualify as deals.
+    4. Regex scan over ``title`` for salvage phrasings — defense-in-depth
+       for listings whose enrichment hasn't run yet (``damage_severity`` and
+       ``mechanical_condition`` are both NULL on freshly scraped rows).
+    5. ``mechanical_condition == "poor"`` and ``photo_damage_flagged`` (from
+       ``llm_extras``). Photo decision uses :func:`is_listing_flagged` so
+       the multi-photo agreement rule (issue #8) takes precedence over a
+       single high-p frame for post-#2 listings, with a fall-back to the
+       v2 max-rule for the ~6 271 pre-#2 rows we never backfilled.
     """
     from src.parser.photo_damage import is_listing_flagged
 
     desc_mentions_accident = listing.get("desc_mentions_accident")
     if pd.notna(desc_mentions_accident) and bool(desc_mentions_accident):
         return "description mentions accident"
+
+    damage_severity = listing.get("damage_severity")
+    if pd.notna(damage_severity):
+        try:
+            sev = int(damage_severity)
+        except (TypeError, ValueError):
+            sev = None
+        if sev is not None and sev >= 3:
+            return f"damage severity {sev} (salvage / parts-only)"
+
+    right_hand_drive = listing.get("right_hand_drive")
+    if pd.notna(right_hand_drive) and bool(right_hand_drive):
+        return "right-hand drive (PT market mismatch)"
+
+    title = listing.get("title")
+    if isinstance(title, str) and title:
+        m = _HARD_BLOCK_TITLE_PATTERN.search(title)
+        if m:
+            return f"salvage phrasing in title: '{m.group(0).lower()}'"
 
     extras = _load_llm_extras(listing.get("llm_extras"))
     if not extras:
@@ -558,14 +609,22 @@ def compute_signals(
         if _blocking_deal_reason(listing):
             continue
 
-        # 1. Undervaluation: gradient boosting predicted price (now includes LLM features)
+        # 1. Undervaluation: gradient boosting predicted price (now includes LLM features).
+        # Quality-over-coverage: a listing only qualifies as a deal when the
+        # GB model has produced a prediction *and* the asking price is
+        # below it. The previous median-discount fallback let listings
+        # through even when the model said "fairly priced", which the
+        # 2026-05-02 audit traced to ~37 % of the false-positive top-30
+        # (Mercedes CLA, BMW X2, Toyota C-HR all surfaced via that path).
+        # Coverage drops on segments where the model never trains, but
+        # those segments produced bad recommendations anyway.
         olx_id = listing.get("olx_id", "")
         predicted = gb_predictions.get(olx_id)
-
-        if predicted and predicted > 0:
-            undervaluation_pct = round((1 - price / predicted) * 100, 1)
-        else:
-            undervaluation_pct = 0.0
+        if not predicted or predicted <= 0:
+            continue
+        undervaluation_pct = round((1 - price / predicted) * 100, 1)
+        if undervaluation_pct <= 0:
+            continue
         discount_pct = round((1 - price / median) * 100, 1)
 
         # Price range from quantile regression
@@ -661,9 +720,8 @@ def compute_signals(
             band_pct = None
             band_confidence_mult = 1.0  # no band → don't penalise
 
-        base_pct = undervaluation_pct if undervaluation_pct > 0 else discount_pct
         flip_score = round(
-            base_pct * liquidity_mult * trend_mult * motivated_mult
+            undervaluation_pct * liquidity_mult * trend_mult * motivated_mult
             * urgency_mult * warranty_mult * velocity_mult * confidence_mult
             * band_confidence_mult, 1
         )
@@ -782,9 +840,18 @@ def load_all():
     if db_data is not None:
         listings, history = db_data
         listings = enrich_listings(listings)
-        # Use LLM-corrected mileage everywhere (sellers game filters with fake low values)
+        # Use LLM-corrected mileage everywhere (sellers game filters with fake low values).
+        # Sanity gate: existing rows include parse-errors like Honda Civic
+        # JmuYR at 278_000_000 km (LLM mis-read "278 mil km"). Drop anything
+        # above 1M km before the fillna so it never overrides the
+        # structured ``mileage_km`` attribute. The same cap exists at
+        # write-time in :func:`correct_listing_data`, but we keep the
+        # read-time gate so legacy bad rows don't poison segment medians
+        # while the DB hasn't been re-enriched.
         if "real_mileage_km" in listings.columns:
-            listings["mileage_km"] = listings["real_mileage_km"].fillna(listings["mileage_km"])
+            real_km = listings["real_mileage_km"]
+            plausible = (real_km > 0) & (real_km <= _SANITY_MAX_MILEAGE_KM)
+            listings["mileage_km"] = real_km.where(plausible).fillna(listings["mileage_km"])
         turnover = compute_turnover_stats(listings)
         signals, importance = compute_signals(listings, history, turnover=turnover)
     else:

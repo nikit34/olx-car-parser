@@ -292,6 +292,34 @@ class TestCorrectListingData:
         corrections = correct_listing_data(listing)
         assert corrections == {}
 
+    def test_implausible_mileage_falls_back_to_attribute(self):
+        """The 2026-05-02 audit found Honda Civic JmuYR with
+        ``real_mileage_km = 278_000_000`` because the LLM mis-parsed
+        "278 mil km" as ``278000 * 1000``. Anything > 1M km is a parse
+        error — fall back to the structured attribute."""
+        listing = FakeListing(mileage_km=210000)
+        listing._llm_extras = {"mileage_in_description_km": 278_000_000}
+        corrections = correct_listing_data(listing)
+        assert corrections["real_mileage_km"] == 210000
+
+    def test_mileage_more_than_10x_attribute_falls_back(self):
+        """Catches narrower unit-suffix mis-reads (e.g. "120 mil km" parsed
+        as 1_200_000) where the absolute cap doesn't fire but the LLM
+        value is still implausible relative to the OLX attribute."""
+        listing = FakeListing(mileage_km=120000)
+        listing._llm_extras = {"mileage_in_description_km": 1_200_001}
+        corrections = correct_listing_data(listing)
+        assert corrections["real_mileage_km"] == 120000
+
+    def test_no_attribute_caps_implausible_mileage(self):
+        """Without an attribute baseline, the absolute cap still applies —
+        we'd rather drop the LLM value than write 278M km to the DB."""
+        listing = FakeListing(mileage_km=0)
+        listing._llm_extras = {"mileage_in_description_km": 5_000_000}
+        corrections = correct_listing_data(listing)
+        # No attribute, no plausible LLM read → no real_mileage_km correction.
+        assert "real_mileage_km" not in corrections
+
 
 # ---------------------------------------------------------------------------
 # apply_corrections

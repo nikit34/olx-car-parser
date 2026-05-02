@@ -29,12 +29,63 @@ if "torchvision" not in sys.modules:
     sys.modules["torchvision.models"] = _tv_models
     sys.modules["torchvision.transforms"] = _tv_transforms
 
+from contextlib import contextmanager
+from unittest.mock import patch, MagicMock
+
 import pytest
 import pandas as pd
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from src.models.listing import Base
+
+
+@contextmanager
+def _patched_gb_model(multiplier: float = 1.4):
+    """Stub the GB price model so compute_signals produces predictions.
+
+    The dashboard's deal scorer requires a fresh GB bundle to surface any
+    listing — the median-discount fallback was removed (2026-05-02 audit
+    found ~37 % of false-positive top-30 came in via that path). Tests that
+    assert a deal IS surfaced therefore need the model layer mocked; this
+    helper wires a synthetic ``predicted_price = price_eur * multiplier``
+    so every input row reads as undervalued by ``(multiplier - 1) * 100 %``.
+    """
+    fake_bundle = (
+        {"median": MagicMock(), "low": MagicMock(), "high": MagicMock()},
+        {},  # cat_maps
+        {"conformal_q": 0.0, "conformal_q_per_bucket": {},
+         "conformal_q_bucket_edges": None},
+        {},  # oof_preds
+        None,  # calibrator
+    )
+
+    def _fake_predict(models, cat_maps, df, **_kw):
+        preds = df["price_eur"].astype(float) * multiplier
+        return pd.DataFrame(
+            {
+                "predicted_price": preds.values,
+                "fair_price_low": (preds * 0.85).values,
+                "fair_price_high": (preds * 1.15).values,
+            },
+            index=df.index,
+        )
+
+    with patch(
+        "src.analytics.price_model.load_model", return_value=fake_bundle,
+    ), patch(
+        "src.analytics.price_model.predict_prices", side_effect=_fake_predict,
+    ), patch(
+        "src.analytics.price_model.load_importance",
+        return_value=pd.DataFrame(),
+    ):
+        yield
+
+
+@pytest.fixture
+def patched_gb_model():
+    """Surface ``_patched_gb_model`` to tests as a context-manager fixture."""
+    return _patched_gb_model
 
 
 @pytest.fixture

@@ -135,6 +135,16 @@ _FIELD_NAMES = [
 ]
 
 
+# Mileage sanity bounds for the LLM-extracted ``mileage_in_description_km``.
+# 1M km absolute cap covers every plausible odometer (the highest-mileage
+# car ever recorded crossed ~5M km, but those don't show up on OLX). The
+# relative gate fires when the LLM read picks up a malformed unit suffix —
+# ``listing.mileage_km`` from the structured attribute is the trusted
+# baseline, and any LLM read more than 10× larger is a parse error.
+_MILEAGE_SANITY_MAX_KM = 1_000_000
+_MILEAGE_SANITY_RELATIVE_MAX = 10
+
+
 _SYSTEM_PROMPT = """\
 Extract structured features from a Portuguese (pt-PT) car listing as ONE JSON object. Use null when a field cannot be determined from the text.
 
@@ -561,6 +571,27 @@ def correct_listing_data(listing) -> dict:
 
     if desc_km and isinstance(desc_km, (int, float)) and desc_km > 0:
         desc_km = int(desc_km)
+        # Sanity gate: the LLM mis-parses "278 mil km" as 278000000 a few
+        # times per 1k listings (Honda Civic JmuYR was the loudest case in
+        # the 2026-05-02 audit at 278M km). Cap at 1M km — anything above
+        # is a parse error, not a real odometer. Same gate fires when the
+        # extracted value is >10× the structured attribute, which catches
+        # mis-parsed unit-suffixes too.
+        implausible_absolute = desc_km > _MILEAGE_SANITY_MAX_KM
+        implausible_relative = (
+            attr_km is not None
+            and attr_km > 0
+            and desc_km > attr_km * _MILEAGE_SANITY_RELATIVE_MAX
+        )
+        if implausible_absolute or implausible_relative:
+            logger.warning(
+                "Implausible description mileage %d km (attr=%s) for %s — "
+                "discarding LLM mileage",
+                desc_km, attr_km, listing.url,
+            )
+            desc_km = None
+
+    if desc_km and desc_km > 0:
         if attr_km and attr_km > 0:
             if desc_km > attr_km * 1.3 and (desc_km - attr_km) > 5000:
                 corrections["real_mileage_km"] = desc_km
