@@ -1,33 +1,11 @@
 """Shared test fixtures."""
 
-import sys
-import types
-
-# torchvision is a heavy GPU dep that production runners install (verify-photos
-# needs it) but the minimal CI test env does not. ``src.parser.photo_damage``
-# imports torchvision at module-load time. Tests that touch dashboard
-# blocking-deal logic (issue #8) lazy-import that module via
-# ``is_listing_flagged`` and would otherwise fail collection on a clean
-# venv. Mirror the same shim shape ``tests/test_photo_damage.py`` uses, but
-# install it once for the whole test session so any import order works.
-if "torchvision" not in sys.modules:
-    _tv = types.ModuleType("torchvision")
-    _tv_models = types.ModuleType("torchvision.models")
-    _tv_transforms = types.ModuleType("torchvision.transforms")
-
-    def _noop(*_a, **_kw):  # pragma: no cover - never invoked under tests
-        return None
-
-    for _name in ("resnet50", "efficientnet_b0", "efficientnet_b3"):
-        setattr(_tv_models, _name, _noop)
-    for _name in ("Compose", "Resize", "ToTensor", "Normalize"):
-        setattr(_tv_transforms, _name, _noop)
-
-    _tv.models = _tv_models
-    _tv.transforms = _tv_transforms
-    sys.modules["torchvision"] = _tv
-    sys.modules["torchvision.models"] = _tv_models
-    sys.modules["torchvision.transforms"] = _tv_transforms
+# Note: the dashboard's blocking-deal logic now imports ``is_listing_flagged``
+# from ``src.parser.damage_decision`` (a torch-free sibling of
+# ``photo_damage``), so the session-wide torchvision shim that used to live
+# here is no longer needed. ``tests/test_photo_damage.py`` and
+# ``tests/test_cli_verify_photos.py`` still install local shims because they
+# explicitly exercise the heavy classifier path.
 
 from contextlib import contextmanager
 from unittest.mock import patch, MagicMock

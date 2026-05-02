@@ -49,10 +49,18 @@ _PARTS_ONLY_HARD_PATTERN = re.compile(
 # Severe mechanical / structural damage that's not "selling for parts" —
 # the car is whole but seriously broken. Used to land on severity 2-3
 # depending on whether mechanical_condition was also flagged "poor".
+# 2026-05-02 audit additions: ``junta queimada`` (blown head gasket — Fiat
+# Punto JmutI was selling at €1500 with this in the description and got a
+# flip_score of 54 under the old blocker) and ``só reboque`` / ``apenas
+# reboque`` (non-runner phrasing the original regex missed). Both surface
+# as severity 2 by default; if mechanical_condition was also flagged
+# "poor" the same path bumps to 3 (see ``_derive_damage_severity`` step 2).
 _SEVERE_DAMAGE_PATTERN = re.compile(
     r"motor\s+(?:fundido|avariad[oa])|caixa\s+avariad[oa]|"
     r"transmiss[ãa]o\s+avariad[oa]|n[ãa]o\s+anda|n[ãa]o\s+funciona|"
-    r"n[ãa]o\s+pega|non[\s-]runner|engine\s+seized|capotamento",
+    r"n[ãa]o\s+pega|non[\s-]runner|engine\s+seized|capotamento|"
+    r"junta\s+(?:de\s+cabe[çc]a\s+)?queimada|"
+    r"(?:s[óo]|apenas)\s+(?:de\s+|com\s+)?reboque",
     re.IGNORECASE,
 )
 

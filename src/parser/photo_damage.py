@@ -36,56 +36,21 @@ def _resolve_default_weights() -> Path:
 
 
 DEFAULT_WEIGHTS = _resolve_default_weights()
-DEFAULT_THRESHOLD = 0.20
 
-# Listing-level multi-photo agreement rule (issue #2, audit context #1).
-#
-# The audit on a 100-listing flagged sample (#1) showed ~87% FP rate when
-# flagging on ``max(p_damaged) >= 0.20``. The dominant failure mode is one
-# weirdly-lit photo (sun glare on dark glossy panels, harsh reflections,
-# OOD interior/engine-bay shots) hitting p≈0.99 on an otherwise pristine
-# car. Raising the per-photo threshold alone only fixes ~7/20 audited FPs;
-# the principled fix is requiring agreement across multiple photos so that
-# a single anomalous shot can't condemn a 50-photo dealer listing.
-#
-# ``DamageClassifier.predict_listing`` uses these to set ``is_damaged``:
-#
-#     is_damaged = sum(p.p_damaged >= FLAG_PHOTO_THRESHOLD for p in photos)
-#                  >= FLAG_MIN_PHOTOS
-#
-# ``max_p`` semantics are unchanged — still ``max(p.p_damaged for p in photos)``
-# — so downstream consumers that read ``photo_damage_p`` from ``llm_extras``
-# (alerts, dashboard) keep working unchanged. ``DEFAULT_THRESHOLD`` is also
-# untouched; it still gates single-photo callers and ``PhotoPrediction.is_damaged``.
-FLAG_MIN_PHOTOS = 2
-FLAG_PHOTO_THRESHOLD = 0.30
-
-
-def is_listing_flagged(extras: dict | None) -> bool:
-    """Listing-level damage decision with backward-compat fallback.
-
-    Reads ``photo_damage_flagged`` (the multi-photo agreement field added
-    by ``verify-photos`` per issue #2 — production-validated in #1 to drop
-    flag rate by 70.6 % vs the old max-rule) when present. For listings
-    predating that field, falls back to the v2 max-rule
-    (``photo_damage_p >= DEFAULT_THRESHOLD``) so the 6 271 legacy rows
-    don't all silently drop out of the deal-blocking path.
-
-    Returns ``False`` for listings with no photo_damage data at all
-    (``verify-photos`` hasn't classified them yet, or extras is empty).
-    """
-    if not extras:
-        return False
-    new = extras.get("photo_damage_flagged")
-    if new is not None:
-        return bool(new)
-    # Legacy listing (pre-#2 cron): fall back to the v2 max-rule so the
-    # behaviour for old rows is exactly what consumers had before.
-    p = extras.get("photo_damage_p") or 0.0
-    try:
-        return float(p) >= DEFAULT_THRESHOLD
-    except (TypeError, ValueError):
-        return False
+# Decision rules (thresholds + ``is_listing_flagged``) live in
+# ``damage_decision`` so the dashboard can import them without pulling in
+# torch/torchvision. Re-exported here so existing call sites that read
+# ``DEFAULT_THRESHOLD`` / ``FLAG_MIN_PHOTOS`` / ``FLAG_PHOTO_THRESHOLD`` /
+# ``is_listing_flagged`` from ``src.parser.photo_damage`` keep working
+# unchanged. ``max_p`` semantics are also unchanged — still
+# ``max(p.p_damaged for p in photos)`` — so consumers reading
+# ``photo_damage_p`` from ``llm_extras`` need no migration.
+from src.parser.damage_decision import (  # noqa: E402
+    DEFAULT_THRESHOLD,
+    FLAG_MIN_PHOTOS,
+    FLAG_PHOTO_THRESHOLD,
+    is_listing_flagged,
+)
 
 
 @dataclass

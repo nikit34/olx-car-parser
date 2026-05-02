@@ -425,8 +425,9 @@ class TestBlockingDealReason:
         self, sample_history_df, generations_data, patched_gb_model,
     ):
         """Severity 2 (needs repair / accident history) is *not* a hard
-        block — those listings stay in scope so a future repair-cost
-        feature can score them. Only severity ≥ 3 is unconditional."""
+        block — those listings stay in scope but get a repair-cost
+        haircut applied to their flip basis (see TestRepairCostAdjustment).
+        Only severity ≥ 3 is unconditional."""
         listings = pd.DataFrame(
             [{"olx_id": "needs-repair", "url": "", "brand": "Volkswagen", "model": "Golf",
               "year": 2015, "price_eur": 8000, "mileage_km": 150000, "engine_cc": 1600,
@@ -440,3 +441,97 @@ class TestBlockingDealReason:
         ):
             signals, _ = compute_signals(listings, sample_history_df)
         assert "needs-repair" in signals["olx_id"].values
+
+
+class TestRepairCostAdjustment:
+    """Severity-2 listings need a repair-cost haircut on their flip basis.
+    A "junta queimada" Punto sitting at €1500 looks like a 50 % discount
+    on a €3000 clean-comp prediction, but once you book €1500 of head-
+    gasket work the actual flip thesis is zero. These tests pin the
+    `_estimate_repair_cost` heuristic and the downstream signal columns."""
+
+    def test_severity_2_drops_listing_when_repair_eats_margin(
+        self, sample_history_df, generations_data, patched_gb_model,
+    ):
+        """GB stub @ multiplier=1.10 ⇒ predicted = price * 1.10, raw
+        undervaluation_pct = ~9 %. A 12 % repair haircut wipes that out
+        and the listing must drop. Without the adjustment, the old code
+        would have surfaced this as a 9 %-discount deal."""
+        listings = pd.DataFrame(
+            [{"olx_id": "thin-margin", "url": "", "brand": "Volkswagen", "model": "Golf",
+              "year": 2015, "price_eur": 8000, "mileage_km": 150000, "engine_cc": 1600,
+              "fuel_type": "Diesel", "is_active": True,
+              "damage_severity": 2}]
+            + _golf_comparables(),
+        )
+        with patched_gb_model(multiplier=1.10), patch(
+            "src.models.generations.load_generations",
+            return_value=generations_data,
+        ):
+            signals, _ = compute_signals(listings, sample_history_df)
+        assert signals.empty or "thin-margin" not in signals["olx_id"].values
+
+    def test_severity_2_kept_when_undervaluation_covers_repair(
+        self, sample_history_df, generations_data, patched_gb_model,
+    ):
+        """GB stub @ multiplier=2.0 ⇒ 50 % raw undervaluation, easily
+        absorbs the 12 % repair haircut. Listing surfaces with
+        ``repair_cost_eur`` and ``est_profit_after_repair_eur`` populated."""
+        listings = pd.DataFrame(
+            [{"olx_id": "fat-margin", "url": "", "brand": "Volkswagen", "model": "Golf",
+              "year": 2015, "price_eur": 8000, "mileage_km": 150000, "engine_cc": 1600,
+              "fuel_type": "Diesel", "is_active": True,
+              "damage_severity": 2}]
+            + _golf_comparables(),
+        )
+        with patched_gb_model(multiplier=2.0), patch(
+            "src.models.generations.load_generations",
+            return_value=generations_data,
+        ):
+            signals, _ = compute_signals(listings, sample_history_df)
+        assert "fat-margin" in signals["olx_id"].values
+        row = signals[signals["olx_id"] == "fat-margin"].iloc[0]
+        assert row["repair_cost_eur"] is not None
+        assert row["repair_cost_eur"] > 0
+        assert row["est_profit_after_repair_eur"] is not None
+        # raw undervaluation is 50 %, adjusted should be lower (haircut applied)
+        assert row["adjusted_undervaluation_pct"] < row["undervaluation_pct"]
+
+    def test_severity_0_or_1_unchanged_by_repair_path(
+        self, sample_history_df, generations_data, patched_gb_model,
+    ):
+        """Pristine / normal-wear cars get repair_cost_eur = None, and
+        adjusted_undervaluation_pct == undervaluation_pct (no haircut)."""
+        listings = pd.DataFrame(
+            [{"olx_id": "clean", "url": "", "brand": "Volkswagen", "model": "Golf",
+              "year": 2015, "price_eur": 8000, "mileage_km": 150000, "engine_cc": 1600,
+              "fuel_type": "Diesel", "is_active": True,
+              "damage_severity": 1}]
+            + _golf_comparables(),
+        )
+        with patched_gb_model(multiplier=1.5), patch(
+            "src.models.generations.load_generations",
+            return_value=generations_data,
+        ):
+            signals, _ = compute_signals(listings, sample_history_df)
+        row = signals[signals["olx_id"] == "clean"].iloc[0]
+        assert row["repair_cost_eur"] is None
+        assert row["est_profit_after_repair_eur"] is None
+        assert row["adjusted_undervaluation_pct"] == row["undervaluation_pct"]
+
+    def test_poor_mechanical_condition_uses_higher_repair_cost(self):
+        """Mechanical-poor branch gets 18 % / €1500 floor — wider than the
+        12 % / €1000 default. The 2026-05-02 audit C5 8Q0kOc (starter +
+        EGR + MAF + water leak) was the loudest example of stacked
+        mechanical work blowing past a panel-paint estimate."""
+        from src.dashboard.data_loader import _estimate_repair_cost
+
+        baseline = _estimate_repair_cost(2, "good", 10000.0)
+        poor = _estimate_repair_cost(2, "poor", 10000.0)
+        assert poor > baseline
+        # Floor for "poor" is €1500; 12 % of €5000 would only be €600.
+        assert _estimate_repair_cost(2, "poor", 5000.0) >= 1500.0
+        # Severity 0/1 returns 0 unconditionally.
+        assert _estimate_repair_cost(0, "good", 10000.0) == 0.0
+        assert _estimate_repair_cost(1, "poor", 10000.0) == 0.0
+        assert _estimate_repair_cost(None, None, 10000.0) == 0.0

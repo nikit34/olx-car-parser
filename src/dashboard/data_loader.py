@@ -19,6 +19,42 @@ DB_PATH = PROJECT_ROOT / "data" / "olx_cars.db"
 # case was Honda Civic JmuYR at 278_000_000 km, "278 mil km" mis-read).
 _SANITY_MAX_MILEAGE_KM = 1_000_000
 
+# Repair-cost heuristic for ``damage_severity == 2`` listings (needs repair
+# OR accident history). We don't block these — they can still be flippable
+# if the asking price is far enough below the GB-predicted "clean" price to
+# absorb the bodywork / mechanical work on top. Without a parts/labor
+# database the only honest approach is a percentage of the predicted clean
+# price, with a higher pct + floor when ``mechanical_condition == "poor"``
+# (engine / gearbox work runs much wider than panel paint). The 2026-05-02
+# audit Citroën C5 8Q0kOc — starter + EGR + MAF + water leak stacked up to
+# €2.5–4k easily, so the "poor" branch needs to be conservative.
+_REPAIR_COST_PCT_DEFAULT = 0.12
+_REPAIR_COST_PCT_POOR = 0.18
+_REPAIR_COST_FLOOR_DEFAULT = 1000.0
+_REPAIR_COST_FLOOR_POOR = 1500.0
+
+
+def _estimate_repair_cost(
+    severity: int | None,
+    mech_condition: str | None,
+    predicted_price: float,
+) -> float:
+    """Heuristic repair cost (€) for damage-severity-2 listings.
+
+    Returns 0 for pristine / normal-wear / unknown-severity rows so the
+    caller can subtract unconditionally. Severity 3 is hard-blocked
+    upstream; if it ever reaches here we return ``predicted_price`` so any
+    profit calc collapses to <=0 and the listing drops out.
+    """
+    if severity is None or severity < 2:
+        return 0.0
+    if severity >= 3:
+        return predicted_price
+    poor = (mech_condition or "").strip().lower() == "poor"
+    pct = _REPAIR_COST_PCT_POOR if poor else _REPAIR_COST_PCT_DEFAULT
+    floor = _REPAIR_COST_FLOOR_POOR if poor else _REPAIR_COST_FLOOR_DEFAULT
+    return max(predicted_price * pct, floor)
+
 
 _CHECK_INTERVAL_SECONDS = 2 * 3600  # check for new release every 2 hours
 
@@ -256,7 +292,7 @@ def _blocking_deal_reason(listing: pd.Series) -> str | None:
        single high-p frame for post-#2 listings, with a fall-back to the
        v2 max-rule for the ~6 271 pre-#2 rows we never backfilled.
     """
-    from src.parser.photo_damage import is_listing_flagged
+    from src.parser.damage_decision import is_listing_flagged
 
     desc_mentions_accident = listing.get("desc_mentions_accident")
     if pd.notna(desc_mentions_accident) and bool(desc_mentions_accident):
@@ -625,6 +661,25 @@ def compute_signals(
         undervaluation_pct = round((1 - price / predicted) * 100, 1)
         if undervaluation_pct <= 0:
             continue
+
+        # Severity-2 listings (needs repair / accident history) aren't
+        # blocked but get their flip_score basis discounted by an
+        # estimated repair cost — a €4k flip thesis on a "junta queimada"
+        # Punto evaporates once you book €1.5k of head-gasket work.
+        # Non-severity-2 rows pass through unchanged (repair_cost == 0).
+        sev_raw = listing.get("damage_severity")
+        try:
+            severity_int = int(sev_raw) if pd.notna(sev_raw) else None
+        except (TypeError, ValueError):
+            severity_int = None
+        mech_condition = listing.get("mechanical_condition")
+        repair_cost = _estimate_repair_cost(
+            severity_int, mech_condition, float(predicted),
+        )
+        profit_after_repair = float(predicted) - float(price) - repair_cost
+        adjusted_pct = round(profit_after_repair / float(predicted) * 100, 1)
+        if adjusted_pct <= 0:
+            continue
         discount_pct = round((1 - price / median) * 100, 1)
 
         # Price range from quantile regression
@@ -720,8 +775,10 @@ def compute_signals(
             band_pct = None
             band_confidence_mult = 1.0  # no band → don't penalise
 
+        # Use repair-adjusted basis when severity 2 is in play; for
+        # severity 0/1/None this is identical to ``undervaluation_pct``.
         flip_score = round(
-            undervaluation_pct * liquidity_mult * trend_mult * motivated_mult
+            adjusted_pct * liquidity_mult * trend_mult * motivated_mult
             * urgency_mult * warranty_mult * velocity_mult * confidence_mult
             * band_confidence_mult, 1
         )
@@ -750,6 +807,12 @@ def compute_signals(
             "median_price_eur": round(median),
             "discount_pct": discount_pct,
             "undervaluation_pct": undervaluation_pct,
+            "damage_severity": severity_int,
+            "repair_cost_eur": round(repair_cost) if repair_cost > 0 else None,
+            "est_profit_after_repair_eur": (
+                round(profit_after_repair) if repair_cost > 0 else None
+            ),
+            "adjusted_undervaluation_pct": adjusted_pct,
             "engine_cc": int(engine_cc) if pd.notna(engine_cc) and engine_cc else None,
             "liquidity_mult": round(liquidity_mult, 2),
             "trend_mult": round(trend_mult, 2),
