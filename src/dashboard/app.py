@@ -16,7 +16,7 @@ from data_loader import load_all, _force_next_check
 st.set_page_config(page_title="Car Deals", layout="wide")
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=300, show_spinner=False)
 def load_data():
     return load_all()
 
