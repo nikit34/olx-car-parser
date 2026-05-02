@@ -273,6 +273,8 @@ _HARD_BLOCK_TEXT_PATTERN = re.compile(
     r"avaria\s+(?:no|do)\s+motor|"
     r"junta\s+(?:de\s+cabe[çc]a\s+)?queimada|"
     r"n[ãa]o\s+pega|n[ãa]o\s+anda|n[ãa]o\s+funciona|"
+    r"(?:o\s+carro\s+)?n[ãa]o\s+liga|n[ãa]o\s+arranca|"
+    r"n[ãa]o\s+(?:é\s+)?poss[ií]vel\s+test(?:ar|á-lo)|"
     r"(?:s[óo]|apenas)\s+(?:de\s+|com\s+)?reboque|"
     r"non[\s-]runner|engine\s+seized",
     re.IGNORECASE,

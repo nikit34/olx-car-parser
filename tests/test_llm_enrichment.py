@@ -473,6 +473,19 @@ class TestDeriveDamageSeverity:
             {"mechanical_condition": "poor"}, "BMW", "Motor fundido.",
         ) == 3
 
+    def test_nao_liga_returns_3(self):
+        """Audit case 8Q0kOc (Citroën C5): description literally says
+        "O carro não liga devido a essas avarias" — the original regex
+        only caught "não pega", missing this Portuguese variant."""
+        from src.parser.llm_enrichment import _derive_damage_severity
+        assert _derive_damage_severity(
+            {}, "Citroën C5", "O carro não liga devido a essas avarias.",
+        ) == 3
+        assert _derive_damage_severity(
+            {}, "Citroën C5",
+            "Não é possível testar. Vendido no estado em que se encontra.",
+        ) == 3
+
     def test_non_runner_returns_3_unconditionally(self):
         """``não pega`` / ``só reboque`` are non-runner — severity 3 even
         when mechanical_condition is "fair" or "good" (the body might be

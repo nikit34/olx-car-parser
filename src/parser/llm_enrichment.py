@@ -56,6 +56,8 @@ _PARTS_ONLY_HARD_PATTERN = re.compile(
 # "apenas reboque" / "engine seized" — see 2026-05-02 audit notes.
 _NON_RUNNER_HARD_PATTERN = re.compile(
     r"n[ãa]o\s+pega|n[ãa]o\s+anda|n[ãa]o\s+funciona|"
+    r"(?:o\s+carro\s+)?n[ãa]o\s+liga|n[ãa]o\s+arranca|"
+    r"n[ãa]o\s+(?:é\s+)?poss[ií]vel\s+test(?:ar|á-lo)|"
     r"non[\s-]runner|engine\s+seized|"
     r"(?:s[óo]|apenas)\s+(?:de\s+|com\s+)?reboque",
     re.IGNORECASE,
