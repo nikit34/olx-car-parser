@@ -195,8 +195,10 @@ def _run_verify(session, monkeypatch, tmp_path, *,
         threshold=threshold,
         workers=1,
         only_text_flagged=False,
+        upgrade_legacy=False,
         cache_dir=tmp_path / "cache",
         dry_run=dry_run,
+        limit=None,
     )
 
 

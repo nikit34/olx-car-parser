@@ -23,6 +23,7 @@ from src.storage.database import get_session, init_db
 from src.models.generations import get_generation, infer_model_from_title
 from src.storage.repository import (
     add_price_snapshot, compute_market_stats, deduplicate_cross_platform,
+    deduplicate_same_platform,
     get_duplicate_ids, get_listings_df, heal_mass_sweeps, mark_inactive,
     upsert_listing, upsert_unmatched,
 )
@@ -529,6 +530,9 @@ def scrape(
     dedup_count = deduplicate_cross_platform(final_session)
     if dedup_count:
         log.info("Marked %d cross-platform duplicates", dedup_count)
+    same_dedup = deduplicate_same_platform(final_session)
+    if same_dedup:
+        log.info("Marked %d same-platform duplicates", same_dedup)
     # Market stats roll up per day, so there's no point recomputing them on
     # every 8-hour scrape — only do the full pass if today hasn't been stamped
     # yet. The three-per-day full pass was the single slowest step for a
@@ -729,10 +733,20 @@ def verify_photos(
     only_text_flagged: bool = typer.Option(
         False, help="Process only listings with text damage_severity >= 2 "
                     "(verifier mode). Off = scan all listings (full coverage)."),
+    upgrade_legacy: bool = typer.Option(
+        False,
+        help="Re-run inference on rows whose photo_damage_flagged was "
+             "written by the 2026-05-02 backfill script (legacy max-rule "
+             "decision persisted as a schema-consistency stop-gap). "
+             "Selects rows with photo_damage_flag_source = "
+             "'legacy_max_rule_backfill', overwrites with proper "
+             "multi-photo agreement, and clears the marker."),
     cache_dir: Path = typer.Option(
         Path("/tmp/photo_verify/cache"), help="Local photo cache directory."),
     dry_run: bool = typer.Option(
         False, help="Print what would change without writing to DB."),
+    limit: int | None = typer.Option(
+        None, help="Optional cap on listings processed (useful for staged rollouts)."),
 ):
     """Run the v2 damage classifier on listings' photos and store ``photo_damage_p`` in llm_extras.
 
@@ -781,11 +795,25 @@ def verify_photos(
     exterior_filter = ExteriorFilter()
     log.info("CLIP filter device: %s", exterior_filter.device)
 
-    # Pending: active StandVirtual listings missing photo_damage_p in llm_extras.
-    needs_photo = sa_func.json_extract(
-        Listing.llm_extras, "$.photo_damage_p",
-    ).is_(None)
+    # Default selection: active OLX/StandVirtual listings missing
+    # photo_damage_p in llm_extras (steady-state cron). The
+    # ``--upgrade-legacy`` flag swaps this for rows the 2026-05-02
+    # backfill stamped with photo_damage_flag_source = 'legacy_max_rule_backfill'
+    # — those have photo_damage_p but their photo_damage_flagged came from
+    # the v2 max-rule (~32.8% over-flag rate), not real multi-photo
+    # inference. Re-running inference replaces the boolean with the
+    # multi-photo decision and clears the marker.
     from sqlalchemy import or_
+    if upgrade_legacy:
+        legacy_marker = sa_func.json_extract(
+            Listing.llm_extras, "$.photo_damage_flag_source",
+        ) == "legacy_max_rule_backfill"
+        selection_filter = legacy_marker
+    else:
+        needs_photo = sa_func.json_extract(
+            Listing.llm_extras, "$.photo_damage_p",
+        ).is_(None)
+        selection_filter = needs_photo
     # Priority order:
     #  1. Listings with text-derived damage_severity >= 2 — alerts already
     #     see them as suspect; photo verifier confirms or downgrades.
@@ -806,7 +834,7 @@ def verify_photos(
                 Listing.url.like("%olx.pt%"),
             ),
             Listing.llm_extras.isnot(None),
-            needs_photo,
+            selection_filter,
         )
         .order_by(
             text_sev_ge2_order.desc(),
@@ -819,6 +847,8 @@ def verify_photos(
             Listing.llm_extras, "$.damage_severity",
         ) >= 2
         q = q.filter(text_sev_ge2)
+    if limit is not None and limit > 0:
+        q = q.limit(limit)
     pending = q.all()
     if not pending:
         log.info("Nothing to verify.")
@@ -947,6 +977,9 @@ def verify_photos(
             # ``photo_damage_p`` (max across photos) and keep working
             # unchanged.
             extras["photo_damage_flagged"] = bool(flagged_pred)
+            # Drop the 2026-05-02 backfill marker once a row gets real
+            # multi-photo inference — the boolean above is now authoritative.
+            extras.pop("photo_damage_flag_source", None)
             if not dry_run:
                 listing.llm_extras = json.dumps(extras, ensure_ascii=False)
             # Count real writes (vs. error/skip rows). Used by the

@@ -357,6 +357,110 @@ def deduplicate_cross_platform(session: Session) -> int:
     return marked
 
 
+def deduplicate_same_platform(session: Session) -> int:
+    """Detect duplicate listings posted twice on the *same* platform.
+
+    Some StandVirtual dealers re-post the same car under a fresh listing
+    ID for visibility, leaving two near-identical entries in the corpus.
+    The cross-platform dedup explicitly skips these (its loop requires one
+    OLX + one SV side per group), so the dashboard's deal scorer sees both
+    rows and emits twin signals — the 2026-05-02 audit caught this with
+    Peugeot 206 ``8Q0ll0`` / ``8Q0ll4`` (both StandVirtual, same
+    €700 / 43200 km / 2008 / district).
+
+    Match criteria are tighter than the cross-platform pass:
+      • brand, model, year, district — same as before
+      • mileage_km — exact match (not ±10 %), since same-platform
+        re-posts copy the attribute verbatim
+      • latest price_eur — exact match (or ±1 % to absorb cents)
+      • source identical
+      • neither side already flagged as a duplicate
+
+    The earlier-seen listing is canonical.
+    """
+    import logging
+    log = logging.getLogger("dedup")
+
+    active = session.query(Listing).filter(
+        Listing.is_active == True,
+        Listing.duplicate_of.is_(None),
+        Listing.brand != "",
+        Listing.model != "",
+        Listing.year.isnot(None),
+        Listing.mileage_km.isnot(None),
+        Listing.mileage_km != 0,
+    ).all()
+
+    log.info("Same-platform dedup: loaded %d active candidates", len(active))
+
+    latest_sub = (
+        session.query(
+            PriceSnapshot.listing_id,
+            func.max(PriceSnapshot.scraped_at).label("max_at"),
+        )
+        .group_by(PriceSnapshot.listing_id)
+        .subquery()
+    )
+    price_rows = (
+        session.query(PriceSnapshot.listing_id, PriceSnapshot.price_eur)
+        .join(latest_sub,
+              (PriceSnapshot.listing_id == latest_sub.c.listing_id)
+              & (PriceSnapshot.scraped_at == latest_sub.c.max_at))
+        .all()
+    )
+    latest_prices: dict[int, float | None] = {lid: price for lid, price in price_rows}
+
+    # Group by (source, brand, model, year, district, mileage). Same-source
+    # near-duplicates share all six on the production data; different mileage
+    # usually means a real second unit.
+    by_key: dict[tuple, list[Listing]] = {}
+    for l in active:
+        key = (
+            (l.source or "olx"),
+            l.brand.lower(),
+            (l.model or "").lower(),
+            l.year,
+            (l.district or "").lower(),
+            l.mileage_km,
+        )
+        by_key.setdefault(key, []).append(l)
+
+    marked = 0
+    for key, group in by_key.items():
+        if len(group) < 2:
+            continue
+        # Sort by first_seen_at so the earliest is the canonical row.
+        group.sort(key=lambda l: l.first_seen_at or datetime.max)
+        canonical = group[0]
+        canonical_price = latest_prices.get(canonical.id)
+        for duplicate in group[1:]:
+            if duplicate.duplicate_of:
+                continue
+            dup_price = latest_prices.get(duplicate.id)
+            # Require an exact (±1 %) price match — same-platform re-posts
+            # copy the price; a different price probably means a different
+            # unit at the same dealer.
+            if canonical_price and dup_price:
+                ratio = dup_price / canonical_price
+                if not (0.99 <= ratio <= 1.01):
+                    continue
+            elif canonical_price or dup_price:
+                # One side has a price, the other doesn't — refuse to merge.
+                continue
+            duplicate.duplicate_of = canonical.olx_id
+            _merge_into_canonical(canonical, duplicate)
+            log.info("Same-platform dedup: %s %s is duplicate of %s (%s %s %s, %d km, €%s)",
+                     duplicate.source, duplicate.olx_id, canonical.olx_id,
+                     canonical.brand, canonical.model, canonical.year,
+                     canonical.mileage_km, canonical_price)
+            marked += 1
+
+    if marked:
+        session.commit()
+        log.info("Same-platform dedup: marked %d duplicates", marked)
+    return marked
+
+
 def compute_market_stats(
     session: Session,
     target_date: date | None = None,

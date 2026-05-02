@@ -11,6 +11,7 @@ from src.storage.repository import (
     heal_mass_sweeps,
     compute_market_stats,
     deduplicate_cross_platform,
+    deduplicate_same_platform,
     get_listings_df,
     get_unmatched_df,
 )
@@ -405,3 +406,68 @@ class TestDeduplicateCrossPlatform:
         assert sv.color == "Preto"
         # SV kept its own description
         assert "recém-revisado" in sv.description
+
+
+class TestDeduplicateSamePlatform:
+    """Same-platform near-duplicate dedup added 2026-05-02 to catch the
+    Peugeot 206 ``8Q0ll0`` / ``8Q0ll4`` case (both StandVirtual, identical
+    €700 / 43200 km / 2008 / district). Cross-platform dedup explicitly
+    skips groups that don't have one OLX + one SV side, so these were
+    silently surfacing as twin signals."""
+
+    def _make(self, db_session, olx_id, source="standvirtual",
+              brand="Peugeot", model="206", year=2008, mileage=43200,
+              price=700, district="Porto"):
+        from datetime import datetime
+        data = {
+            "olx_id": olx_id,
+            "url": f"https://standvirtual.com/{olx_id}" if source == "standvirtual"
+                   else f"https://olx.pt/{olx_id}",
+            "brand": brand, "model": model, "year": year,
+            "mileage_km": mileage, "city": district, "district": district,
+            "source": source,
+        }
+        listing = upsert_listing(db_session, data)
+        listing.first_seen_at = datetime(2026, 1, 1)
+        add_price_snapshot(db_session, listing.id, price)
+        return listing
+
+    def test_marks_identical_same_source_listings(self, db_session):
+        """The audit case: both StandVirtual, exact mileage + price match."""
+        from datetime import datetime
+        canon = self._make(db_session, "8Q0ll0")
+        canon.first_seen_at = datetime(2026, 4, 1)
+        dup = self._make(db_session, "8Q0ll4")
+        dup.first_seen_at = datetime(2026, 4, 15)
+        db_session.commit()
+
+        count = deduplicate_same_platform(db_session)
+        assert count == 1
+        canon_row = db_session.query(Listing).filter_by(olx_id="8Q0ll0").one()
+        dup_row = db_session.query(Listing).filter_by(olx_id="8Q0ll4").one()
+        assert canon_row.duplicate_of is None
+        assert dup_row.duplicate_of == "8Q0ll0"
+
+    def test_does_not_merge_different_mileage(self, db_session):
+        """Even on the same platform, different mileage = different unit
+        from the same dealer's inventory."""
+        self._make(db_session, "lst-a", mileage=43200)
+        self._make(db_session, "lst-b", mileage=85000)
+        db_session.commit()
+        assert deduplicate_same_platform(db_session) == 0
+
+    def test_does_not_merge_different_price(self, db_session):
+        """Different prices on identical specs probably means two real
+        units (or one was repriced) — refuse to merge."""
+        self._make(db_session, "lst-c", price=700)
+        self._make(db_session, "lst-d", price=900)
+        db_session.commit()
+        assert deduplicate_same_platform(db_session) == 0
+
+    def test_does_not_cross_platforms(self, db_session):
+        """Cross-platform pairs are deduplicate_cross_platform's job —
+        the same-platform pass must skip them so we don't double-mark."""
+        self._make(db_session, "olx-a", source="olx")
+        self._make(db_session, "sv-a", source="standvirtual")
+        db_session.commit()
+        assert deduplicate_same_platform(db_session) == 0
