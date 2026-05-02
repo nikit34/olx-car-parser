@@ -27,8 +27,13 @@ from src.models.listing import Listing
 
 
 _BATCH_SIZE = 200
-_RETRY_MAX = 6
+# Total retry budget: 2+4+8+16+32+60+60+60+60+60+60+60 ≈ 8 minutes. The
+# scrape worker's "compute_market_stats" phase can hold the write lock for
+# 3-5 minutes on the production DB; busy_timeout is 30 s so we need
+# enough retries to outlast it. _RETRY_BASE_S * 2**attempt is capped at 60.
+_RETRY_MAX = 12
 _RETRY_BASE_S = 2.0
+_RETRY_MAX_WAIT_S = 60.0
 
 
 def main() -> int:
@@ -102,7 +107,7 @@ def main() -> int:
                 if "locked" not in str(e).lower():
                     raise
                 session.rollback()
-                wait = _RETRY_BASE_S * (2 ** attempt)
+                wait = min(_RETRY_BASE_S * (2 ** attempt), _RETRY_MAX_WAIT_S)
                 log.warning(
                     "DB locked on batch %d, retry %d/%d in %.1fs",
                     i, attempt + 1, _RETRY_MAX, wait,
