@@ -384,16 +384,21 @@ for _, deal in deals.iterrows():
                             ),
                         )
                     if not market_active.empty:
+                        # Plotly's marker spec is strict about Python types —
+                        # pandas .notna().any() returns numpy.bool_, which
+                        # the showscale property rejects with a ValueError.
+                        # Coerce to plain bool here.
+                        has_year = bool(market_active["year"].notna().any())
                         fig.add_scatter(
                             x=market_active["mileage_km"],
                             y=market_active["price_eur"],
                             mode="markers",
                             marker=dict(
                                 size=10,
-                                color=market_active["year"] if market_active["year"].notna().any() else "#1f77b4",
+                                color=market_active["year"] if has_year else "#1f77b4",
                                 colorscale="Turbo",
-                                showscale=market_active["year"].notna().any(),
-                                colorbar=dict(title="year") if market_active["year"].notna().any() else None,
+                                showscale=has_year,
+                                colorbar=dict(title="year") if has_year else None,
                                 opacity=0.85,
                                 line=dict(width=0.5, color="#222"),
                             ),
