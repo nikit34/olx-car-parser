@@ -328,6 +328,11 @@ else:
             # listing's own model band is now visible at its mileage,
             # so you can see at a glance whether the asking-price dot
             # sits inside the model's 80 % range or outside.
+            # Custom data schema is consistent with the sold/active
+            # scatters above: [olx_id, url, …extras]. The click handler
+            # below indexes cd[1] expecting a URL — keeping every
+            # trace's customdata aligned avoids TypeError when the
+            # user happens to click a candle instead of a dot.
             fig.add_scatter(
                 x=band["mileage_km"], y=band["predicted"],
                 mode="markers",
@@ -344,11 +349,11 @@ else:
                     thickness=1.4, width=4,
                 ),
                 name="model fair (P10–P50–P90)",
-                customdata=band[["fair_low", "fair_high", "olx_id"]].values,
+                customdata=band[["olx_id", "url", "fair_low", "fair_high"]].values,
                 hovertemplate=(
                     "<b>predicted P50: €%{y:,.0f}</b><br>"
-                    "fair P10–P90: €%{customdata[0]:,.0f}–€%{customdata[1]:,.0f}<br>"
-                    "%{customdata[2]} @ %{x:,.0f} km<extra></extra>"
+                    "fair P10–P90: €%{customdata[2]:,.0f}–€%{customdata[3]:,.0f}<br>"
+                    "%{customdata[0]} @ %{x:,.0f} km<extra></extra>"
                 ),
             )
     fig.update_layout(
@@ -371,13 +376,15 @@ else:
         if chart_event and chart_event.selection else []
     )
     if sel_pts:
-        # ``customdata`` indexes match the trace ordering above. Plotly
-        # returns a single-row list per click; if user selects multiple,
-        # we link the first.
+        # All traces pack customdata as [olx_id, url, ...]. Coerce to
+        # str to dodge numpy.str_ / NaN sneaking through the protobuf
+        # url assignment in Streamlit's link_button.
         cd = sel_pts[0].get("customdata") or []
-        if len(cd) >= 2 and cd[1]:
+        olx_id = str(cd[0]) if len(cd) > 0 and cd[0] is not None else ""
+        url = str(cd[1]) if len(cd) > 1 and cd[1] is not None else ""
+        if url and url.startswith("http"):
             st.link_button(
-                f"Open listing {cd[0]} ↗", cd[1], use_container_width=True,
+                f"Open listing {olx_id} ↗", url, use_container_width=True,
             )
 
 # --- Panel: Time-on-market histogram (sold only) ---
