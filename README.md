@@ -3,18 +3,29 @@
 End-to-end pipeline that scrapes Portuguese used-car listings from **OLX.pt**
 and **StandVirtual**, enriches them with a local LLM, runs a vision damage
 classifier on the photos, predicts a fair price with LightGBM, and Telegrams
-the standout deals — all on a self-hosted Mac runner driven by a GitHub
-Actions cron.
+the standout deals.
 
-## Workflow
+## Live dashboard
 
-The whole thing runs every 8 hours (02:00 / 10:00 / 18:00 UTC) on a
-self-hosted macOS runner. Public scrape DB + model artifacts are uploaded
-to the `latest-data` GitHub Release after every run.
+**[olx-car-parser-aaktpavdhgpbdqs4bmbdw7.streamlit.app](https://olx-car-parser-aaktpavdhgpbdqs4bmbdw7.streamlit.app/)**
+
+Auto-deployed from `master` on every push. Reads the `latest-data` GitHub
+Release as its source of truth — no LAN access, no SSH, no local DB.
+Cold-starts pull the 90 MB SQLite snapshot via the GitHub CDN; subsequent
+reruns use a marker-gated 2 h TTL plus an `(mtime, size)` cache key on
+`@st.cache_data` so a release refresh invalidates the in-memory cache the
+moment the underlying file changes.
+
+## Pipeline
+
+The scrape pipeline runs every 4 hours (`0 */4 * * *` UTC) on a self-hosted
+macOS runner. Public scrape DB + model artifacts are uploaded to the
+`latest-data` GitHub Release after every run — that's the only surface the
+dashboard sees.
 
 ```mermaid
 flowchart TD
-    Cron[cron 02/10/18 UTC<br/>or workflow_dispatch] --> Setup
+    Cron[cron 0 */4 * * * UTC<br/>or workflow_dispatch] --> Setup
     Setup[Set up Python venv<br/>install -e .] --> Ollama
 
     subgraph LLMGate [LLM gate]
@@ -36,13 +47,14 @@ flowchart TD
     end
 
     Train --> Upload[Upload to latest-data Release<br/>olx_cars.db, *.joblib, *.json,<br/>damage_classifier_v2.pt]
+    Upload --> Dashboard[Streamlit Cloud<br/>pulls release on cold-start]
 
     classDef gate fill:#fef3c7,stroke:#92400e,color:#78350f
     classDef step fill:#dbeafe,stroke:#1e40af,color:#1e3a8a
     classDef terminal fill:#dcfce7,stroke:#166534,color:#14532d
     class Ollama,Probe,Smoke gate
     class Scrape,Enrich,Weights,Verify,Alerts,Checkpoint,Train step
-    class Cron,Upload terminal
+    class Cron,Upload,Dashboard terminal
 ```
 
 Concurrency: `concurrency: scrape-job, cancel-in-progress: true` — a
@@ -72,19 +84,19 @@ flowchart LR
     E --> F
 
     F[ResNet50 v2<br/>imgsz 224, threshold 0.20<br/>F1=0.818, R=100% on gold]
-    F -->|photo_damage_p<br/>n_photos checked| E
+    F -->|photo_damage_p<br/>photo_damage_flagged<br/>per-photo array| E
 
     C --> G
     E --> G
     G[LightGBM CQR<br/>median + P10/P90<br/>schema v7, 24 features]
     G -->|predicted_price<br/>fair_low / fair_high| H
 
-    H[compute_signals<br/>9 multipliers]
-    H -->|flip_score<br/>discount_pct<br/>est_profit_eur| I
+    H[compute_signals<br/>9 multipliers + repair_cost]
+    H -->|flip_score<br/>adjusted_undervaluation_pct<br/>est_profit_after_repair_eur| I
 
-    I[blocking_deal_reason<br/>3-signal veto]
+    I[blocking_deal_reason<br/>5-signal veto]
     I -->|pass| J[Telegram alert<br/>📷 photo_damage_p shown]
-    I -->|veto| X[skip<br/>desc_mentions_accident<br/>OR mech_condition=poor<br/>OR photo_damage_p≥0.20]:::veto
+    I -->|veto| X[skip<br/>damage_severity≥3<br/>OR right_hand_drive<br/>OR salvage phrasing<br/>OR mech_condition=poor<br/>OR photo_damage_flagged]:::veto
 
     classDef db fill:#fef3c7,stroke:#a16207,color:#713f12
     classDef veto fill:#fee2e2,stroke:#991b1b,color:#7f1d1d
@@ -98,7 +110,7 @@ flowchart LR
 | Damage from text | **regex** `_derive_damage_severity` | in-process | ~1 ms/listing | rule-based, calibrated against the 30-listing oracle |
 | Photo damage | **ResNet50 v2** (`damage_classifier_v2.pt`, 90 MB) | M1 MPS or CPU | ~50 ms/photo, ~10 s/listing on the runner (network-bound) | per-photo F1=0.750 @0.30 · listing-level F1=0.818 @0.20, **R=100%** on the 51-listing gold set |
 | Price estimate | **LightGBM CQR** (`price_model.joblib`) | in-process | <1 ms/listing | MAPE ~12% on the 5-split time backtest, 80% pinball coverage |
-| Deal vetoer | `_blocking_deal_reason` | in-process | <1 ms | 3-signal hard veto |
+| Deal vetoer | `_blocking_deal_reason` | in-process | <1 ms | 5-signal hard veto |
 
 ### Photo damage classifier — full receipts
 
@@ -137,44 +149,17 @@ veto signal that gets cross-checked against text damage_severity in
 
 ### Inputs / outputs
 
-- **Persistent state**: `data/olx_cars.db` (SQLite, ~70 MB at steady state).
-- **Per-listing photo signal**: stored as JSON keys `photo_damage_p` and
-  `photo_damage_n_photos` *inside* the existing `llm_extras` column —
-  no schema migration, the dashboard reads them through the same
-  `_load_llm_extras` helper.
+- **Persistent state** lives on the scrape host as `data/olx_cars.db`
+  (SQLite, ~90 MB at steady state). The host runs the GitHub Actions
+  self-hosted runner and is the only thing that writes.
+- **Per-listing photo signal**: stored as JSON keys `photo_damage_p`,
+  `photo_damage_flagged`, and `photo_damages` *inside* the existing
+  `llm_extras` column — no schema migration.
 - **Photo cache**: `/tmp/photo_verify/cache/{olx_id}/{i}.jpg` — survives
   for the cron runtime, not persisted across runs.
 - **Release artifacts**: `latest-data` carries the DB, the price model
-  bundle, training metrics, and the damage classifier weights so a
-  fresh runner can bootstrap without the source data.
-
-## Quick start
-
-```bash
-# Clone and install
-git clone https://github.com/nikit34/olx-car-parser.git
-cd olx-car-parser
-python3.11 -m venv .venv
-.venv/bin/pip install -e .
-
-# Pull a recent DB to test against
-gh release download latest-data --pattern olx_cars.db --dir data/
-
-# Optional — pull the photo classifier weights
-gh release download latest-data --pattern damage_classifier_v2.pt
-
-# Run individual steps
-.venv/bin/python -m src.cli scrape         # scrape OLX + SV
-.venv/bin/python -m src.cli enrich         # LLM-enrich raw listings
-.venv/bin/python -m src.cli verify-photos  # ResNet50 over photos
-.venv/bin/python -m src.cli alerts         # send Telegram alerts
-.venv/bin/python -m src.cli stats          # market overview
-.venv/bin/python -m src.cli dashboard      # Streamlit UI
-
-# Test
-pytest -v -m "not smoke"   # unit + integration (no live deps)
-pytest -v -m smoke         # live Ollama integration (needs both backends)
-```
+  bundle, training metrics, and the damage classifier weights. This is
+  the **only** surface the Streamlit Cloud dashboard reads from.
 
 ## Layout
 
@@ -184,27 +169,30 @@ src/
 ├── parser/
 │   ├── scraper.py          # OLX + SV crawl (BeautifulSoup, HTTP/2)
 │   ├── llm_enrichment.py   # Ollama client, sticky-per-thread routing, JSON-mode prompts
-│   └── photo_damage.py     # ResNet50 wrapper — DamageClassifier
+│   ├── photo_damage.py     # ResNet50 wrapper — DamageClassifier
+│   └── damage_decision.py  # torch-free flag rules — imported by the dashboard
 ├── analytics/
 │   ├── price_model.py      # LightGBM CQR pipeline + features
 │   ├── model_eval.py       # 5-split time backtest
 │   └── computed_columns.py # depreciation / liquidity / per-segment stats
 ├── dashboard/
-│   ├── app.py              # Streamlit
-│   ├── data_loader.py      # compute_signals, _blocking_deal_reason
+│   ├── app.py              # Streamlit Cloud entrypoint
+│   ├── data_loader.py      # release-asset sync, compute_signals, _blocking_deal_reason
 │   └── visualizations.py   # plotly charts
 └── alerts/
     └── telegram_bot.py     # deal alerts, format_deal
 
 scripts/
-├── photo_verify_damage.py            # dry-run photo verification (JSON report)
-├── photo_damage_classifier_eval.py   # eval against gold-labelled holdout
-├── train_damage_classifier.py        # retrain v2/v3 — CE / weighted / focal
-└── build_harvest_imagefolder.py      # rebuild ImageFolder dataset
+├── rederive_damage_severity.py        # rule-based severity backfill (no LLM)
+├── photo_verify_damage.py             # dry-run photo verification (JSON report)
+├── photo_damage_classifier_eval.py    # eval against gold-labelled holdout
+├── train_damage_classifier.py         # retrain v2/v3 — CE / weighted / focal
+└── build_harvest_imagefolder.py       # rebuild ImageFolder dataset
 
 tests/
-├── test_*.py                         # unit + integration suite
-└── test_ollama_integration.py        # live smoke marker (needs Ollama on LAN)
+├── test_*.py                          # unit + integration suite
+├── test_release_cache.py              # marker-gated TTL + CDN fallback
+└── test_ollama_integration.py         # live smoke marker (needs Ollama on LAN)
 ```
 
 ## License
