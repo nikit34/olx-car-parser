@@ -44,10 +44,19 @@ def load_data(_cache_signature: tuple[float, int]):
     return load_all()
 
 
-(
-    listings_df, history_df, signals_df, brands_models, turnover_df,
-    _portfolio_init, _unmatched_df, importance_df, predictions_df,
-) = load_data(_release_cache_signature())
+# Defensive unpack — Streamlit Cloud can serve a stale 8-tuple from
+# its in-memory cache right after a deploy that grew the return shape
+# to 9 (predictions added 2026-05-03). Index with safe defaults; the
+# next cache miss returns the new shape and predictions_df becomes
+# populated.
+_loaded = load_data(_release_cache_signature())
+listings_df = _loaded[0] if len(_loaded) > 0 else pd.DataFrame()
+history_df = _loaded[1] if len(_loaded) > 1 else pd.DataFrame()
+signals_df = _loaded[2] if len(_loaded) > 2 else pd.DataFrame()
+brands_models = _loaded[3] if len(_loaded) > 3 else {}
+turnover_df = _loaded[4] if len(_loaded) > 4 else pd.DataFrame()
+importance_df = _loaded[7] if len(_loaded) > 7 else pd.DataFrame()
+predictions_df = _loaded[8] if len(_loaded) > 8 else pd.DataFrame()
 
 # ---------------------------------------------------------------------------
 # Sidebar — filters

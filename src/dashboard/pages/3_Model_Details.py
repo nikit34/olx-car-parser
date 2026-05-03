@@ -49,10 +49,16 @@ def _load(_sig):
     return load_all()
 
 
-(
-    listings_df, history_df, signals_df, brands_models, _turnover,
-    _portfolio, _unmatched, _importance, predictions_df,
-) = _load(_release_cache_signature())
+# Defensive unpack — Streamlit Cloud can serve a previously-cached
+# 8-tuple right after a redeploy that adds a 9th element (predictions
+# was added 2026-05-03). Index into the tuple with safe defaults so
+# the page boots either way; the next cache miss returns the new shape.
+_loaded = _load(_release_cache_signature())
+listings_df = _loaded[0] if len(_loaded) > 0 else pd.DataFrame()
+history_df = _loaded[1] if len(_loaded) > 1 else pd.DataFrame()
+signals_df = _loaded[2] if len(_loaded) > 2 else pd.DataFrame()
+brands_models = _loaded[3] if len(_loaded) > 3 else {}
+predictions_df = _loaded[8] if len(_loaded) > 8 else pd.DataFrame()
 if listings_df.empty:
     st.warning("No data yet.")
     err = get_last_release_error()
