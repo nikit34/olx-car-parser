@@ -19,6 +19,30 @@ DB_PATH = PROJECT_ROOT / "data" / "olx_cars.db"
 # case was Honda Civic JmuYR at 278_000_000 km, "278 mil km" mis-read).
 _SANITY_MAX_MILEAGE_KM = 1_000_000
 
+
+def _fuel_group(value) -> str:
+    """Coarse fuel-type bucket used for filtering and chart legends.
+
+    Lives here (not in app.py) so the multipage dashboard's segment-detail
+    and market-trend pages can reuse the exact same canonicalisation as
+    the deal feed without re-importing the Streamlit entrypoint.
+    """
+    import pandas as _pd
+    if value is None or (isinstance(value, float) and _pd.isna(value)) or str(value).strip() == "":
+        return "Unknown"
+    fl = str(value).lower()
+    if "diesel" in fl:
+        return "Diesel"
+    if "eléctrico" in fl or "electr" in fl:
+        return "Electric"
+    if "plug" in fl:
+        return "Plug-in Hybrid"
+    if "híbrido" in fl or "hybrid" in fl:
+        return "Hybrid"
+    if "gpl" in fl or "lpg" in fl:
+        return "GPL"
+    return "Petrol"
+
 # Repair-cost heuristic for ``damage_severity == 2`` listings (needs repair
 # OR accident history). We don't block these — they can still be flippable
 # if the asking price is far enough below the GB-predicted "clean" price to

@@ -15,7 +15,7 @@ _sys.path.insert(0, str(_project_root))
 
 from data_loader import (
     load_all, _force_next_check, _ensure_release_assets, DB_PATH,
-    get_last_release_error,
+    get_last_release_error, _fuel_group,
 )
 
 st.set_page_config(page_title="Car Deals", layout="wide")
@@ -78,23 +78,6 @@ if selected_brands:
     available_models = sorted(set(available_models))
 
 selected_models = st.sidebar.multiselect("Model", options=available_models) if available_models else []
-
-
-def _fuel_group(value) -> str:
-    if value is None or (isinstance(value, float) and pd.isna(value)) or str(value).strip() == "":
-        return "Unknown"
-    fl = str(value).lower()
-    if "diesel" in fl:
-        return "Diesel"
-    if "eléctrico" in fl or "electr" in fl:
-        return "Electric"
-    if "plug" in fl:
-        return "Plug-in Hybrid"
-    if "híbrido" in fl or "hybrid" in fl:
-        return "Hybrid"
-    if "gpl" in fl or "lpg" in fl:
-        return "GPL"
-    return "Petrol"
 
 
 fuel_groups_in_data = (
@@ -173,6 +156,47 @@ if not filtered.empty:
 # Main — deal cards
 # ---------------------------------------------------------------------------
 st.title("Car Deals")
+
+# --- Segment ranker (composite "is this market worth my time" score) ---
+# Surfaces brand/model/generation buckets where the model sees average
+# undervaluation, recent sold volume is healthy, and time-on-market is
+# short. Click a row to filter the deal feed below to that segment.
+from src.analytics.segments import compute_segment_metrics, composite_resale_score
+
+with st.expander("📊 Segment ranker — which models are worth my time", expanded=False):
+    seg_metrics = compute_segment_metrics(listings_df, signals=signals_df)
+    if seg_metrics.empty:
+        st.info("No segment metrics available.")
+    else:
+        seg_metrics["composite"] = composite_resale_score(seg_metrics)
+        # Drop tiny segments (fewer than 2 actives + 0 sold) — they're
+        # noise. Keep all otherwise so user can spot quiet markets too.
+        seg_metrics = seg_metrics[
+            (seg_metrics["n_active"] >= 2) | (seg_metrics["n_sold_60d"] >= 2)
+        ]
+        seg_metrics = seg_metrics.sort_values("composite", ascending=False).head(40)
+
+        display = seg_metrics.assign(
+            segment=lambda d: d["brand"].str.cat(d["model"], sep=" ")
+                              .str.cat(d["generation"].fillna(""), sep=" / ")
+                              .str.replace(r" / $", "", regex=True),
+            avg_uv=lambda d: d["avg_undervaluation_pct"].round(1),
+            dom=lambda d: d["median_dom"].round(0),
+            trend=lambda d: d["trend_30d_pct"].round(1),
+            calib=lambda d: d["calibration_residual_eur"].round(0),
+            score=lambda d: (d["composite"] * 100).round(0),
+        )[["segment", "n_active", "n_sold_60d", "dom",
+           "avg_uv", "trend", "calib", "score"]]
+        display.columns = [
+            "segment", "active", "sold 60d", "median dom (d)",
+            "avg uv %", "trend 30d %", "calib residual €", "score",
+        ]
+        st.dataframe(display, hide_index=True, use_container_width=True)
+        st.caption(
+            "score = 0.40·undervaluation + 0.25·log(sold 60d) + 0.20·velocity "
+            "(14d/dom) + 0.15·trend. Calibration residual: median(actual − predicted) "
+            "on sold listings — positive ⇒ model under-prices the segment."
+        )
 
 if filtered.empty:
     st.info("No deals found. Adjust filters.")
