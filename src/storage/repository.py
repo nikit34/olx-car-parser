@@ -12,6 +12,7 @@ def _utcnow() -> datetime:
     """
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
+import httpx
 import pandas as pd
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -118,7 +119,65 @@ def get_duplicate_ids(session: Session) -> set[str]:
     return {r[0] for r in rows}
 
 
-def mark_inactive(session: Session, source: str, active_olx_ids: set[str]) -> int:
+# OLX / StandVirtual phrases that confirm a listing is no longer
+# available (page returns 200 with a "removed" message rather than a
+# proper 404). Lowercased for case-insensitive substring match.
+_DEAD_LISTING_MARKERS = (
+    # OLX.pt
+    "anúncio que tentas aceder não existe ou foi eliminado",
+    "anúncio que pretende aceder não existe",
+    "this advert no longer exists",
+    "página que estás à procura não existe",
+    # StandVirtual
+    "página não encontrada",
+    "anúncio não disponível",
+    "anúncio que procuras não está disponível",
+)
+
+
+def _verify_listing_alive(url: str, timeout: float = 8.0) -> bool | None:
+    """Probe a listing URL.
+
+    Returns:
+      - True   — alive (HTTP 200, no dead-marker phrases on page)
+      - False  — confirmed dead (HTTP 404 / 410, or 200-page with a
+                 known "removed/expired" message)
+      - None   — transient/unknown (timeout, 5xx, network error,
+                 unexpected status). Caller should NOT deactivate on
+                 None — better to wait one more cycle than misclassify.
+
+    Used by ``mark_inactive`` to verify before deactivating, so a
+    listing that just dropped out of the scraper's search-result page
+    one cycle (promoted-slot rotation, pagination drift) doesn't get
+    flagged "sold" while still actively listed.
+    """
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+    }
+    try:
+        resp = httpx.get(
+            url, timeout=timeout, follow_redirects=True, headers=headers,
+        )
+    except (httpx.TimeoutException, httpx.HTTPError, OSError):
+        return None
+    if resp.status_code in (404, 410):
+        return False
+    if resp.status_code != 200:
+        return None
+    text = (resp.text or "").lower()
+    if any(m in text for m in _DEAD_LISTING_MARKERS):
+        return False
+    return True
+
+
+def mark_inactive(
+    session: Session, source: str, active_olx_ids: set[str],
+    verify_via_url: bool = True, max_workers: int = 8,
+) -> int:
     """Mark listings of one source not seen in this scrape as inactive.
 
     Source-scoped: an OLX outage (anti-bot, broken selector, network) must
@@ -126,6 +185,16 @@ def mark_inactive(session: Session, source: str, active_olx_ids: set[str]) -> in
     *active_olx_ids* is empty — that almost certainly means the scrape
     failed completely, and deactivating every row of that source is the
     wrong default.
+
+    ``verify_via_url=True`` (default) probes each candidate's URL before
+    marking it inactive — eliminates the false-positive "marked sold but
+    still on OLX" pattern caused by promoted-slot rotation, pagination
+    drift, and other transient scrape misses (the 2026-05-03 audit
+    flagged Alfa Romeo 147 ``JmEjz`` as one such case). Listings that
+    don't return a definitive 404 / dead-marker stay active.
+
+    Pass ``verify_via_url=False`` for tests or for the legacy
+    "trust scrape results" behaviour.
     """
     import logging
     from sqlalchemy import or_
@@ -135,23 +204,74 @@ def mark_inactive(session: Session, source: str, active_olx_ids: set[str]) -> in
             "mark_inactive(%s): empty scraped_ids, refusing to deactivate", source,
         )
         return 0
-    # Legacy rows predate the `source` column and stored NULL; treat them
-    # as OLX (the only source that existed at the time).
     if source == "olx":
         source_filter = or_(Listing.source == "olx", Listing.source.is_(None))
     else:
         source_filter = Listing.source == source
-    now = _utcnow()
-    count = session.query(Listing).filter(
+
+    candidates = session.query(Listing).filter(
         Listing.is_active == True,
         source_filter,
         ~Listing.olx_id.in_(active_olx_ids),
+    ).all()
+    if not candidates:
+        return 0
+
+    if not verify_via_url:
+        now = _utcnow()
+        ids = [c.id for c in candidates]
+        count = session.query(Listing).filter(
+            Listing.id.in_(ids),
+        ).update({
+            "is_active": False,
+            "deactivated_at": now,
+            "deactivation_reason": "sold",
+        }, synchronize_session="evaluate")
+        log.info("Marked %d %s listings as inactive (no URL verify)", count, source)
+        return count
+
+    log.info(
+        "mark_inactive(%s): verifying %d candidates by URL probe (%d workers)",
+        source, len(candidates), max_workers,
+    )
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    confirmed_dead_ids: list[int] = []
+    alive = 0
+    deferred = 0
+
+    def _probe(listing):
+        return listing.id, _verify_listing_alive(listing.url)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for lid, status in executor.map(_probe, candidates):
+            if status is True:
+                alive += 1
+            elif status is False:
+                confirmed_dead_ids.append(lid)
+            else:
+                deferred += 1
+
+    if not confirmed_dead_ids:
+        log.info(
+            "mark_inactive(%s): no confirmed dead (alive=%d, deferred=%d)",
+            source, alive, deferred,
+        )
+        return 0
+
+    now = _utcnow()
+    count = session.query(Listing).filter(
+        Listing.id.in_(confirmed_dead_ids),
     ).update({
         "is_active": False,
         "deactivated_at": now,
         "deactivation_reason": "sold",
     }, synchronize_session="evaluate")
-    log.info("Marked %d %s listings as inactive", count, source)
+    log.info(
+        "mark_inactive(%s): %d marked sold, %d still alive, %d deferred (transient)",
+        source, count, alive, deferred,
+    )
     return count
 
 

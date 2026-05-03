@@ -100,7 +100,7 @@ class TestMarkInactive:
         })
         db_session.commit()
 
-        mark_inactive(db_session, "olx", {"test-001"})
+        mark_inactive(db_session, "olx", {"test-001"}, verify_via_url=False)
         db_session.commit()
 
         l1 = db_session.query(Listing).filter_by(olx_id="test-001").one()
@@ -121,7 +121,7 @@ class TestMarkInactive:
         db_session.commit()
 
         # Simulate a successful OLX scrape that just didn't see olx-1.
-        mark_inactive(db_session, "olx", {"olx-other"})
+        mark_inactive(db_session, "olx", {"olx-other"}, verify_via_url=False)
         db_session.commit()
 
         olx_row = db_session.query(Listing).filter_by(olx_id="olx-1").one()
@@ -137,7 +137,7 @@ class TestMarkInactive:
         upsert_listing(db_session, {**sample_listing_data, "source": "olx"})
         db_session.commit()
 
-        updated = mark_inactive(db_session, "olx", set())
+        updated = mark_inactive(db_session, "olx", set(), verify_via_url=False)
         db_session.commit()
 
         assert updated == 0
@@ -152,11 +152,129 @@ class TestMarkInactive:
         listing.source = None  # legacy row
         db_session.commit()
 
-        mark_inactive(db_session, "olx", {"olx-other"})
+        mark_inactive(db_session, "olx", {"olx-other"}, verify_via_url=False)
         db_session.commit()
 
         legacy = db_session.query(Listing).filter_by(olx_id="test-001").one()
         assert legacy.is_active is False
+
+
+class TestMarkInactiveURLVerify:
+    """The 2026-05-03 audit found Alfa Romeo 147 ``JmEjz`` flagged as
+    ``deactivation_reason='sold'`` while still live on OLX — the
+    listing dropped out of one scrape's promoted-slot rotation but
+    nothing actually changed. URL verify probes each candidate before
+    marking it sold so a transient miss can't false-positive."""
+
+    def _seed(self, db_session, sample_listing_data, n: int):
+        """Seed N listings, return [(olx_id, url), ...]."""
+        from src.storage.repository import upsert_listing
+        rows = []
+        for i in range(n):
+            oid = f"v-{i:03d}"
+            url = f"https://olx.pt/d/anuncio/{oid}.html"
+            upsert_listing(db_session, {
+                **sample_listing_data, "olx_id": oid, "url": url,
+                "source": "olx",
+            })
+            rows.append((oid, url))
+        db_session.commit()
+        return rows
+
+    def test_alive_listing_is_NOT_marked_sold(
+        self, db_session, sample_listing_data,
+    ):
+        """The literal JmEjz scenario: scrape didn't see the listing
+        (passed empty active_olx_ids), but the URL still returns 200
+        with valid HTML → listing stays active."""
+        from unittest.mock import patch, Mock
+        rows = self._seed(db_session, sample_listing_data, 1)
+
+        fake_resp = Mock(status_code=200, text="<html>Alfa Romeo 147 ...</html>")
+        with patch("src.storage.repository.httpx.get", return_value=fake_resp):
+            mark_inactive(db_session, "olx", {"some-other-id"})
+        db_session.commit()
+        l = db_session.query(Listing).filter_by(olx_id=rows[0][0]).one()
+        assert l.is_active is True
+        assert l.deactivation_reason is None
+
+    def test_404_marks_sold(self, db_session, sample_listing_data):
+        from unittest.mock import patch, Mock
+        rows = self._seed(db_session, sample_listing_data, 1)
+
+        fake_resp = Mock(status_code=404, text="")
+        with patch("src.storage.repository.httpx.get", return_value=fake_resp):
+            mark_inactive(db_session, "olx", {"some-other-id"})
+        db_session.commit()
+        l = db_session.query(Listing).filter_by(olx_id=rows[0][0]).one()
+        assert l.is_active is False
+        assert l.deactivation_reason == "sold"
+
+    def test_dead_marker_in_html_marks_sold(
+        self, db_session, sample_listing_data,
+    ):
+        """OLX/SV sometimes return 200 with a 'this advert no longer
+        exists' page instead of 404. We pattern-match the message."""
+        from unittest.mock import patch, Mock
+        rows = self._seed(db_session, sample_listing_data, 1)
+
+        fake_resp = Mock(
+            status_code=200,
+            text="<html>O anúncio que tentas aceder não existe ou foi eliminado</html>",
+        )
+        with patch("src.storage.repository.httpx.get", return_value=fake_resp):
+            mark_inactive(db_session, "olx", {"some-other-id"})
+        db_session.commit()
+        l = db_session.query(Listing).filter_by(olx_id=rows[0][0]).one()
+        assert l.is_active is False
+        assert l.deactivation_reason == "sold"
+
+    def test_network_error_defers_decision(
+        self, db_session, sample_listing_data,
+    ):
+        """Timeout / connection error → don't deactivate, wait for next
+        cycle. Better one false negative than a misclassified sold."""
+        from unittest.mock import patch
+        import httpx
+        rows = self._seed(db_session, sample_listing_data, 1)
+
+        with patch(
+            "src.storage.repository.httpx.get",
+            side_effect=httpx.TimeoutException("timeout"),
+        ):
+            mark_inactive(db_session, "olx", {"some-other-id"})
+        db_session.commit()
+        l = db_session.query(Listing).filter_by(olx_id=rows[0][0]).one()
+        assert l.is_active is True
+        assert l.deactivation_reason is None
+
+    def test_mixed_population(self, db_session, sample_listing_data):
+        """Three candidates, one per outcome (alive / dead / deferred):
+        only the dead one gets marked sold."""
+        from unittest.mock import patch, Mock
+        import httpx
+        rows = self._seed(db_session, sample_listing_data, 3)
+        alive_url = rows[0][1]
+        dead_url = rows[1][1]
+
+        def _fake(url, **_kw):
+            if url == alive_url:
+                return Mock(status_code=200, text="<html>listing alive</html>")
+            if url == dead_url:
+                return Mock(status_code=404, text="")
+            raise httpx.TimeoutException("timeout")
+
+        with patch("src.storage.repository.httpx.get", side_effect=_fake):
+            mark_inactive(db_session, "olx", {"some-other-id"}, max_workers=1)
+        db_session.commit()
+
+        states = {
+            r[0]: db_session.query(Listing).filter_by(olx_id=r[0]).one().is_active
+            for r in rows
+        }
+        assert states[rows[0][0]] is True   # alive
+        assert states[rows[1][0]] is False  # confirmed dead
+        assert states[rows[2][0]] is True   # deferred (network error)
 
 
 class TestHealMassSweeps:
