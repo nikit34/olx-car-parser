@@ -206,7 +206,7 @@ def _prepare_active(listings):
 listings, history, turnover, competition = get_data()
 
 if listings.empty:
-    st.error("No data yet. Scraper runs every 8 hours via GitHub Actions.")
+    st.error("No data yet. Scraper runs every 4 hours via GitHub Actions.")
     st.stop()
 
 active = listings[listings["is_active"]].copy() if "is_active" in listings.columns else listings.copy()

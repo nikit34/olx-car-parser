@@ -19,8 +19,14 @@ class TestComputeSignals:
         """No price model loaded → no deals surface. The previous behaviour
         used a median-discount fallback that the 2026-05-02 audit traced to
         ~37 % of false-positive top-30 (CLA, X2, C-HR via plain median
-        comparison). Quality-over-coverage: empty is correct."""
+        comparison). Quality-over-coverage: empty is correct.
+
+        ``load_model`` is patched to return None so the test stays
+        deterministic even on a dev machine that already has a real
+        ``data/price_model.joblib`` cached from the latest-data release."""
         with patch(
+            "src.analytics.price_model.load_model", return_value=None,
+        ), patch(
             "src.models.generations.load_generations",
             return_value=generations_data,
         ):
