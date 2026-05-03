@@ -11,6 +11,7 @@ from sqlalchemy import text
 
 from src.models.listing import Base
 import src.models.portfolio  # noqa: F401 — register PortfolioDeal with Base
+import src.models.relist  # noqa: F401 — register RelistEvent with Base
 
 _engine = None
 _Session = None

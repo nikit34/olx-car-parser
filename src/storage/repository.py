@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from src.models.listing import Listing, PriceSnapshot, MarketStats, UnmatchedListing
 from src.models.portfolio import PortfolioDeal
+from src.models.relist import RelistEvent
 
 
 def upsert_listing(session: Session, data: dict) -> Listing:
@@ -1001,6 +1002,104 @@ def delete_portfolio_deal(session: Session, deal_id: int):
     if deal:
         session.delete(deal)
         session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Re-listing events
+# ---------------------------------------------------------------------------
+
+
+def record_relist_events(session: Session, events_df: pd.DataFrame) -> int:
+    """Upsert detected re-listing events. Returns number of new rows.
+
+    Existing rows (matched by the (original_olx_id, relist_olx_id)
+    unique constraint) get their score / gap / price fields refreshed
+    in place — re-runs of the detection job with newer data or
+    different threshold tunables can update an existing row without
+    duplicating it. The detected_at timestamp is preserved on update.
+    """
+    if events_df is None or events_df.empty:
+        return 0
+
+    inserted = 0
+    for _, row in events_df.iterrows():
+        existing = session.query(RelistEvent).filter_by(
+            original_olx_id=row["original_olx_id"],
+            relist_olx_id=row["relist_olx_id"],
+        ).first()
+        if existing:
+            existing.match_score = float(row["match_score"])
+            existing.gap_days = float(row["gap_days"])
+            existing.original_price_eur = (
+                float(row["original_price_eur"])
+                if pd.notna(row.get("original_price_eur")) else None
+            )
+            existing.relist_price_eur = (
+                float(row["relist_price_eur"])
+                if pd.notna(row.get("relist_price_eur")) else None
+            )
+            existing.price_delta_eur = (
+                float(row["price_delta_eur"])
+                if pd.notna(row.get("price_delta_eur")) else None
+            )
+            existing.price_delta_pct = (
+                float(row["price_delta_pct"])
+                if pd.notna(row.get("price_delta_pct")) else None
+            )
+            existing.mileage_delta_km = (
+                int(row["mileage_delta_km"])
+                if pd.notna(row.get("mileage_delta_km")) else None
+            )
+            continue
+
+        ev = RelistEvent(
+            original_olx_id=row["original_olx_id"],
+            relist_olx_id=row["relist_olx_id"],
+            gap_days=float(row["gap_days"]),
+            match_score=float(row["match_score"]),
+            original_price_eur=(
+                float(row["original_price_eur"])
+                if pd.notna(row.get("original_price_eur")) else None
+            ),
+            relist_price_eur=(
+                float(row["relist_price_eur"])
+                if pd.notna(row.get("relist_price_eur")) else None
+            ),
+            price_delta_eur=(
+                float(row["price_delta_eur"])
+                if pd.notna(row.get("price_delta_eur")) else None
+            ),
+            price_delta_pct=(
+                float(row["price_delta_pct"])
+                if pd.notna(row.get("price_delta_pct")) else None
+            ),
+            mileage_delta_km=(
+                int(row["mileage_delta_km"])
+                if pd.notna(row.get("mileage_delta_km")) else None
+            ),
+        )
+        session.add(ev)
+        inserted += 1
+    session.commit()
+    return inserted
+
+
+def get_relist_events_df(session: Session) -> pd.DataFrame:
+    rows = session.query(RelistEvent).order_by(RelistEvent.detected_at.desc()).all()
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame([{
+        "original_olx_id": r.original_olx_id,
+        "relist_olx_id": r.relist_olx_id,
+        "gap_days": r.gap_days,
+        "match_score": r.match_score,
+        "original_price_eur": r.original_price_eur,
+        "relist_price_eur": r.relist_price_eur,
+        "price_delta_eur": r.price_delta_eur,
+        "price_delta_pct": r.price_delta_pct,
+        "mileage_delta_km": r.mileage_delta_km,
+        "detected_at": r.detected_at,
+    } for r in rows])
 
 
 def get_portfolio_df(session: Session) -> pd.DataFrame:
