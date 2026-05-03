@@ -176,21 +176,28 @@ with st.expander("📊 Segment ranker — which models are worth my time", expan
         ]
         seg_metrics = seg_metrics.sort_values("composite", ascending=False).head(40)
 
-        display = seg_metrics.assign(
-            segment=lambda d: d["brand"].str.cat(d["model"], sep=" ")
-                              .str.cat(d["generation"].fillna(""), sep=" / ")
-                              .str.replace(r" / $", "", regex=True),
-            avg_uv=lambda d: d["avg_undervaluation_pct"].round(1),
-            dom=lambda d: d["median_dom"].round(0),
-            trend=lambda d: d["trend_30d_pct"].round(1),
-            calib=lambda d: d["calibration_residual_eur"].round(0),
-            score=lambda d: (d["composite"] * 100).round(0),
-        )[["segment", "n_active", "n_sold_60d", "dom",
-           "avg_uv", "trend", "calib", "score"]]
-        display.columns = [
-            "segment", "active", "sold 60d", "median dom (d)",
-            "avg uv %", "trend 30d %", "calib residual €", "score",
-        ]
+        # ``round(None, 0)`` raises TypeError, so coerce all the
+        # potentially-None numeric columns to float (None → NaN) before
+        # asking pandas to round. NaN survives round() unchanged and
+        # renders as "—" in Streamlit's table — which is exactly what
+        # the user wants for "we don't have this metric for this row".
+        def _num(col):
+            return pd.to_numeric(seg_metrics[col], errors="coerce")
+
+        display = pd.DataFrame({
+            "segment": seg_metrics["brand"].astype(str).str.cat(
+                seg_metrics["model"].astype(str), sep=" "
+            ).str.cat(
+                seg_metrics["generation"].fillna("").astype(str), sep=" / "
+            ).str.replace(r" / $", "", regex=True),
+            "active": _num("n_active").astype("Int64"),
+            "sold 60d": _num("n_sold_60d").astype("Int64"),
+            "median dom (d)": _num("median_dom").round(0),
+            "avg uv %": _num("avg_undervaluation_pct").round(1),
+            "trend 30d %": _num("trend_30d_pct").round(1),
+            "calib residual €": _num("calibration_residual_eur").round(0),
+            "score": (_num("composite") * 100).round(0),
+        })
         st.dataframe(display, hide_index=True, use_container_width=True)
         st.caption(
             "score = 0.40·undervaluation + 0.25·log(sold 60d) + 0.20·velocity "
