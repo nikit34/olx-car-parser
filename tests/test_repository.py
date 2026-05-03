@@ -8,6 +8,7 @@ from src.storage.repository import (
     add_price_snapshot,
     upsert_unmatched,
     mark_inactive,
+    revalidate_recent_sold,
     heal_mass_sweeps,
     compute_market_stats,
     deduplicate_cross_platform,
@@ -275,6 +276,100 @@ class TestMarkInactiveURLVerify:
         assert states[rows[0][0]] is True   # alive
         assert states[rows[1][0]] is False  # confirmed dead
         assert states[rows[2][0]] is True   # deferred (network error)
+
+
+class TestRevalidateRecentSold:
+    """``revalidate_recent_sold`` runs each scrape cycle to undo false-
+    positive deactivations. The literal scenario it fixes: Alfa Romeo
+    JmEjz dropped out of one promoted-slot rotation, mark_inactive
+    flagged it sold, but the URL was still live."""
+
+    def _seed_sold(
+        self, db_session, sample_listing_data, n: int,
+        days_ago: int = 1,
+    ):
+        from datetime import datetime, timezone, timedelta
+        from src.storage.repository import upsert_listing
+        rows = []
+        deact = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days_ago)
+        for i in range(n):
+            oid = f"r-{i:03d}"
+            url = f"https://olx.pt/d/anuncio/{oid}.html"
+            l = upsert_listing(db_session, {
+                **sample_listing_data, "olx_id": oid, "url": url,
+                "source": "olx",
+            })
+            l.is_active = False
+            l.deactivation_reason = "sold"
+            l.deactivated_at = deact
+            rows.append((oid, url, l))
+        db_session.commit()
+        return rows
+
+    def test_alive_url_restores_listing(
+        self, db_session, sample_listing_data,
+    ):
+        from unittest.mock import patch, Mock
+        rows = self._seed_sold(db_session, sample_listing_data, 1)
+        fake = Mock(status_code=200, text="<html>still listed</html>")
+        with patch("src.storage.repository.httpx.get", return_value=fake):
+            stats = revalidate_recent_sold(db_session, "olx")
+        db_session.commit()
+        assert stats["restored"] == 1
+        l = db_session.query(Listing).filter_by(olx_id=rows[0][0]).one()
+        assert l.is_active is True
+        assert l.deactivation_reason is None
+        assert l.deactivated_at is None
+
+    def test_404_url_stays_sold(self, db_session, sample_listing_data):
+        from unittest.mock import patch, Mock
+        rows = self._seed_sold(db_session, sample_listing_data, 1)
+        fake = Mock(status_code=404, text="")
+        with patch("src.storage.repository.httpx.get", return_value=fake):
+            stats = revalidate_recent_sold(db_session, "olx")
+        db_session.commit()
+        assert stats["restored"] == 0
+        assert stats["still_dead"] == 1
+        l = db_session.query(Listing).filter_by(olx_id=rows[0][0]).one()
+        assert l.is_active is False  # unchanged
+
+    def test_old_sold_outside_window_skipped(
+        self, db_session, sample_listing_data,
+    ):
+        """Listings deactivated >max_age_days ago aren't candidates —
+        keeps the per-cycle HTTP budget bounded."""
+        from unittest.mock import patch
+        rows = self._seed_sold(
+            db_session, sample_listing_data, 1, days_ago=30,
+        )
+        with patch("src.storage.repository.httpx.get") as mock_get:
+            stats = revalidate_recent_sold(
+                db_session, "olx", max_age_days=14,
+            )
+        mock_get.assert_not_called()
+        assert stats["checked"] == 0
+
+    def test_source_scoped(self, db_session, sample_listing_data):
+        """An OLX revalidate call must not probe StandVirtual rows even
+        when their URL is included in the candidate query — same source
+        isolation as mark_inactive."""
+        from datetime import datetime, timezone, timedelta
+        from unittest.mock import patch, Mock
+        from src.storage.repository import upsert_listing
+
+        l = upsert_listing(db_session, {
+            **sample_listing_data, "olx_id": "sv-x",
+            "url": "https://standvirtual.com/sv-x", "source": "standvirtual",
+        })
+        l.is_active = False
+        l.deactivation_reason = "sold"
+        l.deactivated_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)
+        db_session.commit()
+
+        with patch("src.storage.repository.httpx.get") as mock_get:
+            stats = revalidate_recent_sold(db_session, "olx")
+        mock_get.assert_not_called()
+        assert stats["checked"] == 0
 
 
 class TestHealMassSweeps:

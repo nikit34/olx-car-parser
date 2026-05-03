@@ -23,7 +23,7 @@ from src.storage.database import get_session, init_db
 from src.models.generations import get_generation, infer_model_from_title
 from src.storage.repository import (
     add_price_snapshot, compute_market_stats, deduplicate_cross_platform,
-    deduplicate_same_platform,
+    deduplicate_same_platform, revalidate_recent_sold,
     get_duplicate_ids, get_listings_df, heal_mass_sweeps, mark_inactive,
     upsert_listing, upsert_unmatched,
 )
@@ -404,11 +404,17 @@ def scrape(
         scraped_by_source.setdefault(src, set()).add(olx_id)
 
     def _mark_inactive_safely(session) -> None:
-        """Per-source mark_inactive with anomaly gate.
+        """Per-source mark_inactive with anomaly gate + revalidate.
 
-        Skips a source whose scrape returned <10% of its currently-active
-        rows — that's almost always a partial/blocked scrape, not real
-        market churn (real per-cycle churn is ≤1–2%).
+        Two phases per source:
+          1. ``revalidate_recent_sold`` — probe URLs of listings marked
+             sold in the last 14 days; restore the ones that turn out
+             to still be live (false-positive heal, see heal_false_sold
+             one-shot for the historical equivalent).
+          2. ``mark_inactive`` — the usual "not in scrape results" sweep.
+             Skipped for any source whose scrape returned <10% of its
+             currently-active rows — almost always a partial scrape,
+             not real churn (real per-cycle churn is ≤1–2%).
         """
         from src.models.listing import Listing as _Listing
         from sqlalchemy import or_ as _or_
@@ -416,6 +422,18 @@ def scrape(
             if not ids:
                 log.warning("No %s listings scraped — skipping mark_inactive(%s)", src, src)
                 continue
+            try:
+                stats = revalidate_recent_sold(session, src)
+                if stats["restored"]:
+                    session.commit()
+                    log.info(
+                        "Revalidate(%s): restored %d false-positive sold rows",
+                        src, stats["restored"],
+                    )
+            except Exception as e:
+                log.warning("revalidate_recent_sold(%s) failed: %s", src, e)
+                session.rollback()
+
             if src == "olx":
                 src_filter = _or_(_Listing.source == "olx", _Listing.source.is_(None))
             else:

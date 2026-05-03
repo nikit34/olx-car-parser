@@ -174,6 +174,102 @@ def _verify_listing_alive(url: str, timeout: float = 8.0) -> bool | None:
     return True
 
 
+def revalidate_recent_sold(
+    session: Session, source: str,
+    max_age_days: int = 14, limit: int = 300, max_workers: int = 4,
+) -> dict:
+    """Probe the URLs of recently-deactivated listings and restore the
+    ones that turn out to still be live on the source.
+
+    Self-heals the false-positive 'sold' deactivations ``mark_inactive``
+    produces when a listing temporarily drops out of the scraper's
+    search-results page — promoted-slot rotation, pagination drift,
+    anti-bot blocks. Without this, the only way to undo such a flag
+    was the one-shot ``heal_false_sold.py`` script. Wiring it into
+    every scrape (called BEFORE ``mark_inactive``) means the dashboard
+    self-corrects within one cycle.
+
+    Source-scoped: an OLX revalidation never probes StandVirtual URLs
+    and vice-versa. ``max_age_days`` keeps the candidate set small —
+    ancient sold listings are far more likely to be genuinely gone, so
+    re-probing them is a waste of HTTP budget. ``limit`` caps the
+    per-cycle work so we don't blow up scrape duration; the rest get
+    picked up over subsequent cycles in deactivated_at order.
+
+    Returns a stats dict: {checked, restored, still_dead, deferred}.
+    """
+    import logging
+    from sqlalchemy import or_
+    from concurrent.futures import ThreadPoolExecutor
+
+    log = logging.getLogger(__name__)
+
+    if source == "olx":
+        source_filter = or_(Listing.source == "olx", Listing.source.is_(None))
+    else:
+        source_filter = Listing.source == source
+
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=max_age_days)
+    candidates = (
+        session.query(Listing)
+        .filter(
+            Listing.is_active == False,
+            Listing.deactivation_reason == "sold",
+            Listing.deactivated_at >= cutoff,
+            source_filter,
+        )
+        .order_by(Listing.deactivated_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    if not candidates:
+        return {"checked": 0, "restored": 0, "still_dead": 0, "deferred": 0}
+
+    log.info(
+        "revalidate_recent_sold(%s): probing %d candidates "
+        "(max_age=%dd, workers=%d)",
+        source, len(candidates), max_age_days, max_workers,
+    )
+
+    restored_ids: list[int] = []
+    still_dead = 0
+    deferred = 0
+
+    def _probe(listing):
+        return listing.id, _verify_listing_alive(listing.url)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for lid, status in executor.map(_probe, candidates):
+            if status is True:
+                restored_ids.append(lid)
+            elif status is False:
+                still_dead += 1
+            else:
+                deferred += 1
+
+    if restored_ids:
+        session.query(Listing).filter(Listing.id.in_(restored_ids)).update(
+            {
+                "is_active": True,
+                "deactivated_at": None,
+                "deactivation_reason": None,
+            },
+            synchronize_session="evaluate",
+        )
+
+    log.info(
+        "revalidate_recent_sold(%s): restored %d, still dead %d, deferred %d",
+        source, len(restored_ids), still_dead, deferred,
+    )
+    return {
+        "checked": len(candidates),
+        "restored": len(restored_ids),
+        "still_dead": still_dead,
+        "deferred": deferred,
+    }
+
+
 def mark_inactive(
     session: Session, source: str, active_olx_ids: set[str],
     verify_via_url: bool = True, max_workers: int = 8,
