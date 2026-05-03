@@ -29,7 +29,6 @@ from data_loader import (
 )
 
 
-st.set_page_config(page_title="Model Details", layout="wide")
 st.title("Model Details")
 st.caption(
     "Every listing for one (brand, model, generation). Sortable table "

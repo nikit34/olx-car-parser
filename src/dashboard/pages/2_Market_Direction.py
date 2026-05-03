@@ -34,7 +34,6 @@ from src.storage.repository import get_price_snapshots_df
 from src.storage.database import init_db, get_session
 
 
-st.set_page_config(page_title="Market Direction", layout="wide")
 st.title("Market Direction — by segment")
 st.caption(
     "Compare median asking-price trajectories across cohorts sharing a "
