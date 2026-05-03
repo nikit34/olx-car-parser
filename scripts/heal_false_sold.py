@@ -25,17 +25,51 @@ from src.storage.repository import _verify_listing_alive
 from src.models.listing import Listing
 
 
-_BATCH_SIZE = 200
 _RETRY_MAX = 12
 _RETRY_BASE_S = 2.0
 _RETRY_MAX_WAIT_S = 60.0
+# Probes are committed every N restores so killing the script mid-run
+# (rate-limit, SIGTERM, OLX going funny) doesn't lose accumulated work
+# the way the v1 "scan-then-bulk-update" design did.
+_FLUSH_EVERY = 50
+
+
+def _commit_restores(session, ids: list[int], log) -> int:
+    if not ids:
+        return 0
+    for attempt in range(_RETRY_MAX):
+        try:
+            session.query(Listing).filter(Listing.id.in_(ids)).update(
+                {
+                    "is_active": True,
+                    "deactivated_at": None,
+                    "deactivation_reason": None,
+                },
+                synchronize_session="evaluate",
+            )
+            session.commit()
+            return len(ids)
+        except OperationalError as e:
+            if "locked" not in str(e).lower():
+                raise
+            session.rollback()
+            wait = min(_RETRY_BASE_S * (2 ** attempt), _RETRY_MAX_WAIT_S)
+            log.warning(
+                "DB locked, retry %d/%d in %.1fs (%d ids)",
+                attempt + 1, _RETRY_MAX, wait, len(ids),
+            )
+            time.sleep(wait)
+    log.error("Gave up committing %d ids", len(ids))
+    return 0
 
 
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--apply", action="store_true",
                    help="Write changes. Without this flag the run is dry-run only.")
-    p.add_argument("--workers", type=int, default=8)
+    p.add_argument("--workers", type=int, default=4,
+                   help="Concurrent HTTP probes. v1 used 8 and OLX rate-"
+                        "limited; 2-4 stays under the radar.")
     p.add_argument("--limit", type=int, default=None,
                    help="Cap on rows probed (useful for staged rollout).")
     args = p.parse_args()
@@ -53,69 +87,54 @@ def main() -> int:
     )
     if args.limit:
         rows = rows[: args.limit]
-    log.info("Probing %d 'sold' listings", len(rows))
+    log.info("Probing %d 'sold' listings (workers=%d, flush every %d restores)",
+             len(rows), args.workers, _FLUSH_EVERY)
 
     stats: Counter = Counter()
-    to_restore: list[int] = []
+    pending_ids: list[int] = []
+    written = 0
 
     def _check(listing):
         return listing.id, _verify_listing_alive(listing.url)
 
-    with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        for i, (lid, status) in enumerate(pool.map(_check, rows)):
-            if status is True:
-                to_restore.append(lid)
-                stats["false_positive_alive"] += 1
-            elif status is False:
-                stats["confirmed_dead"] += 1
-            else:
-                stats["deferred_unknown"] += 1
-            if (i + 1) % 100 == 0:
-                log.info("  probed %d / %d  (alive=%d dead=%d deferred=%d)",
-                         i + 1, len(rows),
-                         stats["false_positive_alive"],
-                         stats["confirmed_dead"],
-                         stats["deferred_unknown"])
+    try:
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            for i, (lid, status) in enumerate(pool.map(_check, rows)):
+                if status is True:
+                    pending_ids.append(lid)
+                    stats["alive"] += 1
+                elif status is False:
+                    stats["dead"] += 1
+                else:
+                    stats["deferred"] += 1
 
-    log.info("Probe complete: %s", dict(stats))
-    log.info("Will %s %d false-positive 'sold' rows back to active",
-             "RESTORE" if args.apply else "(dry-run) restore",
-             len(to_restore))
+                # Flush every _FLUSH_EVERY confirmed alive — keeps work
+                # safe against mid-run aborts (rate-limit, SIGTERM,
+                # OLX outage). Commits via batched UPDATE with retry.
+                if args.apply and len(pending_ids) >= _FLUSH_EVERY:
+                    n = _commit_restores(session, pending_ids, log)
+                    written += n
+                    pending_ids.clear()
 
-    if not args.apply or not to_restore:
-        return 0
+                if (i + 1) % 100 == 0:
+                    log.info(
+                        "  probed %d / %d  (alive=%d dead=%d deferred=%d, restored=%d)",
+                        i + 1, len(rows),
+                        stats["alive"], stats["dead"], stats["deferred"],
+                        written,
+                    )
+    except KeyboardInterrupt:
+        log.warning("interrupted by user — flushing pending restores")
 
-    written = 0
-    for i in range(0, len(to_restore), _BATCH_SIZE):
-        chunk = to_restore[i:i + _BATCH_SIZE]
-        for attempt in range(_RETRY_MAX):
-            try:
-                session.query(Listing).filter(Listing.id.in_(chunk)).update(
-                    {
-                        "is_active": True,
-                        "deactivated_at": None,
-                        "deactivation_reason": None,
-                    },
-                    synchronize_session="evaluate",
-                )
-                session.commit()
-                written += len(chunk)
-                break
-            except OperationalError as e:
-                if "locked" not in str(e).lower():
-                    raise
-                session.rollback()
-                wait = min(_RETRY_BASE_S * (2 ** attempt), _RETRY_MAX_WAIT_S)
-                log.warning("DB locked on batch %d, retry %d/%d in %.1fs",
-                            i, attempt + 1, _RETRY_MAX, wait)
-                time.sleep(wait)
-        else:
-            log.error("Gave up on batch %d", i)
-            return 1
-        if (i // _BATCH_SIZE) % 5 == 0:
-            log.info("Restored %d / %d", written, len(to_restore))
+    # Final flush of anything that didn't reach the threshold.
+    if args.apply and pending_ids:
+        written += _commit_restores(session, pending_ids, log)
+        pending_ids.clear()
 
-    log.info("Restored %d rows total", written)
+    log.info(
+        "DONE: %s  (apply=%s, restored=%d)",
+        dict(stats), args.apply, written,
+    )
     return 0
 
 
