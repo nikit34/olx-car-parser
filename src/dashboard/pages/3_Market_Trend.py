@@ -122,23 +122,53 @@ year_min = int(listings_df["year"].min()) if listings_df["year"].notna().any() e
 year_max = int(listings_df["year"].max()) if listings_df["year"].notna().any() else 2026
 year_range = st.sidebar.slider("Year", year_min, year_max, (year_min, year_max))
 
-# Cap window at the actual data range — picking 180 days when we only
-# have 31 just makes the chart look sparse. User can still expand the
-# slider later as the DB grows.
-window_max = max(7, min(365, data_days))
-window_default = min(window_max, 30)
-window_days = st.sidebar.slider(
-    "Look-back (days)", 7, window_max, window_default, step=1,
+# Quick-pick interval. Maps to days; "all" caps at whatever history
+# actually exists. The hidden slider is for fine-tuning ("show me
+# exactly the last 45 days") — most of the time the buttons are
+# enough and they self-document the common analysis windows.
+_QUICK_LABELS = ("1m", "3m", "6m", "1y", "all")
+_QUICK_DAYS = {"1m": 30, "3m": 90, "6m": 180, "1y": 365, "all": data_days}
+quick = st.sidebar.segmented_control(
+    "Look-back", options=_QUICK_LABELS, default="1m",
+    key="quick_window",
 )
+quick = quick or "1m"
+window_days_request = _QUICK_DAYS[quick]
+# Cap at actual data span — picking "1y" when only 31 days exist
+# can't conjure data we never scraped, but we still respect the user
+# intent: show everything we have.
+window_days = max(7, min(window_days_request, data_days))
 
-# Auto-pick bucket frequency. Daily for short ranges (<35d) gives ~30
-# data points; weekly for longer keeps the chart readable.
-auto_freq = "D" if window_days <= 35 else "W"
+with st.sidebar.expander("Fine-tune window"):
+    window_days = st.slider(
+        "Days",
+        min_value=7,
+        max_value=max(7, data_days),
+        value=window_days,
+        step=1,
+        key="window_days_slider",
+    )
+    if window_days_request > data_days:
+        st.caption(
+            f"Picked {quick} ({window_days_request}d) — "
+            f"clamped to actual data span ({data_days}d)."
+        )
+
+# Auto-pick bucket frequency. Daily for short ranges (≤35d) gives
+# ~30 points; weekly for ≤120d; monthly beyond that to keep the
+# chart legible at 6m / 1y zoom levels.
+if window_days <= 35:
+    auto_freq = "D"
+elif window_days <= 120:
+    auto_freq = "W"
+else:
+    auto_freq = "M"
 freq_choice = st.sidebar.selectbox(
-    "Bucket", ["auto", "daily", "weekly"], index=0,
+    "Bucket", ["auto", "daily", "weekly", "monthly"], index=0,
 )
-freq = {"auto": auto_freq, "daily": "D", "weekly": "W"}[freq_choice]
-freq_label = {"D": "daily", "W": "weekly"}[freq]
+freq = {"auto": auto_freq, "daily": "D",
+        "weekly": "W", "monthly": "M"}[freq_choice]
+freq_label = {"D": "daily", "W": "weekly", "M": "monthly"}[freq]
 
 # --- Apply filters to snapshots ---
 snapshots = _full
