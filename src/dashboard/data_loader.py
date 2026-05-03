@@ -119,10 +119,23 @@ def _download_asset(url: str, dest: Path) -> bool:
     return False
 
 
+# Marker file we touch after every successful release-asset sync. The TTL
+# gate reads this — NOT the DB's mtime — so a half-written stub or a local
+# init that happens to land within the TTL window can't shadow the real
+# release. A stale 60 KB ``data/olx_cars.db`` from a prior failed run
+# was the live example: its recent mtime made ``_ensure_release_assets``
+# treat it as fresh for two hours and silently bypass the GitHub API,
+# leaving the dashboard pointing at an empty DB. (2026-05-03 fix.)
+_RELEASE_CHECK_MARKER = PROJECT_ROOT / "data" / ".last_release_check"
+
+
 def _force_next_check():
     """Reset the check timer so the next _ensure_db() call hits GitHub API."""
-    if DB_PATH.exists():
-        os.utime(DB_PATH, (0, 0))
+    if _RELEASE_CHECK_MARKER.exists():
+        try:
+            _RELEASE_CHECK_MARKER.unlink()
+        except OSError:
+            pass
 
 
 # Model + metrics live alongside the DB in the data release — shipped by CI
@@ -148,10 +161,15 @@ def _ensure_release_assets() -> bool:
     """
     import time
 
-    # TTL gate is keyed on the DB's mtime (same as before): if DB was
-    # refreshed recently, skip the GitHub API call entirely.
-    if DB_PATH.exists() and (time.time() - DB_PATH.stat().st_mtime) <= _CHECK_INTERVAL_SECONDS:
-        return True
+    # TTL gate is keyed on the marker we write after a successful API
+    # sync — never on the DB's own mtime. A half-written stub or local
+    # ``init_db`` would otherwise let the TTL silently shadow the real
+    # release for two hours.
+    if (
+        _RELEASE_CHECK_MARKER.exists()
+        and (time.time() - _RELEASE_CHECK_MARKER.stat().st_mtime) <= _CHECK_INTERVAL_SECONDS
+    ):
+        return DB_PATH.exists()
 
     repo = os.environ.get("GITHUB_REPOSITORY", "nikit34/olx-car-parser")
     if not repo:
@@ -159,6 +177,9 @@ def _ensure_release_assets() -> bool:
 
     assets = _list_release_assets(repo)
     if not assets:
+        # API failure (rate limit, network, missing release). DON'T stamp
+        # the marker — we want the next call to retry immediately rather
+        # than wait out the TTL on a transient miss.
         return DB_PATH.exists()
 
     for name, dest in _RELEASE_ASSETS:
@@ -169,6 +190,8 @@ def _ensure_release_assets() -> bool:
         if url:
             _download_asset(url, dest)
 
+    _RELEASE_CHECK_MARKER.parent.mkdir(parents=True, exist_ok=True)
+    _RELEASE_CHECK_MARKER.touch()
     return DB_PATH.exists()
 
 
