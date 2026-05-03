@@ -4,6 +4,7 @@ import numpy as np
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 
 import sys as _sys
 from pathlib import Path as _Path
@@ -317,9 +318,16 @@ for _, deal in deals.iterrows():
             if listings_df.empty:
                 st.info("No listings loaded.")
             else:
+                # Build the segment slice on the FULL listings_df — both
+                # active and historical (sold/expired). Sold rows give
+                # 2-3× the comp density and show how the market priced
+                # similar cars that actually moved. Active rows are
+                # plotted on top in saturated colour, sold ones underneath
+                # at low opacity so the eye still anchors on what's
+                # buyable now.
                 market = listings_df.copy()
-                if "is_active" in market.columns:
-                    market = market[market["is_active"]]
+                if "duplicate_of" in market.columns:
+                    market = market[market["duplicate_of"].isna()]
                 market = market[
                     (market["brand"] == deal["brand"])
                     & (market["model"] == deal["model"])
@@ -345,21 +353,59 @@ for _, deal in deals.iterrows():
                     st.info("Not enough comparable listings (need ≥2).")
                 else:
                     market["is_this"] = market["olx_id"] == deal["olx_id"]
-                    market_others = market[~market["is_this"]]
+                    is_active_col = (
+                        market["is_active"]
+                        if "is_active" in market.columns
+                        else pd.Series(True, index=market.index)
+                    )
+                    market_active = market[is_active_col & ~market["is_this"]]
+                    market_sold = market[~is_active_col & ~market["is_this"]]
                     market_self = market[market["is_this"]]
 
                     hover_cols = [c for c in ("year", "engine_cc", "horsepower",
                                                "transmission", "city", "url")
                                   if c in market.columns]
-                    fig = px.scatter(
-                        market_others,
-                        x="mileage_km", y="price_eur",
-                        color="year" if market_others["year"].notna().any() else None,
-                        hover_data=hover_cols,
-                        color_continuous_scale="Turbo",
-                    )
-                    fig.update_traces(marker=dict(size=9, opacity=0.65,
-                                                  line=dict(width=0.5, color="#222")))
+
+                    fig = go.Figure()
+                    if not market_sold.empty:
+                        fig.add_scatter(
+                            x=market_sold["mileage_km"],
+                            y=market_sold["price_eur"],
+                            mode="markers",
+                            marker=dict(size=8, color="#888888", opacity=0.32,
+                                        symbol="circle-open"),
+                            name=f"sold / expired ({len(market_sold)})",
+                            customdata=market_sold[hover_cols].values if hover_cols else None,
+                            hovertemplate=(
+                                "<b>%{y:,.0f} EUR</b> · %{x:,.0f} km<br>"
+                                + "<br>".join(f"{c}: %{{customdata[{i}]}}"
+                                              for i, c in enumerate(hover_cols))
+                                + "<extra></extra>"
+                            ),
+                        )
+                    if not market_active.empty:
+                        fig.add_scatter(
+                            x=market_active["mileage_km"],
+                            y=market_active["price_eur"],
+                            mode="markers",
+                            marker=dict(
+                                size=10,
+                                color=market_active["year"] if market_active["year"].notna().any() else "#1f77b4",
+                                colorscale="Turbo",
+                                showscale=market_active["year"].notna().any(),
+                                colorbar=dict(title="year") if market_active["year"].notna().any() else None,
+                                opacity=0.85,
+                                line=dict(width=0.5, color="#222"),
+                            ),
+                            name=f"active ({len(market_active)})",
+                            customdata=market_active[hover_cols].values if hover_cols else None,
+                            hovertemplate=(
+                                "<b>%{y:,.0f} EUR</b> · %{x:,.0f} km<br>"
+                                + "<br>".join(f"{c}: %{{customdata[{i}]}}"
+                                              for i, c in enumerate(hover_cols))
+                                + "<extra></extra>"
+                            ),
+                        )
                     if not market_self.empty:
                         fig.add_scatter(
                             x=market_self["mileage_km"],
@@ -367,7 +413,7 @@ for _, deal in deals.iterrows():
                             mode="markers",
                             marker=dict(size=18, symbol="star", color="#FF3B30",
                                         line=dict(width=1.5, color="#000")),
-                            name="This listing",
+                            name="this listing",
                             hovertext=[f"This listing — {int(deal['price_eur']):,} EUR"],
                             hoverinfo="text",
                         )
@@ -378,21 +424,34 @@ for _, deal in deals.iterrows():
                         yaxis=dict(tickformat=","),
                         height=420,
                         margin=dict(l=10, r=10, t=10, b=10),
-                        showlegend=False,
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                    xanchor="right", x=1),
                     )
                     st.plotly_chart(fig, use_container_width=True,
                                     key=f"chart_{deal['olx_id']}")
 
-                    _med_p = int(market["price_eur"].median())
-                    _med_k = int(market["mileage_km"].median())
+                    _med_p_active = (
+                        int(market_active["price_eur"].median())
+                        if not market_active.empty else None
+                    )
+                    _med_p_sold = (
+                        int(market_sold["price_eur"].median())
+                        if not market_sold.empty else None
+                    )
                     _cc_label = (
                         f"{int(deal_cc) - cc_window}–{int(deal_cc) + cc_window} cc"
                         if pd.notna(deal_cc) and deal_cc
                         else "any cc"
                     )
-                    st.caption(
-                        f"{len(market)} active comps · {deal_fuel_group} · {_cc_label} · "
-                        f"median price {_med_p:,} EUR · median mileage {_med_k:,} km"
-                    )
+                    parts = [
+                        f"{len(market_active)} active",
+                        f"{len(market_sold)} sold/expired",
+                        deal_fuel_group, _cc_label,
+                    ]
+                    if _med_p_active is not None:
+                        parts.append(f"median active {_med_p_active:,} EUR")
+                    if _med_p_sold is not None:
+                        parts.append(f"median sold {_med_p_sold:,} EUR")
+                    st.caption(" · ".join(parts))
 
         st.divider()
