@@ -79,27 +79,33 @@ def main() -> int:
 
     init_db()
     session = get_session()
-    rows = (
-        session.query(Listing)
+    # Snapshot (id, url) up front and detach the ORM objects. Otherwise
+    # the first ``session.commit()`` (after the first 50-row flush)
+    # expires every Listing in the candidates list, and the next thread
+    # that touches ``listing.id`` raises ObjectDeletedError. We don't
+    # need ORM features in the hot loop — just two plain values.
+    rows_q = (
+        session.query(Listing.id, Listing.url)
         .filter(Listing.deactivation_reason == "sold")
         .order_by(Listing.deactivated_at.desc())
-        .all()
     )
     if args.limit:
-        rows = rows[: args.limit]
+        rows_q = rows_q.limit(args.limit)
+    work: list[tuple[int, str]] = [(r.id, r.url) for r in rows_q.all()]
     log.info("Probing %d 'sold' listings (workers=%d, flush every %d restores)",
-             len(rows), args.workers, _FLUSH_EVERY)
+             len(work), args.workers, _FLUSH_EVERY)
 
     stats: Counter = Counter()
     pending_ids: list[int] = []
     written = 0
 
-    def _check(listing):
-        return listing.id, _verify_listing_alive(listing.url)
+    def _check(item: tuple[int, str]):
+        lid, url = item
+        return lid, _verify_listing_alive(url)
 
     try:
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
-            for i, (lid, status) in enumerate(pool.map(_check, rows)):
+            for i, (lid, status) in enumerate(pool.map(_check, work)):
                 if status is True:
                     pending_ids.append(lid)
                     stats["alive"] += 1
@@ -119,7 +125,7 @@ def main() -> int:
                 if (i + 1) % 100 == 0:
                     log.info(
                         "  probed %d / %d  (alive=%d dead=%d deferred=%d, restored=%d)",
-                        i + 1, len(rows),
+                        i + 1, len(work),
                         stats["alive"], stats["dead"], stats["deferred"],
                         written,
                     )
