@@ -71,9 +71,22 @@ if listings_df.empty:
     st.stop()
 
 # --- Sidebar ---
+# Honour the (brand, model, generation) target written into session_state
+# by the "View segment" button on a Recommendations card. Pop the keys
+# after consumption so the user's subsequent sidebar edits take over —
+# without this, every rerun would silently snap back to the original
+# pick.
+_target_brand = st.session_state.pop("target_brand", None)
+_target_model = st.session_state.pop("target_model", None)
+_target_generation = st.session_state.pop("target_generation", None)
+
 st.sidebar.header("Pick a model")
-brand = st.sidebar.selectbox("Brand", sorted(brands_models.keys()))
-model = st.sidebar.selectbox("Model", sorted(brands_models.get(brand, [])))
+_brands = sorted(brands_models.keys())
+_b_idx = _brands.index(_target_brand) if _target_brand in _brands else 0
+brand = st.sidebar.selectbox("Brand", _brands, index=_b_idx)
+_models = sorted(brands_models.get(brand, []))
+_m_idx = _models.index(_target_model) if _target_model in _models else 0
+model = st.sidebar.selectbox("Model", _models, index=_m_idx)
 
 seg = listings_df[
     (listings_df["brand"] == brand) & (listings_df["model"] == model)
@@ -86,7 +99,12 @@ if seg.empty:
 if "generation" not in seg.columns:
     seg["generation"] = ""
 gens = sorted({g for g in seg["generation"].fillna("").tolist() if g})
-gen_pick = st.sidebar.selectbox("Generation", ["(all)"] + gens)
+_gen_options = ["(all)"] + gens
+_g_idx = (
+    _gen_options.index(_target_generation)
+    if _target_generation in _gen_options else 0
+)
+gen_pick = st.sidebar.selectbox("Generation", _gen_options, index=_g_idx)
 if gen_pick != "(all)":
     seg = seg[seg["generation"] == gen_pick]
 
