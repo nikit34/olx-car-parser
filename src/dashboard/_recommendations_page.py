@@ -530,31 +530,33 @@ for _, deal in deals.iterrows():
                             subset=["predicted", "fair_low", "fair_high"]
                         ).sort_values("mileage_km")
                     if not band_src.empty:
-                        win = max(3, min(7, len(band_src) // 5))
-                        sm_low = band_src["fair_low"].rolling(win, min_periods=1, center=True).median()
-                        sm_high = band_src["fair_high"].rolling(win, min_periods=1, center=True).median()
-                        sm_pred = band_src["predicted"].rolling(win, min_periods=1, center=True).median()
+                        # Per-listing "candle": P50 marker with vertical
+                        # whiskers to P10 (down) and P90 (up). Shows the
+                        # model's per-row uncertainty visibly without
+                        # smoothing-out the genuine spread between
+                        # listings of slightly different specs.
                         fig.add_scatter(
-                            x=band_src["mileage_km"], y=sm_low,
-                            mode="lines",
-                            line=dict(color="rgba(46, 160, 67, 0.65)", width=1.5, dash="dash"),
-                            name="fair low (P10)",
-                            hovertemplate="<b>P10: €%{y:,.0f}</b> @ %{x:,.0f} km<extra></extra>",
-                        )
-                        fig.add_scatter(
-                            x=band_src["mileage_km"], y=sm_high,
-                            mode="lines",
-                            line=dict(color="rgba(46, 160, 67, 0.65)", width=1.5, dash="dash"),
-                            fill="tonexty", fillcolor="rgba(46, 160, 67, 0.18)",
-                            name="fair high (P90)",
-                            hovertemplate="<b>P90: €%{y:,.0f}</b> @ %{x:,.0f} km<extra></extra>",
-                        )
-                        fig.add_scatter(
-                            x=band_src["mileage_km"], y=sm_pred,
-                            mode="lines",
-                            line=dict(color="rgba(31, 119, 60, 0.95)", width=2.4),
-                            name="model predicted (P50)",
-                            hovertemplate="<b>predicted: €%{y:,.0f}</b> @ %{x:,.0f} km<extra></extra>",
+                            x=band_src["mileage_km"], y=band_src["predicted"],
+                            mode="markers",
+                            marker=dict(
+                                size=10, color="rgba(31, 119, 60, 0.9)",
+                                symbol="line-ew", line=dict(width=2),
+                            ),
+                            error_y=dict(
+                                type="data",
+                                symmetric=False,
+                                array=(band_src["fair_high"] - band_src["predicted"]).values,
+                                arrayminus=(band_src["predicted"] - band_src["fair_low"]).values,
+                                color="rgba(46, 160, 67, 0.55)",
+                                thickness=1.4, width=4,
+                            ),
+                            name="model fair (P10–P50–P90)",
+                            customdata=band_src[["fair_low", "fair_high", "olx_id"]].values,
+                            hovertemplate=(
+                                "<b>predicted P50: €%{y:,.0f}</b><br>"
+                                "fair P10–P90: €%{customdata[0]:,.0f}–€%{customdata[1]:,.0f}<br>"
+                                "%{customdata[2]} @ %{x:,.0f} km<extra></extra>"
+                            ),
                         )
 
                     if not market_self.empty:
