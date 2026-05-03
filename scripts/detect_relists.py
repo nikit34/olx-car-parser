@@ -22,8 +22,11 @@ from __future__ import annotations
 import argparse
 import logging
 
-from src.analytics.decision import build_context
-from src.analytics.relist import DEFAULT_MATCH_THRESHOLD, find_relists
+from src.analytics.relist import (
+    DEFAULT_MATCH_THRESHOLD,
+    compute_segment_dom_median,
+    find_relists,
+)
 from src.storage.database import get_session, init_db
 from src.storage.repository import get_listings_df, record_relist_events
 
@@ -59,13 +62,13 @@ def main() -> int:
         log.warning("Empty listings table — nothing to do")
         return 0
 
-    log.info("Building segment DoM context (for dynamic window)...")
-    ctx = build_context(listings_df, snapshots_df=None)
-    log.info("  %d segments with DoM data", len(ctx.dom_median))
+    log.info("Building segment DoM map (for dynamic window)...")
+    dom_map = compute_segment_dom_median(listings_df)
+    log.info("  %d segments with DoM data", len(dom_map))
 
     log.info("Scanning for re-listings (threshold=%.2f)...", args.threshold)
     relist_df = find_relists(
-        listings_df, ctx.dom_median, threshold=args.threshold,
+        listings_df, dom_map, threshold=args.threshold,
     )
 
     if relist_df.empty:

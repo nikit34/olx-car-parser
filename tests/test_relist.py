@@ -12,6 +12,7 @@ from src.analytics.relist import (
     _segment_window_days,
     build_outcomes_df,
     compute_match_score,
+    compute_segment_dom_median,
     find_relists,
 )
 
@@ -225,6 +226,48 @@ def test_segment_window_clamped():
     assert _segment_window_days(30) == 120
     # 4 × 200 = 800 → clamped DOWN to 365-day cap
     assert _segment_window_days(200) == 365
+
+
+# ---------------------------------------------------------------------------
+# compute_segment_dom_median
+# ---------------------------------------------------------------------------
+
+
+def test_compute_segment_dom_median_basic():
+    df = pd.DataFrame([
+        # Two sold Golfs, DoM = 10 and 30 → median 20
+        _listing(
+            olx_id="g1", is_active=False, deactivation_reason="sold",
+            first_seen_at=_utc(2026, 1, 1), deactivated_at=_utc(2026, 1, 11),
+        ),
+        _listing(
+            olx_id="g2", is_active=False, deactivation_reason="sold",
+            first_seen_at=_utc(2026, 1, 1), deactivated_at=_utc(2026, 1, 31),
+        ),
+        # Active row — should be excluded
+        _listing(olx_id="g3", is_active=True, deactivation_reason=None),
+    ])
+    out = compute_segment_dom_median(df)
+    assert out[("Volkswagen", "Golf", "Mk7")] == pytest.approx(20.0)
+    # Brand+model fallback should also be present
+    assert out[("Volkswagen", "Golf", None)] == pytest.approx(20.0)
+
+
+def test_compute_segment_dom_median_empty_when_no_sold():
+    df = pd.DataFrame([_listing(olx_id="active", is_active=True)])
+    assert compute_segment_dom_median(df) == {}
+
+
+def test_compute_segment_dom_median_filters_implausible_dom():
+    """DoM > 365 days is parser noise (e.g. 2915-day "sold") and gets
+    dropped before the median is computed."""
+    df = pd.DataFrame([
+        _listing(
+            olx_id="bad", is_active=False, deactivation_reason="sold",
+            first_seen_at=_utc(2018, 1, 1), deactivated_at=_utc(2026, 1, 1),
+        ),
+    ])
+    assert compute_segment_dom_median(df) == {}
 
 
 # ---------------------------------------------------------------------------

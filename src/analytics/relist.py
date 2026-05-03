@@ -252,6 +252,74 @@ def compute_match_score(
 
 
 # ---------------------------------------------------------------------------
+# Segment DoM helper (used to size the dynamic search window)
+# ---------------------------------------------------------------------------
+
+
+def compute_segment_dom_median(
+    listings_df: pd.DataFrame,
+) -> dict[tuple, float]:
+    """Median days-on-market for sold listings per segment.
+
+    Returns a map keyed on (brand, model, generation_or_None) with a
+    (brand, model, None) fallback entry — the same shape
+    ``decision.build_context.dom_median`` produces, but without that
+    function's other machinery (trend, calibration, fast-share). Used
+    by ``find_relists`` to size its dynamic search window per segment;
+    self-contained so re-listing detection has no dependency on the
+    decision algorithm module.
+
+    Empty map when the input lacks the columns needed for sold
+    detection or has no sold rows — ``find_relists`` then uses
+    DEFAULT_WINDOW_DAYS for all segments.
+    """
+    if listings_df is None or listings_df.empty:
+        return {}
+    needed = {
+        "is_active", "deactivation_reason", "deactivated_at",
+        "first_seen_at", "brand", "model",
+    }
+    if not needed.issubset(listings_df.columns):
+        return {}
+
+    df = listings_df.copy()
+    if "duplicate_of" in df.columns:
+        df = df[df["duplicate_of"].isna()]
+    is_active = df["is_active"].astype(bool)
+    reason = df["deactivation_reason"].astype(str)
+    sold = df[(~is_active) & (reason == "sold")].copy()
+    if sold.empty:
+        return {}
+
+    first = pd.to_datetime(sold["first_seen_at"], errors="coerce", utc=True)
+    last = pd.to_datetime(sold["deactivated_at"], errors="coerce", utc=True)
+    sold["__dom"] = (last - first).dt.total_seconds() / 86400
+    sold = sold[
+        (sold["__dom"].notna())
+        & (sold["__dom"] >= 0)
+        & (sold["__dom"] <= 365)
+    ]
+    if sold.empty:
+        return {}
+
+    if "generation" not in sold.columns:
+        sold["generation"] = pd.NA
+
+    out: dict[tuple, float] = {}
+    grouped = sold.groupby(["brand", "model", "generation"], dropna=False)
+    for (b, m, g), grp in grouped:
+        gen_key = g if (g is not None and pd.notna(g) and str(g) != "") else None
+        out[(b, m, gen_key)] = float(grp["__dom"].median())
+    # (brand, model, None) fallback for callers that didn't capture generation
+    grouped_bm = sold.groupby(["brand", "model"], dropna=False)
+    for (b, m), grp in grouped_bm:
+        key = (b, m, None)
+        if key not in out:
+            out[key] = float(grp["__dom"].median())
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Detection driver
 # ---------------------------------------------------------------------------
 
