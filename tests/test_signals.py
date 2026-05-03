@@ -10,7 +10,7 @@ from src.dashboard.data_loader import compute_signals
 
 class TestComputeSignals:
     def test_empty_inputs(self):
-        signals, importance = compute_signals(pd.DataFrame(), pd.DataFrame())
+        signals, importance, predictions = compute_signals(pd.DataFrame(), pd.DataFrame())
         assert signals.empty
 
     def test_without_gb_model_no_signals(
@@ -30,7 +30,7 @@ class TestComputeSignals:
             "src.models.generations.load_generations",
             return_value=generations_data,
         ):
-            signals, _ = compute_signals(sample_listings_df, sample_history_df)
+            signals, *_ = compute_signals(sample_listings_df, sample_history_df)
         assert signals.empty
 
     def test_finds_discount(
@@ -41,7 +41,7 @@ class TestComputeSignals:
             "src.models.generations.load_generations",
             return_value=generations_data,
         ):
-            signals, _ = compute_signals(sample_listings_df, sample_history_df)
+            signals, *_ = compute_signals(sample_listings_df, sample_history_df)
         # GB stub predicts price * 1.5 → undervaluation_pct = ~33 for every
         # listing that clears the median-discount gate. a1 (€8000 vs Golf
         # Mk7 median ~€14k) clears, gets surfaced via the GB path.
@@ -59,7 +59,7 @@ class TestComputeSignals:
             "src.models.generations.load_generations",
             return_value=generations_data,
         ):
-            signals, _ = compute_signals(sample_listings_df, sample_history_df)
+            signals, *_ = compute_signals(sample_listings_df, sample_history_df)
         assert not signals.empty
         required = {"olx_id", "brand", "model", "generation", "year",
                     "price_eur", "predicted_price", "median_price_eur",
@@ -105,7 +105,7 @@ class TestComputeSignals:
             "src.models.generations.load_generations",
             return_value=generations_data,
         ):
-            signals, _ = compute_signals(listings, sample_history_df)
+            signals, *_ = compute_signals(listings, sample_history_df)
         assert signals.empty or "fairly-priced" not in signals["olx_id"].values
 
     def test_excludes_obvious_total_loss_listings(self, sample_history_df, generations_data):
@@ -134,7 +134,7 @@ class TestComputeSignals:
         ])
 
         with patch("src.models.generations.load_generations", return_value=generations_data):
-            signals, _ = compute_signals(listings, sample_history_df)
+            signals, *_ = compute_signals(listings, sample_history_df)
 
         assert signals.empty or "risk-1" not in signals["olx_id"].values
 
@@ -170,7 +170,7 @@ class TestComputeSignals:
             "src.models.generations.load_generations",
             return_value=generations_data,
         ):
-            signals, _ = compute_signals(listings, sample_history_df)
+            signals, *_ = compute_signals(listings, sample_history_df)
 
         assert "maint-1" in signals["olx_id"].values
 
@@ -210,7 +210,7 @@ class TestComputeSignals:
         ])
 
         with patch("src.models.generations.load_generations", return_value=generations_data):
-            signals, _ = compute_signals(listings, sample_history_df)
+            signals, *_ = compute_signals(listings, sample_history_df)
 
         assert signals.empty or "new-flagged" not in signals["olx_id"].values
 
@@ -252,7 +252,7 @@ class TestComputeSignals:
             "src.models.generations.load_generations",
             return_value=generations_data,
         ):
-            signals, _ = compute_signals(listings, sample_history_df)
+            signals, *_ = compute_signals(listings, sample_history_df)
 
         # The whole point of issue #8: trust the new field even when p is high.
         assert "new-cleared" in signals["olx_id"].values
@@ -290,7 +290,7 @@ class TestComputeSignals:
         ])
 
         with patch("src.models.generations.load_generations", return_value=generations_data):
-            signals, _ = compute_signals(listings, sample_history_df)
+            signals, *_ = compute_signals(listings, sample_history_df)
 
         assert signals.empty or "legacy-damaged" not in signals["olx_id"].values
 
@@ -320,7 +320,7 @@ class TestComputeSignals:
         ])
 
         with patch("src.models.generations.load_generations", return_value=generations_data):
-            signals, _ = compute_signals(listings, sample_history_df)
+            signals, *_ = compute_signals(listings, sample_history_df)
 
         if not signals.empty:
             assert "junk-zero" not in signals["olx_id"].values
@@ -370,7 +370,7 @@ class TestBlockingDealReason:
             "src.models.generations.load_generations",
             return_value=generations_data,
         ):
-            signals, _ = compute_signals(listings, sample_history_df)
+            signals, *_ = compute_signals(listings, sample_history_df)
         assert signals.empty or "salvage-1" not in signals["olx_id"].values
 
     def test_blocks_right_hand_drive(
@@ -387,7 +387,7 @@ class TestBlockingDealReason:
             "src.models.generations.load_generations",
             return_value=generations_data,
         ):
-            signals, _ = compute_signals(listings, sample_history_df)
+            signals, *_ = compute_signals(listings, sample_history_df)
         assert signals.empty or "rhd-1" not in signals["olx_id"].values
 
     def test_blocks_salvage_phrasing_in_title_when_severity_unknown(
@@ -406,7 +406,7 @@ class TestBlockingDealReason:
             "src.models.generations.load_generations",
             return_value=generations_data,
         ):
-            signals, _ = compute_signals(listings, sample_history_df)
+            signals, *_ = compute_signals(listings, sample_history_df)
         assert signals.empty or "title-junta" not in signals["olx_id"].values
 
     def test_blocks_parts_only_phrasing_in_title(
@@ -424,7 +424,7 @@ class TestBlockingDealReason:
             "src.models.generations.load_generations",
             return_value=generations_data,
         ):
-            signals, _ = compute_signals(listings, sample_history_df)
+            signals, *_ = compute_signals(listings, sample_history_df)
         assert signals.empty or "title-pecas" not in signals["olx_id"].values
 
     def test_blocks_salvage_phrasing_in_description_only(
@@ -447,7 +447,7 @@ class TestBlockingDealReason:
             "src.models.generations.load_generations",
             return_value=generations_data,
         ):
-            signals, _ = compute_signals(listings, sample_history_df)
+            signals, *_ = compute_signals(listings, sample_history_df)
         assert signals.empty or "desc-junta" not in signals["olx_id"].values
 
     def test_blocks_non_runner_phrasing_in_description(
@@ -468,7 +468,7 @@ class TestBlockingDealReason:
             "src.models.generations.load_generations",
             return_value=generations_data,
         ):
-            signals, _ = compute_signals(listings, sample_history_df)
+            signals, *_ = compute_signals(listings, sample_history_df)
         assert signals.empty or "desc-runner" not in signals["olx_id"].values
 
     def test_keeps_severity_2_listings(
@@ -489,7 +489,7 @@ class TestBlockingDealReason:
             "src.models.generations.load_generations",
             return_value=generations_data,
         ):
-            signals, _ = compute_signals(listings, sample_history_df)
+            signals, *_ = compute_signals(listings, sample_history_df)
         assert "needs-repair" in signals["olx_id"].values
 
 
@@ -518,7 +518,7 @@ class TestRepairCostAdjustment:
             "src.models.generations.load_generations",
             return_value=generations_data,
         ):
-            signals, _ = compute_signals(listings, sample_history_df)
+            signals, *_ = compute_signals(listings, sample_history_df)
         assert signals.empty or "thin-margin" not in signals["olx_id"].values
 
     def test_severity_2_kept_when_undervaluation_covers_repair(
@@ -538,7 +538,7 @@ class TestRepairCostAdjustment:
             "src.models.generations.load_generations",
             return_value=generations_data,
         ):
-            signals, _ = compute_signals(listings, sample_history_df)
+            signals, *_ = compute_signals(listings, sample_history_df)
         assert "fat-margin" in signals["olx_id"].values
         row = signals[signals["olx_id"] == "fat-margin"].iloc[0]
         assert row["repair_cost_eur"] is not None
@@ -563,7 +563,7 @@ class TestRepairCostAdjustment:
             "src.models.generations.load_generations",
             return_value=generations_data,
         ):
-            signals, _ = compute_signals(listings, sample_history_df)
+            signals, *_ = compute_signals(listings, sample_history_df)
         row = signals[signals["olx_id"] == "clean"].iloc[0]
         assert row["repair_cost_eur"] is None
         assert row["est_profit_after_repair_eur"] is None

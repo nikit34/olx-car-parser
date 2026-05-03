@@ -49,9 +49,10 @@ def _load(_sig):
     return load_all()
 
 
-listings_df, history_df, signals_df, brands_models, *_rest = _load(
-    _release_cache_signature(),
-)
+(
+    listings_df, history_df, signals_df, brands_models, _turnover,
+    _portfolio, _unmatched, _importance, predictions_df,
+) = _load(_release_cache_signature())
 if listings_df.empty:
     st.warning("No data yet.")
     err = get_last_release_error()
@@ -213,12 +214,15 @@ st.dataframe(
 
 st.divider()
 
-# Build prediction lookups for the rest of the page.
+# Build prediction lookups for the rest of the page. Use predictions_df
+# (full active set with GB predictions), NOT signals_df (deals only).
+# Otherwise the band overlay below misses every active listing whose
+# asking price wasn't below the model's predicted — i.e., most of them.
 pred_lookup: dict[str, float] = {}
 fair_low_lookup: dict[str, float] = {}
 fair_high_lookup: dict[str, float] = {}
-if signals_df is not None and not signals_df.empty and "olx_id" in signals_df.columns:
-    for _, row in signals_df.iterrows():
+if predictions_df is not None and not predictions_df.empty:
+    for _, row in predictions_df.iterrows():
         oid = row.get("olx_id")
         if not isinstance(oid, str):
             continue
@@ -248,13 +252,23 @@ else:
     ss = scatter_df[is_sold.reindex(scatter_df.index, fill_value=False)]
 
     fig = go.Figure()
+    # Sold rows: warmer colour + higher alpha than the v1 grey-hollow,
+    # so they read as part of the data instead of "background noise".
+    # User feedback: "более заметные распроданные точки".
     if not ss.empty:
         fig.add_scatter(
             x=ss["mileage_km"], y=ss["price_eur"],
             mode="markers",
-            marker=dict(size=8, color="#888888", opacity=0.32, symbol="circle-open"),
+            marker=dict(
+                size=10, color="rgba(176, 92, 92, 0.55)",
+                symbol="x-thin", line=dict(width=2, color="rgba(176, 92, 92, 0.85)"),
+            ),
             name=f"sold ({len(ss)})",
-            hovertemplate="<b>€%{y:,.0f}</b> · %{x:,.0f} km<extra></extra>",
+            customdata=ss[["olx_id", "url"]].values,
+            hovertemplate=(
+                "<b>SOLD · €%{y:,.0f}</b> · %{x:,.0f} km<br>"
+                "%{customdata[0]} — click to open<extra></extra>"
+            ),
         )
     if not sa.empty:
         has_year = bool(sa["year"].notna().any())
@@ -262,16 +276,20 @@ else:
             x=sa["mileage_km"], y=sa["price_eur"],
             mode="markers",
             marker=dict(
-                size=10,
+                size=11,
                 color=sa["year"] if has_year else "#1f77b4",
                 colorscale="Turbo",
                 showscale=has_year,
                 colorbar=dict(title="year") if has_year else None,
-                opacity=0.85,
+                opacity=0.88,
                 line=dict(width=0.5, color="#222"),
             ),
             name=f"active ({len(sa)})",
-            hovertemplate="<b>€%{y:,.0f}</b> · %{x:,.0f} km<extra></extra>",
+            customdata=sa[["olx_id", "url"]].values,
+            hovertemplate=(
+                "<b>€%{y:,.0f}</b> · %{x:,.0f} km<br>"
+                "%{customdata[0]} — click to open<extra></extra>"
+            ),
         )
     if pred_lookup and not sa.empty:
         band = sa.copy()
@@ -328,7 +346,27 @@ else:
         legend=dict(orientation="h", yanchor="bottom", y=1.02,
                     xanchor="right", x=1),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    # ``on_select="rerun"`` lets the user pick points; we read the
+    # selection's customdata (olx_id + url) and offer a one-click
+    # link button below the chart so they can jump to the listing.
+    chart_event = st.plotly_chart(
+        fig, use_container_width=True,
+        on_select="rerun", selection_mode="points",
+        key="model_details_scatter",
+    )
+    sel_pts = (
+        chart_event.selection.points
+        if chart_event and chart_event.selection else []
+    )
+    if sel_pts:
+        # ``customdata`` indexes match the trace ordering above. Plotly
+        # returns a single-row list per click; if user selects multiple,
+        # we link the first.
+        cd = sel_pts[0].get("customdata") or []
+        if len(cd) >= 2 and cd[1]:
+            st.link_button(
+                f"Open listing {cd[0]} ↗", cd[1], use_container_width=True,
+            )
 
 # --- Panel: Time-on-market histogram (sold only) ---
 st.subheader("Time on market — sold listings")

@@ -44,7 +44,10 @@ def load_data(_cache_signature: tuple[float, int]):
     return load_all()
 
 
-listings_df, history_df, signals_df, brands_models, turnover_df, _portfolio_init, _unmatched_df, importance_df = load_data(_release_cache_signature())
+(
+    listings_df, history_df, signals_df, brands_models, turnover_df,
+    _portfolio_init, _unmatched_df, importance_df, predictions_df,
+) = load_data(_release_cache_signature())
 
 # ---------------------------------------------------------------------------
 # Sidebar — filters
@@ -442,20 +445,29 @@ for _, deal in deals.iterrows():
                                   if c in market.columns]
 
                     fig = go.Figure()
+                    # Pack olx_id + url into customdata as the first two
+                    # columns (followed by the user-facing hover_cols),
+                    # so the on_select handler below can extract the
+                    # listing URL by fixed index.
+                    sold_cd_cols = ["olx_id", "url"] + [
+                        c for c in hover_cols if c not in ("url",)
+                    ]
+                    active_cd_cols = sold_cd_cols
                     if not market_sold.empty:
                         fig.add_scatter(
                             x=market_sold["mileage_km"],
                             y=market_sold["price_eur"],
                             mode="markers",
-                            marker=dict(size=8, color="#888888", opacity=0.32,
-                                        symbol="circle-open"),
+                            marker=dict(
+                                size=10, color="rgba(176, 92, 92, 0.55)",
+                                symbol="x-thin",
+                                line=dict(width=2, color="rgba(176, 92, 92, 0.85)"),
+                            ),
                             name=f"sold / expired ({len(market_sold)})",
-                            customdata=market_sold[hover_cols].values if hover_cols else None,
+                            customdata=market_sold[sold_cd_cols].values,
                             hovertemplate=(
-                                "<b>%{y:,.0f} EUR</b> · %{x:,.0f} km<br>"
-                                + "<br>".join(f"{c}: %{{customdata[{i}]}}"
-                                              for i, c in enumerate(hover_cols))
-                                + "<extra></extra>"
+                                "<b>SOLD · €%{y:,.0f}</b> · %{x:,.0f} km<br>"
+                                "%{customdata[0]} — click to open<extra></extra>"
                             ),
                         )
                     if not market_active.empty:
@@ -469,21 +481,19 @@ for _, deal in deals.iterrows():
                             y=market_active["price_eur"],
                             mode="markers",
                             marker=dict(
-                                size=10,
+                                size=11,
                                 color=market_active["year"] if has_year else "#1f77b4",
                                 colorscale="Turbo",
                                 showscale=has_year,
                                 colorbar=dict(title="year") if has_year else None,
-                                opacity=0.85,
+                                opacity=0.88,
                                 line=dict(width=0.5, color="#222"),
                             ),
                             name=f"active ({len(market_active)})",
-                            customdata=market_active[hover_cols].values if hover_cols else None,
+                            customdata=market_active[active_cd_cols].values,
                             hovertemplate=(
-                                "<b>%{y:,.0f} EUR</b> · %{x:,.0f} km<br>"
-                                + "<br>".join(f"{c}: %{{customdata[{i}]}}"
-                                              for i, c in enumerate(hover_cols))
-                                + "<extra></extra>"
+                                "<b>€%{y:,.0f}</b> · %{x:,.0f} km<br>"
+                                "%{customdata[0]} — click to open<extra></extra>"
                             ),
                         )
                     # Model band overlay — make the P10/P90 envelope visible
@@ -492,16 +502,20 @@ for _, deal in deals.iterrows():
                     # 80 % CQR range. Only drawn for active comps (sold/
                     # historical predictions are stale).
                     band_src = market_active.copy()
-                    if not band_src.empty and not signals_df.empty:
-                        sig_idx = signals_df.set_index("olx_id")
+                    # Use predictions_df (full active set) — NOT signals_df
+                    # (deal-only). Otherwise the band only covers listings
+                    # that scored above the undervaluation threshold and
+                    # mostly disappears for "not-a-deal" comparables.
+                    if not band_src.empty and not predictions_df.empty:
+                        pred_idx = predictions_df.set_index("olx_id")
                         for col, target in (
                             ("predicted_price", "predicted"),
                             ("fair_price_low", "fair_low"),
                             ("fair_price_high", "fair_high"),
                         ):
                             band_src[target] = (
-                                band_src["olx_id"].map(sig_idx[col])
-                                if col in sig_idx.columns else None
+                                band_src["olx_id"].map(pred_idx[col])
+                                if col in pred_idx.columns else None
                             )
                         band_src = band_src.dropna(
                             subset=["predicted", "fair_low", "fair_high"]
@@ -555,8 +569,22 @@ for _, deal in deals.iterrows():
                         legend=dict(orientation="h", yanchor="bottom", y=1.02,
                                     xanchor="right", x=1),
                     )
-                    st.plotly_chart(fig, use_container_width=True,
-                                    key=f"chart_{deal['olx_id']}")
+                    chart_event = st.plotly_chart(
+                        fig, use_container_width=True,
+                        on_select="rerun", selection_mode="points",
+                        key=f"chart_{deal['olx_id']}",
+                    )
+                    sel_pts = (
+                        chart_event.selection.points
+                        if chart_event and chart_event.selection else []
+                    )
+                    if sel_pts:
+                        cd = sel_pts[0].get("customdata") or []
+                        if len(cd) >= 2 and cd[1]:
+                            st.link_button(
+                                f"Open {cd[0]} ↗", cd[1],
+                                use_container_width=True,
+                            )
 
                     _med_p_active = (
                         int(market_active["price_eur"].median())

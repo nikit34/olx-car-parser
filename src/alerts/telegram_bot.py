@@ -139,7 +139,7 @@ def check_and_send_alerts() -> int:
 
     listings, history = db_data
     listings = enrich_listings(listings)
-    signals, _ = compute_signals(listings, history)
+    signals, *_ = compute_signals(listings, history)
 
     if signals.empty:
         logger.info("No deal signals found.")

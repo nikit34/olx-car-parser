@@ -561,7 +561,7 @@ def compute_signals(
     listings_df: pd.DataFrame,
     history_df: pd.DataFrame,
     turnover: pd.DataFrame | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Find undervalued listings and rank by flip potential.
 
     Price model (gradient boosting) uses 20 features including LLM-extracted
@@ -582,7 +582,7 @@ def compute_signals(
       gets ±27% bands).
     """
     if listings_df.empty:
-        return pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
     import numpy as np
 
@@ -1015,7 +1015,19 @@ def compute_signals(
     df = pd.DataFrame(signals)
     if not df.empty:
         df = df.sort_values("flip_score", ascending=False)
-    return df, importance_df
+
+    # Per-listing GB predictions for the FULL active set, regardless of
+    # whether the listing qualified as a deal. The deal-card scatter
+    # band overlay needs predictions for every comparable listing in
+    # the segment — not just the ones that scored above the
+    # undervaluation threshold and made it into ``df``.
+    predictions_df = pd.DataFrame({
+        "olx_id": list(gb_predictions.keys()),
+        "predicted_price": list(gb_predictions.values()),
+        "fair_price_low": [gb_fair_low.get(o) for o in gb_predictions],
+        "fair_price_high": [gb_fair_high.get(o) for o in gb_predictions],
+    })
+    return df, importance_df, predictions_df
 
 
 
@@ -1073,12 +1085,15 @@ def load_all():
             plausible = (real_km > 0) & (real_km <= _SANITY_MAX_MILEAGE_KM)
             listings["mileage_km"] = real_km.where(plausible).fillna(listings["mileage_km"])
         turnover = compute_turnover_stats(listings)
-        signals, importance = compute_signals(listings, history, turnover=turnover)
+        signals, importance, predictions = compute_signals(
+            listings, history, turnover=turnover,
+        )
     else:
         listings = pd.DataFrame()
         history = pd.DataFrame()
         signals = pd.DataFrame()
         importance = pd.DataFrame()
+        predictions = pd.DataFrame()
         turnover = pd.DataFrame()
 
     portfolio = load_portfolio()
@@ -1091,4 +1106,7 @@ def load_all():
 
     unmatched = load_unmatched()
 
-    return listings, history, signals, brands_models, turnover, portfolio, unmatched, importance
+    return (
+        listings, history, signals, brands_models, turnover,
+        portfolio, unmatched, importance, predictions,
+    )
