@@ -22,6 +22,14 @@ from src.models.portfolio import PortfolioDeal
 
 def upsert_listing(session: Session, data: dict) -> Listing:
     """Insert or update a listing by olx_id. Returns the Listing object."""
+    # Canonicalise brand at write time so "VW" / "Citroen" don't land
+    # alongside "Volkswagen" / "Citroën" in the segment ranker. The
+    # ``scripts/normalize_brands.py`` one-shot fixes legacy rows that
+    # were written before this hook landed.
+    from src.parser.brand_normalize import normalize_brand
+    if "brand" in data:
+        data["brand"] = normalize_brand(data["brand"])
+
     listing = session.query(Listing).filter_by(olx_id=data["olx_id"]).first()
     now = _utcnow()
     # Use the site-parsed date if available, fall back to scrape time.
