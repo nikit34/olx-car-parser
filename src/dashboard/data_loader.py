@@ -170,6 +170,18 @@ def _download_asset(url: str, dest: Path) -> bool:
 # leaving the dashboard pointing at an empty DB. (2026-05-03 fix.)
 _RELEASE_CHECK_MARKER = PROJECT_ROOT / "data" / ".last_release_check"
 
+# Production DB is ~90 MB. Anything under 1 MB is a stub (test init,
+# half-written file from a partial download, sqlite empty schema). We
+# use this to gate "is the local cache trustworthy" decisions — without
+# it, a 60 KB stub fooled both ``_ensure_release_assets`` (treated as
+# present, skipped CDN fallback) and the empty-state UI (loaded zero
+# listings, looked like "no data yet" instead of "broken cache").
+_DB_VALID_MIN_BYTES = 1_000_000
+
+
+def _looks_like_real_db() -> bool:
+    return DB_PATH.exists() and DB_PATH.stat().st_size >= _DB_VALID_MIN_BYTES
+
 
 def _force_next_check():
     """Reset the check timer so the next _ensure_db() call hits GitHub API."""
@@ -215,7 +227,7 @@ def _ensure_release_assets() -> bool:
 
     repo = os.environ.get("GITHUB_REPOSITORY", "nikit34/olx-car-parser")
     if not repo:
-        return DB_PATH.exists()
+        return _looks_like_real_db()
 
     assets = _list_release_assets(repo)
     if assets:
@@ -228,20 +240,34 @@ def _ensure_release_assets() -> bool:
                 _download_asset(url, dest)
         _RELEASE_CHECK_MARKER.parent.mkdir(parents=True, exist_ok=True)
         _RELEASE_CHECK_MARKER.touch()
-        return DB_PATH.exists()
+        if _looks_like_real_db():
+            return True
+        # API succeeded but our local DB is still suspicious (stub from
+        # an earlier failed run, partial download, missing asset). Drop
+        # through to the CDN path before giving up.
 
-    # API failed (rate limit / network / missing release). On a fresh
-    # cold-start with no local DB we still need *something* — fall
-    # through to the public CDN URL, which has no API rate limit. We
-    # download unconditionally because we lost the ability to compare
-    # remote.updated_at vs local.mtime; on Streamlit Cloud cold-starts
-    # the local file doesn't exist anyway, so this is the correct
-    # behaviour. Marker is NOT stamped so the next call retries the
-    # API in case the rate-limit window cleared.
-    if not DB_PATH.exists():
+    # API failed / returned empty / left us with a stub DB. Fall through
+    # to the public CDN URL — it has no API rate limit and works for
+    # public release assets. We download unconditionally because we
+    # lost the ability to compare remote.updated_at vs local.mtime;
+    # on Streamlit Cloud cold-starts the local file is missing or stub
+    # anyway, so this is the correct behaviour. Marker is NOT stamped
+    # so the next call retries the API in case the rate-limit window
+    # cleared (which would let us recover the mtime short-circuit).
+    if not _looks_like_real_db():
+        global _LAST_RELEASE_ERROR
         for name, dest in _RELEASE_ASSETS:
             _download_asset(_public_download_url(repo, name), dest)
-    return DB_PATH.exists()
+        if _looks_like_real_db():
+            # CDN download succeeded — clear any earlier API error so the
+            # empty-state banner doesn't persist on a now-working dashboard.
+            _LAST_RELEASE_ERROR = None
+        elif not _LAST_RELEASE_ERROR:
+            _LAST_RELEASE_ERROR = (
+                "CDN fallback download did not produce a valid DB "
+                f"(local size: {DB_PATH.stat().st_size if DB_PATH.exists() else 0} bytes)"
+            )
+    return _looks_like_real_db()
 
 
 def _ensure_db() -> bool:
