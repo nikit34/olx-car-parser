@@ -486,6 +486,54 @@ for _, deal in deals.iterrows():
                                 + "<extra></extra>"
                             ),
                         )
+                    # Model band overlay — make the P10/P90 envelope visible
+                    # against the dot cloud so the user can see at a glance
+                    # whether the listing sits inside or below the model's
+                    # 80 % CQR range. Only drawn for active comps (sold/
+                    # historical predictions are stale).
+                    band_src = market_active.copy()
+                    if not band_src.empty and not signals_df.empty:
+                        sig_idx = signals_df.set_index("olx_id")
+                        for col, target in (
+                            ("predicted_price", "predicted"),
+                            ("fair_price_low", "fair_low"),
+                            ("fair_price_high", "fair_high"),
+                        ):
+                            band_src[target] = (
+                                band_src["olx_id"].map(sig_idx[col])
+                                if col in sig_idx.columns else None
+                            )
+                        band_src = band_src.dropna(
+                            subset=["predicted", "fair_low", "fair_high"]
+                        ).sort_values("mileage_km")
+                    if not band_src.empty:
+                        win = max(3, min(7, len(band_src) // 5))
+                        sm_low = band_src["fair_low"].rolling(win, min_periods=1, center=True).median()
+                        sm_high = band_src["fair_high"].rolling(win, min_periods=1, center=True).median()
+                        sm_pred = band_src["predicted"].rolling(win, min_periods=1, center=True).median()
+                        fig.add_scatter(
+                            x=band_src["mileage_km"], y=sm_low,
+                            mode="lines",
+                            line=dict(color="rgba(46, 160, 67, 0.65)", width=1.5, dash="dash"),
+                            name="fair low (P10)",
+                            hovertemplate="<b>P10: €%{y:,.0f}</b> @ %{x:,.0f} km<extra></extra>",
+                        )
+                        fig.add_scatter(
+                            x=band_src["mileage_km"], y=sm_high,
+                            mode="lines",
+                            line=dict(color="rgba(46, 160, 67, 0.65)", width=1.5, dash="dash"),
+                            fill="tonexty", fillcolor="rgba(46, 160, 67, 0.18)",
+                            name="fair high (P90)",
+                            hovertemplate="<b>P90: €%{y:,.0f}</b> @ %{x:,.0f} km<extra></extra>",
+                        )
+                        fig.add_scatter(
+                            x=band_src["mileage_km"], y=sm_pred,
+                            mode="lines",
+                            line=dict(color="rgba(31, 119, 60, 0.95)", width=2.4),
+                            name="model predicted (P50)",
+                            hovertemplate="<b>predicted: €%{y:,.0f}</b> @ %{x:,.0f} km<extra></extra>",
+                        )
+
                     if not market_self.empty:
                         fig.add_scatter(
                             x=market_self["mileage_km"],

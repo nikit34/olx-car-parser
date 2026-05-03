@@ -277,18 +277,49 @@ else:
         band = sa.copy()
         band["fair_low"] = band["olx_id"].map(fair_low_lookup)
         band["fair_high"] = band["olx_id"].map(fair_high_lookup)
-        band = band.dropna(subset=["fair_low", "fair_high"]).sort_values("mileage_km")
+        band["predicted"] = band["olx_id"].map(pred_lookup)
+        band = band.dropna(
+            subset=["fair_low", "fair_high", "predicted"],
+        ).sort_values("mileage_km")
         if not band.empty:
-            fig.add_scatter(
-                x=band["mileage_km"], y=band["fair_low"],
-                mode="lines", line=dict(color="rgba(50, 200, 50, 0.0)"),
-                showlegend=False, hoverinfo="skip",
+            # Smooth via rolling median across mileage so a single
+            # quirky listing's prediction doesn't kink the curve. The
+            # band itself is the model's 80 % CQR interval (P10–P90);
+            # the centre line is the calibrated median (P50).
+            win = max(3, min(7, len(band) // 5))
+            sm_low = (
+                band["fair_low"].rolling(win, min_periods=1, center=True).median()
             )
+            sm_high = (
+                band["fair_high"].rolling(win, min_periods=1, center=True).median()
+            )
+            sm_pred = (
+                band["predicted"].rolling(win, min_periods=1, center=True).median()
+            )
+            # Lower edge (P10) — visible dashed line.
             fig.add_scatter(
-                x=band["mileage_km"], y=band["fair_high"],
-                mode="lines", line=dict(color="rgba(50, 200, 50, 0.0)"),
-                fill="tonexty", fillcolor="rgba(50, 200, 50, 0.10)",
-                name="model 80% band", hoverinfo="skip",
+                x=band["mileage_km"], y=sm_low,
+                mode="lines",
+                line=dict(color="rgba(46, 160, 67, 0.65)", width=1.5, dash="dash"),
+                name="fair low (P10)",
+                hovertemplate="<b>P10: €%{y:,.0f}</b> @ %{x:,.0f} km<extra></extra>",
+            )
+            # Upper edge (P90) — visible dashed line with fill back to P10.
+            fig.add_scatter(
+                x=band["mileage_km"], y=sm_high,
+                mode="lines",
+                line=dict(color="rgba(46, 160, 67, 0.65)", width=1.5, dash="dash"),
+                fill="tonexty", fillcolor="rgba(46, 160, 67, 0.18)",
+                name="fair high (P90)",
+                hovertemplate="<b>P90: €%{y:,.0f}</b> @ %{x:,.0f} km<extra></extra>",
+            )
+            # Center prediction (P50) — solid darker line.
+            fig.add_scatter(
+                x=band["mileage_km"], y=sm_pred,
+                mode="lines",
+                line=dict(color="rgba(31, 119, 60, 0.95)", width=2.4),
+                name="model predicted (P50)",
+                hovertemplate="<b>predicted: €%{y:,.0f}</b> @ %{x:,.0f} km<extra></extra>",
             )
     fig.update_layout(
         xaxis_title="Mileage (km)", yaxis_title="Price (EUR)",
