@@ -633,6 +633,12 @@ def get_listings_df(session: Session) -> pd.DataFrame:
             "photo_count": l.photo_count, "description_length": l.description_length,
             "city": l.city, "district": l.district,
             "seller_type": l.seller_type, "is_active": l.is_active,
+            # ``generation`` is populated by the scrape pipeline at
+            # upsert time (cli.py:185 calls get_generation). We surface
+            # it here so the dashboard's segment-detail and ranker
+            # pages can group by (brand, model, generation) without
+            # rerunning prepare_active_for_model just to recover it.
+            "generation": l.generation,
             # ``description`` was previously excluded for memory reasons,
             # but the dashboard's hard-block scan needs to see phrases like
             # "junta queimada" / "só reboque" that often live only in the

@@ -78,7 +78,11 @@ if seg.empty:
     st.info("No listings in segment.")
     st.stop()
 
-# Generation pick is optional — empty = all
+# Generation pick is optional — empty = all. Defensive: ``generation``
+# was added to ``get_listings_df`` on 2026-05-03; older DB releases
+# pulled before that change won't have the column.
+if "generation" not in seg.columns:
+    seg["generation"] = ""
 gens = sorted({g for g in seg["generation"].fillna("").tolist() if g})
 gen_options = ["(all)"] + gens
 gen_pick = st.sidebar.selectbox("Generation", gen_options)

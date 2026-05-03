@@ -236,7 +236,10 @@ def compute_segment_time_series(
         df = df[df["duplicate_of"].isna()]
     df["scraped_at"] = pd.to_datetime(df["scraped_at"], errors="coerce", utc=True)
     df["bucket"] = df["scraped_at"].dt.to_period(freq).dt.start_time
-    df["generation"] = df.get("generation", "").fillna("").astype(str)
+    if "generation" in df.columns:
+        df["generation"] = df["generation"].fillna("").astype(str)
+    else:
+        df["generation"] = ""
 
     # Active observations: each scrape = one observation. We take the
     # median of all observed prices in the bucket per segment.
