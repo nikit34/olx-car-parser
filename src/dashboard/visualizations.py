@@ -105,8 +105,25 @@ def _apply_layout(fig, **kw):
 # ---------------------------------------------------------------------------
 # Data loading — keep module-level work lightweight (no model training)
 # ---------------------------------------------------------------------------
+def _release_cache_signature() -> tuple[float, int]:
+    """Stable cache key that flips whenever the local DB cache changes.
+
+    Calling ``_ensure_release_assets`` first lets the marker-gated TTL
+    actually hit the GitHub API on every dashboard rerun (cheap when
+    fresh, decisive when stale). Returning ``(mtime, size)`` makes
+    ``@st.cache_data`` invalidate as soon as the file is replaced — the
+    bug we just hit was Streamlit serving a 10-min-stale empty df even
+    after the underlying release refreshed."""
+    from data_loader import _ensure_release_assets, DB_PATH
+    _ensure_release_assets()
+    if not DB_PATH.exists():
+        return (0.0, 0)
+    s = DB_PATH.stat()
+    return (s.st_mtime, s.st_size)
+
+
 @st.cache_data(ttl=600)
-def get_data():
+def get_data(_cache_signature: tuple[float, int]):
     db_data = load_from_db()
     if db_data is None:
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
@@ -203,7 +220,7 @@ def _prepare_active(listings):
     return active
 
 
-listings, history, turnover, competition = get_data()
+listings, history, turnover, competition = get_data(_release_cache_signature())
 
 if listings.empty:
     st.error("No data yet. Scraper runs every 4 hours via GitHub Actions.")

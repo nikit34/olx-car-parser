@@ -12,17 +12,33 @@ _project_root = _dashboard_dir.parent.parent
 _sys.path.insert(0, str(_dashboard_dir))
 _sys.path.insert(0, str(_project_root))
 
-from data_loader import load_all, _force_next_check
+from data_loader import load_all, _force_next_check, _ensure_release_assets, DB_PATH
 
 st.set_page_config(page_title="Car Deals", layout="wide")
 
 
+def _release_cache_signature() -> tuple[float, int]:
+    """Cache key that invalidates the moment the local DB cache changes.
+
+    Without this the @st.cache_data(ttl=300) below would serve a stale
+    (empty / old) load_all() result for up to 5 minutes after the
+    GitHub Release refresh, even though _ensure_release_assets had
+    already pulled the new file. Calling _ensure_release_assets here is
+    cheap (marker-gated TTL inside) and gives us the up-to-date mtime.
+    """
+    _ensure_release_assets()
+    if not DB_PATH.exists():
+        return (0.0, 0)
+    s = DB_PATH.stat()
+    return (s.st_mtime, s.st_size)
+
+
 @st.cache_data(ttl=300)
-def load_data():
+def load_data(_cache_signature: tuple[float, int]):
     return load_all()
 
 
-listings_df, history_df, signals_df, brands_models, turnover_df, _portfolio_init, _unmatched_df, importance_df = load_data()
+listings_df, history_df, signals_df, brands_models, turnover_df, _portfolio_init, _unmatched_df, importance_df = load_data(_release_cache_signature())
 
 # ---------------------------------------------------------------------------
 # Sidebar — filters
