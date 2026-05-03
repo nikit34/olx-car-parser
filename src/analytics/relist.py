@@ -492,6 +492,9 @@ def build_outcomes_df(
     fees_pct: float = 0.03,
     flat_fees_eur: float = 200.0,
     min_score: float = DEFAULT_MATCH_THRESHOLD,
+    min_gap_days: float = 7.0,
+    min_abs_delta_pct: float = 5.0,
+    max_abs_delta_pct: float = 100.0,
     require_both_sides_sold: bool = True,
     listings_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
@@ -506,6 +509,22 @@ def build_outcomes_df(
       - ``olx_id``     ← original_olx_id  (the listing a hypothetical
                          flipper would have purchased)
 
+    Filtering is tighter than the underlying matcher because most
+    detected re-listings are dealer reposts of the same unit at the
+    same price, not actual resales. The 2026-05 production cohort
+    showed:
+
+      - 67 % of matches have gap ≤ 7 days (mostly same-day or
+        next-day reposts triggered by ``mark_inactive`` false-sold)
+      - median price_delta_pct ≈ 0 % (no real margin)
+      - long tail of price_delta_pct > 100 % is price-parsing
+        artefacts (currency / mileage-as-price typos), not flips
+
+    Defaults strip those out: ``min_gap_days=7``, ``min_abs_delta_pct=5``,
+    ``max_abs_delta_pct=100``. With the 2026-05 cohort the strict
+    defaults yield ~65 events vs the 459 raw matches — a much cleaner
+    signal for ``calibrate_thresholds``.
+
     *require_both_sides_sold* (default True) keeps only events where
     the re-listed candidate has itself become inactive with reason
     ``sold``, i.e. the proxy resale actually closed. Active re-lists
@@ -517,10 +536,16 @@ def build_outcomes_df(
     if relist_df is None or relist_df.empty:
         return pd.DataFrame(columns=cols)
 
+    abs_delta = relist_df["price_delta_pct"].abs()
     mask = (
         (relist_df["match_score"].fillna(0) >= min_score)
         & relist_df["original_price_eur"].notna()
         & relist_df["relist_price_eur"].notna()
+        & (relist_df["original_price_eur"].fillna(0) > 0)
+        & (relist_df["gap_days"].fillna(0) >= min_gap_days)
+        & relist_df["price_delta_pct"].notna()
+        & (abs_delta >= min_abs_delta_pct)
+        & (abs_delta <= max_abs_delta_pct)
     )
     df = relist_df[mask].copy()
 

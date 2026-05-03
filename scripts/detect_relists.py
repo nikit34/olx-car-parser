@@ -22,6 +22,8 @@ from __future__ import annotations
 import argparse
 import logging
 
+import pandas as pd
+
 from src.analytics.relist import (
     DEFAULT_MATCH_THRESHOLD,
     compute_segment_dom_median,
@@ -91,12 +93,18 @@ def main() -> int:
     top = relist_df.nlargest(min(10, len(relist_df)), "match_score")
     log.info("Top matches:")
     for _, row in top.iterrows():
+        # ``or 0`` doesn't catch NaN (bool(NaN) is True) so use explicit
+        # pd.notna; otherwise we get "+nan%" in the log when the original
+        # had price_eur=0 and price_delta_pct couldn't be computed.
+        delta_eur = row.get("price_delta_eur")
+        delta_pct = row.get("price_delta_pct")
+        delta_eur_str = f"{float(delta_eur):+.0f}€" if pd.notna(delta_eur) else "n/a"
+        delta_pct_str = f"{float(delta_pct):+.1f}%" if pd.notna(delta_pct) else "n/a"
         log.info(
-            "  %s -> %s: score=%.2f, gap=%.0fd, Δ=%+.0f€ (%+.1f%%), window=%dd",
+            "  %s -> %s: score=%.2f, gap=%.0fd, Δ=%s (%s), window=%dd",
             row["original_olx_id"], row["relist_olx_id"],
             row["match_score"], row["gap_days"],
-            row.get("price_delta_eur") or 0,
-            row.get("price_delta_pct") or 0,
+            delta_eur_str, delta_pct_str,
             row.get("window_days_used") or 0,
         )
 

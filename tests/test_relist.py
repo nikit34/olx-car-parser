@@ -476,3 +476,69 @@ def test_build_outcomes_df_filters_by_min_score():
         relist_df, listings_df=listings_df, min_score=0.65,
     )
     assert out.empty
+
+
+def test_build_outcomes_df_filters_short_gap_reposts():
+    """Default min_gap_days=7 strips out same-day / next-day reposts
+    (the bulk of detected matches in production)."""
+    relist_df = pd.DataFrame([_relist_row(gap_days=2.0)])
+    listings_df = pd.DataFrame([
+        {"olx_id": "relist", "is_active": False, "deactivation_reason": "sold"},
+    ])
+    out = build_outcomes_df(relist_df, listings_df=listings_df)
+    assert out.empty
+
+
+def test_build_outcomes_df_filters_zero_delta_reposts():
+    """Default min_abs_delta_pct=5 strips out same-price reposts."""
+    relist_df = pd.DataFrame([_relist_row(
+        gap_days=14.0, price_delta_pct=0.5,  # passes gap, fails delta
+    )])
+    listings_df = pd.DataFrame([
+        {"olx_id": "relist", "is_active": False, "deactivation_reason": "sold"},
+    ])
+    out = build_outcomes_df(relist_df, listings_df=listings_df)
+    assert out.empty
+
+
+def test_build_outcomes_df_keeps_negative_flip():
+    """A flip-down (sold cheaper than the original ask) is still
+    realised P&L data — keeps it for calibration; the algorithm
+    learns from losses too."""
+    relist_df = pd.DataFrame([_relist_row(
+        gap_days=14.0, price_delta_pct=-15.0,
+        relist_price_eur=12_750.0, price_delta_eur=-2250.0,
+    )])
+    listings_df = pd.DataFrame([
+        {"olx_id": "relist", "is_active": False, "deactivation_reason": "sold"},
+    ])
+    out = build_outcomes_df(relist_df, listings_df=listings_df)
+    assert len(out) == 1
+
+
+def test_build_outcomes_df_filters_price_parsing_artifacts():
+    """Default max_abs_delta_pct=100 strips price-parsing artefacts
+    (currency / mileage-as-price typos can produce 1000 %+ deltas)."""
+    relist_df = pd.DataFrame([_relist_row(
+        gap_days=14.0, price_delta_pct=500.0,
+    )])
+    listings_df = pd.DataFrame([
+        {"olx_id": "relist", "is_active": False, "deactivation_reason": "sold"},
+    ])
+    out = build_outcomes_df(relist_df, listings_df=listings_df)
+    assert out.empty
+
+
+def test_build_outcomes_df_rejects_zero_buy_price():
+    """A 0-priced original makes margin computation meaningless.
+    Filter it out even when the gap/delta filters would otherwise pass."""
+    relist_df = pd.DataFrame([_relist_row(
+        original_price_eur=0.0,
+        gap_days=14.0,
+        price_delta_pct=10.0,
+    )])
+    listings_df = pd.DataFrame([
+        {"olx_id": "relist", "is_active": False, "deactivation_reason": "sold"},
+    ])
+    out = build_outcomes_df(relist_df, listings_df=listings_df)
+    assert out.empty
