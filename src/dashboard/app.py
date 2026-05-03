@@ -12,7 +12,10 @@ _project_root = _dashboard_dir.parent.parent
 _sys.path.insert(0, str(_dashboard_dir))
 _sys.path.insert(0, str(_project_root))
 
-from data_loader import load_all, _force_next_check, _ensure_release_assets, DB_PATH
+from data_loader import (
+    load_all, _force_next_check, _ensure_release_assets, DB_PATH,
+    get_last_release_error,
+)
 
 st.set_page_config(page_title="Car Deals", layout="wide")
 
@@ -47,6 +50,13 @@ st.sidebar.title("Filters")
 
 if listings_df.empty:
     st.sidebar.warning("No data yet. Scraper runs every 4 hours via GitHub Actions.")
+    err = get_last_release_error()
+    if err:
+        st.sidebar.error(f"Release fetch failed: {err}")
+    if st.sidebar.button("Force refresh"):
+        _force_next_check()
+        st.cache_data.clear()
+        st.rerun()
     st.stop()
 else:
     st.sidebar.success(f"{len(listings_df)} listings")

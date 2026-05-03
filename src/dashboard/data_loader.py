@@ -70,8 +70,26 @@ def _github_token() -> str | None:
         return None
 
 
+_LAST_RELEASE_ERROR: str | None = None
+
+
+def get_last_release_error() -> str | None:
+    """Surface the most recent release-fetch failure to the empty-state UI.
+
+    Without this the dashboard says "No data yet" with zero hint why —
+    rate limit, network, missing release, etc. all look identical to the
+    user."""
+    return _LAST_RELEASE_ERROR
+
+
 def _list_release_assets(repo: str) -> dict[str, dict] | None:
-    """Return {asset_name: asset_dict} for the latest-data release."""
+    """Return {asset_name: asset_dict} for the latest-data release.
+
+    On failure stamps ``_LAST_RELEASE_ERROR`` with a human-readable
+    reason (HTTP status / exception class) so the empty-state banner
+    can explain what's going on.
+    """
+    global _LAST_RELEASE_ERROR
     import httpx
 
     api_url = f"https://api.github.com/repos/{repo}/releases/tags/latest-data"
@@ -82,10 +100,34 @@ def _list_release_assets(repo: str) -> dict[str, dict] | None:
     try:
         resp = httpx.get(api_url, headers=headers, timeout=10)
         if resp.status_code != 200:
+            hint = ""
+            if resp.status_code in (403, 429):
+                hint = (
+                    " (likely rate-limited — set GITHUB_TOKEN in env or "
+                    "Streamlit secrets to lift the 60-req/hour cap)"
+                )
+            _LAST_RELEASE_ERROR = (
+                f"GitHub API returned HTTP {resp.status_code} for "
+                f"releases/tags/latest-data{hint}"
+            )
             return None
+        _LAST_RELEASE_ERROR = None
         return {a["name"]: a for a in resp.json().get("assets", [])}
-    except Exception:
+    except Exception as e:
+        _LAST_RELEASE_ERROR = f"GitHub API call failed: {type(e).__name__}: {e}"
         return None
+
+
+def _public_download_url(repo: str, asset_name: str) -> str:
+    """CDN-backed direct URL for a public release asset.
+
+    Bypasses the GitHub API rate limit entirely — works even when
+    ``_list_release_assets`` returned None due to a 403/429. Costs us
+    the ``updated_at`` comparison (we always download on this path),
+    but on Streamlit Cloud cold-starts the local file doesn't exist
+    anyway so the comparison wouldn't have skipped the download.
+    """
+    return f"https://github.com/{repo}/releases/download/latest-data/{asset_name}"
 
 
 def _asset_url_if_newer(asset: dict, local_path: Path) -> str | None:
@@ -176,22 +218,29 @@ def _ensure_release_assets() -> bool:
         return DB_PATH.exists()
 
     assets = _list_release_assets(repo)
-    if not assets:
-        # API failure (rate limit, network, missing release). DON'T stamp
-        # the marker — we want the next call to retry immediately rather
-        # than wait out the TTL on a transient miss.
+    if assets:
+        for name, dest in _RELEASE_ASSETS:
+            asset = assets.get(name)
+            if not asset:
+                continue
+            url = _asset_url_if_newer(asset, dest)
+            if url:
+                _download_asset(url, dest)
+        _RELEASE_CHECK_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        _RELEASE_CHECK_MARKER.touch()
         return DB_PATH.exists()
 
-    for name, dest in _RELEASE_ASSETS:
-        asset = assets.get(name)
-        if not asset:
-            continue
-        url = _asset_url_if_newer(asset, dest)
-        if url:
-            _download_asset(url, dest)
-
-    _RELEASE_CHECK_MARKER.parent.mkdir(parents=True, exist_ok=True)
-    _RELEASE_CHECK_MARKER.touch()
+    # API failed (rate limit / network / missing release). On a fresh
+    # cold-start with no local DB we still need *something* — fall
+    # through to the public CDN URL, which has no API rate limit. We
+    # download unconditionally because we lost the ability to compare
+    # remote.updated_at vs local.mtime; on Streamlit Cloud cold-starts
+    # the local file doesn't exist anyway, so this is the correct
+    # behaviour. Marker is NOT stamped so the next call retries the
+    # API in case the rate-limit window cleared.
+    if not DB_PATH.exists():
+        for name, dest in _RELEASE_ASSETS:
+            _download_asset(_public_download_url(repo, name), dest)
     return DB_PATH.exists()
 
 
