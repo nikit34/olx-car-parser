@@ -152,6 +152,17 @@ if not filtered.empty:
     if hide_repair:
         filtered = filtered[filtered["desc_mentions_repair"] != True]
 
+    # Segment filter from the ranker click — applied last so it
+    # composes with the sidebar filters rather than replacing them.
+    seg_filter = st.session_state.get("segment_filter")
+    if seg_filter:
+        filtered = filtered[
+            (filtered["brand"] == seg_filter["brand"])
+            & (filtered["model"] == seg_filter["model"])
+        ]
+        if seg_filter.get("generation"):
+            filtered = filtered[filtered["generation"] == seg_filter["generation"]]
+
 # ---------------------------------------------------------------------------
 # Main — deal cards
 # ---------------------------------------------------------------------------
@@ -198,12 +209,43 @@ with st.expander("📊 Segment ranker — which models are worth my time", expan
             "calib residual €": _num("calibration_residual_eur").round(0),
             "score": (_num("composite") * 100).round(0),
         })
-        st.dataframe(display, hide_index=True, use_container_width=True)
+        # Click a row → write the segment to session_state so the filter
+        # logic below narrows the deal feed to it. Streamlit's
+        # ``on_select="rerun"`` reruns the whole script when the user
+        # picks a row, so the change takes effect immediately.
+        evt = st.dataframe(
+            display, hide_index=True, use_container_width=True,
+            on_select="rerun", selection_mode="single-row",
+            key="segment_ranker_table",
+        )
+        rows = evt.selection.rows if evt and evt.selection else []
+        if rows:
+            picked = seg_metrics.iloc[rows[0]]
+            new_filter = {
+                "brand": picked["brand"],
+                "model": picked["model"],
+                "generation": picked["generation"] or None,
+            }
+            if st.session_state.get("segment_filter") != new_filter:
+                st.session_state["segment_filter"] = new_filter
+                st.rerun()
         st.caption(
             "score = 0.40·undervaluation + 0.25·log(sold 60d) + 0.20·velocity "
             "(14d/dom) + 0.15·trend. Calibration residual: median(actual − predicted) "
             "on sold listings — positive ⇒ model under-prices the segment."
         )
+
+# Active segment-filter chip (from clicking the ranker table above).
+seg_filter = st.session_state.get("segment_filter")
+if seg_filter:
+    chip_col, clear_col = st.columns([6, 1])
+    label = f"{seg_filter['brand']} {seg_filter['model']}"
+    if seg_filter.get("generation"):
+        label += f" / {seg_filter['generation']}"
+    chip_col.info(f"📍 Filtered to segment: **{label}**")
+    if clear_col.button("Clear", key="clear_segment_filter"):
+        st.session_state.pop("segment_filter", None)
+        st.rerun()
 
 if filtered.empty:
     st.info("No deals found. Adjust filters.")

@@ -669,6 +669,56 @@ def get_listings_df(session: Session) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def get_price_snapshots_df(
+    session: Session,
+    since_days: int | None = 365,
+) -> pd.DataFrame:
+    """All price snapshots joined to their listing's brand/model/generation
+    metadata, optionally restricted to the last ``since_days`` days.
+
+    Used by the dashboard's segment-detail and market-trend pages to
+    plot median ASK over time using the *real* price observed at each
+    scrape, not just the first-seen value. ~25 MB for a 5-week window
+    on the production DB; ``since_days=365`` is the default cap to
+    keep memory bounded as the corpus grows.
+
+    Returns columns: olx_id, brand, model, generation, fuel_type, year,
+    price_eur, scraped_at, is_active, deactivation_reason,
+    deactivated_at, duplicate_of.
+    """
+    query = (
+        session.query(
+            PriceSnapshot.price_eur,
+            PriceSnapshot.scraped_at,
+            Listing.olx_id, Listing.brand, Listing.model, Listing.generation,
+            Listing.fuel_type, Listing.year, Listing.is_active,
+            Listing.deactivation_reason, Listing.deactivated_at,
+            Listing.duplicate_of,
+        )
+        .join(Listing, PriceSnapshot.listing_id == Listing.id)
+    )
+    if since_days is not None and since_days > 0:
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=since_days)
+        query = query.filter(PriceSnapshot.scraped_at >= cutoff)
+    rows = query.all()
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame([{
+        "price_eur": r.price_eur,
+        "scraped_at": r.scraped_at,
+        "olx_id": r.olx_id,
+        "brand": r.brand,
+        "model": r.model,
+        "generation": r.generation,
+        "fuel_type": r.fuel_type,
+        "year": r.year,
+        "is_active": r.is_active,
+        "deactivation_reason": r.deactivation_reason,
+        "deactivated_at": r.deactivated_at,
+        "duplicate_of": r.duplicate_of,
+    } for r in rows])
+
+
 def get_price_history_df(session: Session) -> pd.DataFrame:
     """Market stats history as DataFrame."""
     q = session.query(MarketStats).order_by(MarketStats.date).all()

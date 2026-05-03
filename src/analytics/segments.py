@@ -201,6 +201,86 @@ def compute_segment_metrics(
     return out
 
 
+def compute_segment_time_series(
+    snapshots: pd.DataFrame,
+    sold_listings: pd.DataFrame | None = None,
+    freq: str = "W",
+) -> pd.DataFrame:
+    """Real per-period (default weekly) median ask + volume per segment.
+
+    ``snapshots`` is the output of ``get_price_snapshots_df`` — every
+    scrape wrote a price observation, so the time series reflects the
+    *actual* asking price observed at each scrape, not just the
+    first-seen value. That matters because a listing posted in March
+    at €10 k that dropped to €8 k in April should land in April's
+    median, not March's.
+
+    ``sold_listings``: optional listings DataFrame restricted to sold
+    rows. Their ``deactivated_at`` + last ``price_eur`` snapshot are
+    used to compute the "median sold last-ask per period" line that
+    the user can compare against the active median ASK.
+
+    Returns long-format DataFrame with columns:
+      bucket, brand, model, generation, series, value, n
+    where ``series`` is one of ``"active_ask_median"`` or
+    ``"sold_lastask_median"``.
+    """
+    if snapshots is None or snapshots.empty:
+        return pd.DataFrame(
+            columns=["bucket", "brand", "model", "generation",
+                     "series", "value", "n"]
+        )
+
+    df = snapshots.copy()
+    if "duplicate_of" in df.columns:
+        df = df[df["duplicate_of"].isna()]
+    df["scraped_at"] = pd.to_datetime(df["scraped_at"], errors="coerce", utc=True)
+    df["bucket"] = df["scraped_at"].dt.to_period(freq).dt.start_time
+    df["generation"] = df.get("generation", "").fillna("").astype(str)
+
+    # Active observations: each scrape = one observation. We take the
+    # median of all observed prices in the bucket per segment.
+    active_df = df[df.get("is_active", True).astype(bool)] if "is_active" in df.columns else df
+    if not active_df.empty:
+        active_agg = (
+            active_df.groupby(["bucket", "brand", "model", "generation"])
+            .agg(value=("price_eur", "median"), n=("price_eur", "size"))
+            .reset_index()
+        )
+        active_agg["series"] = "active_ask_median"
+    else:
+        active_agg = pd.DataFrame(
+            columns=["bucket", "brand", "model", "generation",
+                     "value", "n", "series"]
+        )
+
+    # Sold observations: bucket by the deactivation week, value = the
+    # last ASK we saw (latest snapshot per listing). Computed against
+    # snapshots so we don't need the listings DataFrame for the price.
+    sold_agg = pd.DataFrame(
+        columns=["bucket", "brand", "model", "generation",
+                 "value", "n", "series"]
+    )
+    if sold_listings is not None and not sold_listings.empty:
+        sold = sold_listings.copy()
+        sold["generation"] = sold.get("generation", "").fillna("").astype(str)
+        sold["deactivated_at"] = pd.to_datetime(
+            sold.get("deactivated_at"), errors="coerce", utc=True,
+        )
+        sold = sold.dropna(subset=["deactivated_at", "price_eur"])
+        sold = sold[sold["price_eur"] > 0]
+        if not sold.empty:
+            sold["bucket"] = sold["deactivated_at"].dt.to_period(freq).dt.start_time
+            sold_agg = (
+                sold.groupby(["bucket", "brand", "model", "generation"])
+                .agg(value=("price_eur", "median"), n=("price_eur", "size"))
+                .reset_index()
+            )
+            sold_agg["series"] = "sold_lastask_median"
+
+    return pd.concat([active_agg, sold_agg], ignore_index=True)
+
+
 def composite_resale_score(metrics: pd.DataFrame) -> pd.Series:
     """Single-number ranking for "interesting segments to focus on".
 

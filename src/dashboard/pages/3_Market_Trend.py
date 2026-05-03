@@ -138,7 +138,55 @@ c4.metric(
 st.divider()
 
 # --- Weekly aggregation ---
-def _weekly_median(d: pd.DataFrame, time_col: str) -> pd.DataFrame:
+# Active series uses the real per-scrape snapshots so a price drop
+# mid-life gets credited to the right week (not stuck at first_seen).
+# Sold series uses last-ask at deactivation since we don't have an
+# actual transaction price.
+from src.storage.repository import get_price_snapshots_df
+from src.storage.database import init_db, get_session
+
+
+@st.cache_data(ttl=600)
+def _load_snapshots(_sig):
+    init_db()
+    s = get_session()
+    try:
+        return get_price_snapshots_df(s, since_days=window_days)
+    finally:
+        s.close()
+
+
+snapshots = _load_snapshots(_release_cache_signature())
+if not snapshots.empty:
+    if "duplicate_of" in snapshots.columns:
+        snapshots = snapshots[snapshots["duplicate_of"].isna()]
+    if brand != "(all)":
+        snapshots = snapshots[snapshots["brand"] == brand]
+    if model != "(all)":
+        snapshots = snapshots[snapshots["model"] == model]
+    if fuel_pick:
+        snapshots = snapshots[snapshots["fuel_type"].map(_fuel_group).isin(fuel_pick)]
+    snapshots = snapshots[
+        (snapshots["year"].between(year_range[0], year_range[1])) | snapshots["year"].isna()
+    ]
+
+
+def _weekly_from_snapshots(snaps: pd.DataFrame) -> pd.DataFrame:
+    if snaps.empty:
+        return pd.DataFrame(columns=["week", "median_price", "n"])
+    s = snaps[snaps.get("is_active", True).astype(bool)] if "is_active" in snaps.columns else snaps
+    s = s[s["price_eur"] > 0].copy()
+    if s.empty:
+        return pd.DataFrame(columns=["week", "median_price", "n"])
+    s["scraped_at"] = pd.to_datetime(s["scraped_at"], errors="coerce", utc=True)
+    s["week"] = s["scraped_at"].dt.to_period("W").dt.start_time
+    return s.groupby("week").agg(
+        median_price=("price_eur", "median"),
+        n=("price_eur", "size"),
+    ).reset_index()
+
+
+def _weekly_sold(d: pd.DataFrame, time_col: str) -> pd.DataFrame:
     if d.empty or time_col not in d.columns:
         return pd.DataFrame(columns=["week", "median_price", "n"])
     work = d[[time_col, "price_eur"]].dropna()
@@ -152,8 +200,8 @@ def _weekly_median(d: pd.DataFrame, time_col: str) -> pd.DataFrame:
     ).reset_index()
 
 
-active_weekly = _weekly_median(active_recent, "first_seen_at")
-sold_weekly = _weekly_median(sold_recent, "deactivated_at")
+active_weekly = _weekly_from_snapshots(snapshots)
+sold_weekly = _weekly_sold(sold_recent, "deactivated_at")
 
 # --- Chart 1: median ask vs median sold last-ask ---
 fig = make_subplots(

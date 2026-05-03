@@ -199,27 +199,48 @@ else:
 
 # --- Panel 2: Time-series median price (active asks + sold last-ask) ---
 st.subheader("Median price over time")
+st.caption(
+    "Active line built from per-scrape price snapshots — when a "
+    "listing's price drops mid-life, the new value lands in the right "
+    "week's median, not stuck at first-seen."
+)
 
-ts_rows: list[dict] = []
-# Active asks: bucket by first_seen_at week
-if not active_seg.empty and "first_seen_at" in active_seg.columns:
-    a = active_seg.copy()
-    a["week"] = pd.to_datetime(a["first_seen_at"], errors="coerce", utc=True).dt.to_period("W").dt.start_time
-    weekly = a.groupby("week")["price_eur"].median().dropna().reset_index()
-    weekly["series"] = "active ask (median)"
-    ts_rows.append(weekly)
-# Sold last-ask: bucket by deactivated_at week
-if not sold_seg.empty and "deactivated_at" in sold_seg.columns:
-    s = sold_seg.copy()
-    s["week"] = pd.to_datetime(s["deactivated_at"], errors="coerce", utc=True).dt.to_period("W").dt.start_time
-    weekly_s = s.groupby("week")["price_eur"].median().dropna().reset_index()
-    weekly_s["series"] = "sold last-ask (median)"
-    ts_rows.append(weekly_s)
+from src.analytics.segments import compute_segment_time_series
+from src.storage.repository import get_price_snapshots_df
+from src.storage.database import init_db, get_session
 
-if ts_rows:
-    ts = pd.concat(ts_rows, ignore_index=True)
+
+@st.cache_data(ttl=600)
+def _load_snapshots(_sig):
+    init_db()
+    s = get_session()
+    try:
+        return get_price_snapshots_df(s, since_days=180)
+    finally:
+        s.close()
+
+
+snapshots = _load_snapshots(_release_cache_signature())
+if not snapshots.empty:
+    seg_snaps = snapshots[
+        (snapshots["brand"] == brand) & (snapshots["model"] == model)
+    ]
+    if gen_pick != "(all)":
+        seg_snaps = seg_snaps[seg_snaps["generation"] == gen_pick]
+else:
+    seg_snaps = pd.DataFrame()
+
+ts = compute_segment_time_series(seg_snaps, sold_listings=sold_seg)
+if ts.empty:
+    st.info("Not enough snapshot history yet for a time series.")
+else:
+    label_map = {
+        "active_ask_median": "active ask (median)",
+        "sold_lastask_median": "sold last-ask (median)",
+    }
+    ts = ts.assign(label=ts["series"].map(label_map))
     fig_ts = px.line(
-        ts, x="week", y="price_eur", color="series",
+        ts, x="bucket", y="value", color="label",
         markers=True,
         color_discrete_map={
             "active ask (median)": "#1f77b4",
@@ -229,16 +250,14 @@ if ts_rows:
     fig_ts.update_layout(
         xaxis_title=None, yaxis_title="Price (EUR)",
         height=320, margin=dict(l=10, r=10, t=10, b=10),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="right", x=1),
     )
     st.plotly_chart(fig_ts, use_container_width=True)
     st.caption(
-        "Gap between blue and orange = how much current ASKs sit above what "
-        "the market actually cleared at recently. Negative gap = sellers "
-        "now ask less than recent transactions."
+        "Gap between blue and orange = how much current ASKs sit above "
+        "what the market actually cleared at recently."
     )
-else:
-    st.info("Not enough date-stamped rows for a time series.")
 
 # --- Panel 3: Time-on-market histogram ---
 st.subheader("Time-on-market — sold listings")

@@ -9,6 +9,7 @@ import pytest
 
 from src.analytics.segments import (
     compute_segment_metrics,
+    compute_segment_time_series,
     composite_resale_score,
 )
 
@@ -181,6 +182,99 @@ class TestComputeSegmentMetrics:
         m = compute_segment_metrics(listings, signals=signals, now=_NOW)
         # actual − pred = [+1000, +2000] → median +1500
         assert m.iloc[0]["calibration_residual_eur"] == pytest.approx(1500.0)
+
+
+class TestSegmentTimeSeries:
+    """``compute_segment_time_series`` aggregates real per-scrape
+    snapshots into weekly medians. The point of using snapshots
+    (not just first_seen_at) is that listings whose price moved
+    after first-seen show up at the right week, not stuck at week-1."""
+
+    def _snap(self, **kw):
+        base = {
+            "olx_id": "x", "brand": "VW", "model": "Golf", "generation": "Mk7",
+            "fuel_type": "Diesel", "year": 2018,
+            "is_active": True, "deactivation_reason": None, "deactivated_at": None,
+            "duplicate_of": None,
+        }
+        base.update(kw)
+        return base
+
+    def test_empty_returns_empty_frame(self):
+        out = compute_segment_time_series(pd.DataFrame())
+        assert out.empty
+        assert list(out.columns) == [
+            "bucket", "brand", "model", "generation", "series", "value", "n",
+        ]
+
+    def test_active_median_per_week(self):
+        """Two listings, two snapshots each — median should average
+        them inside each weekly bucket."""
+        snaps = pd.DataFrame([
+            self._snap(olx_id="a", price_eur=10000, scraped_at=_NOW - timedelta(days=10)),
+            self._snap(olx_id="b", price_eur=12000, scraped_at=_NOW - timedelta(days=10)),
+            self._snap(olx_id="a", price_eur=9500,  scraped_at=_NOW - timedelta(days=3)),
+            self._snap(olx_id="b", price_eur=11500, scraped_at=_NOW - timedelta(days=3)),
+        ])
+        out = compute_segment_time_series(snaps)
+        active = out[out["series"] == "active_ask_median"].sort_values("bucket")
+        assert len(active) == 2
+        # Older bucket: median of [10000, 12000] = 11000
+        # Newer bucket: median of [9500, 11500]  = 10500
+        # Order isn't guaranteed by sort, so check both buckets exist.
+        assert {11000.0, 10500.0} == set(active["value"])
+
+    def test_price_drop_lands_in_later_bucket(self):
+        """Listing posted 3 weeks ago at €10 k that drops to €8 k
+        last week: the €8 k should appear in last week's median, NOT
+        be stuck at the first-seen week. That's the whole reason we
+        use snapshots instead of first_price_eur."""
+        snaps = pd.DataFrame([
+            self._snap(olx_id="dropper", price_eur=10000,
+                       scraped_at=_NOW - timedelta(days=21)),
+            self._snap(olx_id="dropper", price_eur=8000,
+                       scraped_at=_NOW - timedelta(days=2)),
+        ])
+        out = compute_segment_time_series(snaps)
+        active = out[out["series"] == "active_ask_median"].sort_values("bucket")
+        assert len(active) == 2
+        early = active.iloc[0]["value"]
+        late = active.iloc[1]["value"]
+        assert early == 10000.0
+        assert late == 8000.0
+
+    def test_duplicates_filtered(self):
+        snaps = pd.DataFrame([
+            self._snap(olx_id="canon", price_eur=10000,
+                       scraped_at=_NOW - timedelta(days=3)),
+            self._snap(olx_id="dup", price_eur=8000, duplicate_of="canon",
+                       scraped_at=_NOW - timedelta(days=3)),
+        ])
+        out = compute_segment_time_series(snaps)
+        active = out[out["series"] == "active_ask_median"]
+        assert active.iloc[0]["value"] == 10000.0  # dup ignored
+        assert active.iloc[0]["n"] == 1
+
+    def test_sold_lastask_series_from_listings(self):
+        """The ``sold_listings`` arg adds a parallel ``sold_lastask_median``
+        series bucketed by deactivation date."""
+        snaps = pd.DataFrame([
+            self._snap(olx_id="a", price_eur=10000, scraped_at=_NOW - timedelta(days=3)),
+        ])
+        sold = pd.DataFrame([
+            {"olx_id": "s1", "brand": "VW", "model": "Golf", "generation": "Mk7",
+             "price_eur": 7500,
+             "deactivated_at": _NOW - timedelta(days=10),
+             "deactivation_reason": "sold"},
+            {"olx_id": "s2", "brand": "VW", "model": "Golf", "generation": "Mk7",
+             "price_eur": 8500,
+             "deactivated_at": _NOW - timedelta(days=10),
+             "deactivation_reason": "sold"},
+        ])
+        out = compute_segment_time_series(snaps, sold_listings=sold)
+        sold_rows = out[out["series"] == "sold_lastask_median"]
+        assert len(sold_rows) == 1
+        assert sold_rows.iloc[0]["value"] == 8000.0  # median of 7500 + 8500
 
 
 class TestCompositeScore:
