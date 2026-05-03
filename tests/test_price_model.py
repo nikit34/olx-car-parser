@@ -495,3 +495,121 @@ def test_metrics_history(tmp_path, monkeypatch):
     assert len(history) == 2
     assert "timestamp" in history[0]
     assert history[0]["mae"] == metrics["mae"]
+
+
+class TestSoldTargetAdjustment:
+    """``_build_sold_target_adjustment`` lets the trainer reuse sold
+    listings as ~3× extra training data without trusting last-ask as
+    the actual sold price. The 2026-05-03 audit found 12 450 sold rows
+    sitting unused; this is the helper that brings them into the fit."""
+
+    def _row(self, **overrides):
+        from datetime import datetime, timezone, timedelta
+        defaults = {
+            "is_active": True,
+            "deactivation_reason": None,
+            "first_seen_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "deactivated_at": None,
+        }
+        defaults.update(overrides)
+        return defaults
+
+    def test_active_rows_pass_through_unchanged(self):
+        from src.analytics.price_model import _build_sold_target_adjustment
+        df = pd.DataFrame([self._row(), self._row(), self._row()])
+        mult, w = _build_sold_target_adjustment(df)
+        assert (mult == 1.0).all()
+        assert (w == 1.0).all()
+
+    def test_quick_sold_gets_small_discount_high_weight(self):
+        from datetime import datetime, timezone, timedelta
+        from src.analytics.price_model import _build_sold_target_adjustment
+        first = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        df = pd.DataFrame([self._row(
+            is_active=False, deactivation_reason="sold",
+            first_seen_at=first, deactivated_at=first + timedelta(days=5),
+        )])
+        mult, w = _build_sold_target_adjustment(df)
+        # 5 days → first tier (≤14): 0.96 multiplier, 0.90 weight
+        assert mult[0] == pytest.approx(0.96)
+        assert w[0] == pytest.approx(0.90)
+
+    def test_slow_sold_gets_bigger_discount_lower_weight(self):
+        from datetime import datetime, timezone, timedelta
+        from src.analytics.price_model import _build_sold_target_adjustment
+        first = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        df = pd.DataFrame([self._row(
+            is_active=False, deactivation_reason="sold",
+            first_seen_at=first, deactivated_at=first + timedelta(days=200),
+        )])
+        mult, w = _build_sold_target_adjustment(df)
+        # 200 days → 4th tier (≤365): 0.88 multiplier, 0.30 weight
+        assert mult[0] == pytest.approx(0.88)
+        assert w[0] == pytest.approx(0.30)
+
+    def test_bogus_dates_get_zero_weight(self):
+        """Pre-fix DB had rows with 2915-day "sold" lifespans (parser
+        noise from a since-fixed date-extraction bug). Those must not
+        contribute to training — weight=0 makes LightGBM ignore them
+        without dropping the row from the index."""
+        from datetime import datetime, timezone, timedelta
+        from src.analytics.price_model import _build_sold_target_adjustment
+        first = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        df = pd.DataFrame([
+            self._row(  # 2915 days = bogus
+                is_active=False, deactivation_reason="sold",
+                first_seen_at=first,
+                deactivated_at=first + timedelta(days=2915),
+            ),
+            self._row(  # negative days = clock-skew bug
+                is_active=False, deactivation_reason="sold",
+                first_seen_at=first,
+                deactivated_at=first - timedelta(days=5),
+            ),
+        ])
+        mult, w = _build_sold_target_adjustment(df)
+        assert (w == 0.0).all()
+
+    def test_expired_not_treated_as_sold(self):
+        """Only ``deactivation_reason == "sold"`` triggers the
+        adjustment. "Expired" / "removed" / unknown rows pass through
+        unchanged so they don't pollute the target."""
+        from datetime import datetime, timezone, timedelta
+        from src.analytics.price_model import _build_sold_target_adjustment
+        first = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        df = pd.DataFrame([
+            self._row(
+                is_active=False, deactivation_reason="expired",
+                first_seen_at=first, deactivated_at=first + timedelta(days=20),
+            ),
+        ])
+        mult, w = _build_sold_target_adjustment(df)
+        assert mult[0] == 1.0 and w[0] == 1.0
+
+    def test_train_logs_sold_inclusion_metrics(self):
+        """End-to-end: the train_price_model output records how many
+        sold rows were used vs dropped, so CI history can track whether
+        the inclusion is helping."""
+        from datetime import datetime, timezone, timedelta
+        df = _sample_listings(n=200)
+        # Half the rows become "sold" with varied lifespans.
+        df["is_active"] = [True] * 100 + [False] * 100
+        df["deactivation_reason"] = [None] * 100 + ["sold"] * 100
+        first_seen = pd.to_datetime(
+            [datetime(2026, 1, 1, tzinfo=timezone.utc)] * len(df), utc=True,
+        )
+        df["first_seen_at"] = first_seen
+        df["deactivated_at"] = first_seen + pd.to_timedelta(
+            [None] * 100 + list(np.tile([5, 30, 100, 250], 25)),
+            unit="D",
+        )
+        result = train_price_model(df)
+        assert result is not None
+        _, _, metrics, _, _ = result
+        assert "sold_inclusion" in metrics
+        si = metrics["sold_inclusion"]
+        assert si["sold_rows_used"] > 0
+        # ``_filter_training_data`` clips the 1st/99th percentiles, so a
+        # handful of the 100 actives may be filtered out — check the
+        # majority survived rather than the exact count.
+        assert si["active_rows"] >= 90

@@ -445,11 +445,23 @@ def _blocking_deal_reason(listing: pd.Series) -> str | None:
 def prepare_active_for_model(
     listings_df: pd.DataFrame,
     turnover: pd.DataFrame | None = None,
+    include_sold: bool = False,
 ) -> pd.DataFrame:
-    """Active-listing subset enriched with generation, sub_segment, avg_days_to_sell.
+    """Listings enriched with generation, sub_segment, avg_days_to_sell.
 
     Shared by compute_signals (dashboard) and the `train-model` CLI so the
     model sees the exact same feature prep in both paths.
+
+    ``include_sold=True`` keeps inactive listings whose
+    ``deactivation_reason == "sold"`` in the result, alongside actives.
+    Used by training to roughly 3× the row count (~6 k active vs ~12 k
+    sold on the 2026-05-03 release); the price-model side of training
+    applies a per-row target discount + sample-weight haircut to those
+    rows so the unknown gap between last ask and actual sold price
+    doesn't bias the model toward "what didn't sell".
+
+    Dashboard scoring keeps the default (active-only) — we only need
+    fair-price predictions for listings the user can actually buy.
     """
     from src.models.generations import get_generation
     from src.analytics.turnover import compute_turnover_stats
@@ -457,7 +469,19 @@ def prepare_active_for_model(
     if listings_df.empty:
         return listings_df.copy()
 
-    active = listings_df[listings_df["is_active"]].copy() if "is_active" in listings_df.columns else listings_df.copy()
+    if "is_active" in listings_df.columns:
+        if include_sold:
+            mask = listings_df["is_active"].astype(bool)
+            if "deactivation_reason" in listings_df.columns:
+                mask = mask | (
+                    (~listings_df["is_active"].astype(bool))
+                    & (listings_df["deactivation_reason"].astype(str) == "sold")
+                )
+            active = listings_df[mask].copy()
+        else:
+            active = listings_df[listings_df["is_active"]].copy()
+    else:
+        active = listings_df.copy()
     if "duplicate_of" in active.columns:
         active = active[active["duplicate_of"].isna()].copy()
 

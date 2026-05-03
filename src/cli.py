@@ -1136,9 +1136,14 @@ def train_model():
         listings["mileage_km"] = listings["real_mileage_km"].fillna(listings["mileage_km"])
 
     turnover = compute_turnover_stats(listings)
-    active = prepare_active_for_model(listings, turnover=turnover)
+    active = prepare_active_for_model(listings, turnover=turnover, include_sold=True)
 
-    console.print(f"Training on {len(active)} active listings...")
+    n_active_only = int(active["is_active"].sum()) if "is_active" in active.columns else len(active)
+    n_sold = len(active) - n_active_only
+    console.print(
+        f"Training on {len(active)} listings ({n_active_only} active + "
+        f"{n_sold} sold; sold rows get a days-on-market target/weight haircut)..."
+    )
     result = train_price_model(active)
     if result is None:
         console.print("[red]Training failed: insufficient data after filtering.[/red]")
@@ -1228,7 +1233,9 @@ def eval_model(
     if "real_mileage_km" in listings.columns:
         listings["mileage_km"] = listings["real_mileage_km"].fillna(listings["mileage_km"])
     turnover = compute_turnover_stats(listings)
-    active = prepare_active_for_model(listings, turnover=turnover)
+    # Match the training-side row set so eval_oof can join sold-row OOF
+    # predictions back to the rows they were trained on.
+    active = prepare_active_for_model(listings, turnover=turnover, include_sold=True)
 
     # --- Global ---
     report = evaluate_oof(active, oof_preds)

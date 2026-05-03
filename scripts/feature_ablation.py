@@ -55,7 +55,7 @@ def load_active() -> pd.DataFrame:
             listings["mileage_km"]
         )
     turnover = compute_turnover_stats(listings)
-    return prepare_active_for_model(listings, turnover=turnover)
+    return prepare_active_for_model(listings, turnover=turnover, include_sold=True)
 
 
 def run(active: pd.DataFrame, label: str, drop: set[str] | None = None) -> dict:

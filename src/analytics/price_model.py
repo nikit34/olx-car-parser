@@ -238,6 +238,77 @@ def _model_for_quantile(
     return lgb.LGBMRegressor(objective="quantile", alpha=alpha, **params)
 
 
+# Days-on-market tiers used to estimate the gap between last ask and the
+# actual (unknown) sold price for inactive ``deactivation_reason == "sold"``
+# listings. Cars that cleared quickly were likely priced near the market;
+# slow movers were over-priced and the closing transaction probably came
+# in lower. The discounts approximate typical PT used-car negotiation
+# margins (3-7 %) padded for over-asking on the long-tail. Sample weights
+# step down in parallel so a 200-day-old sold listing contributes less
+# signal than a 5-day-old one — both the target estimate and our trust
+# in it weaken with time-on-market.
+#
+# These numbers are heuristic; CI's time-aware backtest is the place to
+# tune them. Default tiers were picked to keep median sold-target ≈ 95 %
+# of last ask, matching aggregate price-drop telemetry on the 2026-05-03
+# corpus (median price_change_pct on sold listings = -4.8 %).
+_SOLD_TIERS = (
+    # (max_days_inclusive, price_multiplier, sample_weight)
+    (14,  0.96, 0.90),
+    (60,  0.94, 0.70),
+    (180, 0.91, 0.50),
+    (365, 0.88, 0.30),
+)
+_SOLD_MAX_DAYS = 365  # rows beyond this are parser noise (e.g. 2915-day "sold")
+
+
+def _build_sold_target_adjustment(
+    df: pd.DataFrame,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-row (target_multiplier, sample_weight) for sold-listing inclusion.
+
+    Active rows pass through unchanged — multiplier=1.0, weight=1.0. Sold
+    rows (``deactivation_reason == "sold"``) are scaled by their
+    days-on-market bucket. Sold rows with bogus dates (negative or
+    > _SOLD_MAX_DAYS) get weight=0 so LightGBM ignores them entirely
+    rather than the row being silently dropped — keeps the index aligned
+    with the rest of the training arrays.
+    """
+    n = len(df)
+    multiplier = np.ones(n, dtype=float)
+    weight = np.ones(n, dtype=float)
+
+    if "is_active" not in df.columns or "deactivation_reason" not in df.columns:
+        return multiplier, weight
+
+    is_active = df["is_active"].astype(bool).values
+    reason = df["deactivation_reason"].astype(str).values
+    sold_mask = (~is_active) & (reason == "sold")
+    if not sold_mask.any():
+        return multiplier, weight
+
+    deactivated = pd.to_datetime(
+        df.get("deactivated_at"), errors="coerce", utc=True,
+    )
+    first_seen = pd.to_datetime(
+        df.get("first_seen_at"), errors="coerce", utc=True,
+    )
+    days = (deactivated - first_seen).dt.days.fillna(-1).values
+
+    for i in np.where(sold_mask)[0]:
+        d = days[i]
+        if d < 0 or d > _SOLD_MAX_DAYS:
+            weight[i] = 0.0
+            continue
+        for max_d, mult, w in _SOLD_TIERS:
+            if d <= max_d:
+                multiplier[i] = mult
+                weight[i] = w
+                break
+
+    return multiplier, weight
+
+
 def _compute_sample_weights(y_price: np.ndarray) -> np.ndarray:
     """Inverse-log sample weights so pinball loss is balanced across price
     tiers.
@@ -540,11 +611,16 @@ def _cv_metrics(
                 space — already calibrated with conformal_q, sorted to repair
                 crossings, and clamped at 0. Indexed by df row position.
     """
-    y_all = df["price_eur"].values.astype(float)
+    raw_price = df["price_eur"].values.astype(float)
+    # Apply the same sold-listing target discount + sample-weight haircut
+    # the final fit uses, so CV metrics reflect the actual training
+    # objective. Active rows pass through unchanged.
+    sold_mult, sold_w = _build_sold_target_adjustment(df)
+    y_all = raw_price * sold_mult
     # Train on log1p — clamp at 0 first so log1p never sees a negative input
     # (filter step normally already enforces this, but be defensive)
     y_log = np.log1p(np.maximum(y_all, 0))
-    sample_weight_all = _compute_sample_weights(y_all)
+    sample_weight_all = _compute_sample_weights(y_all) * sold_w
     n_splits = min(n_splits, max(2, len(df) // 20))
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
     cat_indices = [_ALL_FEATURES.index(c) for c in CATEGORICAL_FEATURES]
@@ -771,15 +847,25 @@ def train_price_model(
     if len(df) < min_samples:
         return None
 
-    y_price = df["price_eur"].values.astype(float)
+    raw_price = df["price_eur"].values.astype(float)
+    sold_mult, sold_w = _build_sold_target_adjustment(df)
+    y_price = raw_price * sold_mult
     y_log = np.log1p(np.maximum(y_price, 0))
-    sample_weight = _compute_sample_weights(y_price)
+    sample_weight = _compute_sample_weights(y_price) * sold_w
 
     # CV with per-fold cat encoding + per-quantile early stopping → tuned
     # n_estimators dict + OOF predictions in price space + isotonic calibrator
     # for the median quantile.
     metrics, best_iters_per_q, oof_band, median_calibrator = _cv_metrics(df)
     metrics["filter_stats"] = filter_stats
+    n_sold = int((sold_w != 1.0).sum())
+    n_dropped_sold = int((sold_w == 0.0).sum())
+    metrics["sold_inclusion"] = {
+        "total_rows": len(df),
+        "sold_rows_used": n_sold - n_dropped_sold,
+        "sold_rows_dropped_bad_dates": n_dropped_sold,
+        "active_rows": len(df) - n_sold,
+    }
 
     # Final models: fit on full filtered data with CV-tuned per-quantile iters
     X_arr, cat_maps = _prepare_X(df)
