@@ -48,9 +48,13 @@ def _make_corpus(n_normal: int = 150) -> pd.DataFrame:
 
 def test_build_features_base_only():
     df = _make_corpus(20)
-    X, features = _build_features(df, predictions_df=None)
-    assert features == BASE_FEATURES
-    assert list(X.columns) == BASE_FEATURES
+    X, info = _build_features(df, predictions_df=None)
+    assert info["base_features"] == BASE_FEATURES
+    assert info["residual_features"] == []
+    # X carries every column referenced (raw log_price plus the
+    # segment-residualised one) so callers can reproduce arithmetic.
+    for col in BASE_FEATURES:
+        assert col in X.columns
     assert len(X) == len(df)
     # log_price should be reasonable (log1p(14k) ≈ 9.5)
     assert X["log_price"].mean() == pytest.approx(np.log1p(14_500), rel=0.1)
@@ -63,8 +67,9 @@ def test_build_features_with_predictions():
         "fair_price_low": np.full(20, 13_000.0),
         "fair_price_high": np.full(20, 17_000.0),
     }, index=df.index)
-    X, features = _build_features(df, predictions_df=preds)
-    assert features == BASE_FEATURES + PREDICTION_FEATURES
+    X, info = _build_features(df, predictions_df=preds)
+    assert info["base_features"] == BASE_FEATURES
+    assert info["residual_features"] == PREDICTION_FEATURES
     assert "residual_pct" in X.columns
     assert "band_pct" in X.columns
     # band_pct should be ~26.7 % (=4000/15000*100), uniform across rows
@@ -82,6 +87,27 @@ def test_build_features_handles_zero_predicted_price():
     X, _ = _build_features(df, predictions_df=preds)
     assert pd.isna(X["residual_pct"].iloc[0])
     assert pd.isna(X["band_pct"].iloc[0])
+
+
+def test_build_features_imputes_missing_per_segment():
+    """The 2026-05-04 fix: a missing engine_cc / hp / seats no longer
+    drops the row out of the feature matrix. Each NaN gets filled with
+    the (brand, model[, generation]) median collected at train time
+    (or build time when lookups isn't passed)."""
+    df = _make_corpus(50)
+    df.loc[0, "engine_cc"] = np.nan
+    df.loc[1, "horsepower"] = np.nan
+    df.loc[2, "seats"] = np.nan
+    X, info = _build_features(df)
+    # Imputation kicks in — these rows should now have valid features.
+    assert pd.notna(X.loc[0, "engine_cc"])
+    assert pd.notna(X.loc[1, "horsepower"])
+    assert pd.notna(X.loc[2, "seats"])
+    # Imputed values should be the segment median (= the constant in
+    # _normal_listing for the dominant Golf segment).
+    assert X.loc[0, "engine_cc"] == 1968
+    assert X.loc[1, "horsepower"] == 150
+    assert X.loc[2, "seats"] == 5
 
 
 # ---------------------------------------------------------------------------
@@ -102,13 +128,18 @@ def test_train_produces_valid_bundle():
     df = _make_corpus(150)
     bundle = train_anomaly_detector(df, contamination=0.05)
     assert bundle is not None
-    assert bundle["schema_version"] == 1
+    assert bundle["schema_version"] == 2
     assert bundle["contamination"] == 0.05
     assert bundle["uses_predictions"] is False
     assert bundle["n_samples"] == 150
-    assert bundle["feature_names"] == BASE_FEATURES
-    assert "model" in bundle and "scaler" in bundle
-    assert bundle["raw_min"] < bundle["raw_max"]
+    assert bundle["base_features"] == BASE_FEATURES
+    assert bundle["residual_features"] == []
+    assert bundle["residual_bundle"] is None
+    assert bundle["feature_bundle"] is not None
+    fb = bundle["feature_bundle"]
+    assert "model" in fb and "scaler" in fb
+    assert fb["raw_min"] < fb["raw_max"]
+    assert "segment_lookups" in bundle
 
 
 def test_train_with_predictions_extends_features():
@@ -120,7 +151,11 @@ def test_train_with_predictions_extends_features():
     }, index=df.index)
     bundle = train_anomaly_detector(df, predictions_df=preds)
     assert bundle["uses_predictions"] is True
-    assert bundle["feature_names"] == BASE_FEATURES + PREDICTION_FEATURES
+    assert bundle["base_features"] == BASE_FEATURES
+    assert bundle["residual_features"] == PREDICTION_FEATURES
+    # Two parallel IFs, both populated when predictions are present.
+    assert bundle["feature_bundle"] is not None
+    assert bundle["residual_bundle"] is not None
 
 
 # ---------------------------------------------------------------------------
@@ -153,19 +188,31 @@ def test_score_flags_extreme_outlier():
     assert weird["anomaly_score"] >= 0.8
 
 
-def test_score_returns_nan_for_unfeaturisable_rows():
+def test_score_recovers_rows_with_missing_specs():
+    """The whole point of v2 imputation: a row missing engine_cc or
+    horsepower no longer drops out of scoring — it gets filled with
+    the per-segment median and produces a real anomaly score. Pre-v2
+    this test asserted score = NaN; v2 flips that to "score is real,
+    just not 1.0"."""
     df = _make_corpus(150)
     bundle = train_anomaly_detector(df, contamination=0.05)
-    # New listing with NaN year — can't be featurised
-    bad = pd.DataFrame([_normal_listing(999, year=None)])
+    # Use an in-distribution index (50) so price/mileage match the
+    # training corpus; only specs are missing → imputation should
+    # produce a benign score.
+    bad = pd.DataFrame([_normal_listing(50, engine_cc=None, horsepower=None)])
     scores = score_anomalies(bundle, bad)
-    assert pd.isna(scores["anomaly_score"].iloc[0])
-    assert scores["is_anomaly"].iloc[0] == False  # noqa: E712
+    # Imputation succeeded → real numeric score, not NaN.
+    assert pd.notna(scores["feature_anomaly_score"].iloc[0])
+    # Should NOT be flagged anomalous — imputation gave it the dominant
+    # Golf segment medians, which match the rest of the corpus.
+    assert not scores["feature_is_anomaly"].iloc[0]
 
 
-def test_score_respects_feature_contract():
-    """A bundle trained with predictions errors loudly when scored
-    without — silent feature mismatch would produce garbage scores."""
+def test_score_residual_axis_silently_skips_when_predictions_missing():
+    """Bundle trained with predictions, scored without — residual axis
+    cleanly produces NaN, feature axis still scores. v1 raised a hard
+    ValueError; v2 tolerates the asymmetry so the dashboard can mix
+    'with predictions' and 'without' calls without bookkeeping."""
     df = _make_corpus(150)
     preds = pd.DataFrame({
         "predicted_price": np.full(150, 14_500.0),
@@ -173,8 +220,10 @@ def test_score_respects_feature_contract():
         "fair_price_high": np.full(150, 16_500.0),
     }, index=df.index)
     bundle = train_anomaly_detector(df, predictions_df=preds)
-    with pytest.raises(ValueError, match="feature mismatch"):
-        score_anomalies(bundle, df, predictions_df=None)
+    scores = score_anomalies(bundle, df, predictions_df=None)
+    # Feature axis works; residual axis NaN'd cleanly.
+    assert scores["feature_anomaly_score"].notna().any()
+    assert scores["residual_anomaly_score"].isna().all()
 
 
 def test_score_anomaly_score_range_clipped():
