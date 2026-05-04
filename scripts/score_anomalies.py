@@ -59,14 +59,17 @@ def _maybe_get_predictions(active_df: pd.DataFrame) -> pd.DataFrame | None:
     saved = load_price_model(max_age_hours=14 * 24)
     if saved is None:
         return None
-    models, cat_maps, metrics, oof_preds, calibrator = saved
+    models, cat_maps, metrics, oof_preds, calibrator, uncertainty = saved
+    edges_raw = metrics.get("conformal_q_bucket_edges")
+    bucket_edges = [tuple(e) for e in edges_raw] if edges_raw else None
     return predict_prices(
         models, cat_maps, active_df,
         conformal_q=metrics.get("conformal_q", 0.0),
         oof_preds=oof_preds,
         median_calibrator=calibrator,
         conformal_q_per_bucket=metrics.get("conformal_q_per_bucket"),
-        conformal_q_bucket_edges=metrics.get("conformal_q_bucket_edges"),
+        conformal_q_bucket_edges=bucket_edges,
+        uncertainty_bundle=uncertainty,
     )
 
 
