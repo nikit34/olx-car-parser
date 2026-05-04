@@ -585,9 +585,18 @@ def compute_signals(
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
     import numpy as np
+    import time as _time
+    _cs_t0 = _time.perf_counter()
+    _cs_ts = _cs_t0
+    def _cs_step(label: str):
+        nonlocal _cs_ts
+        now = _time.perf_counter()
+        print(f"[compute_signals]   {label}: {now - _cs_ts:.2f}s (cs total {now - _cs_t0:.2f}s)", flush=True)
+        _cs_ts = now
 
     signals = []
     active = prepare_active_for_model(listings_df, turnover=turnover)
+    _cs_step("prepare_active_for_model")
 
     # --- Generation-level stats ---
     priced_gen = active[(active["price_eur"] > 0) & active["generation"].notna()]
@@ -672,12 +681,14 @@ def compute_signals(
         load_model,
     )
 
+    _cs_step("stats+liquidity+trend+velocity")
     feature_fill = compute_feature_completeness(active)
 
     # Model is trained in CI (see `train-model` CLI) and shipped in the data
     # release. Dashboard never trains inline — if the model is missing or
     # too old, we skip predictions instead of blocking the user for minutes.
     saved = load_model(max_age_hours=14 * 24)  # tolerate up to 2 weeks
+    _cs_step("load_model")
     gb_models = None
     gb_cat_maps: dict = {}
     _gb_metrics: dict | None = None
@@ -737,6 +748,7 @@ def compute_signals(
             conformal_q_bucket_edges=_bucket_edges,
             uncertainty_bundle=_gb_uncertainty,
         )
+        _cs_step(f"predict_prices(active n={len(active)})")
         if "olx_id" in active.columns:
             olx_ids = active["olx_id"].reindex(price_df.index).values
             preds = price_df["predicted_price"].values
@@ -771,6 +783,7 @@ def compute_signals(
                     conformal_q_bucket_edges=_bucket_edges,
                     uncertainty_bundle=_gb_uncertainty,
                 )
+                _cs_step(f"predict_prices(sold n={len(sold_only)})")
                 sold_olx_ids = sold_only["olx_id"].reindex(sold_pred_df.index).values
                 sold_preds = sold_pred_df["predicted_price"].values
                 sold_lows = sold_pred_df["fair_price_low"].values
@@ -819,6 +832,7 @@ def compute_signals(
                         "no fresh price model is available this run",
                     )
                 _anom_df = score_anomalies(anomaly_bundle, active, _anom_pred)
+                _cs_step(f"score_anomalies(n={len(active)})")
                 for _, _row in _anom_df.iterrows():
                     _oid = _row.get("olx_id")
                     if _oid and pd.notna(_row.get("anomaly_score")):
@@ -850,6 +864,7 @@ def compute_signals(
                 _haz_df = predict_sold_probability(
                     hazard_bundle, active, _haz_pred,
                 )
+                _cs_step(f"predict_sold_probability(n={len(active)})")
                 for _, _row in _haz_df.iterrows():
                     _oid = _row.get("olx_id")
                     _p = _row.get("prob_sold_within_horizon")
@@ -1150,6 +1165,7 @@ def compute_signals(
                 sig[col] = listing[col]
         signals.append(sig)
 
+    _cs_step(f"scoring loop (n_active={len(active)}, n_signals={len(signals)})")
     df = pd.DataFrame(signals)
     if not df.empty:
         df = df.sort_values("flip_score", ascending=False)
@@ -1201,11 +1217,26 @@ def load_portfolio() -> pd.DataFrame:
 
 
 def load_all():
-    """Load listings, history, signals, brand map, turnover, and portfolio."""
+    """Load listings, history, signals, brand map, turnover, and portfolio.
+
+    Per-step timing logged to stdout so cold-load bottlenecks show up
+    in Streamlit Cloud logs. If wall-clock approaches 30 s, the
+    websocket keepalive ping fires and the connection drops with
+    1011 — the timings tell us which step to attack.
+    """
+    import time as _time
+    _t0 = _time.perf_counter()
+    def _step(label: str, since: float) -> float:
+        now = _time.perf_counter()
+        print(f"[load_all] {label}: {now - since:.2f}s (total {now - _t0:.2f}s)", flush=True)
+        return now
+
     from src.analytics.computed_columns import enrich_listings
     from src.analytics.turnover import compute_turnover_stats
 
+    _ts = _time.perf_counter()
     db_data = load_from_db()
+    _ts = _step("load_from_db", _ts)
 
     if db_data is not None:
         listings, history = db_data
@@ -1222,10 +1253,13 @@ def load_all():
             real_km = listings["real_mileage_km"]
             plausible = (real_km > 0) & (real_km <= _SANITY_MAX_MILEAGE_KM)
             listings["mileage_km"] = real_km.where(plausible).fillna(listings["mileage_km"])
+        _ts = _step("enrich_listings", _ts)
         turnover = compute_turnover_stats(listings)
+        _ts = _step("compute_turnover_stats", _ts)
         signals, importance, predictions = compute_signals(
             listings, history, turnover=turnover,
         )
+        _ts = _step("compute_signals", _ts)
     else:
         listings = pd.DataFrame()
         history = pd.DataFrame()
@@ -1235,6 +1269,7 @@ def load_all():
         turnover = pd.DataFrame()
 
     portfolio = load_portfolio()
+    _ts = _step("load_portfolio", _ts)
 
     brands_models: dict[str, list[str]] = {}
     if not listings.empty:
@@ -1243,6 +1278,8 @@ def load_all():
             brands_models[brand] = grp["model"].tolist()
 
     unmatched = load_unmatched()
+    _ts = _step("load_unmatched", _ts)
+    print(f"[load_all] DONE total {_time.perf_counter() - _t0:.2f}s", flush=True)
 
     return (
         listings, history, signals, brands_models, turnover,
