@@ -61,6 +61,27 @@ from src.models.listing import Listing  # noqa: E402
 logger = logging.getLogger("backfill_olx_photo_count")
 
 
+def _harden_session(session) -> None:
+    """SQLite-write-contention hardening for long batches.
+
+    The live scrape worker holds the write lock 3-5 min during the
+    market_stats commit. Two protections:
+
+    1. ``PRAGMA busy_timeout = 30000`` — SQLite itself blocks for up to
+       30 s on lock contention before raising. The dev-mac smoke-test
+       didn't need this; the host hits it immediately because the
+       scrape worker is also writing at the same wall-clock time.
+
+    2. ``autoflush = False`` — by default SQLAlchemy auto-flushes
+       pending writes on every ``session.get()`` / query, and that
+       flush can hit a locked DB *before* the explicit commit-with-retry
+       loop ever sees it. Disabling autoflush keeps reads pure and lets
+       us own the commit cadence.
+    """
+    session.execute(__import__("sqlalchemy").text("PRAGMA busy_timeout = 30000"))
+    session.autoflush = False
+
+
 def _select_targets(session, limit: int | None) -> list[tuple[int, str, str]]:
     """Return (id, olx_id, url) for active OLX listings missing photo_count."""
     q = (
@@ -110,9 +131,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Fetch + parse but don't update the DB. Logs what would change.",
     )
     parser.add_argument(
-        "--commit-every", type=int, default=20,
-        help="Commit batch size. Smaller = more retries, larger = more lost "
-             "work on a crash.",
+        "--commit-every", type=int, default=10,
+        help="Commit batch size. Smaller = shorter pending-write windows "
+             "(less risk of crash on lock), larger = fewer commits. With "
+             "autoflush disabled and PRAGMA busy_timeout 30 s, 10 is a "
+             "safe default against the live scrape worker.",
     )
     parser.add_argument(
         "--log-level", default="INFO",
@@ -127,6 +150,7 @@ def main(argv: list[str] | None = None) -> int:
 
     init_db()
     session = get_session()
+    _harden_session(session)
     try:
         targets = _select_targets(session, args.limit)
         if not targets:
