@@ -272,6 +272,44 @@ jobs:
             exit $TRAIN_RC
           fi
 
+      - name: Train anomaly + hazard + detect re-listings
+        # Three downstream signals that all consume the price_model
+        # output. They run in parallel after train_model finishes —
+        # any one failing is best-effort: dashboard degrades to "no
+        # signal" rather than blocking the build. Re-listing detection
+        # is independent of the price model but cheap enough to bundle
+        # here so we get one daily refresh of all three together.
+        id: train_aux_models
+        if: ${{ !cancelled() && steps.train_model.outputs.train_rc == '0' }}
+        timeout-minutes: 20
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          set +e
+          .venv/bin/python -m src.cli train-anomaly       > /tmp/anomaly.log 2>&1 &
+          ANOM_PID=$!
+          .venv/bin/python -m src.cli train-hazard        > /tmp/hazard.log 2>&1 &
+          HAZ_PID=$!
+          .venv/bin/python -m scripts.detect_relists      > /tmp/relists.log 2>&1 &
+          REL_PID=$!
+          wait $ANOM_PID; ANOM_RC=$?
+          wait $HAZ_PID;  HAZ_RC=$?
+          wait $REL_PID;  REL_RC=$?
+          echo "===== train-anomaly (rc=$ANOM_RC) ====="
+          cat /tmp/anomaly.log
+          echo "===== train-hazard (rc=$HAZ_RC) ====="
+          cat /tmp/hazard.log
+          echo "===== detect_relists (rc=$REL_RC) ====="
+          cat /tmp/relists.log
+          # Surface to the upload step so we don't re-publish a stale
+          # bundle when training failed for one of the three.
+          echo "anomaly_rc=$ANOM_RC" >> "$GITHUB_OUTPUT"
+          echo "hazard_rc=$HAZ_RC"   >> "$GITHUB_OUTPUT"
+          echo "relists_rc=$REL_RC"  >> "$GITHUB_OUTPUT"
+          if [ $ANOM_RC -ne 0 ]; then echo "::warning::train-anomaly failed (rc=$ANOM_RC)"; fi
+          if [ $HAZ_RC -ne 0 ];  then echo "::warning::train-hazard failed (rc=$HAZ_RC)";   fi
+          if [ $REL_RC -ne 0 ];  then echo "::warning::detect_relists failed (rc=$REL_RC)"; fi
+
       - name: Verify fresh bundle is loadable
         # Last-mile contract check between save_model (just ran) and
         # load_model (what dashboard/alerts/eval-model use). If schema or
@@ -308,6 +346,8 @@ jobs:
           # schema-mismatched bundle that was rejected by load_model and
           # zeroed out predicted_price downstream.
           TRAIN_RC: ${{ steps.train_model.outputs.train_rc }}
+          ANOM_RC: ${{ steps.train_aux_models.outputs.anomaly_rc }}
+          HAZ_RC: ${{ steps.train_aux_models.outputs.hazard_rc }}
         run: |
           gh release view latest-data 2>/dev/null || \
             gh release create latest-data \
@@ -323,3 +363,23 @@ jobs:
           else
             echo "::warning::Skipping model upload — train-model rc=${TRAIN_RC:-<unset>} (preserves last-known-good artifact in release)"
           fi
+          # Auxiliary models (anomaly + hazard). Each gated on its own rc
+          # so a failed anomaly run doesn't block hazard upload and vice
+          # versa. Same preserve-last-known-good policy: skip the upload
+          # if its rc is non-zero. Their metrics histories live in
+          # separate JSON files alongside the bundles.
+          if [ "$ANOM_RC" = "0" ]; then
+            [ -f data/anomaly_model.joblib ]   && gh release upload latest-data data/anomaly_model.joblib   --clobber || true
+            [ -f data/anomaly_metrics.json ]   && gh release upload latest-data data/anomaly_metrics.json   --clobber || true
+          else
+            echo "::warning::Skipping anomaly upload — train-anomaly rc=${ANOM_RC:-<unset>}"
+          fi
+          if [ "$HAZ_RC" = "0" ]; then
+            [ -f data/hazard_model.joblib ]    && gh release upload latest-data data/hazard_model.joblib    --clobber || true
+            [ -f data/hazard_metrics.json ]    && gh release upload latest-data data/hazard_metrics.json    --clobber || true
+          else
+            echo "::warning::Skipping hazard upload — train-hazard rc=${HAZ_RC:-<unset>}"
+          fi
+          # detect_relists writes directly to the SQLite DB
+          # (relist_events table); no separate file to upload — it
+          # rides the data/olx_cars.db release alongside everything else.
