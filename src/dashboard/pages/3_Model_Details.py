@@ -27,6 +27,11 @@ from data_loader import (
     load_all, _ensure_release_assets, DB_PATH, _force_next_check,
     get_last_release_error,
 )
+from src.analytics.decision import (
+    build_context as _build_decision_context,
+    decide as _decide_one,
+    VERDICT_ICON,
+)
 
 
 st.title("Model Details")
@@ -191,6 +196,61 @@ seg["__score"] = seg["olx_id"].map(
     lambda o: _sig_field(o, "flip_score") if sig_lookup is not None and "flip_score" in sig_lookup.columns else None
 )
 
+# Decision verdicts. Reuse signals_df rows (already have predicted /
+# fair_low / fair_high / sample_size / band_pct). Skip snapshots-based
+# trend signal — Page 3 is segment-scoped, the global trend map would
+# add a 600 ms snapshot load for one or two cells in the table.
+_pred_lookup = (
+    dict(zip(predictions_df["olx_id"], predictions_df["predicted_price"]))
+    if predictions_df is not None and not predictions_df.empty
+    else {}
+)
+from src.analytics.price_model import load_metrics_history as _load_mh3
+_mh3 = _load_mh3()
+_cov3 = None
+if _mh3:
+    _last3 = _mh3[-1]
+    _cov3 = _last3.get("coverage_80_calibrated") or _last3.get("coverage_80")
+_decision_ctx = _build_decision_context(
+    listings_df, None, coverage_80=_cov3, predicted_lookup=_pred_lookup,
+)
+
+# Merge raw listing flags onto signals_df so decide() sees urgency /
+# warranty / days_listed / price_change_eur — compute_signals collapses
+# those into multipliers but doesn't carry the raw values.
+_decision_extra_cols = [
+    "urgency", "warranty", "first_owner_selling", "taxi_fleet_rental",
+    "days_listed", "price_change_eur", "mechanical_condition",
+]
+_verdict_lookup: dict[str, tuple[str, float]] = {}
+if sig_lookup is not None:
+    _present_extras = [c for c in _decision_extra_cols if c in listings_df.columns]
+    _extras = (
+        listings_df[["olx_id"] + _present_extras]
+        .drop_duplicates("olx_id").set_index("olx_id")
+        if _present_extras else None
+    )
+    for oid, row in sig_lookup.iterrows():
+        merged = row.to_dict()
+        if _extras is not None and oid in _extras.index:
+            for c in _present_extras:
+                merged.setdefault(c, _extras.loc[oid, c])
+        merged["olx_id"] = oid
+        d = _decide_one(pd.Series(merged), _decision_ctx)
+        _verdict_lookup[oid] = (d.verdict, d.score)
+
+def _verdict_for(oid: str) -> str:
+    v = _verdict_lookup.get(oid)
+    if not v:
+        return ""
+    icon = VERDICT_ICON.get(v[0], "")
+    return f"{icon} {v[0]}"
+
+seg["__verdict"] = seg["olx_id"].map(_verdict_for)
+seg["__decision_score"] = seg["olx_id"].map(
+    lambda o: _verdict_lookup.get(o, (None, None))[1],
+)
+
 # Order rows: active+highest score first, then sold by deactivation desc, then expired.
 seg["__sort_bucket"] = seg["__status"].map({"🟢 active": 0, "🔵 sold": 1, "⚫ expired": 2})
 seg = seg.sort_values(
@@ -201,11 +261,13 @@ seg = seg.sort_values(
 
 table = pd.DataFrame({
     "status": seg["__status"],
+    "verdict": seg["__verdict"],
+    "dec score": pd.to_numeric(seg["__decision_score"], errors="coerce").round(1),
     "year": seg["year"].astype("Int64"),
     "km": seg["mileage_km"].astype("Int64"),
     "price €": pd.to_numeric(seg["price_eur"], errors="coerce").round(0).astype("Int64"),
     "predicted €": pd.to_numeric(seg["__predicted"], errors="coerce").round(0).astype("Int64"),
-    "score": pd.to_numeric(seg["__score"], errors="coerce").round(0).astype("Int64"),
+    "flip": pd.to_numeric(seg["__score"], errors="coerce").round(0).astype("Int64"),
     "DoM (d)": pd.to_numeric(seg["__dom"], errors="coerce").astype("Int64"),
     "trim": seg.get("trim_level", "").fillna(""),
     "sub_model": seg.get("sub_model", "").fillna(""),
@@ -218,8 +280,10 @@ table = pd.DataFrame({
 st.subheader(f"Listings ({len(table)})")
 st.caption(
     "DoM = days-on-market (active rows: now − first_seen; closed rows: "
-    "deactivated − first_seen). Predicted / score only populated for "
-    "rows the price model scored — usually the active subset."
+    "deactivated − first_seen). Predicted / flip / verdict only populated "
+    "for rows the price model scored — usually the active subset. "
+    "verdict / dec score come from the resale-decision algorithm; flip "
+    "is the legacy ranker."
 )
 
 st.dataframe(
@@ -231,7 +295,8 @@ st.dataframe(
         ),
         "price €": st.column_config.NumberColumn(format="%d"),
         "predicted €": st.column_config.NumberColumn(format="%d"),
-        "score": st.column_config.NumberColumn(format="%d"),
+        "flip": st.column_config.NumberColumn(format="%d"),
+        "dec score": st.column_config.NumberColumn(format="%.1f"),
         "DoM (d)": st.column_config.NumberColumn(format="%d"),
     },
 )

@@ -21,6 +21,14 @@ from data_loader import (
     load_all, _force_next_check, _ensure_release_assets, DB_PATH,
     get_last_release_error, _fuel_group,
 )
+from src.analytics.decision import (
+    build_context as _build_decision_context,
+    decide as _decide_one,
+    VERDICT_ICON,
+    VERDICT_BUY, VERDICT_WATCH, VERDICT_REJECT, VERDICT_NO_OPINION,
+)
+from src.storage.repository import get_price_snapshots_df
+from src.storage.database import init_db, get_session
 
 
 def _release_cache_signature() -> tuple[float, int]:
@@ -57,6 +65,50 @@ brands_models = _loaded[3] if len(_loaded) > 3 else {}
 turnover_df = _loaded[4] if len(_loaded) > 4 else pd.DataFrame()
 importance_df = _loaded[7] if len(_loaded) > 7 else pd.DataFrame()
 predictions_df = _loaded[8] if len(_loaded) > 8 else pd.DataFrame()
+
+
+# Snapshots feed the 90d trend signal of the decision algorithm.
+# 120-day window keeps memory bounded (~7 MB on prod) while giving
+# enough history for an early/late tercile split.
+@st.cache_data(ttl=600)
+def _load_snapshots(_sig, since_days: int):
+    init_db()
+    s = get_session()
+    try:
+        return get_price_snapshots_df(s, since_days=since_days)
+    finally:
+        s.close()
+
+
+# Build a DecisionContext once per data refresh. ``predictions_df`` is
+# the right input for the calibration map — it carries predictions for
+# the full active set, not just deals. The segment-level maps (DoM,
+# trend, calibration) are tiny — the heavy bit is the snapshots load.
+_dec_predicted_lookup = (
+    dict(zip(predictions_df["olx_id"], predictions_df["predicted_price"]))
+    if predictions_df is not None and not predictions_df.empty
+    else {}
+)
+try:
+    _snapshots_df = _load_snapshots(_release_cache_signature(), 120)
+except Exception:  # noqa: BLE001 — repository errors → fall back to no-trend ctx
+    _snapshots_df = pd.DataFrame()
+
+# Latest model-quality coverage feeds the global trust signal. Same
+# accessor the sidebar 'Model quality' expander uses below.
+from src.analytics.price_model import load_metrics_history as _load_mh
+_mh = _load_mh()
+_latest_coverage = None
+if _mh:
+    _last = _mh[-1]
+    _latest_coverage = _last.get("coverage_80_calibrated") or _last.get("coverage_80")
+
+decision_ctx = _build_decision_context(
+    listings_df,
+    _snapshots_df,
+    coverage_80=_latest_coverage,
+    predicted_lookup=_dec_predicted_lookup,
+)
 
 # ---------------------------------------------------------------------------
 # Sidebar — filters
@@ -111,6 +163,21 @@ price_range = st.sidebar.slider("Price (EUR)", min_value=0, max_value=price_max_
 only_private = st.sidebar.checkbox("Private sellers only", value=False)
 hide_accidents = st.sidebar.checkbox("Hide accidents", value=False)
 hide_repair = st.sidebar.checkbox("Hide repair needed", value=False)
+sort_by_decision = st.sidebar.checkbox(
+    "Sort by decision score",
+    value=False,
+    help=(
+        "Re-rank cards by the resale-decision algorithm's score "
+        "instead of the default flip_score. The decision score "
+        "factors in calibration residual, segment trend, DoM and "
+        "seller-side multipliers."
+    ),
+)
+hide_non_buy = st.sidebar.checkbox(
+    "Hide non-BUY verdicts",
+    value=False,
+    help="Show only BUY rows from the decision algorithm.",
+)
 
 if not importance_df.empty:
     with st.sidebar.expander("Feature importance"):
@@ -208,7 +275,39 @@ deals["est_profit_eur"] = (deals["predicted_price"] - deals["price_eur"]).round(
 _price = deals["price_eur"].where(deals["price_eur"] > 0, pd.NA)
 deals["est_roi_pct"] = ((deals["predicted_price"] - deals["price_eur"]) / _price * 100).round(1)
 
-st.caption(f"{len(deals)} deals sorted by flip score")
+# Enrich with raw listing fields that compute_signals collapses into
+# multipliers but doesn't carry through. ``decide`` reads them again to
+# build its own narrative reasons.
+_extra_cols = [
+    "urgency", "warranty", "first_owner_selling", "taxi_fleet_rental",
+    "days_listed", "price_change_eur", "mechanical_condition",
+]
+_present = [c for c in _extra_cols if c in listings_df.columns]
+if _present:
+    _extras = listings_df[["olx_id"] + _present].drop_duplicates("olx_id")
+    deals = deals.merge(_extras, on="olx_id", how="left", suffixes=("", "_raw"))
+
+# Run the decision algorithm once for every visible deal. Building the
+# verdict / score columns up front lets us optionally sort or filter on
+# them before the render loop.
+_decisions = [_decide_one(row, decision_ctx) for _, row in deals.iterrows()]
+deals["verdict"] = [d.verdict for d in _decisions]
+deals["decision_score"] = [d.score for d in _decisions]
+deals["__decision_obj"] = _decisions
+
+if hide_non_buy:
+    deals = deals[deals["verdict"] == VERDICT_BUY]
+    if deals.empty:
+        st.info("No BUY-verdict deals after current filters.")
+        st.stop()
+
+if sort_by_decision:
+    deals = deals.sort_values("decision_score", ascending=False)
+    _sort_label = "decision score"
+else:
+    _sort_label = "flip score"
+
+st.caption(f"{len(deals)} deals sorted by {_sort_label}")
 
 # --- Cards ---
 for _, deal in deals.iterrows():
@@ -288,8 +387,20 @@ for _, deal in deals.iterrows():
                     st.caption(f"Score: {flip:.0f} · {sample} comps · band ±{band_pct/2:.0f}%")
                 else:
                     st.caption(f"Score: {flip:.0f} · based on {sample} listings")
+
+                # Resale-decision verdict — pre-computed above so it can
+                # also drive the optional sidebar sort/filter on
+                # decision_score.
+                _decision = deal.get("__decision_obj")
+                if _decision is not None:
+                    _icon = VERDICT_ICON.get(_decision.verdict, "")
+                    st.markdown(
+                        f"{_icon} **{_decision.verdict}** · decision score "
+                        f"{_decision.score:.1f}"
+                    )
             else:
                 st.markdown(f"**{price:,} EUR**")
+                _decision = None
 
         with col_link:
             url = deal.get("url")
@@ -317,5 +428,25 @@ for _, deal in deals.iterrows():
                 else None
             )
             st.switch_page("pages/3_Model_Details.py")
+
+        if _decision is not None and _decision.reasons:
+            with st.expander(f"Why {_decision.verdict}? ({len(_decision.reasons)} reasons)"):
+                for _r in _decision.reasons:
+                    st.markdown(f"- {_r}")
+                _comp = _decision.components
+                if _comp:
+                    _bits = []
+                    if _comp.get("net_margin_pct") is not None:
+                        _bits.append(f"net margin {_comp['net_margin_pct']:.1f}%")
+                    if _comp.get("expected_profit_eur") is not None:
+                        _bits.append(f"expected profit €{int(_comp['expected_profit_eur']):,}")
+                    if _comp.get("dom_median") is not None:
+                        _bits.append(f"DoM {int(_comp['dom_median'])}d")
+                    if _comp.get("trend_90d_pct") is not None:
+                        _bits.append(f"trend 90d {_comp['trend_90d_pct']:+.1f}%")
+                    if _comp.get("confidence") is not None:
+                        _bits.append(f"confidence ×{_comp['confidence']:.2f}")
+                    if _bits:
+                        st.caption(" · ".join(_bits))
 
         st.divider()
