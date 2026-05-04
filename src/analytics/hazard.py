@@ -199,29 +199,64 @@ def _build_features(
 # ---------------------------------------------------------------------------
 
 
-def _time_aware_split(
+def _split_train_val(
     X: pd.DataFrame,
     y: np.ndarray,
     first_seen: pd.Series,
     val_frac: float = VAL_FRAC,
-) -> tuple[pd.DataFrame, np.ndarray, pd.DataFrame, np.ndarray] | None:
+) -> tuple[pd.DataFrame, np.ndarray, pd.DataFrame, np.ndarray, str] | None:
     """Sort labeled rows by first_seen_at; oldest (1-val_frac) train,
-    newest val_frac validate. Honest answer to 'how does the model
+    newest val_frac validate — the honest answer to 'how does the model
     perform on tomorrow's listings'.
 
-    Returns None when either fold ends up below 50 rows (typical with
-    tiny synthetic test corpora).
+    Returns ``None`` when either fold ends up below 50 rows.
+
+    On the production corpus the time-tail tends to be heavily skewed
+    toward the positive class: fresh intake includes listings that
+    came in and sold within their first 30 days (label=1), while the
+    negatives (active and ≥horizon old) are pulled from the older
+    backlog. When the val fold ends up single-class, time-aware
+    early-stopping is meaningless — we fall back to a stratified
+    random split so the model still has a usable val set, at the cost
+    of temporal honesty in the AUC. The chosen mode is returned so the
+    caller can record it on the bundle and downstream consumers can
+    decide whether to trust the metric for production drift checks.
     """
+    n = len(X)
+    if n < 100:
+        return None
+
     order = first_seen.fillna(pd.Timestamp.min).argsort().values
-    n = len(order)
     cutoff = int(n * (1 - val_frac))
     train_idx = order[:cutoff]
     val_idx = order[cutoff:]
-    if len(train_idx) < 50 or len(val_idx) < 20:
+    if len(train_idx) >= 50 and len(val_idx) >= 20:
+        y_train, y_val = y[train_idx], y[val_idx]
+        if len(np.unique(y_train)) >= 2 and len(np.unique(y_val)) >= 2:
+            return (
+                X.iloc[train_idx], y_train,
+                X.iloc[val_idx], y_val,
+                "time_aware",
+            )
+
+    # Stratified random fallback — only path that survives a
+    # single-class time-tail.
+    from sklearn.model_selection import train_test_split
+
+    if len(np.unique(y)) < 2:
+        return None
+    try:
+        idx_train, idx_val = train_test_split(
+            np.arange(n), test_size=val_frac, random_state=42, stratify=y,
+        )
+    except ValueError:
+        return None
+    if len(idx_train) < 50 or len(idx_val) < 20:
         return None
     return (
-        X.iloc[train_idx], y[train_idx],
-        X.iloc[val_idx], y[val_idx],
+        X.iloc[idx_train], y[idx_train],
+        X.iloc[idx_val], y[idx_val],
+        "stratified_random",
     )
 
 
@@ -291,14 +326,10 @@ def train_hazard_model(
         listings_df.loc[keep, "first_seen_at"], errors="coerce", utc=True,
     )
 
-    split = _time_aware_split(X_kept, y_kept, first_seen_kept)
+    split = _split_train_val(X_kept, y_kept, first_seen_kept)
     if split is None:
         return None
-    X_train, y_train, X_val, y_val = split
-
-    if len(np.unique(y_train)) < 2 or len(np.unique(y_val)) < 2:
-        # Single-class fold — model can't learn / val can't score
-        return None
+    X_train, y_train, X_val, y_val, split_mode = split
 
     pos_weight = (y_train == 0).sum() / max((y_train == 1).sum(), 1)
 
@@ -327,6 +358,7 @@ def train_hazard_model(
         "horizon_days": horizon_days,
         "n_dropped_censored": int((~labeled).sum()),
         "n_dropped_nan_features": int(labeled.sum() - keep.sum()),
+        "split_mode": split_mode,
     }
 
     # Refit on full labeled corpus with the tuned best_iteration so the

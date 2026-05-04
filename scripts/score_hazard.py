@@ -146,10 +146,11 @@ def main() -> int:
         m = bundle["metrics"]
         log.info(
             "  saved bundle: AUC=%.3f · logloss=%.3f · base_rate_train=%.2f · "
-            "n_train=%d · n_val=%d · best_iter=%d · "
+            "n_train=%d · n_val=%d · best_iter=%d · split=%s · "
             "censored=%d · nan_dropped=%d",
             m["auc"], m["logloss"], m["base_rate_train"],
             m["n_train"], m["n_val"], m["best_iteration"],
+            m.get("split_mode", "?"),
             m["n_dropped_censored"], m["n_dropped_nan_features"],
         )
     else:
