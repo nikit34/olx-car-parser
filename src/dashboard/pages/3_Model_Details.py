@@ -23,9 +23,10 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from data_loader import (
-    load_all, _ensure_release_assets, DB_PATH, _force_next_check,
-    get_last_release_error,
+from data_loader import _force_next_check, get_last_release_error
+from _cache import (
+    release_signature as _release_cache_signature,
+    load_all_cached,
 )
 from src.analytics.decision import (
     build_context as _build_decision_context,
@@ -41,24 +42,11 @@ st.caption(
 )
 
 
-def _release_cache_signature() -> tuple[float, int]:
-    _ensure_release_assets()
-    if not DB_PATH.exists():
-        return (0.0, 0)
-    s = DB_PATH.stat()
-    return (s.st_mtime, s.st_size)
-
-
-@st.cache_data(ttl=300)
-def _load(_sig):
-    return load_all()
-
-
 # Defensive unpack — Streamlit Cloud can serve a previously-cached
 # 8-tuple right after a redeploy that adds a 9th element (predictions
 # was added 2026-05-03). Index into the tuple with safe defaults so
 # the page boots either way; the next cache miss returns the new shape.
-_loaded = _load(_release_cache_signature())
+_loaded = load_all_cached(_release_cache_signature())
 listings_df = _loaded[0] if len(_loaded) > 0 else pd.DataFrame()
 history_df = _loaded[1] if len(_loaded) > 1 else pd.DataFrame()
 signals_df = _loaded[2] if len(_loaded) > 2 else pd.DataFrame()
@@ -200,44 +188,59 @@ seg["__score"] = seg["olx_id"].map(
 # fair_low / fair_high / sample_size / band_pct). Skip snapshots-based
 # trend signal — Page 3 is segment-scoped, the global trend map would
 # add a 600 ms snapshot load for one or two cells in the table.
-_pred_lookup = (
-    dict(zip(predictions_df["olx_id"], predictions_df["predicted_price"]))
-    if predictions_df is not None and not predictions_df.empty
-    else {}
-)
-from src.analytics.price_model import load_metrics_history as _load_mh3
-_mh3 = _load_mh3()
-_cov3 = None
-if _mh3:
-    _last3 = _mh3[-1]
-    _cov3 = _last3.get("coverage_80_calibrated") or _last3.get("coverage_80")
-_decision_ctx = _build_decision_context(
-    listings_df, None, coverage_80=_cov3, predicted_lookup=_pred_lookup,
-)
-
-# Merge raw listing flags onto signals_df so decide() sees urgency /
-# warranty / days_listed / price_change_eur — compute_signals collapses
-# those into multipliers but doesn't carry the raw values.
-_decision_extra_cols = [
-    "urgency", "warranty", "first_owner_selling", "taxi_fleet_rental",
-    "days_listed", "price_change_eur", "mechanical_condition",
-]
-_verdict_lookup: dict[str, tuple[str, float]] = {}
-if sig_lookup is not None:
-    _present_extras = [c for c in _decision_extra_cols if c in listings_df.columns]
-    _extras = (
-        listings_df[["olx_id"] + _present_extras]
-        .drop_duplicates("olx_id").set_index("olx_id")
-        if _present_extras else None
+# The verdict map depends only on the data release, NOT on the user's
+# brand/model/status pick — so cache it on the release signature.
+# Without this, every sidebar change re-runs decide() across thousands
+# of signals (~10-20 s on 1 vCPU), starving the websocket and
+# triggering the 1011 keepalive timeout.
+@st.cache_data(ttl=1800, show_spinner="Computing verdicts...")
+def _verdicts_cached(
+    _sig: tuple[float, int],
+    _listings, _signals, _predictions,
+):
+    from src.analytics.price_model import load_metrics_history as _lmh
+    pred_lookup = (
+        dict(zip(_predictions["olx_id"], _predictions["predicted_price"]))
+        if _predictions is not None and not _predictions.empty
+        else {}
     )
-    for oid, row in sig_lookup.iterrows():
-        merged = row.to_dict()
-        if _extras is not None and oid in _extras.index:
-            for c in _present_extras:
-                merged.setdefault(c, _extras.loc[oid, c])
-        merged["olx_id"] = oid
-        d = _decide_one(pd.Series(merged), _decision_ctx)
-        _verdict_lookup[oid] = (d.verdict, d.score)
+    mh = _lmh()
+    cov = None
+    if mh:
+        last = mh[-1]
+        cov = last.get("coverage_80_calibrated") or last.get("coverage_80")
+    ctx = _build_decision_context(
+        _listings, None, coverage_80=cov, predicted_lookup=pred_lookup,
+    )
+    sigs = (
+        _signals.set_index("olx_id")
+        if _signals is not None and not _signals.empty else None
+    )
+    extra_cols = [
+        "urgency", "warranty", "first_owner_selling", "taxi_fleet_rental",
+        "days_listed", "price_change_eur", "mechanical_condition",
+    ]
+    out: dict[str, tuple[str, float]] = {}
+    if sigs is not None:
+        present = [c for c in extra_cols if c in _listings.columns]
+        extras = (
+            _listings[["olx_id"] + present].drop_duplicates("olx_id").set_index("olx_id")
+            if present else None
+        )
+        for oid, row in sigs.iterrows():
+            merged = row.to_dict()
+            if extras is not None and oid in extras.index:
+                for c in present:
+                    merged.setdefault(c, extras.loc[oid, c])
+            merged["olx_id"] = oid
+            d = _decide_one(pd.Series(merged), ctx)
+            out[oid] = (d.verdict, d.score)
+    return out
+
+
+_verdict_lookup = _verdicts_cached(
+    _release_cache_signature(), listings_df, signals_df, predictions_df,
+)
 
 def _verdict_for(oid: str) -> str:
     v = _verdict_lookup.get(oid)

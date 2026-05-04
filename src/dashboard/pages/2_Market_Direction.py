@@ -26,12 +26,12 @@ import plotly.graph_objects as go
 import plotly.express as px
 import streamlit as st
 
-from data_loader import (
-    load_all, _ensure_release_assets, DB_PATH, _force_next_check,
-    get_last_release_error, _fuel_group,
+from data_loader import _force_next_check, get_last_release_error, _fuel_group
+from _cache import (
+    release_signature as _release_cache_signature,
+    load_all_cached,
+    load_snapshots_cached,
 )
-from src.storage.repository import get_price_snapshots_df
-from src.storage.database import init_db, get_session
 
 
 st.title("Market Direction — by segment")
@@ -42,30 +42,7 @@ st.caption(
 )
 
 
-def _release_cache_signature() -> tuple[float, int]:
-    _ensure_release_assets()
-    if not DB_PATH.exists():
-        return (0.0, 0)
-    s = DB_PATH.stat()
-    return (s.st_mtime, s.st_size)
-
-
-@st.cache_data(ttl=300)
-def _load(_sig):
-    return load_all()
-
-
-@st.cache_data(ttl=600)
-def _load_snapshots(_sig, since_days: int):
-    init_db()
-    s = get_session()
-    try:
-        return get_price_snapshots_df(s, since_days=since_days)
-    finally:
-        s.close()
-
-
-listings_df, *_rest = _load(_release_cache_signature())
+listings_df, *_rest = load_all_cached(_release_cache_signature())
 if listings_df.empty:
     st.warning("No data yet.")
     err = get_last_release_error()
@@ -77,7 +54,7 @@ if listings_df.empty:
         st.rerun()
     st.stop()
 
-snapshots = _load_snapshots(_release_cache_signature(), 365)
+snapshots = load_snapshots_cached(_release_cache_signature(), 365)
 if snapshots.empty:
     st.warning("No snapshot history yet.")
     st.stop()

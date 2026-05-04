@@ -18,8 +18,12 @@ _sys.path.insert(0, str(_dashboard_dir))
 _sys.path.insert(0, str(_project_root))
 
 from data_loader import (
-    load_all, _force_next_check, _ensure_release_assets, DB_PATH,
-    get_last_release_error, _fuel_group,
+    _force_next_check, get_last_release_error, _fuel_group,
+)
+from _cache import (
+    release_signature as _release_cache_signature,
+    load_all_cached,
+    load_snapshots_cached,
 )
 from src.analytics.decision import (
     build_context as _build_decision_context,
@@ -27,29 +31,6 @@ from src.analytics.decision import (
     VERDICT_ICON,
     VERDICT_BUY, VERDICT_WATCH, VERDICT_REJECT, VERDICT_NO_OPINION,
 )
-from src.storage.repository import get_price_snapshots_df
-from src.storage.database import init_db, get_session
-
-
-def _release_cache_signature() -> tuple[float, int]:
-    """Cache key that invalidates the moment the local DB cache changes.
-
-    Without this the @st.cache_data(ttl=300) below would serve a stale
-    (empty / old) load_all() result for up to 5 minutes after the
-    GitHub Release refresh, even though _ensure_release_assets had
-    already pulled the new file. Calling _ensure_release_assets here is
-    cheap (marker-gated TTL inside) and gives us the up-to-date mtime.
-    """
-    _ensure_release_assets()
-    if not DB_PATH.exists():
-        return (0.0, 0)
-    s = DB_PATH.stat()
-    return (s.st_mtime, s.st_size)
-
-
-@st.cache_data(ttl=1800)
-def load_data(_cache_signature: tuple[float, int]):
-    return load_all()
 
 
 # Defensive unpack — Streamlit Cloud can serve a stale 8-tuple from
@@ -57,7 +38,7 @@ def load_data(_cache_signature: tuple[float, int]):
 # to 9 (predictions added 2026-05-03). Index with safe defaults; the
 # next cache miss returns the new shape and predictions_df becomes
 # populated.
-_loaded = load_data(_release_cache_signature())
+_loaded = load_all_cached(_release_cache_signature())
 listings_df = _loaded[0] if len(_loaded) > 0 else pd.DataFrame()
 history_df = _loaded[1] if len(_loaded) > 1 else pd.DataFrame()
 signals_df = _loaded[2] if len(_loaded) > 2 else pd.DataFrame()
@@ -67,25 +48,14 @@ importance_df = _loaded[7] if len(_loaded) > 7 else pd.DataFrame()
 predictions_df = _loaded[8] if len(_loaded) > 8 else pd.DataFrame()
 
 
-# Snapshots feed the 90d trend signal of the decision algorithm.
-# 120-day window keeps memory bounded (~7 MB on prod) while giving
-# enough history for an early/late tercile split.
-@st.cache_data(ttl=1800)
-def _load_snapshots(_sig, since_days: int):
-    init_db()
-    s = get_session()
-    try:
-        return get_price_snapshots_df(s, since_days=since_days)
-    finally:
-        s.close()
-
-
 # Build a DecisionContext once per data refresh. ``predictions_df`` is
 # the right input for the calibration map — it carries predictions for
 # the full active set, not just deals. The segment-level maps (DoM,
 # trend, calibration) are tiny — the heavy bit is the snapshots load.
+# 120-day window keeps memory bounded (~7 MB on prod) while giving
+# enough history for an early/late tercile split.
 try:
-    _snapshots_df = _load_snapshots(_release_cache_signature(), 120)
+    _snapshots_df = load_snapshots_cached(_release_cache_signature(), 120)
 except Exception:  # noqa: BLE001 — repository errors → fall back to no-trend ctx
     _snapshots_df = pd.DataFrame()
 
