@@ -144,16 +144,17 @@ def get_model_data(_active_df, _listings_df):
 
     saved = load_model()
     if saved is not None:
-        models, cat_maps, metrics, oof_preds, calibrator = saved
+        models, cat_maps, metrics, oof_preds, calibrator, uncertainty = saved
     else:
         result = train_price_model(active)
         if result is None:
             return None
-        models, cat_maps, metrics, oof_preds, calibrator = result
+        models, cat_maps, metrics, oof_preds, calibrator, uncertainty = result
         save_model(
             models, cat_maps, metrics,
             oof_preds=oof_preds,
             median_calibrator=calibrator,
+            uncertainty_bundle=uncertainty,
         )
 
     conformal_q = metrics.get("conformal_q", 0.0)
@@ -167,6 +168,7 @@ def get_model_data(_active_df, _listings_df):
         median_calibrator=calibrator,
         conformal_q_per_bucket=per_bucket_q,
         conformal_q_bucket_edges=bucket_edges,
+        uncertainty_bundle=uncertainty,
     )
     importance = compute_permutation_importance(
         models, cat_maps, active,

@@ -108,6 +108,36 @@ class TestComputeSignals:
             signals, *_ = compute_signals(listings, sample_history_df)
         assert signals.empty or "fairly-priced" not in signals["olx_id"].values
 
+    def test_drops_listings_with_too_few_comparables(
+        self, sample_history_df, generations_data, patched_gb_model,
+    ):
+        """When even the model-level comparable group has <5 listings,
+        compute_signals must drop the row instead of surfacing it with
+        sample_size=1..4. The downstream resale-decision algorithm
+        gates at MIN_SAMPLE=5, so anything that slips through the
+        signals gate is wasted compute and a confusing card on the
+        dashboard.
+
+        Setup: 3 Lancia Y listings, one obviously below the others.
+        Pre-fix this would surface as a "deal" with sample_size=3."""
+        listings = pd.DataFrame([
+            {"olx_id": "orphan-cheap", "url": "", "brand": "Lancia", "model": "Y",
+             "year": 2010, "price_eur": 1000, "mileage_km": 180000,
+             "fuel_type": "Petrol", "is_active": True},
+            {"olx_id": "orphan-2", "url": "", "brand": "Lancia", "model": "Y",
+             "year": 2010, "price_eur": 3500, "mileage_km": 150000,
+             "fuel_type": "Petrol", "is_active": True},
+            {"olx_id": "orphan-3", "url": "", "brand": "Lancia", "model": "Y",
+             "year": 2009, "price_eur": 3200, "mileage_km": 200000,
+             "fuel_type": "Petrol", "is_active": True},
+        ])
+        with patched_gb_model(multiplier=1.5), patch(
+            "src.models.generations.load_generations",
+            return_value=generations_data,
+        ):
+            signals, *_ = compute_signals(listings, sample_history_df)
+        assert signals.empty or "orphan-cheap" not in signals["olx_id"].values
+
     def test_excludes_obvious_total_loss_listings(self, sample_history_df, generations_data):
         listings = pd.DataFrame([
             {"olx_id": "risk-1", "url": "", "brand": "Volkswagen", "model": "Golf",

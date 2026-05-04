@@ -36,6 +36,7 @@ def _patched_gb_model(multiplier: float = 1.4):
          "conformal_q_bucket_edges": None},
         {},  # oof_preds
         None,  # calibrator
+        None,  # uncertainty_bundle (option C — None means fallback to per-bucket q)
     )
 
     def _fake_predict(models, cat_maps, df, **_kw):
@@ -136,7 +137,13 @@ def generations_data():
 
 @pytest.fixture
 def sample_listings_df():
-    """Active listings DataFrame for signal tests."""
+    """Active listings DataFrame for signal tests.
+
+    The Mk7 generation has 6 priced listings so the comparable lookup
+    clears the ≥5 sample gate uniformly applied across sub/gen/model
+    fallbacks (compute_signals). a1 is the obvious below-median deal.
+    a4 has no year → no generation → excluded by upstream prep.
+    """
     return pd.DataFrame([
         {"olx_id": "a1", "url": "", "brand": "Volkswagen", "model": "Golf",
          "year": 2015, "price_eur": 8000, "mileage_km": 150000,
@@ -147,6 +154,15 @@ def sample_listings_df():
         {"olx_id": "a3", "url": "", "brand": "Volkswagen", "model": "Golf",
          "year": 2017, "price_eur": 15000, "mileage_km": 80000,
          "fuel_type": "Diesel", "city": "Faro", "district": "Faro", "is_active": True},
+        {"olx_id": "a5", "url": "", "brand": "Volkswagen", "model": "Golf",
+         "year": 2014, "price_eur": 13000, "mileage_km": 130000,
+         "fuel_type": "Diesel", "city": "Braga", "district": "Braga", "is_active": True},
+        {"olx_id": "a6", "url": "", "brand": "Volkswagen", "model": "Golf",
+         "year": 2018, "price_eur": 16000, "mileage_km": 60000,
+         "fuel_type": "Diesel", "city": "Coimbra", "district": "Coimbra", "is_active": True},
+        {"olx_id": "a7", "url": "", "brand": "Volkswagen", "model": "Golf",
+         "year": 2016, "price_eur": 14500, "mileage_km": 110000,
+         "fuel_type": "Diesel", "city": "Aveiro", "district": "Aveiro", "is_active": True},
         # No year → no generation → should be excluded
         {"olx_id": "a4", "url": "", "brand": "Volkswagen", "model": "Golf",
          "year": None, "price_eur": 5000, "mileage_km": 200000,

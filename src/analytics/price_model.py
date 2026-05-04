@@ -47,7 +47,7 @@ _OTHER_CATEGORY = "__other__"
 # scan kept running on every train/predict for nothing.
 # v8: drop the dead pipeline + helpers entirely. Bundle no longer carries
 # `text_pipeline`; `_prepare_X` stops fitting a TF-IDF/SVD on every call.
-_SCHEMA_VERSION = 8
+_SCHEMA_VERSION = 9  # v9: per-row uncertainty model (option C)
 # Fraction of the dataset (newest rows by first_seen_at) used as the
 # time-honest conformal calibration window. Random-KFold CQR mixes
 # time-adjacent rows across folds and over-estimates coverage on real future
@@ -396,13 +396,98 @@ def _conformal_q_from_scores(
     return float(np.quantile(scores, q_level))
 
 
+def _train_uncertainty_model(
+    X_train_unc: np.ndarray,
+    scores_train_unc: np.ndarray,
+    X_cal_unc: np.ndarray,
+    scores_cal_unc: np.ndarray,
+    cat_indices: list[int],
+    target_coverage: float = 0.80,
+) -> tuple[lgb.LGBMRegressor, float] | None:
+    """Per-row CQR-score model + additive conformal correction.
+
+    Trains a regressor ``s ≈ f(features)`` on one half of the cal-set
+    where the target is the *signed* CQR score
+    (``s_i = max(low_i − y_i, y_i − high_i)`` — negative when ``y`` lies
+    safely inside the band, positive when outside). MAE objective keeps
+    the fit robust to extreme outliers from salvage rows.
+
+    On the held-out half computes the additive correction ``q_offset``
+    such that ``coverage_at(g(x) + q_offset) ≈ target_coverage``. This
+    is the classic locally-adaptive conformal recipe — the same
+    statistical guarantee as the per-bucket scheme but with the bucket
+    replaced by a learned per-row prediction.
+
+    The final inference-time widening (built in ``_per_row_uncertainty_q``)
+    is ``max(0, g(x) + q_offset)`` (floored against the global conformal q
+    so we never shrink below the marginal-coverage value).
+
+    Returns ``None`` when either half is too small to fit reliably —
+    callers fall back to the per-bucket conformal q.
+    """
+    if len(X_train_unc) < 30 or len(X_cal_unc) < 20:
+        return None
+
+    model = lgb.LGBMRegressor(
+        objective="regression_l1",     # MAE — robust to score outliers
+        n_estimators=200,
+        learning_rate=0.05,
+        num_leaves=15,
+        min_data_in_leaf=20,
+        feature_fraction=0.8,
+        bagging_fraction=0.8,
+        bagging_freq=5,
+        verbose=-1,
+        random_state=42,
+    )
+    # Train on signed scores so rows safely inside the band (negative s)
+    # contribute to lowering predicted q, not just zero them out — that's
+    # what lets per-row q get *narrower* than per-bucket on easy rows.
+    model.fit(
+        X_train_unc, scores_train_unc,
+        categorical_feature=cat_indices,
+    )
+
+    # Additive conformal correction: pick q_offset so that
+    # Pr(s_i <= g(x_i) + q_offset) = target_coverage on the held-out half.
+    # Equivalent to running the marginal conformal recipe on the residuals
+    # (s_i - g(x_i)) instead of raw scores.
+    pred_cal = model.predict(X_cal_unc)
+    residuals = scores_cal_unc - pred_cal
+    q_offset = _conformal_q_from_scores(residuals, target_coverage=target_coverage)
+    return model, float(q_offset)
+
+
+def _per_row_uncertainty_q(
+    X: np.ndarray,
+    uncertainty_model: lgb.LGBMRegressor,
+    q_offset: float,
+    floor_q: float,
+) -> np.ndarray:
+    """Predict per-row CQR widening: ``max(g(x) + q_offset, floor_q, 0)``.
+
+    The floor at ``floor_q`` (typically the global conformal q) keeps
+    bands from collapsing to zero on rows where the regressor predicts
+    very low scores. The floor at 0 prevents a *negative* widening,
+    which would tighten the band — for rows where the model predicts
+    "this row is well inside the band" we keep the original quantile
+    edges, not narrower."""
+    raw = uncertainty_model.predict(X) + q_offset
+    return np.maximum(np.maximum(raw, 0.0), floor_q)
+
+
 def _time_aware_conformal_q(
     df: pd.DataFrame,
     best_iters_per_q: dict[str, int],
     calibration_frac: float = _TIME_CALIBRATION_FRAC,
-) -> tuple[float, dict[str, float], list[tuple[float, float, str]]] | None:
-    """Compute conformal_q from a time-honest holdout, globally and per
-    price bucket.
+) -> tuple[
+    float,
+    dict[str, float],
+    list[tuple[float, float, str]],
+    tuple[lgb.LGBMRegressor, float] | None,
+] | None:
+    """Compute conformal_q from a time-honest holdout, globally, per
+    price bucket, and as a per-row uncertainty model.
 
     Trains the three quantile models on the oldest ``(1 - calibration_frac)``
     of the data (sorted by ``first_seen_at``), predicts the newest fraction,
@@ -412,14 +497,22 @@ def _time_aware_conformal_q(
         predicted prices (10 bins by default; falls back to the static
         5-bucket scheme on small data)
       - per-bucket q from scores grouped by those edges
+      - per-row uncertainty model + q_scale (option C): a regressor that
+        predicts the CQR score from features, trained on half the cal
+        set and calibrated on the other half. Replaces the bucket-q
+        lookup at inference time with a per-row width — addresses the
+        bottleneck where 77% of deals end up NO_OPINION because the
+        cheap-decile bucket-q is dominated by salvage outliers.
 
     Per-bucket q on dynamic deciles closes the within-bucket coverage gap
     the static 5-bucket scheme leaves — reliability curve showed deciles
     1-3 spanning 14pp of coverage even though they all sit inside the
     static ``<€3k`` bucket.
 
-    Returns (global_q, per_bucket_q, bucket_edges) or None if the data
-    lacks ``first_seen_at`` or is too small to split.
+    Returns (global_q, per_bucket_q, bucket_edges, uncertainty_bundle)
+    or None if the data lacks ``first_seen_at`` or is too small to split.
+    ``uncertainty_bundle`` is ``(model, q_scale)`` when training
+    succeeded, else ``None`` (the caller falls back to bucket-q).
     """
     if "first_seen_at" not in df.columns:
         return None
@@ -476,7 +569,21 @@ def _time_aware_conformal_q(
             continue  # too few rows for a reliable per-bucket q
         per_bucket[label] = _conformal_q_from_scores(scores[mask])
 
-    return global_q, per_bucket, bucket_edges
+    # Per-row uncertainty model (option C). Split the cal-set in half:
+    # first half trains ``score = f(features)``, second half calibrates
+    # the global q_scale so empirical 80% coverage holds. Falls back to
+    # None if either half is too small — caller then keeps bucket-q.
+    uncertainty_bundle: tuple[lgb.LGBMRegressor, float] | None = None
+    n_cal = len(X_cal)
+    if n_cal >= 50:
+        half = n_cal // 2
+        uncertainty_bundle = _train_uncertainty_model(
+            X_cal[:half], scores[:half],
+            X_cal[half:], scores[half:],
+            cat_indices,
+        )
+
+    return global_q, per_bucket, bucket_edges, uncertainty_bundle
 
 
 # Default bucket boundaries used when no decile edges are stored in the
@@ -593,7 +700,10 @@ def _per_row_conformal_q(
 def _cv_metrics(
     df: pd.DataFrame,
     n_splits: int = 5,
-) -> tuple[dict, dict[str, int], np.ndarray, IsotonicRegression | None]:
+) -> tuple[
+    dict, dict[str, int], np.ndarray, IsotonicRegression | None,
+    tuple[lgb.LGBMRegressor, float] | None,
+]:
     """K-fold CV for all three quantile models with per-fold categorical
     encoding (no leakage) and early stopping to tune n_estimators.
 
@@ -683,8 +793,12 @@ def _cv_metrics(
     time_result = _time_aware_conformal_q(df, suggested)
     per_bucket_q: dict[str, float] = {}
     bucket_edges: list[tuple[float, float, str]] = list(_DEFAULT_BUCKET_EDGES)
+    uncertainty_bundle: tuple[lgb.LGBMRegressor, float] | None = None
     if time_result is not None:
-        conformal_q_log_time, per_bucket_q, bucket_edges = time_result
+        (
+            conformal_q_log_time, per_bucket_q, bucket_edges,
+            uncertainty_bundle,
+        ) = time_result
         conformal_q_log = conformal_q_log_time
     else:
         conformal_q_log_time = None
@@ -809,7 +923,7 @@ def _cv_metrics(
         "monotone_constraints": True,
         "n_features": len(_ALL_FEATURES),
     }
-    return metrics, suggested, oof_band, median_calibrator
+    return metrics, suggested, oof_band, median_calibrator, uncertainty_bundle
 
 
 def train_price_model(
@@ -821,16 +935,21 @@ def train_price_model(
     dict,
     dict[str, tuple[float, float, float]],
     IsotonicRegression | None,
+    tuple[lgb.LGBMRegressor, float] | None,
 ] | None:
     """Train quantile regression models: median, low (10th), high (90th).
 
-    Returns (models, category_maps, metrics, oof_preds, median_calibrator)
-    or None if insufficient data.
+    Returns (models, category_maps, metrics, oof_preds, median_calibrator,
+    uncertainty_bundle) or None if insufficient data.
 
     - ``oof_preds``: dict olx_id → (low, median, high) of cross-validated,
       calibrated, crossing-repaired predictions in price space.
     - ``median_calibrator``: IsotonicRegression for median post-calibration
       on new rows; OOF preds already have it baked in.
+    - ``uncertainty_bundle``: ``(LGBMRegressor, q_scale)`` for per-row
+      CQR widening, or ``None`` if the time-aware split was too small
+      to fit. ``predict_prices`` prefers this over the per-bucket q
+      lookup when present.
     """
     needed = {"price_eur", "year", "mileage_km"}
     if not needed.issubset(listings_df.columns):
@@ -856,7 +975,10 @@ def train_price_model(
     # CV with per-fold cat encoding + per-quantile early stopping → tuned
     # n_estimators dict + OOF predictions in price space + isotonic calibrator
     # for the median quantile.
-    metrics, best_iters_per_q, oof_band, median_calibrator = _cv_metrics(df)
+    (
+        metrics, best_iters_per_q, oof_band, median_calibrator,
+        uncertainty_bundle,
+    ) = _cv_metrics(df)
     metrics["filter_stats"] = filter_stats
     n_sold = int((sold_w != 1.0).sum())
     n_dropped_sold = int((sold_w == 0.0).sum())
@@ -894,7 +1016,7 @@ def train_price_model(
                 float(oof_band[2, i]),
             )
 
-    return models, cat_maps, metrics, oof_preds, median_calibrator
+    return models, cat_maps, metrics, oof_preds, median_calibrator, uncertainty_bundle
 
 
 def predict_prices(
@@ -906,18 +1028,23 @@ def predict_prices(
     median_calibrator: IsotonicRegression | None = None,
     conformal_q_per_bucket: dict[str, float] | None = None,
     conformal_q_bucket_edges: list[tuple[float, float, str]] | None = None,
+    uncertainty_bundle: tuple[lgb.LGBMRegressor, float] | None = None,
 ) -> pd.DataFrame:
     """Predict fair price range for each listing.
 
     Models predict in log1p space; this function back-transforms with expm1.
 
-    *conformal_q* is the marginal CQR widening (log space). When
-    *conformal_q_per_bucket* is also supplied, each row's q is looked up by
-    its predicted-price bucket — class-conditional CQR — and falls back to
-    the marginal value for buckets the calibration window had too few rows
-    to estimate. *conformal_q_bucket_edges* are the bucket boundaries
-    (dynamic deciles persisted at train time). When None, the static
-    5-bucket scheme is used as a backward-compatible fallback.
+    Per-row band widening (CQR) is selected in this priority order:
+      1. ``uncertainty_bundle`` — a regressor predicting score directly
+         from features, scaled by ``q_scale`` (option C). Replaces the
+         bucket-q lookup at inference time and lets each listing carry
+         its own band width. Falls through to (2) when None.
+      2. ``conformal_q_per_bucket`` + ``conformal_q_bucket_edges`` —
+         class-conditional CQR keyed on predicted-price decile. Falls
+         through to (3) when None.
+      3. ``conformal_q`` — single global widening factor, always used
+         as a floor under (1) so the band never shrinks below the
+         marginal-coverage value.
 
     *oof_preds* — dict olx_id → (low, median, high) of out-of-fold CV
     predictions, shipped with the bundle. Listings whose olx_id is in this
@@ -947,20 +1074,25 @@ def predict_prices(
     else:
         median = raw_median
 
-    # Per-row CQR widening: each row's q is selected by its predicted-price
-    # bucket; falls back to the marginal q for buckets without a calibrated
-    # value. predict-time lookup uses calibrated median so it matches what
-    # the dashboard displays.
-    if conformal_q_per_bucket:
+    # Per-row CQR widening — priority order documented in the docstring:
+    #   1. uncertainty_bundle (option C, per-row from features)
+    #   2. conformal_q_per_bucket (class-conditional, by price decile)
+    #   3. conformal_q (single global value)
+    if uncertainty_bundle is not None:
+        unc_model, q_scale = uncertainty_bundle
+        per_row_q = _per_row_uncertainty_q(
+            X_arr, unc_model, q_scale, floor_q=conformal_q,
+        )
+    elif conformal_q_per_bucket:
         per_row_q = _per_row_conformal_q(
             median, conformal_q, conformal_q_per_bucket,
             edges=conformal_q_bucket_edges,
         )
-        log_low = models["low"].predict(X_arr) - per_row_q
-        log_high = models["high"].predict(X_arr) + per_row_q
     else:
-        log_low = models["low"].predict(X_arr) - conformal_q
-        log_high = models["high"].predict(X_arr) + conformal_q
+        per_row_q = np.full(len(median), float(conformal_q))
+
+    log_low = models["low"].predict(X_arr) - per_row_q
+    log_high = models["high"].predict(X_arr) + per_row_q
 
     low = np.expm1(log_low)
     high = np.expm1(log_high)
@@ -1010,6 +1142,7 @@ def save_model(
     metrics: dict,
     oof_preds: dict[str, tuple[float, float, float]] | None = None,
     median_calibrator: IsotonicRegression | None = None,
+    uncertainty_bundle: tuple[lgb.LGBMRegressor, float] | None = None,
 ) -> None:
     """Save trained model bundle to disk and append metrics to history."""
     _MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -1021,6 +1154,7 @@ def save_model(
         "metrics": metrics,
         "oof_preds": oof_preds or {},
         "median_calibrator": median_calibrator,
+        "uncertainty_bundle": uncertainty_bundle,
         "saved_at": datetime.now(timezone.utc).isoformat(),
     }
     joblib.dump(bundle, _MODEL_PATH)
@@ -1031,6 +1165,7 @@ def load_model(
     max_age_hours: float = _MODEL_MAX_AGE_HOURS,
 ) -> tuple[
     dict, dict, dict, dict, IsotonicRegression | None,
+    tuple[lgb.LGBMRegressor, float] | None,
 ] | None:
     """Load saved model if it exists, is fresh, and matches current schema.
 
@@ -1064,6 +1199,7 @@ def load_model(
             bundle.get("metrics", {}),
             bundle.get("oof_preds", {}),
             bundle.get("median_calibrator"),
+            bundle.get("uncertainty_bundle"),
         )
     except Exception:
         return None

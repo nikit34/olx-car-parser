@@ -100,7 +100,7 @@ def test_train_returns_model_and_metrics():
     df = _sample_listings(400, with_first_seen_at=True)
     result = train_price_model(df)
     assert result is not None
-    models, cat_maps, metrics, oof_preds, calibrator = result
+    models, cat_maps, metrics, oof_preds, calibrator, _unc = result
     assert "brand" in cat_maps
     assert "model" in cat_maps
     assert "low" in models and "median" in models and "high" in models
@@ -172,6 +172,103 @@ def test_per_bucket_conformal_q_with_dynamic_edges():
     assert out[2] == 0.10  # "high" has no per-bucket q → global
 
 
+def test_uncertainty_bundle_trains_and_predicts_positive_q():
+    """Option C: per-row uncertainty model trains on the cal-set residuals
+    and yields strictly-positive widening factors at inference time."""
+    df = _sample_listings(400, with_first_seen_at=True)
+    result = train_price_model(df)
+    assert result is not None
+    _models, _maps, _metrics, _oof, _calib, uncertainty = result
+    assert uncertainty is not None, (
+        "400 rows × ≥80 cal split should be enough to fit the uncertainty model"
+    )
+    unc_model, q_scale = uncertainty
+    assert q_scale > 0
+    # Predict on the same training distribution and check non-negative output.
+    from src.analytics.price_model import _prepare_X
+    X, _ = _prepare_X(df.iloc[:30])
+    raw_q = unc_model.predict(X)
+    # Raw predictions can be slightly negative (regression target is unbounded);
+    # the inference helper clamps at 0 and applies q_scale.
+    from src.analytics.price_model import _per_row_uncertainty_q
+    per_row_q = _per_row_uncertainty_q(X, unc_model, q_scale, floor_q=0.05)
+    assert (per_row_q >= 0.05).all()  # never below floor
+    assert per_row_q.std() > 0         # genuinely per-row, not a constant
+
+
+def test_predict_prices_uses_uncertainty_when_present(monkeypatch):
+    """When uncertainty_bundle is supplied, it overrides per-bucket q —
+    different rows get different band widths from the same model."""
+    df = _sample_listings(400, with_first_seen_at=True)
+    result = train_price_model(df)
+    assert result is not None
+    models, cat_maps, metrics, oof_preds, calibrator, uncertainty = result
+    assert uncertainty is not None
+
+    # Predict with vs without the uncertainty bundle. The bands should
+    # differ — uncertainty path is per-row, bucket path is per-decile.
+    _conf_q = metrics.get("conformal_q", 0.0)
+    _bucket_q = metrics.get("conformal_q_per_bucket", {})
+    _edges = [tuple(e) for e in metrics.get("conformal_q_bucket_edges") or []]
+
+    bucket_path = predict_prices(
+        models, cat_maps, df.head(50),
+        conformal_q=_conf_q,
+        oof_preds={},  # disable OOF override so the band path is exercised
+        median_calibrator=calibrator,
+        conformal_q_per_bucket=_bucket_q,
+        conformal_q_bucket_edges=_edges,
+    )
+    unc_path = predict_prices(
+        models, cat_maps, df.head(50),
+        conformal_q=_conf_q,
+        oof_preds={},
+        median_calibrator=calibrator,
+        conformal_q_per_bucket=_bucket_q,
+        conformal_q_bucket_edges=_edges,
+        uncertainty_bundle=uncertainty,
+    )
+    # Predicted median is unaffected by widening choice.
+    np.testing.assert_allclose(
+        bucket_path["predicted_price"], unc_path["predicted_price"],
+    )
+    # But bands should differ on at least some rows.
+    bucket_widths = (bucket_path["fair_price_high"] - bucket_path["fair_price_low"]).values
+    unc_widths = (unc_path["fair_price_high"] - unc_path["fair_price_low"]).values
+    assert not np.allclose(bucket_widths, unc_widths)
+
+
+def test_predict_prices_falls_back_to_per_bucket_q_when_uncertainty_none():
+    """Backward compat — old bundles without uncertainty_bundle keep
+    using the per-bucket lookup. A frame with uncertainty_bundle=None
+    must produce identical output to one not passing the param at all."""
+    df = _sample_listings(400, with_first_seen_at=True)
+    result = train_price_model(df)
+    assert result is not None
+    models, cat_maps, metrics, _oof, calibrator, _unc = result
+    _conf_q = metrics.get("conformal_q", 0.0)
+    _bucket_q = metrics.get("conformal_q_per_bucket", {})
+    _edges = [tuple(e) for e in metrics.get("conformal_q_bucket_edges") or []]
+
+    a = predict_prices(
+        models, cat_maps, df.head(20),
+        conformal_q=_conf_q,
+        median_calibrator=calibrator,
+        conformal_q_per_bucket=_bucket_q,
+        conformal_q_bucket_edges=_edges,
+    )
+    b = predict_prices(
+        models, cat_maps, df.head(20),
+        conformal_q=_conf_q,
+        median_calibrator=calibrator,
+        conformal_q_per_bucket=_bucket_q,
+        conformal_q_bucket_edges=_edges,
+        uncertainty_bundle=None,
+    )
+    np.testing.assert_allclose(a["fair_price_low"], b["fair_price_low"])
+    np.testing.assert_allclose(a["fair_price_high"], b["fair_price_high"])
+
+
 def test_compute_decile_edges_falls_back_on_small_data():
     """Below the row threshold, decile computation returns the static 5-bucket
     scheme — small synthetic test fixtures shouldn't get noisy 10-bin edges."""
@@ -203,7 +300,7 @@ def test_train_falls_back_to_random_cqr_without_first_seen_at():
     """No first_seen_at column → time-aware q is None, source falls back to random."""
     df = _sample_listings(with_first_seen_at=False)
     assert "first_seen_at" not in df.columns
-    _models, _maps, metrics, _oof, _calib = train_price_model(df)
+    _models, _maps, metrics, _oof, _calib, _unc = train_price_model(df)
     assert metrics.get("conformal_q_source") == "random"
     assert metrics.get("conformal_q_time") is None
     # Active conformal_q equals the random one in this fallback path
@@ -218,7 +315,7 @@ def test_train_returns_none_for_small_data():
 
 def test_predictions_are_positive():
     df = _sample_listings()
-    models, cat_maps, _metrics, _oof, _calib = train_price_model(df)
+    models, cat_maps, _metrics, _oof, _calib, _unc = train_price_model(df)
     preds = predict_prices(models, cat_maps, df)
     assert (preds["predicted_price"] >= 0).all()
     assert (preds["fair_price_low"] >= 0).all()
@@ -229,7 +326,7 @@ def test_predictions_are_positive():
 def test_predictions_never_cross():
     """low ≤ median ≤ high must hold for every row, with or without OOF override."""
     df = _sample_listings(300)
-    models, cat_maps, metrics, oof_preds, calibrator = train_price_model(df)
+    models, cat_maps, metrics, oof_preds, calibrator, _unc = train_price_model(df)
 
     # In-sample (uses OOF preds for every row)
     in_sample = predict_prices(
@@ -258,7 +355,7 @@ def test_predictions_never_cross():
 def test_oof_preds_used_for_known_olx_ids():
     """Listings present in oof_preds get exactly the OOF values, not model.predict."""
     df = _sample_listings(150)
-    models, cat_maps, _metrics, oof_preds, calibrator = train_price_model(df)
+    models, cat_maps, _metrics, oof_preds, calibrator, _unc = train_price_model(df)
 
     # Pick an olx_id that's in the OOF dict and predict on a single-row df.
     target_id = next(iter(oof_preds))
@@ -289,7 +386,7 @@ def test_calibrator_changes_predictions_for_new_rows():
     given heterogeneous training data that's vanishingly rare.
     """
     df = _sample_listings(400)
-    models, cat_maps, _metrics, _oof, calibrator = train_price_model(df)
+    models, cat_maps, _metrics, _oof, calibrator, _unc = train_price_model(df)
 
     fresh = df.head(50).copy()
     fresh["olx_id"] = [f"new_{i}" for i in range(len(fresh))]
@@ -301,7 +398,7 @@ def test_calibrator_changes_predictions_for_new_rows():
 
 def test_newer_cars_predicted_higher():
     df = _sample_listings(500)
-    models, cat_maps, _metrics, _oof, _calib = train_price_model(df)
+    models, cat_maps, _metrics, _oof, _calib, _unc = train_price_model(df)
 
     old_car = pd.DataFrame([{
         "year": 2010, "mileage_km": 150000, "engine_cc": 1600,
@@ -330,7 +427,7 @@ def test_handles_missing_features():
 
     result = train_price_model(df)
     assert result is not None
-    models, cat_maps, _metrics, _oof, _calib = result
+    models, cat_maps, _metrics, _oof, _calib, _unc = result
 
     # Predict on row with missing features
     sparse = pd.DataFrame([{
@@ -350,7 +447,7 @@ def test_rare_categories_grouped():
 
     result = train_price_model(df)
     assert result is not None
-    models, cat_maps, _metrics, _oof, _calib = result
+    models, cat_maps, _metrics, _oof, _calib, _unc = result
     assert "__other__" in cat_maps["model"]
 
     unseen = pd.DataFrame([{
@@ -370,7 +467,7 @@ def test_save_and_load_model(tmp_path, monkeypatch):
     monkeypatch.setattr("src.analytics.price_model._METRICS_PATH", tmp_path / "metrics.json")
 
     df = _sample_listings()
-    models, cat_maps, metrics, oof_preds, calibrator = train_price_model(df)
+    models, cat_maps, metrics, oof_preds, calibrator, _unc = train_price_model(df)
     save_model(
         models, cat_maps, metrics,
         oof_preds=oof_preds,
@@ -379,7 +476,7 @@ def test_save_and_load_model(tmp_path, monkeypatch):
 
     loaded = load_model(max_age_hours=1)
     assert loaded is not None
-    l_models, l_cat_maps, l_metrics, l_oof, l_calib = loaded
+    l_models, l_cat_maps, l_metrics, l_oof, l_calib, l_unc = loaded
 
     preds_orig = predict_prices(
         models, cat_maps, df,
@@ -404,7 +501,7 @@ def test_load_model_rejects_schema_mismatch(tmp_path, monkeypatch):
     monkeypatch.setattr("src.analytics.price_model._METRICS_PATH", tmp_path / "metrics.json")
 
     df = _sample_listings()
-    models, cat_maps, metrics, oof_preds, calibrator = train_price_model(df)
+    models, cat_maps, metrics, oof_preds, calibrator, _unc = train_price_model(df)
     save_model(
         models, cat_maps, metrics,
         oof_preds=oof_preds,
@@ -427,7 +524,7 @@ def test_load_model_rejects_feature_mismatch(tmp_path, monkeypatch):
     monkeypatch.setattr("src.analytics.price_model._METRICS_PATH", tmp_path / "metrics.json")
 
     df = _sample_listings()
-    models, cat_maps, metrics, oof_preds, calibrator = train_price_model(df)
+    models, cat_maps, metrics, oof_preds, calibrator, _unc = train_price_model(df)
     save_model(
         models, cat_maps, metrics,
         oof_preds=oof_preds,
@@ -457,7 +554,7 @@ def test_load_model_rejects_stale_bundle(tmp_path, monkeypatch):
     monkeypatch.setattr("src.analytics.price_model._METRICS_PATH", tmp_path / "metrics.json")
 
     df = _sample_listings()
-    models, cat_maps, metrics, oof_preds, calibrator = train_price_model(df)
+    models, cat_maps, metrics, oof_preds, calibrator, _unc = train_price_model(df)
     save_model(
         models, cat_maps, metrics,
         oof_preds=oof_preds,
@@ -480,7 +577,7 @@ def test_metrics_history(tmp_path, monkeypatch):
     monkeypatch.setattr("src.analytics.price_model._METRICS_PATH", tmp_path / "metrics.json")
 
     df = _sample_listings()
-    models, cat_maps, metrics, oof_preds, calibrator = train_price_model(df)
+    models, cat_maps, metrics, oof_preds, calibrator, _unc = train_price_model(df)
 
     save_model(
         models, cat_maps, metrics,
@@ -605,7 +702,7 @@ class TestSoldTargetAdjustment:
         )
         result = train_price_model(df)
         assert result is not None
-        _, _, metrics, _, _ = result
+        _, _, metrics, _, _, _ = result
         assert "sold_inclusion" in metrics
         si = metrics["sold_inclusion"]
         assert si["sold_rows_used"] > 0
