@@ -683,10 +683,11 @@ def compute_signals(
     _gb_metrics: dict | None = None
     _gb_oof_preds: dict[str, tuple[float, float, float]] = {}
     _gb_calibrator = None
+    _gb_uncertainty = None
     if saved is not None:
         (
             gb_models, gb_cat_maps, _gb_metrics, _gb_oof_preds,
-            _gb_calibrator,
+            _gb_calibrator, _gb_uncertainty,
         ) = saved
     else:
         import logging as _logging
@@ -698,6 +699,9 @@ def compute_signals(
     gb_predictions: dict[str, float] = {}
     gb_fair_low: dict[str, float] = {}
     gb_fair_high: dict[str, float] = {}
+    # Defined here so the anomaly/hazard scoring blocks below can
+    # safely read it whether or not the price model branch ran.
+    price_df: pd.DataFrame | None = None
     # Importance is computed once during training (CI) and shipped in the
     # data release — loading it here costs one JSON read instead of a
     # 690-predict permutation loop per signal recompute.
@@ -731,6 +735,7 @@ def compute_signals(
             median_calibrator=_gb_calibrator,
             conformal_q_per_bucket=_per_bucket_q,
             conformal_q_bucket_edges=_bucket_edges,
+            uncertainty_bundle=_gb_uncertainty,
         )
         if "olx_id" in active.columns:
             olx_ids = active["olx_id"].reindex(price_df.index).values
@@ -742,6 +747,119 @@ def compute_signals(
                     gb_predictions[oid] = float(pred)
                     gb_fair_low[oid] = float(lo)
                     gb_fair_high[oid] = float(hi)
+
+        # Sold-side predictions — feed the calibration_resid_pct map in
+        # ``decision.build_context``. We re-run the GB pipeline on the
+        # sold subset rather than including sold rows in `active` because
+        # the deal-scoring lookups (gen_stats / model_stats medians) need
+        # to reflect what's currently buyable, not historical sale prices.
+        try:
+            combined = prepare_active_for_model(
+                listings_df, turnover=turnover, include_sold=True,
+            )
+            if "is_active" in combined.columns:
+                sold_only = combined[~combined["is_active"].astype(bool)].copy()
+            else:
+                sold_only = combined.iloc[0:0]
+            if not sold_only.empty:
+                sold_pred_df = predict_prices(
+                    gb_models, gb_cat_maps, sold_only,
+                    conformal_q=_conformal_q,
+                    oof_preds=_gb_oof_preds,
+                    median_calibrator=_gb_calibrator,
+                    conformal_q_per_bucket=_per_bucket_q,
+                    conformal_q_bucket_edges=_bucket_edges,
+                    uncertainty_bundle=_gb_uncertainty,
+                )
+                sold_olx_ids = sold_only["olx_id"].reindex(sold_pred_df.index).values
+                sold_preds = sold_pred_df["predicted_price"].values
+                sold_lows = sold_pred_df["fair_price_low"].values
+                sold_highs = sold_pred_df["fair_price_high"].values
+                for oid, pred, lo, hi in zip(sold_olx_ids, sold_preds, sold_lows, sold_highs):
+                    if oid and pred > 0 and oid not in gb_predictions:
+                        gb_predictions[oid] = float(pred)
+                        gb_fair_low[oid] = float(lo)
+                        gb_fair_high[oid] = float(hi)
+        except Exception as _sold_err:  # noqa: BLE001
+            import logging as _l
+            _l.getLogger(__name__).warning(
+                "sold-side prediction skipped: %s", _sold_err,
+            )
+
+    # --- Anomaly + hazard scores per listing -----------------------
+    # Both ship as best-effort negative-filter signals: missing or
+    # incompatible bundles → empty lookups, downstream decide() degrades
+    # gracefully (the gate / multiplier just no-ops). We score the SAME
+    # ``active`` frame the price model used so olx_id alignment holds.
+    anomaly_lookup: dict[str, float] = {}
+    anomaly_flag_lookup: dict[str, bool] = {}
+    hazard_lookup: dict[str, float] = {}
+    if not active.empty:
+        try:
+            from src.analytics.anomaly import (
+                load_model as load_anomaly_model,
+                score_anomalies,
+            )
+            anomaly_bundle = load_anomaly_model()
+            if anomaly_bundle is not None:
+                # The bundle's uses_predictions flag tells us whether
+                # the residual feature set (residual_pct + band_pct)
+                # was part of training. Pass price_df only when both
+                # the bundle expects it AND we actually computed
+                # predictions this run.
+                _need_pred = bool(anomaly_bundle.get("uses_predictions"))
+                _anom_pred = (
+                    price_df if (_need_pred and gb_models is not None) else None
+                )
+                if _need_pred and _anom_pred is None:
+                    # Bundle expects predictions but we don't have them
+                    # — skip rather than passing the wrong feature set.
+                    raise RuntimeError(
+                        "anomaly bundle was trained with predictions but "
+                        "no fresh price model is available this run",
+                    )
+                _anom_df = score_anomalies(anomaly_bundle, active, _anom_pred)
+                for _, _row in _anom_df.iterrows():
+                    _oid = _row.get("olx_id")
+                    if _oid and pd.notna(_row.get("anomaly_score")):
+                        anomaly_lookup[str(_oid)] = float(_row["anomaly_score"])
+                    if _oid and pd.notna(_row.get("is_anomaly")):
+                        anomaly_flag_lookup[str(_oid)] = bool(_row["is_anomaly"])
+        except Exception as _anom_err:  # noqa: BLE001
+            import logging as _l
+            _l.getLogger(__name__).warning(
+                "anomaly scoring skipped: %s", _anom_err,
+            )
+
+        try:
+            from src.analytics.hazard import (
+                load_model as load_hazard_model,
+                predict_sold_probability,
+            )
+            hazard_bundle = load_hazard_model()
+            if hazard_bundle is not None:
+                _need_pred = bool(hazard_bundle.get("uses_predictions"))
+                _haz_pred = (
+                    price_df if (_need_pred and gb_models is not None) else None
+                )
+                if _need_pred and _haz_pred is None:
+                    raise RuntimeError(
+                        "hazard bundle was trained with predictions but "
+                        "no fresh price model is available this run",
+                    )
+                _haz_df = predict_sold_probability(
+                    hazard_bundle, active, _haz_pred,
+                )
+                for _, _row in _haz_df.iterrows():
+                    _oid = _row.get("olx_id")
+                    _p = _row.get("prob_sold_within_horizon")
+                    if _oid and pd.notna(_p):
+                        hazard_lookup[str(_oid)] = float(_p)
+        except Exception as _haz_err:  # noqa: BLE001
+            import logging as _l
+            _l.getLogger(__name__).warning(
+                "hazard scoring skipped: %s", _haz_err,
+            )
 
     # --- Precompute stat lookups (dict by tuple) to avoid per-row boolean
     # indexing over sub_stats/gen_stats/model_stats in the scoring loop.
@@ -773,7 +891,12 @@ def compute_signals(
         model = listing["model"]
         generation = listing.get("generation")
 
-        # Resolve comparison group: sub-segment → generation → model
+        # Resolve comparison group: sub-segment → generation → model. Each
+        # level requires ≥5 comparables — fewer is statistical noise and
+        # downstream the resale-decision algorithm hard-rejects them as
+        # NO_OPINION anyway. The previous gen/model fallbacks were
+        # ungated, surfacing 1–2-listing "deals" in orphan brands
+        # (Lancia Y, MG ZS, …) that a user couldn't act on.
         median = None
         sample = 0
         group_year_median = None
@@ -787,12 +910,12 @@ def compute_signals(
 
         if median is None and generation:
             hit = gen_lookup.get((brand, model, generation))
-            if hit is not None:
+            if hit is not None and hit[1] >= 5:
                 median, sample, group_year_median, group_mileage_median = hit
 
         if median is None:
             hit = model_lookup.get((brand, model))
-            if hit is None:
+            if hit is None or hit[1] < 5:
                 continue
             median, sample, group_year_median, group_mileage_median = hit
 
@@ -1006,6 +1129,21 @@ def compute_signals(
             "warranty": bool(has_warranty) if pd.notna(has_warranty) else None,
             "taxi_fleet_rental": bool(listing.get("taxi_fleet_rental")) if pd.notna(listing.get("taxi_fleet_rental")) else None,
             "first_owner_selling": bool(listing.get("first_owner_selling")) if pd.notna(listing.get("first_owner_selling")) else None,
+            # Anomaly + hazard signals — None when bundle missing.
+            # decide() reads these as a hard-gate (anomaly ≥ 0.90)
+            # and a velocity multiplier (P(sold≤30d) tails).
+            "anomaly_score": (
+                round(anomaly_lookup[olx_id], 3)
+                if olx_id in anomaly_lookup else None
+            ),
+            "is_anomaly": (
+                bool(anomaly_flag_lookup[olx_id])
+                if olx_id in anomaly_flag_lookup else None
+            ),
+            "prob_sold_within_horizon": (
+                round(hazard_lookup[olx_id], 3)
+                if olx_id in hazard_lookup else None
+            ),
         }
         for col in ("days_listed", "price_change_eur", "price_change_pct", "eur_per_km"):
             if col in listing.index:
