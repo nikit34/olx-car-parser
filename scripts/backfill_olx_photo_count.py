@@ -29,6 +29,19 @@ in the LAN map). The local checkout reads a snapshot from the GitHub
 For the actual backfill, push the script + selector fix and run from
 the scrape host's persistent clone (see ``post-push-host-sync``).
 
+Concurrency
+~~~~~~~~~~~
+The live scrape worker holds the SQLite write lock 3-5 minutes during
+its market_stats commit. SQLAlchemy's connection-pool / autoflush
+behaviour made it hard to honour ``PRAGMA busy_timeout`` reliably —
+the v1 of this script crashed on autoflush mid-batch even after
+disabling autoflush, because commit pulled a fresh pooled connection
+without the PRAGMA applied. The current implementation drops SQLAlchemy
+for writes entirely and uses a single raw ``sqlite3.Connection`` with
+``timeout=30.0`` (Python's wrapper around busy_timeout) and per-row
+``COMMIT``. Per-row commits keep pending-write windows ~milliseconds
+long, so a colliding scraper write will at worst delay one update.
+
 What it does
 ------------
 1. Selects every active OLX listing with ``photo_count IS NULL``.
@@ -47,77 +60,81 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sqlite3
 import sys
-import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
 from src.parser.scraper import OlxScraper, ScraperConfig  # noqa: E402
-from src.storage.database import init_db, get_session  # noqa: E402
-from src.models.listing import Listing  # noqa: E402
+
+DB_PATH = _REPO_ROOT / "data" / "olx_cars.db"
 
 logger = logging.getLogger("backfill_olx_photo_count")
 
 
-def _harden_session(session) -> None:
-    """SQLite-write-contention hardening for long batches.
+def _open_db(timeout_s: float = 30.0) -> sqlite3.Connection:
+    """Open a single raw connection with busy_timeout honoured.
 
-    The live scrape worker holds the write lock 3-5 min during the
-    market_stats commit. Two protections:
-
-    1. ``PRAGMA busy_timeout = 30000`` — SQLite itself blocks for up to
-       30 s on lock contention before raising. The dev-mac smoke-test
-       didn't need this; the host hits it immediately because the
-       scrape worker is also writing at the same wall-clock time.
-
-    2. ``autoflush = False`` — by default SQLAlchemy auto-flushes
-       pending writes on every ``session.get()`` / query, and that
-       flush can hit a locked DB *before* the explicit commit-with-retry
-       loop ever sees it. Disabling autoflush keeps reads pure and lets
-       us own the commit cadence.
+    ``sqlite3.connect(timeout=…)`` is the Python wrapper that calls
+    ``sqlite3_busy_timeout`` under the hood, so a write blocked by the
+    live scrape worker waits up to ``timeout_s`` before raising. Using
+    one long-lived connection avoids the SQLAlchemy pool-cycling that
+    silently dropped the PRAGMA on the v1 path.
     """
-    session.execute(__import__("sqlalchemy").text("PRAGMA busy_timeout = 30000"))
-    session.autoflush = False
+    conn = sqlite3.connect(str(DB_PATH), timeout=timeout_s, isolation_level=None)
+    # WAL mode = readers don't block writers; we still serialise *with*
+    # the live scraper, but we don't compete with dashboard read traffic.
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    return conn
 
 
-def _select_targets(session, limit: int | None) -> list[tuple[int, str, str]]:
+def _select_targets(conn: sqlite3.Connection, limit: int | None) -> list[tuple[int, str, str]]:
     """Return (id, olx_id, url) for active OLX listings missing photo_count."""
-    q = (
-        session.query(Listing.id, Listing.olx_id, Listing.url)
-        .filter(Listing.source == "olx")
-        .filter(Listing.is_active == True)  # noqa: E712
-        .filter(Listing.photo_count.is_(None))
-        .order_by(Listing.id)
+    sql = (
+        "SELECT id, olx_id, url FROM listings "
+        "WHERE source='olx' AND is_active=1 AND photo_count IS NULL "
+        "ORDER BY id"
     )
     if limit is not None:
-        q = q.limit(limit)
-    return q.all()
+        sql += f" LIMIT {int(limit)}"
+    return conn.execute(sql).fetchall()
 
 
-def _commit_with_retry(session, max_attempts: int = 5) -> bool:
-    """SQLite write contention with the live scrape worker can hold the
-    lock 3-5 min during market_stats commit. Retry with backoff before
-    giving up — losing a single row's update is fine, losing the whole
-    batch over a transient lock would mean re-fetching."""
-    delay = 5.0
-    for attempt in range(1, max_attempts + 1):
-        try:
-            session.commit()
-            return True
-        except Exception as exc:  # noqa: BLE001 — sqlite3.OperationalError
-            if "locked" not in str(exc).lower() or attempt == max_attempts:
-                logger.warning("commit failed after %d attempts: %s", attempt, exc)
-                session.rollback()
-                return False
-            logger.info(
-                "DB locked (scrape worker?) — retry in %.0fs (attempt %d/%d)",
-                delay, attempt, max_attempts,
-            )
-            time.sleep(delay)
-            delay = min(delay * 2, 60.0)
-    return False
+def _update_photo_count(conn: sqlite3.Connection, listing_id: int, photo_count: int) -> bool:
+    """Single-row UPDATE with implicit transaction. Returns True on success.
+
+    ``isolation_level=None`` means each statement is its own transaction;
+    no need for an explicit commit() call. busy_timeout from connect()
+    handles contention. Catches OperationalError ("locked"/"busy") even
+    after the timeout and logs without aborting the whole run."""
+    now = datetime.now(timezone.utc).isoformat(sep=" ")
+    try:
+        conn.execute(
+            "UPDATE listings SET photo_count=?, last_seen_at=? WHERE id=?",
+            (photo_count, now, listing_id),
+        )
+        return True
+    except sqlite3.OperationalError as exc:
+        logger.warning("UPDATE locked for id=%d: %s", listing_id, exc)
+        return False
+
+
+def _mark_expired(conn: sqlite3.Connection, listing_id: int) -> bool:
+    now = datetime.now(timezone.utc).isoformat(sep=" ")
+    try:
+        conn.execute(
+            "UPDATE listings SET is_active=0, deactivation_reason='expired', "
+            "deactivated_at=? WHERE id=? AND is_active=1",
+            (now, listing_id),
+        )
+        return True
+    except sqlite3.OperationalError as exc:
+        logger.warning("UPDATE-expired locked for id=%d: %s", listing_id, exc)
+        return False
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -131,11 +148,8 @@ def main(argv: list[str] | None = None) -> int:
         help="Fetch + parse but don't update the DB. Logs what would change.",
     )
     parser.add_argument(
-        "--commit-every", type=int, default=10,
-        help="Commit batch size. Smaller = shorter pending-write windows "
-             "(less risk of crash on lock), larger = fewer commits. With "
-             "autoflush disabled and PRAGMA busy_timeout 30 s, 10 is a "
-             "safe default against the live scrape worker.",
+        "--progress-every", type=int, default=20,
+        help="Log a progress line every N rows.",
     )
     parser.add_argument(
         "--log-level", default="INFO",
@@ -148,11 +162,9 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    init_db()
-    session = get_session()
-    _harden_session(session)
+    conn = _open_db()
     try:
-        targets = _select_targets(session, args.limit)
+        targets = _select_targets(conn, args.limit)
         if not targets:
             logger.info("Nothing to backfill — all active OLX rows have photo_count.")
             return 0
@@ -163,7 +175,8 @@ def main(argv: list[str] | None = None) -> int:
             n_updated = 0
             n_no_photo_field = 0
             n_expired = 0
-            n_failed = 0
+            n_failed_write = 0
+
             for i, (listing_id, olx_id, url) in enumerate(targets, start=1):
                 try:
                     details = scraper.scrape_listing_detail(url)
@@ -172,51 +185,43 @@ def main(argv: list[str] | None = None) -> int:
                     details = {}
 
                 if not details:
-                    # 404 / network — treat as expired listing.
-                    if not args.dry_run:
-                        listing = session.get(Listing, listing_id)
-                        if listing is not None and listing.is_active:
-                            from datetime import datetime, timezone
-                            listing.is_active = False
-                            listing.deactivation_reason = "expired"
-                            listing.deactivated_at = datetime.now(timezone.utc)
-                    n_expired += 1
+                    if args.dry_run:
+                        n_expired += 1
+                    elif _mark_expired(conn, listing_id):
+                        n_expired += 1
+                    else:
+                        n_failed_write += 1
                 elif "photo_count" in details:
-                    if not args.dry_run:
-                        listing = session.get(Listing, listing_id)
-                        if listing is not None:
-                            listing.photo_count = details["photo_count"]
-                    n_updated += 1
+                    pc = int(details["photo_count"])
+                    if args.dry_run:
+                        n_updated += 1
+                    elif _update_photo_count(conn, listing_id, pc):
+                        n_updated += 1
+                    else:
+                        n_failed_write += 1
                 else:
                     # Page loaded but neither selector hit — layout edge
                     # case (private-account / blocked / atypical render).
                     n_no_photo_field += 1
-                    n_failed += 1
 
-                if i % args.commit_every == 0:
-                    if not args.dry_run and not _commit_with_retry(session):
-                        logger.error(
-                            "commit aborted at i=%d — re-running picks up "
-                            "where this stopped (rows still NULL)", i,
-                        )
-                        return 2
+                if i % args.progress_every == 0:
                     logger.info(
-                        "progress %d/%d  · updated=%d  expired=%d  no-photo-field=%d",
-                        i, len(targets), n_updated, n_expired, n_no_photo_field,
+                        "progress %d/%d  · updated=%d  expired=%d  "
+                        "no-photo-field=%d  failed-write=%d",
+                        i, len(targets), n_updated, n_expired,
+                        n_no_photo_field, n_failed_write,
                     )
 
-            # Tail commit.
-            if not args.dry_run:
-                _commit_with_retry(session)
-
             logger.info(
-                "Done. Updated=%d  Expired=%d  No-photo-field=%d  Failed=%d  Total=%d",
-                n_updated, n_expired, n_no_photo_field, n_failed, len(targets),
+                "Done. Updated=%d  Expired=%d  No-photo-field=%d  "
+                "Failed-write=%d  Total=%d",
+                n_updated, n_expired, n_no_photo_field,
+                n_failed_write, len(targets),
             )
         finally:
             scraper.close()
     finally:
-        session.close()
+        conn.close()
 
     return 0
 
