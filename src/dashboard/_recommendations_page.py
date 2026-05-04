@@ -436,15 +436,15 @@ for _, deal in deals.iterrows():
                 _comp = _decision.components
                 if _comp:
                     _bits = []
-                    if _comp.get("net_margin_pct") is not None:
+                    if pd.notna(_comp.get("net_margin_pct")):
                         _bits.append(f"net margin {_comp['net_margin_pct']:.1f}%")
-                    if _comp.get("expected_profit_eur") is not None:
+                    if pd.notna(_comp.get("expected_profit_eur")):
                         _bits.append(f"expected profit €{int(_comp['expected_profit_eur']):,}")
-                    if _comp.get("dom_median") is not None:
+                    if pd.notna(_comp.get("dom_median")):
                         _bits.append(f"DoM {int(_comp['dom_median'])}d")
-                    if _comp.get("trend_90d_pct") is not None:
+                    if pd.notna(_comp.get("trend_90d_pct")):
                         _bits.append(f"trend 90d {_comp['trend_90d_pct']:+.1f}%")
-                    if _comp.get("confidence") is not None:
+                    if pd.notna(_comp.get("confidence")):
                         _bits.append(f"confidence ×{_comp['confidence']:.2f}")
                     if _bits:
                         st.caption(" · ".join(_bits))
