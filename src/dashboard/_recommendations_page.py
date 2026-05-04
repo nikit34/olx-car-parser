@@ -47,7 +47,7 @@ def _release_cache_signature() -> tuple[float, int]:
     return (s.st_mtime, s.st_size)
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def load_data(_cache_signature: tuple[float, int]):
     return load_all()
 
@@ -70,7 +70,7 @@ predictions_df = _loaded[8] if len(_loaded) > 8 else pd.DataFrame()
 # Snapshots feed the 90d trend signal of the decision algorithm.
 # 120-day window keeps memory bounded (~7 MB on prod) while giving
 # enough history for an early/late tercile split.
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=1800)
 def _load_snapshots(_sig, since_days: int):
     init_db()
     s = get_session()
@@ -84,11 +84,6 @@ def _load_snapshots(_sig, since_days: int):
 # the right input for the calibration map — it carries predictions for
 # the full active set, not just deals. The segment-level maps (DoM,
 # trend, calibration) are tiny — the heavy bit is the snapshots load.
-_dec_predicted_lookup = (
-    dict(zip(predictions_df["olx_id"], predictions_df["predicted_price"]))
-    if predictions_df is not None and not predictions_df.empty
-    else {}
-)
 try:
     _snapshots_df = _load_snapshots(_release_cache_signature(), 120)
 except Exception:  # noqa: BLE001 — repository errors → fall back to no-trend ctx
@@ -103,11 +98,26 @@ if _mh:
     _last = _mh[-1]
     _latest_coverage = _last.get("coverage_80_calibrated") or _last.get("coverage_80")
 
-decision_ctx = _build_decision_context(
-    listings_df,
-    _snapshots_df,
-    coverage_80=_latest_coverage,
-    predicted_lookup=_dec_predicted_lookup,
+@st.cache_data(ttl=1800, show_spinner="Building decision context...")
+def _cached_decision_context(_sig, _listings, _snapshots, coverage_80):
+    # `predicted_lookup` is rebuilt inside from `_listings` to keep the
+    # arg list hashable-free (DataFrames + the dict are both skipped
+    # via underscore prefix). Cache invalidates by TTL; callers re-run
+    # on Refresh which also clears the cache.
+    lookup = (
+        dict(zip(predictions_df["olx_id"], predictions_df["predicted_price"]))
+        if predictions_df is not None and not predictions_df.empty
+        else {}
+    )
+    return _build_decision_context(
+        _listings, _snapshots,
+        coverage_80=coverage_80,
+        predicted_lookup=lookup,
+    )
+
+
+decision_ctx = _cached_decision_context(
+    _release_cache_signature(), listings_df, _snapshots_df, _latest_coverage,
 )
 
 # ---------------------------------------------------------------------------
