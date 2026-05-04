@@ -169,9 +169,9 @@ def test_calibration_overprediction_pulls_predicted_down():
 
 
 def test_watch_on_moderate_margin():
-    # ~13% margin × partial confidence (sample 8 → sample_conf=0.8) puts
+    # ~14% margin × partial confidence (sample 8 → sample_conf=0.8) puts
     # the score in the WATCH band [15, 18) under the calibrated tunables.
-    d = decide(_row(price_eur=10800, predicted_price=13000, sample_size=8), _ctx())
+    d = decide(_row(price_eur=11000, predicted_price=13000, sample_size=8), _ctx())
     assert d.verdict == VERDICT_WATCH
     assert 15 <= d.score < 18
 

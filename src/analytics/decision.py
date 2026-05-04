@@ -246,7 +246,20 @@ _MIN_NET_MARGIN_PCT_SLOW = 18.0     # if median DoM > 60d
 _MAX_SOFTENING_PCT = -3.0
 _DOM_LIMIT_DAYS = 120                # > this: REJECT regardless of margin
 _FAST_SHARE_OK = 0.30
-_FEES_PCT_DEFAULT = 0.03
+# Resale-cost model (private resident, intra-PT flip — no IVA, no broker).
+# Replaces the previous 3% + €200 stub which over-penalised expensive cars
+# and missed the holding cost that dominates slow segments. Components:
+#   flat (one-off)   — registo automóvel ~€65 + detailing ~€50 + transport
+#                      / ads ~€35 ≈ €150
+#   holding cost/day — seguro 3rd party (€25-40/mo) + IUC prorated
+#                      (€5-20/mo, cat. B) ≈ €30-50/mo ≈ €1.30/day
+# Hold time uses the segment's median DoM (capped at _DOM_LIMIT_DAYS so a
+# slow-segment lookup before the DoM gate doesn't double-count). When DoM
+# is unknown we fall back to a 45-day default (rough median of the active
+# set's resolved DoM histogram).
+_FEES_FLAT_EUR = 150.0
+_HOLDING_COST_EUR_PER_DAY = 1.30
+_DEFAULT_HOLD_DAYS = 45
 _BUY_SCORE = 18.0
 _WATCH_SCORE = 15.0
 # Anomaly hard-gate (feature-space outlier from
@@ -272,8 +285,6 @@ def _is_truthy(v) -> bool:
 def decide(
     listing: pd.Series | Mapping,
     ctx: DecisionContext,
-    *,
-    fees_pct: float = _FEES_PCT_DEFAULT,
 ) -> Decision:
     """Run the 15-step decision tree on one listing.
 
@@ -382,7 +393,13 @@ def decide(
     components["predicted_corrected"] = round(predicted_corrected, 0)
 
     # ---- Step 5: net margin after repair + fees.
-    fees = price * fees_pct + 200  # flat €200 transport / paperwork stub
+    # Look up DoM here (the gate at step 8 reuses it) so the holding-cost
+    # component of fees is segment-aware rather than a flat stub.
+    dom_med = _lookup_with_fallback(ctx.dom_median, brand, model, gen)
+    fast_share = _lookup_with_fallback(ctx.dom_fast_share, brand, model, gen)
+    expected_hold_days = float(dom_med) if not pd.isna(dom_med) else float(_DEFAULT_HOLD_DAYS)
+    expected_hold_days = min(expected_hold_days, float(_DOM_LIMIT_DAYS))
+    fees = _FEES_FLAT_EUR + _HOLDING_COST_EUR_PER_DAY * expected_hold_days
     raw_margin = predicted_corrected - price
     net_margin = raw_margin - repair_cost - fees
     net_margin_pct = (net_margin / predicted_corrected) * 100 if predicted_corrected else 0.0
@@ -428,9 +445,8 @@ def decide(
         else:
             reasons.append(f"segment firming {trend_pct:+.1f}%/90d")
 
-    # ---- Step 8 + 9: liquidity gates.
-    dom_med = _lookup_with_fallback(ctx.dom_median, brand, model, gen)
-    fast_share = _lookup_with_fallback(ctx.dom_fast_share, brand, model, gen)
+    # ---- Step 8 + 9: liquidity gates. (dom_med / fast_share were looked
+    # up earlier in step 5 so the fees holding-cost can use them.)
     components["dom_median"] = None if pd.isna(dom_med) else round(dom_med, 0)
     components["dom_fast_share"] = None if pd.isna(fast_share) else round(fast_share, 2)
 
@@ -543,8 +559,6 @@ def decide(
 def decide_many(
     signals_df: pd.DataFrame,
     ctx: DecisionContext,
-    *,
-    fees_pct: float = _FEES_PCT_DEFAULT,
 ) -> pd.DataFrame:
     """Vectorised wrapper — returns a frame aligned to ``signals_df.index``
     with verdict / score / top-3 reasons columns. Internally it still
@@ -554,7 +568,7 @@ def decide_many(
         return pd.DataFrame(columns=["olx_id", "verdict", "score", "reasons"])
     out = []
     for _, row in signals_df.iterrows():
-        d = decide(row, ctx, fees_pct=fees_pct)
+        d = decide(row, ctx)
         out.append({
             "olx_id": row.get("olx_id"),
             "verdict": d.verdict,
