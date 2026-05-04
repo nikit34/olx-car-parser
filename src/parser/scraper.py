@@ -341,10 +341,22 @@ class OlxScraper:
             elif len(loc_items) == 1:
                 details["district"] = loc_items[0].split(" - ", 1)[-1].strip()
 
-        # Photo count
-        gallery = soup.select_one("[data-testid='photo-gallery']") or soup.select_one("[data-cy='ad-photos']")
-        if gallery:
-            details["photo_count"] = len(gallery.find_all("img"))
+        # Photo count. Current OLX layout (verified 2026-05-04) wraps each
+        # gallery photo in [data-testid="ad-photo"]; counting those is the
+        # simplest stable signal. The old [data-testid="photo-gallery"] /
+        # [data-cy="ad-photos"] selectors no longer match — they returned
+        # photo_count=None for 4436 / 4438 active OLX listings (≈100 %),
+        # leaving the photo-damage classifier nothing to score and
+        # zeroing out the uncertainty model's desc_quality feature.
+        ad_photos = soup.select('[data-testid="ad-photo"]')
+        if ad_photos:
+            details["photo_count"] = len(ad_photos)
+        else:
+            gallery = soup.select_one("[data-testid='photo-gallery']") \
+                or soup.select_one("[data-cy='ad-photos']") \
+                or soup.select_one("[data-testid='image-galery-container']")
+            if gallery:
+                details["photo_count"] = len(gallery.find_all("img"))
 
         # Description text
         desc_el = soup.select_one("[data-cy='ad_description'] div") or soup.select_one("[data-testid='ad-description']")

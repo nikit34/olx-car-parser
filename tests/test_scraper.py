@@ -427,3 +427,71 @@ class TestScrapeAllLoudFailure:
         with pytest.raises(ScraperParseError, match="StandVirtual SERP parser returned 0 cards"):
             scraper.scrape_all(enrich_details=False)
         scraper.close()
+
+
+# ---------------------------------------------------------------------------
+# OLX detail page — photo-count selector regression
+# ---------------------------------------------------------------------------
+
+# Snippet mirrors the current OLX layout (verified 2026-05-04). Each photo
+# is wrapped in [data-testid="ad-photo"]; the surrounding container uses
+# the typo "image-galery-container".
+OLX_DETAIL_NEW_LAYOUT_HTML = """\
+<html><body>
+<div data-testid="image-galery-container">
+  <div data-testid="ad-photo"><img src="https://ireland.apollo.olxcdn.com/v1/files/a-PT/image"/></div>
+  <div data-testid="ad-photo"><img src="https://ireland.apollo.olxcdn.com/v1/files/b-PT/image"/></div>
+  <div data-testid="ad-photo"><img src="https://ireland.apollo.olxcdn.com/v1/files/c-PT/image"/></div>
+</div>
+<div data-cy="ad_description"><div>Carro em bom estado, sem acidentes, ITV em dia.</div></div>
+</body></html>
+"""
+
+# Pre-2026 layout — kept around so the fallback path is exercised too.
+OLX_DETAIL_LEGACY_HTML = """\
+<html><body>
+<div data-testid="photo-gallery">
+  <img src="https://x.example/1.jpg"/>
+  <img src="https://x.example/2.jpg"/>
+</div>
+<div data-cy="ad_description"><div>Bom estado.</div></div>
+</body></html>
+"""
+
+
+class TestOlxDetailPhotoCount:
+    """Regression: 2026-05-04 audit found photo_count=None on 4436/4438
+    active OLX rows because the old [data-testid="photo-gallery"] selector
+    no longer matches. The new selector is [data-testid="ad-photo"]."""
+
+    @pytest.fixture()
+    def scraper(self):
+        s = OlxScraper(ScraperConfig())
+        yield s
+        s.close()
+
+    def _patch_fetch(self, scraper, html):
+        scraper._fetch = lambda url, retries=3: (url, html)
+
+    def test_counts_ad_photo_containers_on_new_layout(self, scraper):
+        self._patch_fetch(scraper, OLX_DETAIL_NEW_LAYOUT_HTML)
+        d = scraper.scrape_listing_detail(
+            "https://www.olx.pt/d/anuncio/test-IDxYz12.html",
+        )
+        assert d.get("photo_count") == 3
+
+    def test_falls_back_to_legacy_gallery_selector(self, scraper):
+        self._patch_fetch(scraper, OLX_DETAIL_LEGACY_HTML)
+        d = scraper.scrape_listing_detail(
+            "https://www.olx.pt/d/anuncio/test-IDxYz12.html",
+        )
+        assert d.get("photo_count") == 2
+
+    def test_returns_no_photo_count_when_neither_selector_matches(self, scraper):
+        self._patch_fetch(
+            scraper, "<html><body><p>nothing here</p></body></html>",
+        )
+        d = scraper.scrape_listing_detail(
+            "https://www.olx.pt/d/anuncio/test-IDxYz12.html",
+        )
+        assert "photo_count" not in d
