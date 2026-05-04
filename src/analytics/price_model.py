@@ -47,7 +47,7 @@ _OTHER_CATEGORY = "__other__"
 # scan kept running on every train/predict for nothing.
 # v8: drop the dead pipeline + helpers entirely. Bundle no longer carries
 # `text_pipeline`; `_prepare_X` stops fitting a TF-IDF/SVD on every call.
-_SCHEMA_VERSION = 9  # v9: per-row uncertainty model (option C)
+_SCHEMA_VERSION = 10  # v10: uncertainty model uses 3 extra meta-features
 # Fraction of the dataset (newest rows by first_seen_at) used as the
 # time-honest conformal calibration window. Random-KFold CQR mixes
 # time-adjacent rows across folds and over-estimates coverage on real future
@@ -396,11 +396,69 @@ def _conformal_q_from_scores(
     return float(np.quantile(scores, q_level))
 
 
+# Meta-features specific to the uncertainty model. They describe "how
+# trustworthy is this listing's data" — orthogonal to the price-relevant
+# fields used by the main quantile models. Listings with low completeness
+# / few LLM-filled flags / no photos / bare-bones descriptions are exactly
+# the rows where huge residuals come from in the cheap-price decile, so
+# making the uncertainty model see them explicitly is the targeted fix.
+_LLM_FLAG_COLS = (
+    "desc_mentions_accident", "desc_mentions_repair",
+    "desc_mentions_num_owners", "desc_mentions_customs_cleared",
+    "right_hand_drive", "taxi_fleet_rental",
+    "warranty", "first_owner_selling",
+)
+
+
+def _uncertainty_extra_features(df: pd.DataFrame) -> np.ndarray:
+    """Per-row meta-features that signal listing-data trustworthiness.
+
+    Returns an ``(n_rows, 3)`` float array with these columns:
+
+      0. ``data_completeness`` — fraction of ``_ALL_FEATURES`` non-null.
+         Mirrors the runtime helper used elsewhere; computed locally
+         here to avoid circular dependence with ``compute_feature_completeness``.
+      1. ``llm_flags_filled`` — count (0..8) of LLM-extracted flags
+         that are non-null on this row. A serious seller fills these
+         out; a salvage / call-only listing leaves them all blank.
+      2. ``desc_quality`` — ``log1p(description_length) × log1p(photo_count)``.
+         Captures the interaction "long description AND many photos →
+         well-documented listing"; either alone is weaker.
+    """
+    n = len(df)
+    if n == 0:
+        return np.empty((0, 3))
+
+    # 1. Data completeness — fraction of main-model features non-null.
+    cols_present = [c for c in _ALL_FEATURES if c in df.columns]
+    if cols_present:
+        completeness = df[cols_present].notna().mean(axis=1).values
+    else:
+        completeness = np.zeros(n)
+
+    # 2. LLM flag fill count.
+    flag_count = np.zeros(n)
+    for col in _LLM_FLAG_COLS:
+        if col in df.columns:
+            flag_count = flag_count + df[col].notna().astype(int).values
+
+    # 3. Description × photo interaction.
+    desc_len = df.get("description_length", pd.Series(0, index=df.index))
+    photos = df.get("photo_count", pd.Series(0, index=df.index))
+    desc_log = np.log1p(np.maximum(desc_len.fillna(0).values.astype(float), 0))
+    photo_log = np.log1p(np.maximum(photos.fillna(0).values.astype(float), 0))
+    desc_quality = desc_log * photo_log
+
+    return np.column_stack([completeness, flag_count, desc_quality])
+
+
 def _train_uncertainty_model(
-    X_train_unc: np.ndarray,
-    scores_train_unc: np.ndarray,
-    X_cal_unc: np.ndarray,
-    scores_cal_unc: np.ndarray,
+    df_train: pd.DataFrame,
+    X_train_main: np.ndarray,
+    scores_train: np.ndarray,
+    df_cal: pd.DataFrame,
+    X_cal_main: np.ndarray,
+    scores_cal: np.ndarray,
     cat_indices: list[int],
     target_coverage: float = 0.80,
 ) -> tuple[lgb.LGBMRegressor, float] | None:
@@ -422,11 +480,21 @@ def _train_uncertainty_model(
     is ``max(0, g(x) + q_offset)`` (floored against the global conformal q
     so we never shrink below the marginal-coverage value).
 
+    Feature set is the main model's ``_ALL_FEATURES`` ⊕ three extra
+    meta-features built by ``_uncertainty_extra_features`` (data
+    completeness, LLM-flag fill count, description × photo interaction)
+    that explicitly signal listing-data trustworthiness.
+
     Returns ``None`` when either half is too small to fit reliably —
     callers fall back to the per-bucket conformal q.
     """
-    if len(X_train_unc) < 30 or len(X_cal_unc) < 20:
+    if len(X_train_main) < 30 or len(X_cal_main) < 20:
         return None
+
+    extras_train = _uncertainty_extra_features(df_train)
+    extras_cal = _uncertainty_extra_features(df_cal)
+    X_train_unc = np.hstack([X_train_main, extras_train])
+    X_cal_unc = np.hstack([X_cal_main, extras_cal])
 
     model = lgb.LGBMRegressor(
         objective="regression_l1",     # MAE — robust to score outliers
@@ -443,8 +511,11 @@ def _train_uncertainty_model(
     # Train on signed scores so rows safely inside the band (negative s)
     # contribute to lowering predicted q, not just zero them out — that's
     # what lets per-row q get *narrower* than per-bucket on easy rows.
+    # Categorical indices are unchanged: the 3 extras are appended *after*
+    # _ALL_FEATURES, all numeric, so cat_indices still points to the same
+    # columns by position.
     model.fit(
-        X_train_unc, scores_train_unc,
+        X_train_unc, scores_train,
         categorical_feature=cat_indices,
     )
 
@@ -453,18 +524,25 @@ def _train_uncertainty_model(
     # Equivalent to running the marginal conformal recipe on the residuals
     # (s_i - g(x_i)) instead of raw scores.
     pred_cal = model.predict(X_cal_unc)
-    residuals = scores_cal_unc - pred_cal
+    residuals = scores_cal - pred_cal
     q_offset = _conformal_q_from_scores(residuals, target_coverage=target_coverage)
     return model, float(q_offset)
 
 
 def _per_row_uncertainty_q(
-    X: np.ndarray,
+    df: pd.DataFrame,
+    X_main: np.ndarray,
     uncertainty_model: lgb.LGBMRegressor,
     q_offset: float,
     floor_q: float,
 ) -> np.ndarray:
     """Predict per-row CQR widening: ``max(g(x) + q_offset, floor_q, 0)``.
+
+    Builds the extended uncertainty-feature matrix on the fly by
+    concatenating ``X_main`` (the prepared main-model features) with
+    the 3 extras from ``_uncertainty_extra_features``. Caller passes
+    the raw DataFrame so we can read ``description_length``,
+    ``photo_count`` and the LLM-flag columns directly.
 
     The floor at ``floor_q`` (typically the global conformal q) keeps
     bands from collapsing to zero on rows where the regressor predicts
@@ -472,7 +550,9 @@ def _per_row_uncertainty_q(
     which would tighten the band — for rows where the model predicts
     "this row is well inside the band" we keep the original quantile
     edges, not narrower."""
-    raw = uncertainty_model.predict(X) + q_offset
+    extras = _uncertainty_extra_features(df)
+    X_unc = np.hstack([X_main, extras])
+    raw = uncertainty_model.predict(X_unc) + q_offset
     return np.maximum(np.maximum(raw, 0.0), floor_q)
 
 
@@ -577,9 +657,10 @@ def _time_aware_conformal_q(
     n_cal = len(X_cal)
     if n_cal >= 50:
         half = n_cal // 2
+        cal_df = cal.reset_index(drop=True)
         uncertainty_bundle = _train_uncertainty_model(
-            X_cal[:half], scores[:half],
-            X_cal[half:], scores[half:],
+            cal_df.iloc[:half], X_cal[:half], scores[:half],
+            cal_df.iloc[half:], X_cal[half:], scores[half:],
             cat_indices,
         )
 
@@ -1081,7 +1162,7 @@ def predict_prices(
     if uncertainty_bundle is not None:
         unc_model, q_scale = uncertainty_bundle
         per_row_q = _per_row_uncertainty_q(
-            X_arr, unc_model, q_scale, floor_q=conformal_q,
+            listings_df, X_arr, unc_model, q_scale, floor_q=conformal_q,
         )
     elif conformal_q_per_bucket:
         per_row_q = _per_row_conformal_q(

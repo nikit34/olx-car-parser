@@ -174,26 +174,52 @@ def test_per_bucket_conformal_q_with_dynamic_edges():
 
 def test_uncertainty_bundle_trains_and_predicts_positive_q():
     """Option C: per-row uncertainty model trains on the cal-set residuals
-    and yields strictly-positive widening factors at inference time."""
+    and yields strictly-positive widening factors at inference time.
+
+    The model takes ``_ALL_FEATURES + 3 meta-features`` (data
+    completeness, LLM-flag count, description × photo interaction); the
+    inference helper builds them from the raw DataFrame, so callers
+    pass ``df`` and the prepared ``X_main`` array."""
     df = _sample_listings(400, with_first_seen_at=True)
     result = train_price_model(df)
     assert result is not None
-    _models, _maps, _metrics, _oof, _calib, uncertainty = result
+    _models, cat_maps, _metrics, _oof, _calib, uncertainty = result
     assert uncertainty is not None, (
         "400 rows × ≥80 cal split should be enough to fit the uncertainty model"
     )
-    unc_model, q_scale = uncertainty
-    assert q_scale > 0
-    # Predict on the same training distribution and check non-negative output.
-    from src.analytics.price_model import _prepare_X
-    X, _ = _prepare_X(df.iloc[:30])
-    raw_q = unc_model.predict(X)
-    # Raw predictions can be slightly negative (regression target is unbounded);
-    # the inference helper clamps at 0 and applies q_scale.
-    from src.analytics.price_model import _per_row_uncertainty_q
-    per_row_q = _per_row_uncertainty_q(X, unc_model, q_scale, floor_q=0.05)
+    unc_model, q_offset = uncertainty
+    # Predict via the inference helper (which builds extras internally).
+    from src.analytics.price_model import _prepare_X, _per_row_uncertainty_q
+    sample = df.iloc[:30]
+    X_main, _ = _prepare_X(sample, cat_maps)
+    per_row_q = _per_row_uncertainty_q(
+        sample, X_main, unc_model, q_offset, floor_q=0.05,
+    )
     assert (per_row_q >= 0.05).all()  # never below floor
     assert per_row_q.std() > 0         # genuinely per-row, not a constant
+
+
+def test_uncertainty_extra_features_signal_completeness():
+    """The 3 extras should genuinely vary across rows of differing
+    completeness — sanity check that the helper isn't returning a
+    constant shape that the model can't learn from."""
+    from src.analytics.price_model import _uncertainty_extra_features
+    df = pd.DataFrame([
+        # Rich row: long desc, many photos, multiple flags filled.
+        {"description_length": 800, "photo_count": 18,
+         "year": 2018, "mileage_km": 80000,
+         "desc_mentions_accident": False, "warranty": True,
+         "first_owner_selling": True},
+        # Bare row: minimal data.
+        {"description_length": 20, "photo_count": 1,
+         "year": 2010, "mileage_km": None},
+    ])
+    extras = _uncertainty_extra_features(df)
+    assert extras.shape == (2, 3)
+    # Rich row has higher completeness, more flags, higher desc_quality.
+    assert extras[0, 0] > extras[1, 0]   # data_completeness
+    assert extras[0, 1] > extras[1, 1]   # llm_flags_filled
+    assert extras[0, 2] > extras[1, 2]   # desc_quality
 
 
 def test_predict_prices_uses_uncertainty_when_present(monkeypatch):
