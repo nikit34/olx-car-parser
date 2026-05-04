@@ -1167,11 +1167,12 @@ def train_model():
         console.print("[red]Training failed: insufficient data after filtering.[/red]")
         raise typer.Exit(1)
 
-    models, cat_maps, metrics, oof_preds, calibrator = result
+    models, cat_maps, metrics, oof_preds, calibrator, uncertainty = result
     save_model(
         models, cat_maps, metrics,
         oof_preds=oof_preds,
         median_calibrator=calibrator,
+        uncertainty_bundle=uncertainty,
     )
 
     console.print("Computing permutation importance...")
@@ -1409,6 +1410,150 @@ def eval_model(
                 "[green]Backtest saved to data/price_backtest.json — "
                 "dashboard will pick it up.[/green]"
             )
+
+
+def _load_predictions_for_model_consumers(active: "pd.DataFrame"):
+    """Helper: get aligned price-model predictions for the active set.
+
+    Returns a DataFrame with predicted_price / fair_price_low /
+    fair_price_high indexed to ``active.index``, or None when no fresh
+    price model bundle exists. Both ``train-anomaly`` and
+    ``train-hazard`` need this because residual_pct + band_pct are
+    their dominant features and they have to be aligned to the same
+    index the trainer iterates.
+    """
+    from src.analytics.price_model import load_model as load_price_model
+    from src.analytics.price_model import predict_prices
+
+    saved = load_price_model(max_age_hours=14 * 24)
+    if saved is None:
+        return None
+    models, cat_maps, metrics, oof_preds, calibrator = saved
+    return predict_prices(
+        models, cat_maps, active,
+        conformal_q=metrics.get("conformal_q", 0.0),
+        oof_preds=oof_preds,
+        median_calibrator=calibrator,
+        conformal_q_per_bucket=metrics.get("conformal_q_per_bucket"),
+        conformal_q_bucket_edges=metrics.get("conformal_q_bucket_edges"),
+    )
+
+
+@app.command("train-anomaly")
+def train_anomaly():
+    """Train IsolationForest anomaly model and save to
+    ``data/anomaly_model.joblib``.
+
+    Mirrors ``train-model``: runs after scrape+enrich, intended for CI
+    so the dashboard always loads a fresh bundle. Pulls price-model
+    predictions when available so residual_pct + band_pct enter the
+    feature set; falls back to base features otherwise.
+    """
+    from src.storage.repository import get_listings_df
+    from src.analytics.computed_columns import enrich_listings
+    from src.analytics.turnover import compute_turnover_stats
+    from src.analytics.anomaly import save_model, train_anomaly_detector
+    from src.dashboard.data_loader import prepare_active_for_model
+
+    init_db()
+    session = get_session()
+    listings = get_listings_df(session)
+    session.close()
+    if listings.empty:
+        console.print("[yellow]No listings in DB — nothing to train on.[/yellow]")
+        raise typer.Exit(1)
+
+    listings = enrich_listings(listings)
+    if "real_mileage_km" in listings.columns:
+        listings["mileage_km"] = (
+            listings["real_mileage_km"].fillna(listings["mileage_km"])
+        )
+    turnover = compute_turnover_stats(listings)
+    active = prepare_active_for_model(listings, turnover=turnover, include_sold=True)
+
+    predictions_df = _load_predictions_for_model_consumers(active)
+    if predictions_df is None:
+        console.print(
+            "[yellow]No fresh price model — anomaly trains on base "
+            "features only. Run train-model first to enable "
+            "residual_pct / band_pct.[/yellow]"
+        )
+
+    bundle = train_anomaly_detector(active, predictions_df)
+    if bundle is None:
+        console.print(
+            "[red]Training failed: insufficient data after NaN filter.[/red]"
+        )
+        raise typer.Exit(1)
+    save_model(bundle)
+    console.print(
+        f"[green]Anomaly model saved.[/green] schema=v{bundle['schema_version']} · "
+        f"contamination={bundle['contamination']} · "
+        f"uses_predictions={bundle['uses_predictions']} · "
+        f"n_samples={bundle['n_samples']}"
+    )
+
+
+@app.command("train-hazard")
+def train_hazard(
+    horizon_days: int = typer.Option(
+        30, "--horizon", help="Sale-window horizon in days (default 30).",
+    ),
+):
+    """Train per-listing hazard model (P(sold within horizon)) and
+    save to ``data/hazard_model.joblib``.
+
+    Mirrors ``train-model`` for the binary classifier. Pulls price-model
+    predictions for residual_pct + band_pct features when available.
+    """
+    from src.storage.repository import get_listings_df
+    from src.analytics.computed_columns import enrich_listings
+    from src.analytics.turnover import compute_turnover_stats
+    from src.analytics.hazard import save_model, train_hazard_model
+    from src.dashboard.data_loader import prepare_active_for_model
+
+    init_db()
+    session = get_session()
+    listings = get_listings_df(session)
+    session.close()
+    if listings.empty:
+        console.print("[yellow]No listings in DB — nothing to train on.[/yellow]")
+        raise typer.Exit(1)
+
+    listings = enrich_listings(listings)
+    if "real_mileage_km" in listings.columns:
+        listings["mileage_km"] = (
+            listings["real_mileage_km"].fillna(listings["mileage_km"])
+        )
+    turnover = compute_turnover_stats(listings)
+    active = prepare_active_for_model(listings, turnover=turnover, include_sold=True)
+
+    predictions_df = _load_predictions_for_model_consumers(active)
+    if predictions_df is None:
+        console.print(
+            "[yellow]No fresh price model — hazard trains without "
+            "residual_pct / band_pct features.[/yellow]"
+        )
+
+    bundle = train_hazard_model(
+        active, predictions_df, horizon_days=horizon_days,
+    )
+    if bundle is None:
+        console.print(
+            "[red]Training failed: insufficient labeled data after "
+            "censoring (active+young rows are dropped) and price-NaN "
+            "filter.[/red]"
+        )
+        raise typer.Exit(1)
+    save_model(bundle)
+    m = bundle["metrics"]
+    console.print(
+        f"[green]Hazard model saved.[/green] schema=v{bundle['schema_version']} · "
+        f"horizon={bundle['horizon_days']}d · AUC={m['auc']:.3f} · "
+        f"logloss={m['logloss']:.3f} · split={m['split_mode']} · "
+        f"n_train={m['n_train']} · n_val={m['n_val']} · "
+        f"censored={m['n_dropped_censored']}"
+    )
 
 
 @app.command()

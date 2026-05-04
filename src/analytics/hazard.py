@@ -6,8 +6,8 @@ price model uses. Target: did this listing sell within horizon_days
 
 Refines decision.py's segment-level liquidity signals (dom_median,
 dom_fast_share) to per-listing: instead of "VW Golf Mk7 sells fast in
-Porto on average", it answers "this specific Golf, with this price /
-photos / damage profile, has 65 % chance of selling in 30 days."
+Porto on average", answers "this specific Golf, with this price /
+photos / damage profile, has 65 % chance of selling in 30 days".
 
 Censoring rules — what gets dropped from training:
   - Active listings younger than horizon_days (target unobservable)
@@ -15,22 +15,31 @@ Censoring rules — what gets dropped from training:
   - Listings deactivated for non-sold reasons within horizon
     (ambiguous: parser noise vs genuine removal)
 
-Negatives are observably not-sold-within-horizon:
+Negatives are observably-not-sold-within-horizon:
   - Active and age >= horizon (still listed past the deadline)
   - Deactivated past horizon (any reason — visibly survived past it)
 
-Features are intentionally numeric-only for v1: brand/model patterns
-get captured indirectly through residual_pct when predictions_df is
-supplied (the price model has already learned them). Categorical
-encoding adds 30 brands × dozens of models worth of high-cardinality
-splits with small per-class sample sizes — bumps complexity without
-proportional payoff at this corpus size.
+Schema v2 (2026-05-04):
+  - Per-segment median imputation for photo_count / engine_cc /
+    horsepower / mileage_km / description_length / damage_severity.
+    v1 dropped any row with one NaN feature; on the production corpus
+    that was 49 % unscored (mostly photo_count). Layered fallback
+    (brand+model+gen → brand+model → brand → global) brings coverage
+    above ~90 %.
+  - Categorical features added: brand, model, fuel_type, transmission,
+    segment, district. LightGBM handles them natively via pandas
+    Categorical dtype; train-time category levels persist in the
+    bundle so predict-time encodes deterministically.
+  - num_price_drops / max_drop_pct still excluded — they're zero on a
+    fresh listing, so including them creates a train/predict
+    distribution shift that pushes the model to under-predict P(sold)
+    on new entries.
 
-Notably absent: num_price_drops, max_drop_pct, days_since_last_drop.
-They're informative on training rows (which by construction are old
-enough to have observable drops) but on a fresh listing they're
-identically zero — the train/predict distribution shift would push
-the model to under-predict P(sold) on new listings.
+Time-aware split with stratified-random fallback when the time-tail
+collapses to a single class (typical when fresh intake skews positive
+because recently-sold listings dominate the newest first_seen_at).
+``metrics.split_mode`` records which path was taken so consumers
+can decide whether to trust the AUC for production drift checks.
 """
 from __future__ import annotations
 
@@ -51,11 +60,15 @@ _MODEL_PATH = _MODEL_DIR / "hazard_model.joblib"
 _METRICS_PATH = _MODEL_DIR / "hazard_metrics.json"
 _MODEL_MAX_AGE_HOURS = 24
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 DEFAULT_HORIZON_DAYS = 30
 MIN_SAMPLES = 200
 VAL_FRAC = 0.2
+# A segment must hold at least this many priced rows for its median
+# to anchor an imputation; below that we fall through to the next
+# coarser key.
+_MIN_SEGMENT_SAMPLES = 5
 
 NUMERIC_FEATURES = [
     "year",
@@ -68,7 +81,139 @@ NUMERIC_FEATURES = [
     "damage_severity",
 ]
 
+# Numeric columns whose NaNs we fill from per-segment medians. log_price
+# is excluded — if price_eur is missing the listing isn't a hazard
+# candidate at all.
+_IMPUTE_FEATURES = (
+    "photo_count",
+    "description_length",
+    "engine_cc",
+    "horsepower",
+    "mileage_km",
+    "damage_severity",
+    "year",
+)
+
+CATEGORICAL_FEATURES = [
+    "brand",
+    "model",
+    "fuel_type",
+    "transmission",
+    "segment",
+    "district",
+]
+
 PREDICTION_FEATURES = ["residual_pct", "band_pct"]
+
+
+# ---------------------------------------------------------------------------
+# Per-segment imputation
+# ---------------------------------------------------------------------------
+
+
+def _build_segment_lookups(
+    df: pd.DataFrame, X: pd.DataFrame,
+) -> dict[str, dict]:
+    """Per-segment median table for the layered imputation fallback:
+    (brand, model, generation) → (brand, model) → (brand,) → global.
+
+    A segment qualifies only if it carries at least
+    ``_MIN_SEGMENT_SAMPLES`` non-NaN priced rows for the feature in
+    question — that stops us from "imputing" on the basis of one
+    outlier in a 2-row brand bucket. Stored in the bundle so inference
+    applies the same imputation without re-providing the corpus.
+    """
+    cols = list(_IMPUTE_FEATURES)
+    work = X[cols].copy()
+    work["__brand"] = df.get("brand", pd.Series("", index=df.index)).fillna("").astype(str)
+    work["__model"] = df.get("model", pd.Series("", index=df.index)).fillna("").astype(str)
+    work["__generation"] = (
+        df.get("generation", pd.Series("", index=df.index)).fillna("").astype(str)
+    )
+
+    out: dict[str, dict] = {
+        "global": {},
+        "brand": {},        # {(brand,) : {feature: median}}
+        "brand_model": {},  # {(brand, model) : {...}}
+        "segment": {},      # {(brand, model, generation) : {...}}
+    }
+    for col in cols:
+        med = work[col].median()
+        out["global"][col] = float(med) if pd.notna(med) else 0.0
+
+    for keys, grp in work.groupby(["__brand"], dropna=False):
+        if len(grp) < _MIN_SEGMENT_SAMPLES:
+            continue
+        out["brand"][keys] = {
+            col: float(grp[col].median())
+            for col in cols if pd.notna(grp[col].median())
+        }
+    for keys, grp in work.groupby(["__brand", "__model"], dropna=False):
+        if len(grp) < _MIN_SEGMENT_SAMPLES:
+            continue
+        out["brand_model"][keys] = {
+            col: float(grp[col].median())
+            for col in cols if pd.notna(grp[col].median())
+        }
+    for keys, grp in work.groupby(
+        ["__brand", "__model", "__generation"], dropna=False,
+    ):
+        if len(grp) < _MIN_SEGMENT_SAMPLES:
+            continue
+        out["segment"][keys] = {
+            col: float(grp[col].median())
+            for col in cols if pd.notna(grp[col].median())
+        }
+    return out
+
+
+def _segment_lookup(lookups: dict, brand, model, generation, feature: str) -> float:
+    """Walk the (segment → brand_model → brand → global) chain."""
+    seg_key = (str(brand or ""), str(model or ""), str(generation or ""))
+    bm_key = seg_key[:2]
+    b_key = seg_key[:1]
+    for layer, key in (
+        ("segment", seg_key),
+        ("brand_model", bm_key),
+        ("brand", b_key),
+    ):
+        v = lookups.get(layer, {}).get(key, {}).get(feature)
+        if v is not None:
+            return v
+    return lookups.get("global", {}).get(feature, 0.0)
+
+
+def _apply_segment_imputation(
+    df: pd.DataFrame,
+    X: pd.DataFrame,
+    lookups: dict,
+) -> pd.DataFrame:
+    """Fill NaN in _IMPUTE_FEATURES from the lookup table. Returns a
+    new DataFrame; original X untouched."""
+    out = X.copy()
+    brands = df.get("brand", pd.Series("", index=df.index)).fillna("").astype(str)
+    models = df.get("model", pd.Series("", index=df.index)).fillna("").astype(str)
+    generations = (
+        df.get("generation", pd.Series("", index=df.index)).fillna("").astype(str)
+    )
+    for col in _IMPUTE_FEATURES:
+        if col not in out.columns:
+            continue
+        missing = out[col].isna()
+        if not missing.any():
+            continue
+        fill_vals = pd.Series(
+            [
+                _segment_lookup(lookups, b, m, g, col)
+                for b, m, g in zip(
+                    brands[missing], models[missing], generations[missing],
+                )
+            ],
+            index=out.index[missing],
+            dtype=float,
+        )
+        out.loc[missing, col] = fill_vals
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -84,11 +229,9 @@ def _build_target(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute (y, labeled_mask) aligned to ``listings_df.index``.
 
-    ``y[i] = 1``  → listing i sold within horizon_days of first_seen_at
-    ``y[i] = 0``  → listing i is observably not sold by horizon
+    ``y[i] = 1``  → sold within horizon_days of first_seen_at
+    ``y[i] = 0``  → observably not sold by horizon
     ``labeled[i] = False`` → row is censored / unlabelable; drop from training
-
-    *now* — override "today" for deterministic tests; defaults to current UTC.
     """
     n = len(listings_df)
     y = np.zeros(n, dtype=int)
@@ -121,22 +264,15 @@ def _build_target(
     pos = (
         (~is_active)
         & (reason == "sold")
-        & first_seen.notna()
-        & deactivated.notna()
-        & (days_to_deact >= 0)
-        & (days_to_deact <= horizon_days)
+        & first_seen.notna() & deactivated.notna()
+        & (days_to_deact >= 0) & (days_to_deact <= horizon_days)
     )
     neg_active = is_active & first_seen.notna() & (days_active >= horizon_days)
     neg_deact_past = (
         (~is_active)
-        & first_seen.notna()
-        & deactivated.notna()
+        & first_seen.notna() & deactivated.notna()
         & (days_to_deact > horizon_days)
     )
-    # Censored / dropped:
-    #   - active and age < horizon (don't know yet)
-    #   - first_seen_at missing
-    #   - deactivated within horizon for non-sold reason (ambiguous)
 
     y[pos.values] = 1
     y[(neg_active | neg_deact_past).values] = 0
@@ -145,19 +281,30 @@ def _build_target(
 
 
 # ---------------------------------------------------------------------------
-# Feature build
+# Feature build (numeric + categoricals)
 # ---------------------------------------------------------------------------
 
 
 def _build_features(
     listings_df: pd.DataFrame,
     predictions_df: pd.DataFrame | None = None,
-) -> tuple[pd.DataFrame, list[str]]:
-    """Build the numeric feature matrix (no categoricals — see module
-    docstring for why).
+    *,
+    lookups: dict | None = None,
+    categorical_levels: dict[str, list[str]] | None = None,
+) -> tuple[pd.DataFrame, dict]:
+    """Build the LightGBM-ready feature DataFrame.
+
+    Returns ``(X, info)`` where ``X`` carries every feature column and
+    ``info`` contains:
+      - ``feature_names``: full ordered column list
+      - ``categorical_features``: subset that's pandas Categorical
+      - ``categorical_levels``: per-cat sorted level list (for predict-time
+        encoding consistency; built when not supplied)
+      - ``lookups``: imputation table (built when not supplied)
 
     *predictions_df* must be aligned to ``listings_df.index`` — pass
-    the direct output of ``price_model.predict_prices``.
+    the direct output of ``price_model.predict_prices``. When supplied,
+    residual_pct and band_pct join the feature list.
     """
     df = listings_df
     out = pd.DataFrame(index=df.index)
@@ -166,10 +313,11 @@ def _build_features(
     out["mileage_km"] = pd.to_numeric(df.get("mileage_km"), errors="coerce")
     out["engine_cc"] = pd.to_numeric(df.get("engine_cc"), errors="coerce")
     out["horsepower"] = pd.to_numeric(df.get("horsepower"), errors="coerce")
-    out["log_price"] = np.log1p(
-        pd.to_numeric(df.get("price_eur"), errors="coerce")
-        .fillna(0).clip(lower=0)
-    )
+    # No fillna here — a missing price_eur must propagate to log_price=NaN
+    # so train + predict can drop the row (we can't impute price; the
+    # listing isn't a hazard candidate without it).
+    raw_price = pd.to_numeric(df.get("price_eur"), errors="coerce").clip(lower=0)
+    out["log_price"] = np.log1p(raw_price)
     out["photo_count"] = pd.to_numeric(df.get("photo_count"), errors="coerce")
     out["description_length"] = pd.to_numeric(
         df.get("description_length"), errors="coerce",
@@ -178,7 +326,28 @@ def _build_features(
         df.get("damage_severity"), errors="coerce",
     )
 
-    feature_names = list(NUMERIC_FEATURES)
+    # Per-segment median imputation. Build at train time, reuse at score time.
+    if lookups is None:
+        lookups = _build_segment_lookups(df, out)
+    out = _apply_segment_imputation(df, out, lookups)
+
+    # Categoricals — pandas Categorical so LightGBM picks them up natively.
+    saved_levels: dict[str, list[str]] = {}
+    for col in CATEGORICAL_FEATURES:
+        raw = df.get(col)
+        if raw is None:
+            values = pd.Series([pd.NA] * len(df), index=df.index, dtype="object")
+        else:
+            values = raw.astype("string")
+        if categorical_levels is not None and col in categorical_levels:
+            levels = categorical_levels[col]
+            cat = pd.Categorical(values, categories=levels)
+        else:
+            cat = pd.Categorical(values)
+            saved_levels[col] = list(cat.categories)
+        out[col] = cat
+
+    feature_names = list(NUMERIC_FEATURES) + list(CATEGORICAL_FEATURES)
 
     if predictions_df is not None and not predictions_df.empty:
         pred = predictions_df.reindex(df.index)
@@ -189,13 +358,23 @@ def _build_features(
         safe_pred = pred_price.where(pred_price > 0)
         out["residual_pct"] = (price - safe_pred) / safe_pred * 100
         out["band_pct"] = (fair_high - fair_low) / safe_pred * 100
-        feature_names = NUMERIC_FEATURES + PREDICTION_FEATURES
+        feature_names = (
+            NUMERIC_FEATURES + CATEGORICAL_FEATURES + PREDICTION_FEATURES
+        )
 
-    return out[feature_names], feature_names
+    info = {
+        "feature_names": feature_names,
+        "categorical_features": list(CATEGORICAL_FEATURES),
+        "categorical_levels": (
+            saved_levels if categorical_levels is None else categorical_levels
+        ),
+        "lookups": lookups,
+    }
+    return out[feature_names], info
 
 
 # ---------------------------------------------------------------------------
-# Time-aware split
+# Train / val split
 # ---------------------------------------------------------------------------
 
 
@@ -205,22 +384,19 @@ def _split_train_val(
     first_seen: pd.Series,
     val_frac: float = VAL_FRAC,
 ) -> tuple[pd.DataFrame, np.ndarray, pd.DataFrame, np.ndarray, str] | None:
-    """Sort labeled rows by first_seen_at; oldest (1-val_frac) train,
-    newest val_frac validate — the honest answer to 'how does the model
-    perform on tomorrow's listings'.
-
-    Returns ``None`` when either fold ends up below 50 rows.
+    """Time-aware first; stratified-random fallback when the time-tail
+    collapses to a single class. Returns
+    ``(X_train, y_train, X_val, y_val, mode)`` or None.
 
     On the production corpus the time-tail tends to be heavily skewed
-    toward the positive class: fresh intake includes listings that
-    came in and sold within their first 30 days (label=1), while the
-    negatives (active and ≥horizon old) are pulled from the older
-    backlog. When the val fold ends up single-class, time-aware
-    early-stopping is meaningless — we fall back to a stratified
-    random split so the model still has a usable val set, at the cost
-    of temporal honesty in the AUC. The chosen mode is returned so the
-    caller can record it on the bundle and downstream consumers can
-    decide whether to trust the metric for production drift checks.
+    toward the positive class (fresh intake includes listings that came
+    in and sold within their first 30 days; negatives are pulled from
+    the older backlog). When the val fold ends up single-class,
+    time-aware early-stopping is meaningless — we fall back to a
+    stratified random split so the model still has a usable val set.
+    Less temporally honest, but the only path that lets the model fit
+    at all on this corpus shape. ``mode`` is recorded on the bundle so
+    drift checks can discount the AUC accordingly.
     """
     n = len(X)
     if n < 100:
@@ -239,8 +415,6 @@ def _split_train_val(
                 "time_aware",
             )
 
-    # Stratified random fallback — only path that survives a
-    # single-class time-tail.
     from sklearn.model_selection import train_test_split
 
     if len(np.unique(y)) < 2:
@@ -291,17 +465,15 @@ def train_hazard_model(
     """Fit the binary classifier; return bundle dict or None on
     insufficient data.
 
-    The pipeline:
-      1. Compute target with censoring (drop active-and-young, etc.)
-      2. Build feature matrix; drop rows with NaN in either feature
-         set (LightGBM handles NaN, but val-set ROC-AUC needs clean
-         labels so we filter at the row level).
-      3. Time-aware 80/20 split by first_seen_at.
-      4. Fit on train fold with early stopping on val; record
-         best_iteration.
-      5. Compute val-set AUC, log-loss, base-rate.
-      6. Refit on full labeled corpus with best_iteration so the
-         shipped model uses the entire signal, not just 80 %.
+    Pipeline:
+      1. Compute target with censoring
+      2. Build features (per-segment imputed numerics + categoricals);
+         drop only rows where log_price is NaN (price_eur missing)
+         since those can't be hazard candidates regardless of segment
+      3. Time-aware 80/20 split with stratified-random fallback
+      4. Fit on train fold with early stopping on val
+      5. Compute val-set AUC, log-loss
+      6. Refit on full labeled corpus with the tuned best_iteration
     """
     if listings_df is None or listings_df.empty:
         return None
@@ -310,12 +482,14 @@ def train_hazard_model(
     if not labeled.any():
         return None
 
-    X_all, feature_names = _build_features(listings_df, predictions_df)
-    # Drop rows with NaN in any required feature — LightGBM tolerates
-    # NaN at fit time, but we want clean ROC-AUC, and the predict path
-    # will independently surface NaN as "unscored" anyway.
-    feature_valid = X_all.notna().all(axis=1).values
-    keep = labeled & feature_valid
+    X_all, info = _build_features(listings_df, predictions_df)
+    feature_names = info["feature_names"]
+
+    # Drop only rows where the target is missing OR log_price is NaN
+    # (price_eur was missing; can't impute price). Other numerics get
+    # filled by per-segment median; LightGBM tolerates NaN categoricals.
+    log_price_valid = X_all["log_price"].notna().values
+    keep = labeled & log_price_valid
 
     if keep.sum() < min_samples:
         return None
@@ -339,11 +513,11 @@ def train_hazard_model(
         X_train, y_train,
         eval_set=[(X_val, y_val)],
         callbacks=[lgb.early_stopping(_EARLY_STOPPING_ROUNDS, verbose=False)],
+        categorical_feature=info["categorical_features"],
     )
     best_iter = max(int(model.best_iteration_ or fit_params["n_estimators"]),
                     _MIN_N_ESTIMATORS)
 
-    # Validation metrics on the held-out tail
     val_proba = model.predict_proba(X_val)[:, 1]
     metrics = {
         "auc": float(roc_auc_score(y_val, val_proba)),
@@ -357,20 +531,24 @@ def train_hazard_model(
         "best_iteration": best_iter,
         "horizon_days": horizon_days,
         "n_dropped_censored": int((~labeled).sum()),
-        "n_dropped_nan_features": int(labeled.sum() - keep.sum()),
+        "n_dropped_no_price": int(labeled.sum() - keep.sum()),
         "split_mode": split_mode,
     }
 
-    # Refit on full labeled corpus with the tuned best_iteration so the
-    # shipped model uses every available row, not just the 80 % train fold.
     final_params = {**fit_params, "n_estimators": best_iter}
     final_model = lgb.LGBMClassifier(**final_params)
-    final_model.fit(X_kept, y_kept)
+    final_model.fit(
+        X_kept, y_kept,
+        categorical_feature=info["categorical_features"],
+    )
 
     return {
         "schema_version": _SCHEMA_VERSION,
         "model": final_model,
         "feature_names": feature_names,
+        "categorical_features": info["categorical_features"],
+        "categorical_levels": info["categorical_levels"],
+        "lookups": info["lookups"],
         "horizon_days": horizon_days,
         "uses_predictions": predictions_df is not None and not predictions_df.empty,
         "metrics": metrics,
@@ -385,30 +563,35 @@ def predict_sold_probability(
 ) -> pd.DataFrame:
     """Per-listing P(sold within horizon_days from first_seen_at).
 
-    Returns a DataFrame with columns ``olx_id`` and
-    ``prob_sold_within_horizon`` (NaN for rows whose feature row has
-    any NaN — those can't be scored). Index aligned to listings_df.
+    Returns a DataFrame with ``olx_id`` and
+    ``prob_sold_within_horizon``. Listings whose ``log_price`` is NaN
+    (price_eur missing) get NaN probability — every other column is
+    imputed from the bundle's per-segment lookup table.
     """
     cols = ["olx_id", "prob_sold_within_horizon"]
     if bundle is None or listings_df is None or listings_df.empty:
         return pd.DataFrame(columns=cols)
 
-    X, features = _build_features(listings_df, predictions_df)
-    if features != bundle.get("feature_names"):
+    X, info = _build_features(
+        listings_df, predictions_df,
+        lookups=bundle.get("lookups"),
+        categorical_levels=bundle.get("categorical_levels"),
+    )
+    if info["feature_names"] != bundle.get("feature_names"):
         raise ValueError(
             f"feature mismatch: bundle expects {bundle['feature_names']}, "
-            f"input produced {features}",
+            f"input produced {info['feature_names']}",
         )
 
     out = pd.DataFrame(index=listings_df.index)
     out["olx_id"] = listings_df.get("olx_id")
     out["prob_sold_within_horizon"] = np.nan
 
-    valid = X.notna().all(axis=1)
+    valid = X["log_price"].notna()
     if not valid.any():
         return out[cols]
 
-    proba = bundle["model"].predict_proba(X[valid].values)[:, 1]
+    proba = bundle["model"].predict_proba(X[valid])[:, 1]
     out.loc[valid, "prob_sold_within_horizon"] = proba
     return out[cols]
 
@@ -448,7 +631,10 @@ def load_model(max_age_hours: float = _MODEL_MAX_AGE_HOURS) -> dict | None:
         return None
     if bundle.get("schema_version") != _SCHEMA_VERSION:
         return None
-    expected = {"model", "feature_names", "horizon_days", "metrics"}
+    expected = {
+        "model", "feature_names", "categorical_features",
+        "categorical_levels", "lookups", "horizon_days", "metrics",
+    }
     if not expected.issubset(bundle.keys()):
         return None
     return bundle
