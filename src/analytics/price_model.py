@@ -60,6 +60,28 @@ NUMERIC_FEATURES = [
     "year", "mileage_km", "engine_cc", "horsepower",
     "avg_days_to_sell",
     "photo_count", "description_length", "seats",
+    # v9: flipper-detection primitives. The 2026-05-05 pilot study and
+    # design discussion concluded that *plate_readable* alone is too
+    # noisy (43% obscuring rate dominated by privacy-conscious private
+    # sellers, not actual flippers), but the combination of
+    # ``seller_listings_count_90d`` (rotation rate from the listings
+    # table) and ``plate_obscured`` (= plate_readable=False AND
+    # n_exterior >= 5, threshold defended in computed_columns.py) carries
+    # complementary signal: rotation captures TIME-axis flipper activity,
+    # plate captures SELLER-BEHAVIOR. Raw signals fed in (not the
+    # ``flipper_score`` composite from src/analytics/flipper.py) so the
+    # tree can learn the interaction itself instead of inheriting our
+    # arbitrary weights.
+    #
+    # Both float NaN until ``backfill_sellers`` (resolves seller_uuid)
+    # and ``verify-photos --backfill-plates`` (computes plate fields)
+    # finish their first passes on the production corpus. LightGBM
+    # handles missing values natively, so these features only contribute
+    # to splits once data is there. Permutation-importance in the next
+    # ablation pass (post-backfill) determines whether they survive the
+    # 0.003 threshold the team has applied to all soft signals since v7.
+    "seller_listings_count_90d",
+    "plate_obscured",
     # NOTE: price-history features (num_price_drops, max_drop_pct,
     # price_drop_velocity, days_since_last_drop) are intentionally excluded.
     # They are post-hoc — known only after observing the listing for days —
@@ -81,6 +103,9 @@ BOOL_FEATURES: list[str] = []
 # note above. desc_mentions_*, right_hand_drive, taxi_fleet_rental,
 # warranty, first_owner_selling, title_has_parts_only,
 # title_has_severe_damage all sat at near-zero permutation importance.
+# (``plate_obscured`` is exposed as nullable bool by ``computed_columns``
+# but enters the model via NUMERIC_FEATURES — _prepare_X coerces it to
+# {0.0, 1.0, NaN} and lets LightGBM treat NaN-handling natively.)
 
 CATEGORICAL_FEATURES = [
     "brand", "model", "fuel_type", "transmission", "segment",

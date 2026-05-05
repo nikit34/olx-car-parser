@@ -764,6 +764,15 @@ def verify_photos(
              "Selects rows with photo_damage_flag_source = "
              "'legacy_max_rule_backfill', overwrites with proper "
              "multi-photo agreement, and clears the marker."),
+    backfill_plates: bool = typer.Option(
+        False,
+        help="Plate-only pass over rows that already have damage scores "
+             "but no plate_readable yet. Selects "
+             "photo_damage_p IS NOT NULL AND plate_readable IS NULL, "
+             "skips the damage classifier (preserves existing damage "
+             "scores untouched), and runs only photo download + CLIP "
+             "filter + plate OCR. Use to retro-fit the four ``plate_*`` "
+             "fields onto listings verified before plate detection landed."),
     cache_dir: Path = typer.Option(
         Path("/tmp/photo_verify/cache"), help="Local photo cache directory."),
     dry_run: bool = typer.Option(
@@ -786,6 +795,19 @@ def verify_photos(
         from ``photo_damage_p`` so alerts/dashboard threshold logic on the
         max-score keeps working untouched (additive field).
 
+    Plus four plate-detection keys (PT license-plate OCR on the same
+    exterior photos):
+      • ``plate_texts`` — per-photo ``[{"idx": int, "text": "AA-00-AA",
+        "confidence": float}, ...]`` for photos where a PT-formatted plate
+        was readable. ``idx`` matches ``photo_damages`` so a listing's
+        photos line up across both signals.
+      • ``plate_n_readable`` — count of exterior photos with a readable
+        plate. ``0`` means no photo in the listing showed a recognizable
+        plate; useful as a soft "obscured listing" hint.
+      • ``plate_readable`` — bool: ``plate_n_readable > 0``.
+      • ``plate_text_primary`` — highest-confidence plate text across the
+        listing, or ``None``. Stored on the listing for dedup / search.
+
     Coverage: both OLX (``apollo.olxcdn.com`` URL scrape) and StandVirtual
     (``__NEXT_DATA__`` JSON). Listings from other sources are skipped.
 
@@ -797,26 +819,50 @@ def verify_photos(
     Filtered photos contribute ``photo_damage_n_exterior`` (additive field).
     Listings whose every photo is filtered out persist as the same empty
     record as the no-photos path (``photo_damage_n_photos=len(original)``,
-    ``photo_damage_n_exterior=0``, no flag).
+    ``photo_damage_n_exterior=0``, no flag). The plate reader runs on the
+    same exterior set; non-exterior shots are skipped (plates rarely
+    survive a wheel close-up or dashboard frame anyway).
+
+    ``--backfill-plates``: one-shot retro-fit for rows verified before the
+    plate reader landed. Selects ``photo_damage_p IS NOT NULL AND
+    plate_readable IS NULL``, skips the damage classifier entirely (no
+    inference cost, existing damage scores preserved bit-for-bit), and
+    writes only the four ``plate_*`` fields. Mutually exclusive with
+    ``--upgrade-legacy``.
     """
+    # Flag validation happens before any heavy imports / DB init so an
+    # operator typo aborts in milliseconds rather than after loading torch.
+    if upgrade_legacy and backfill_plates:
+        raise typer.BadParameter(
+            "--upgrade-legacy and --backfill-plates are mutually exclusive: "
+            "the first re-runs damage inference, the second deliberately skips it."
+        )
+
     import sqlite3
     import time
     from src.parser.photo_damage import DamageClassifier
     from src.parser.photo_viewpoint import ExteriorFilter
+    from src.parser.photo_plate import PlateReader
     from src.parser.photo_fetch import fetch_photos, download_photo
 
     init_db()
     session = get_session()
     from src.models.listing import Listing
-    from sqlalchemy import or_, func as sa_func
+    from sqlalchemy import and_, or_, func as sa_func
 
     cache_dir.mkdir(parents=True, exist_ok=True)
-    log.info("Loading classifier (threshold=%.2f)...", threshold)
-    clf = DamageClassifier(threshold=threshold)
-    log.info("Device: %s, classes: %s", clf.device, clf.classes)
+    if backfill_plates:
+        log.info("Backfill-plates mode: skipping damage classifier load.")
+        clf = None
+    else:
+        log.info("Loading classifier (threshold=%.2f)...", threshold)
+        clf = DamageClassifier(threshold=threshold)
+        log.info("Device: %s, classes: %s", clf.device, clf.classes)
     log.info("Loading CLIP exterior filter (issue #3 OOD pre-filter)...")
     exterior_filter = ExteriorFilter()
     log.info("CLIP filter device: %s", exterior_filter.device)
+    log.info("Loading EasyOCR plate reader (CPU)...")
+    plate_reader = PlateReader()
 
     # Default selection: active OLX/StandVirtual listings missing
     # photo_damage_p in llm_extras (steady-state cron). The
@@ -832,6 +878,17 @@ def verify_photos(
             Listing.llm_extras, "$.photo_damage_flag_source",
         ) == "legacy_max_rule_backfill"
         selection_filter = legacy_marker
+    elif backfill_plates:
+        # One-shot plate retro-fit: pick rows already verified for damage
+        # (so we don't re-process listings still in the steady-state
+        # damage queue) but missing the plate fields entirely.
+        has_damage = sa_func.json_extract(
+            Listing.llm_extras, "$.photo_damage_p",
+        ).isnot(None)
+        needs_plate = sa_func.json_extract(
+            Listing.llm_extras, "$.plate_readable",
+        ).is_(None)
+        selection_filter = and_(has_damage, needs_plate)
     else:
         needs_photo = sa_func.json_extract(
             Listing.llm_extras, "$.photo_damage_p",
@@ -892,8 +949,15 @@ def verify_photos(
 
     def _verify_one(
         olx_id: str, url: str
-    ) -> tuple[str, float, int, int, list[dict], bool, str | None]:
-        """Returns ``(olx_id, max_p, n_photos, n_exterior, per_photo, flagged, error_msg)``.
+    ) -> tuple[
+        str, float, int, int, list[dict], bool,
+        list[dict], str | None, str | None,
+    ]:
+        """Returns the per-listing tuple consumed by the main loop.
+
+        Tuple fields (in order):
+          ``olx_id, max_p, n_photos, n_exterior, per_photo, flagged,
+           plate_per_photo, plate_primary, error_msg``
 
         ``n_photos`` is the count of photos that successfully downloaded —
         same as the legacy semantics so ``photo_damage_n_photos`` keeps
@@ -913,6 +977,12 @@ def verify_photos(
         (``ListingPrediction.is_damaged``, see issue #2). Decoupled from
         ``max_p`` so existing consumers that threshold on the max-score keep
         working unchanged.
+
+        ``plate_per_photo`` is a list of ``{"idx", "text", "confidence"}``
+        for exterior photos with a recognized PT plate (same idx convention
+        as ``per_photo``; photos without a readable plate are absent).
+        ``plate_primary`` is the single highest-confidence plate text across
+        the listing, or ``None``.
         """
         try:
             photo_urls = fetch_photos(url)
@@ -926,7 +996,7 @@ def verify_photos(
                 if download_photo(purl, p):
                     indexed_paths.append((j, p))
             if not indexed_paths:
-                return olx_id, 0.0, 0, 0, [], False, None
+                return olx_id, 0.0, 0, 0, [], False, [], None, None
             # CLIP pre-filter: drop OOD viewpoints before damage scoring.
             # Single forward pass over all of the listing's photos — same
             # CLIP model instance is reused across listings.
@@ -941,19 +1011,53 @@ def verify_photos(
                 # Every photo was OOD — same persistence shape as no_photos
                 # but ``n_photos`` keeps the original count so the listing
                 # records "we did look at N photos, none were exterior".
-                return olx_id, 0.0, n_total, 0, [], False, None
+                return olx_id, 0.0, n_total, 0, [], False, [], None, None
             photo_paths = [p for _, p in exterior_indexed]
-            pred = clf.predict_listing(olx_id, photo_paths)
-            per_photo = [
-                {"idx": idx, "p": round(float(photo.p_damaged), 4)}
-                for (idx, _), photo in zip(exterior_indexed, pred.photos)
-            ]
+            if clf is None:
+                # Backfill-plates mode: skip damage inference. We still
+                # need n_total / n_exterior accounting and the exterior
+                # photo set for the plate reader, but the damage tuple
+                # fields are placeholders — the persistence layer below
+                # is wired to leave existing damage_* values untouched
+                # in this mode.
+                pred_max_p = 0.0
+                pred_is_damaged = False
+                per_photo: list[dict] = []
+            else:
+                pred = clf.predict_listing(olx_id, photo_paths)
+                pred_max_p = pred.max_p
+                pred_is_damaged = bool(pred.is_damaged)
+                per_photo = [
+                    {"idx": idx, "p": round(float(photo.p_damaged), 4)}
+                    for (idx, _), photo in zip(exterior_indexed, pred.photos)
+                ]
+            # Plate OCR on the same exterior set. ``read_photos`` preserves
+            # ordering and emits ``None`` for photos with no readable PT
+            # plate; we pair those back with the original idx and drop
+            # blanks before persisting.
+            plate_results = plate_reader.read_photos(photo_paths)
+            plate_per_photo: list[dict] = []
+            plate_primary: str | None = None
+            best_conf: float = -1.0
+            for (idx, _), pr in zip(exterior_indexed, plate_results):
+                if pr is None:
+                    continue
+                plate_per_photo.append({
+                    "idx": idx,
+                    "text": pr.text,
+                    "confidence": round(float(pr.confidence), 4),
+                })
+                if pr.confidence > best_conf:
+                    best_conf = float(pr.confidence)
+                    plate_primary = pr.text
+            plate_per_photo.sort(key=lambda d: d["idx"])
             return (
-                olx_id, pred.max_p, n_total, n_exterior,
-                per_photo, bool(pred.is_damaged), None,
+                olx_id, pred_max_p, n_total, n_exterior,
+                per_photo, pred_is_damaged,
+                plate_per_photo, plate_primary, None,
             )
         except Exception as exc:  # noqa: BLE001
-            return olx_id, 0.0, 0, 0, [], False, str(exc)
+            return olx_id, 0.0, 0, 0, [], False, [], None, str(exc)
 
     flagged = downgraded = no_photos = errors = 0
     processed = 0
@@ -967,7 +1071,8 @@ def verify_photos(
         }
         for fut in as_completed(futures):
             (olx_id, max_p, n_photos, n_exterior,
-             per_photo, flagged_pred, err) = fut.result()
+             per_photo, flagged_pred,
+             plate_per_photo, plate_primary, err) = fut.result()
             processed += 1
             if err:
                 log.warning("Classifier failed on %s: %s", olx_id, err)
@@ -981,28 +1086,38 @@ def verify_photos(
             except (json.JSONDecodeError, TypeError):
                 extras = {}
             text_sev = extras.get("damage_severity") or 0
-            extras["photo_damage_p"] = round(max_p, 4)
-            extras["photo_damage_n_photos"] = n_photos
-            # CLIP exterior pre-filter count (issue #3) — how many of the
-            # ``n_photos`` downloaded actually got fed to the damage
-            # classifier. ``n_exterior <= n_photos``; equal means no
-            # filtering happened on this listing, zero means every photo
-            # was OOD (interiors / engine bay / wheel close-up / etc.).
-            extras["photo_damage_n_exterior"] = n_exterior
-            # Per-photo scores (issue #4) — keep listing-level fields above
-            # untouched for backward compat with alerts/dashboard. Sorted by
-            # idx ascending so downstream consumers don't have to. After
-            # issue #3 only exterior photos appear here; their ``idx`` is
-            # the original 1-based position in ``fetch_photos(url)``.
-            extras["photo_damages"] = sorted(per_photo, key=lambda d: d["idx"])
-            # Listing-level multi-photo agreement decision (issue #2). New,
-            # additive field — alerts/dashboard still threshold on
-            # ``photo_damage_p`` (max across photos) and keep working
-            # unchanged.
-            extras["photo_damage_flagged"] = bool(flagged_pred)
-            # Drop the 2026-05-02 backfill marker once a row gets real
-            # multi-photo inference — the boolean above is now authoritative.
-            extras.pop("photo_damage_flag_source", None)
+            if not backfill_plates:
+                extras["photo_damage_p"] = round(max_p, 4)
+                extras["photo_damage_n_photos"] = n_photos
+                # CLIP exterior pre-filter count (issue #3) — how many of the
+                # ``n_photos`` downloaded actually got fed to the damage
+                # classifier. ``n_exterior <= n_photos``; equal means no
+                # filtering happened on this listing, zero means every photo
+                # was OOD (interiors / engine bay / wheel close-up / etc.).
+                extras["photo_damage_n_exterior"] = n_exterior
+                # Per-photo scores (issue #4) — keep listing-level fields above
+                # untouched for backward compat with alerts/dashboard. Sorted by
+                # idx ascending so downstream consumers don't have to. After
+                # issue #3 only exterior photos appear here; their ``idx`` is
+                # the original 1-based position in ``fetch_photos(url)``.
+                extras["photo_damages"] = sorted(per_photo, key=lambda d: d["idx"])
+                # Listing-level multi-photo agreement decision (issue #2). New,
+                # additive field — alerts/dashboard still threshold on
+                # ``photo_damage_p`` (max across photos) and keep working
+                # unchanged.
+                extras["photo_damage_flagged"] = bool(flagged_pred)
+                # Drop the 2026-05-02 backfill marker once a row gets real
+                # multi-photo inference — the boolean above is now authoritative.
+                extras.pop("photo_damage_flag_source", None)
+            # PT plate OCR — same exterior set as the damage classifier.
+            # ``plate_per_photo`` already sorted by idx in _verify_one. Always
+            # written, including in --backfill-plates mode (that's the whole
+            # point of the mode — retro-fit these four fields onto rows that
+            # already have damage scores from a pre-plate run).
+            extras["plate_texts"] = plate_per_photo
+            extras["plate_n_readable"] = len(plate_per_photo)
+            extras["plate_readable"] = bool(plate_per_photo)
+            extras["plate_text_primary"] = plate_primary
             if not dry_run:
                 listing.llm_extras = json.dumps(extras, ensure_ascii=False)
             # Count real writes (vs. error/skip rows). Used by the

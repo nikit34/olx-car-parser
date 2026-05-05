@@ -736,3 +736,50 @@ class TestSoldTargetAdjustment:
         # handful of the 100 actives may be filtered out — check the
         # majority survived rather than the exact count.
         assert si["active_rows"] >= 90
+
+
+class TestFlipperPrimitivesInFeatureSet:
+    """v9 added two flipper-detection primitives to ``NUMERIC_FEATURES``.
+    Verify (a) they are in ``_ALL_FEATURES``, (b) ``_prepare_X`` tolerates
+    DataFrames that don't carry them yet (pre-backfill production state),
+    and (c) training still succeeds on such data — they just don't
+    contribute to splits until the columns are populated."""
+
+    def test_features_list_contains_new_primitives(self):
+        from src.analytics.price_model import (
+            NUMERIC_FEATURES, _ALL_FEATURES,
+        )
+        assert "seller_listings_count_90d" in NUMERIC_FEATURES
+        assert "plate_obscured" in NUMERIC_FEATURES
+        assert "seller_listings_count_90d" in _ALL_FEATURES
+        assert "plate_obscured" in _ALL_FEATURES
+
+    def test_prepare_X_handles_dataframe_without_new_columns(self):
+        """A pre-backfill DataFrame has no seller_uuid resolved and no
+        plate detection run, so neither column exists. ``_prepare_X``
+        must reindex them in as NaN rather than raise."""
+        from src.analytics.price_model import _prepare_X
+        df = _sample_listings(50)
+        # Sanity: the helper does NOT add the new columns.
+        assert "seller_listings_count_90d" not in df.columns
+        assert "plate_obscured" not in df.columns
+        X_arr, _maps = _prepare_X(df)
+        # Shape includes the new feature slots.
+        from src.analytics.price_model import _ALL_FEATURES
+        assert X_arr.shape == (50, len(_ALL_FEATURES))
+        idx_listings = _ALL_FEATURES.index("seller_listings_count_90d")
+        idx_plate = _ALL_FEATURES.index("plate_obscured")
+        # Values are NaN — LightGBM handles natively, splits never key
+        # on these features until backfill populates them.
+        assert np.isnan(X_arr[:, idx_listings]).all()
+        assert np.isnan(X_arr[:, idx_plate]).all()
+
+    def test_train_succeeds_on_data_missing_new_columns(self):
+        """Training pipeline must not regress when the new features are
+        all-NaN. The model trains end-to-end and metrics come back
+        positive — the new features simply contribute zero importance."""
+        df = _sample_listings(400, with_first_seen_at=True)
+        result = train_price_model(df)
+        assert result is not None
+        _models, _cat_maps, metrics, _oof, _calib, _unc = result
+        assert metrics["mae"] > 0  # smoke: training completed

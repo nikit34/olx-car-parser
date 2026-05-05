@@ -32,6 +32,20 @@ _photo_viewpoint_stub = types.ModuleType("src.parser.photo_viewpoint")
 _photo_viewpoint_stub.ExteriorFilter = None  # set per test
 sys.modules.setdefault("src.parser.photo_viewpoint", _photo_viewpoint_stub)
 
+# ``src.parser.photo_plate`` imports easyocr at PlateReader.__init__ time
+# (heavy: ~50 MB of weights downloaded on first use). Same shim approach
+# as photo_damage / photo_viewpoint — the ``PlateReader`` attribute is
+# replaced per-test with a stub so we can control exactly which photos
+# emit a plate detection without touching the OCR backend. ``normalize_plate``
+# is preserved on the stub so any caller importing it from this module
+# (real or stubbed) gets a working implementation.
+from src.parser.photo_plate import normalize_plate  # noqa: E402
+
+_photo_plate_stub = types.ModuleType("src.parser.photo_plate")
+_photo_plate_stub.PlateReader = None  # set per test
+_photo_plate_stub.normalize_plate = normalize_plate
+sys.modules.setdefault("src.parser.photo_plate", _photo_plate_stub)
+
 from src import cli as cli_module  # noqa: E402
 from src.models.listing import Listing  # noqa: E402
 
@@ -133,17 +147,57 @@ class _StubExteriorFilter:
         return self.is_exterior_batch([path])[0]
 
 
+@dataclass
+class _StubPlateRead:
+    path: Path
+    text: str
+    confidence: float
+
+
+class _StubPlateReader:
+    """Deterministic plate OCR stub keyed off filename ``<olx_id>_<idx>.jpg``.
+
+    Tests configure ``_StubPlateReader.plates_by_idx[olx_id] = {idx: (text, conf)}``
+    before calling ``_run_verify``; absent entries return None (no plate
+    detected). Default empty map → every photo returns None, mirroring the
+    production case where no plate is readable on any photo.
+    """
+
+    # Class-level so tests can configure without instantiation:
+    # {olx_id: {idx: (plate_text, confidence)}}
+    plates_by_idx: dict[str, dict[int, tuple[str, float]]] = {}
+
+    def __init__(self, *_a, **_kw):
+        pass
+
+    def read_photo(self, path):
+        stem = Path(path).stem
+        olx_id, idx_str = stem.rsplit("_", 1)
+        idx = int(idx_str)
+        match = self.plates_by_idx.get(olx_id, {}).get(idx)
+        if match is None:
+            return None
+        text, conf = match
+        return _StubPlateRead(Path(path), text, float(conf))
+
+    def read_photos(self, paths):
+        return [self.read_photo(p) for p in paths]
+
+
 def _run_verify(session, monkeypatch, tmp_path, *,
                 photo_urls_by_listing: dict[str, list[str]],
                 fail_indices: dict[str, set[int]] | None = None,
                 ood_indices: dict[str, set[int]] | None = None,
+                plates_by_idx: dict[str, dict[int, tuple[str, float]]] | None = None,
                 threshold: float = 0.2,
                 classifier_cls=None,
-                dry_run: bool = False):
-    """Drive the typer command with stubbed photo IO + classifier + CLIP."""
+                dry_run: bool = False,
+                backfill_plates: bool = False):
+    """Drive the typer command with stubbed photo IO + classifier + CLIP + plate OCR."""
     fail_indices = fail_indices or {}
-    # Reset the class-level OOD map per call so tests don't leak state.
+    # Reset the class-level maps per call so tests don't leak state.
     _StubExteriorFilter.ood_indices = ood_indices or {}
+    _StubPlateReader.plates_by_idx = plates_by_idx or {}
 
     def fake_fetch_photos(url):
         for olx_id, urls in photo_urls_by_listing.items():
@@ -165,22 +219,33 @@ def _run_verify(session, monkeypatch, tmp_path, *,
     # session from conftest.py rather than touching data/olx_cars.db.
     monkeypatch.setattr(cli_module, "init_db", lambda *a, **kw: None)
     monkeypatch.setattr(cli_module, "get_session", lambda: session)
-    # Patch ``DamageClassifier`` on whichever module object is currently in
-    # ``sys.modules`` — could be our bare stub from this file's import-time
-    # ``setdefault``, OR the *real* module if test_photo_damage.py ran first
-    # and force-loaded it (it pops the cached stub to populate constants).
-    # Either way, ``cli.verify_photos`` resolves ``from src.parser.photo_damage
-    # import DamageClassifier`` against ``sys.modules`` at call time.
+    # Patch the per-module classes that ``cli.verify_photos`` resolves at
+    # call time. The shim modules at the top of this file are installed via
+    # ``sys.modules.setdefault`` — but other tests (notably
+    # ``test_damage_v3_pipeline.py``) ``pop`` the cached entry to force-
+    # reload the real module, leaving sys.modules without a key by the time
+    # we get here. Re-install a fresh stub when the entry is missing so the
+    # monkeypatch always has a target object.
+    def _ensure_module(name: str):
+        mod = sys.modules.get(name)
+        if mod is None:
+            mod = types.ModuleType(name)
+            sys.modules[name] = mod
+        return mod
     monkeypatch.setattr(
-        sys.modules["src.parser.photo_damage"],
+        _ensure_module("src.parser.photo_damage"),
         "DamageClassifier", classifier_cls or _StubClassifier, raising=False,
     )
-    # Same pattern for the issue #3 CLIP pre-filter — patch whichever module
-    # object is in ``sys.modules`` (bare stub from this file's setdefault, or
-    # the real module if test_photo_viewpoint.py loaded it first).
     monkeypatch.setattr(
-        sys.modules["src.parser.photo_viewpoint"],
+        _ensure_module("src.parser.photo_viewpoint"),
         "ExteriorFilter", _StubExteriorFilter, raising=False,
+    )
+    # Plate reader: photo_plate.py defers easyocr to PlateReader.__init__,
+    # so the module imports cheaply at test-collect time and rarely gets
+    # popped — but we route through the same helper for consistency.
+    monkeypatch.setattr(
+        _ensure_module("src.parser.photo_plate"),
+        "PlateReader", _StubPlateReader, raising=False,
     )
     monkeypatch.setattr(
         "src.parser.photo_fetch.fetch_photos", fake_fetch_photos,
@@ -196,6 +261,7 @@ def _run_verify(session, monkeypatch, tmp_path, *,
         workers=1,
         only_text_flagged=False,
         upgrade_legacy=False,
+        backfill_plates=backfill_plates,
         cache_dir=tmp_path / "cache",
         dry_run=dry_run,
         limit=None,
@@ -606,3 +672,317 @@ class TestVerifyPhotosZeroOutputGuard:
         )
         captured = capsys.readouterr()
         assert "::warning::" not in captured.out
+
+
+class TestVerifyPhotosPlateOCR:
+    """PT plate OCR runs on the same exterior set as the damage classifier
+    and persists four ``plate_*`` keys to ``llm_extras``:
+      • ``plate_texts`` — per-photo ``[{idx, text, confidence}]``
+      • ``plate_n_readable`` — count of photos with a recognized plate
+      • ``plate_readable`` — bool, ``plate_n_readable > 0``
+      • ``plate_text_primary`` — highest-confidence plate text or None
+
+    Photos sharing ``idx`` semantics with ``photo_damages`` so callers can
+    join the two arrays by index.
+    """
+
+    def test_writes_plate_fields_when_one_photo_readable(
+        self, db_session, monkeypatch, tmp_path,
+    ):
+        olx_id = "olx-plate-001"
+        _seed_listing(
+            db_session,
+            olx_id=olx_id,
+            url=f"https://standvirtual.com/test/{olx_id}",
+        )
+        _run_verify(
+            db_session, monkeypatch, tmp_path,
+            photo_urls_by_listing={
+                olx_id: [f"{olx_id}#{i}" for i in range(1, 5)],
+            },
+            # Only photo #2 has a readable plate.
+            plates_by_idx={olx_id: {2: ("AB-12-CD", 0.85)}},
+        )
+        listing = db_session.query(Listing).filter_by(olx_id=olx_id).one()
+        extras = json.loads(listing.llm_extras)
+
+        assert extras["plate_readable"] is True
+        assert extras["plate_n_readable"] == 1
+        assert extras["plate_text_primary"] == "AB-12-CD"
+        assert extras["plate_texts"] == [
+            {"idx": 2, "text": "AB-12-CD", "confidence": 0.85},
+        ]
+
+    def test_no_readable_plate_writes_empty_record(
+        self, db_session, monkeypatch, tmp_path,
+    ):
+        """Listing whose every photo OCRs blank still gets all four keys
+        — consumers can rely on field presence to distinguish "verified
+        with no plate found" from "not yet verified" (key absent)."""
+        olx_id = "olx-plate-002"
+        _seed_listing(
+            db_session,
+            olx_id=olx_id,
+            url=f"https://standvirtual.com/test/{olx_id}",
+        )
+        _run_verify(
+            db_session, monkeypatch, tmp_path,
+            photo_urls_by_listing={
+                olx_id: [f"{olx_id}#{i}" for i in range(1, 4)],
+            },
+            # No plates_by_idx entries → every read_photo returns None.
+        )
+        listing = db_session.query(Listing).filter_by(olx_id=olx_id).one()
+        extras = json.loads(listing.llm_extras)
+
+        assert extras["plate_readable"] is False
+        assert extras["plate_n_readable"] == 0
+        assert extras["plate_text_primary"] is None
+        assert extras["plate_texts"] == []
+
+    def test_primary_picks_highest_confidence(
+        self, db_session, monkeypatch, tmp_path,
+    ):
+        """Multiple photos with detected plates → ``plate_text_primary`` is
+        the highest-confidence one; per-photo array preserves all of them
+        ordered by idx ascending."""
+        olx_id = "olx-plate-003"
+        _seed_listing(
+            db_session,
+            olx_id=olx_id,
+            url=f"https://standvirtual.com/test/{olx_id}",
+        )
+        _run_verify(
+            db_session, monkeypatch, tmp_path,
+            photo_urls_by_listing={
+                olx_id: [f"{olx_id}#{i}" for i in range(1, 5)],
+            },
+            plates_by_idx={olx_id: {
+                1: ("12-34-56", 0.45),
+                3: ("AB-12-CD", 0.92),  # highest
+                4: ("AB-12-CD", 0.60),
+            }},
+        )
+        listing = db_session.query(Listing).filter_by(olx_id=olx_id).one()
+        extras = json.loads(listing.llm_extras)
+
+        assert extras["plate_n_readable"] == 3
+        assert extras["plate_readable"] is True
+        # Highest-confidence wins regardless of position in photo order.
+        assert extras["plate_text_primary"] == "AB-12-CD"
+        assert [d["idx"] for d in extras["plate_texts"]] == [1, 3, 4]
+
+    def test_skips_ood_photos_so_plate_idx_aligns_with_damage_idx(
+        self, db_session, monkeypatch, tmp_path,
+    ):
+        """Plate reader runs ONLY on the CLIP-exterior subset — same idx
+        space as ``photo_damages`` so callers can join by ``idx`` without
+        worrying about non-exterior frames sneaking back in."""
+        olx_id = "olx-plate-004"
+        _seed_listing(
+            db_session,
+            olx_id=olx_id,
+            url=f"https://standvirtual.com/test/{olx_id}",
+        )
+        _run_verify(
+            db_session, monkeypatch, tmp_path,
+            photo_urls_by_listing={
+                olx_id: [f"{olx_id}#{i}" for i in range(1, 5)],
+            },
+            # idx 2 and 4 are OOD (interior shots). Even though we
+            # 'configure' a plate at idx 4, it must not appear because
+            # the plate reader is never called on it.
+            ood_indices={olx_id: {2, 4}},
+            plates_by_idx={olx_id: {
+                3: ("12-AB-34", 0.80),
+                4: ("XX-XX-XX", 0.99),
+            }},
+        )
+        listing = db_session.query(Listing).filter_by(olx_id=olx_id).one()
+        extras = json.loads(listing.llm_extras)
+
+        # Only idx 3 survives both filters.
+        assert extras["plate_texts"] == [
+            {"idx": 3, "text": "12-AB-34", "confidence": 0.8},
+        ]
+        assert extras["plate_text_primary"] == "12-AB-34"
+        # And the damage array's exterior set matches — same idx universe.
+        assert [d["idx"] for d in extras["photo_damages"]] == [1, 3]
+
+    def test_no_photos_yields_empty_plate_record(
+        self, db_session, monkeypatch, tmp_path,
+    ):
+        """Every download fails → the no-photos persistence shape includes
+        the four plate keys so consumers don't need a fallback path."""
+        olx_id = "olx-plate-005"
+        _seed_listing(
+            db_session,
+            olx_id=olx_id,
+            url=f"https://standvirtual.com/test/{olx_id}",
+        )
+        _run_verify(
+            db_session, monkeypatch, tmp_path,
+            photo_urls_by_listing={
+                olx_id: [f"{olx_id}#{i}" for i in range(1, 3)],
+            },
+            fail_indices={olx_id: {1, 2}},
+        )
+        listing = db_session.query(Listing).filter_by(olx_id=olx_id).one()
+        extras = json.loads(listing.llm_extras)
+        assert extras["plate_readable"] is False
+        assert extras["plate_n_readable"] == 0
+        assert extras["plate_text_primary"] is None
+        assert extras["plate_texts"] == []
+
+
+class TestVerifyPhotosBackfillPlates:
+    """``--backfill-plates`` retro-fits the four ``plate_*`` keys onto rows
+    that already have ``photo_damage_p`` from a pre-plate run. Three
+    invariants:
+
+      1. Selection picks rows with damage but no plate — listings still
+         in the steady-state damage queue (``photo_damage_p`` absent) are
+         not touched.
+      2. Existing damage scores are preserved bit-for-bit. The classifier
+         should not re-run; even if it did, no damage_* extras key is
+         allowed to change.
+      3. The four plate_* keys land exactly as in the steady-state path.
+    """
+
+    def test_skips_rows_still_pending_damage_verification(
+        self, db_session, monkeypatch, tmp_path,
+    ):
+        """A listing without ``photo_damage_p`` is not part of the backfill
+        cohort — it'll be picked up by the steady-state cron, where the
+        damage path runs alongside plate detection."""
+        olx_id = "olx-bf-pending"
+        _seed_listing(
+            db_session,
+            olx_id=olx_id,
+            url=f"https://standvirtual.com/test/{olx_id}",
+            llm_extras={"damage_severity": 0},  # no photo_damage_p
+        )
+        _run_verify(
+            db_session, monkeypatch, tmp_path,
+            photo_urls_by_listing={
+                olx_id: [f"{olx_id}#{i}" for i in range(1, 4)],
+            },
+            plates_by_idx={olx_id: {1: ("AB-12-CD", 0.9)}},
+            backfill_plates=True,
+        )
+        listing = db_session.query(Listing).filter_by(olx_id=olx_id).one()
+        extras = json.loads(listing.llm_extras)
+        # Untouched: no damage scores, no plate fields.
+        assert "photo_damage_p" not in extras
+        assert "plate_readable" not in extras
+
+    def test_preserves_existing_damage_scores(
+        self, db_session, monkeypatch, tmp_path,
+    ):
+        """Listing already verified for damage gets plate fields added
+        without any change to existing photo_damage_* values — even though
+        the stub classifier would score photos differently if invoked."""
+        olx_id = "olx-bf-existing"
+        # Populated with damage values from a pre-plate run. The stub
+        # classifier scores p=idx/10, so a re-run on these 4 photos would
+        # produce max_p=0.4 / flagged=True — values that must NOT appear
+        # in the persisted record.
+        prior = {
+            "photo_damage_p": 0.85,
+            "photo_damage_n_photos": 3,
+            "photo_damage_n_exterior": 3,
+            "photo_damages": [
+                {"idx": 1, "p": 0.85},
+                {"idx": 2, "p": 0.40},
+                {"idx": 3, "p": 0.10},
+            ],
+            "photo_damage_flagged": True,
+        }
+        _seed_listing(
+            db_session,
+            olx_id=olx_id,
+            url=f"https://standvirtual.com/test/{olx_id}",
+            llm_extras=prior,
+        )
+        _run_verify(
+            db_session, monkeypatch, tmp_path,
+            photo_urls_by_listing={
+                olx_id: [f"{olx_id}#{i}" for i in range(1, 5)],
+            },
+            plates_by_idx={olx_id: {2: ("AB-12-CD", 0.7)}},
+            backfill_plates=True,
+        )
+        listing = db_session.query(Listing).filter_by(olx_id=olx_id).one()
+        extras = json.loads(listing.llm_extras)
+
+        # Damage fields untouched — would be 0.4 / 4 / 4 / [0.1, 0.2, 0.3, 0.4]
+        # / True if the classifier had been invoked & persisted.
+        assert extras["photo_damage_p"] == 0.85
+        assert extras["photo_damage_n_photos"] == 3
+        assert extras["photo_damage_n_exterior"] == 3
+        assert extras["photo_damage_flagged"] is True
+        assert [d["idx"] for d in extras["photo_damages"]] == [1, 2, 3]
+
+        # Plate fields: written from the stub OCR.
+        assert extras["plate_readable"] is True
+        assert extras["plate_n_readable"] == 1
+        assert extras["plate_text_primary"] == "AB-12-CD"
+        assert extras["plate_texts"] == [
+            {"idx": 2, "text": "AB-12-CD", "confidence": 0.7},
+        ]
+
+    def test_skips_rows_already_plated(
+        self, db_session, monkeypatch, tmp_path,
+    ):
+        """A listing already through the plate reader (has plate_readable)
+        is filtered out of the backfill selection — backfill is one-shot,
+        not idempotent re-processing."""
+        olx_id = "olx-bf-plated"
+        prior = {
+            "photo_damage_p": 0.10,
+            "photo_damage_flagged": False,
+            "plate_readable": False,
+            "plate_n_readable": 0,
+            "plate_text_primary": None,
+            "plate_texts": [],
+        }
+        _seed_listing(
+            db_session,
+            olx_id=olx_id,
+            url=f"https://standvirtual.com/test/{olx_id}",
+            llm_extras=prior,
+        )
+        _run_verify(
+            db_session, monkeypatch, tmp_path,
+            photo_urls_by_listing={
+                olx_id: [f"{olx_id}#{i}" for i in range(1, 4)],
+            },
+            # Even though we 'configure' a plate, this row should be skipped.
+            plates_by_idx={olx_id: {1: ("AA-99-AA", 0.95)}},
+            backfill_plates=True,
+        )
+        listing = db_session.query(Listing).filter_by(olx_id=olx_id).one()
+        extras = json.loads(listing.llm_extras)
+        # Selection filter excluded the row → all values match the prior.
+        assert extras["plate_readable"] is False
+        assert extras["plate_text_primary"] is None
+        assert extras["plate_texts"] == []
+
+    def test_mutually_exclusive_with_upgrade_legacy(
+        self, db_session, monkeypatch, tmp_path,
+    ):
+        """``--backfill-plates`` and ``--upgrade-legacy`` model conflicting
+        intents (skip vs re-run damage). Combining must raise so an
+        operator typo doesn't silently misroute the cron."""
+        import click
+        with pytest.raises(click.exceptions.UsageError):
+            cli_module.verify_photos(
+                threshold=0.2,
+                workers=1,
+                only_text_flagged=False,
+                upgrade_legacy=True,
+                backfill_plates=True,
+                cache_dir=tmp_path / "cache",
+                dry_run=True,
+                limit=None,
+            )
