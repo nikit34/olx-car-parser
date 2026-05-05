@@ -66,8 +66,60 @@ class TestComputeSignals:
                     "discount_pct", "undervaluation_pct",
                     "urgency_mult", "warranty_mult",
                     "velocity_mult", "confidence_mult",
-                    "flip_score", "sample_size"}
+                    "flip_score", "sample_size",
+                    # Flipper composite + raw seller primitives — the
+                    # alert formatter and decision engine read these.
+                    "flipper_score", "flipper_confidence",
+                    "seller_pseudoprivate", "seller_listings_count_90d",
+                    "seller_parts_count", "seller_is_business"}
         assert required.issubset(set(signals.columns))
+
+    def test_flipper_score_null_when_no_seller_data(
+        self, sample_listings_df, sample_history_df, generations_data,
+        patched_gb_model,
+    ):
+        """Pre-backfill state: the sample listings DataFrame has no
+        seller_* primitives at all. ``compute_flipper_score`` short-
+        circuits (no expected columns intersect df) and never adds the
+        flipper columns; the signal loop then coerces them to None.
+        Both fields must be None — never spurious 0, which would read
+        as "definitely not a flipper" rather than "we don't know"."""
+        with patched_gb_model(), patch(
+            "src.models.generations.load_generations",
+            return_value=generations_data,
+        ):
+            signals, *_ = compute_signals(sample_listings_df, sample_history_df)
+        assert signals["flipper_score"].isna().all()
+        assert signals["flipper_confidence"].isna().all()
+
+    def test_flipper_score_populated_when_seller_data_present(
+        self, sample_listings_df, sample_history_df, generations_data,
+        patched_gb_model,
+    ):
+        """When the listings DataFrame DOES carry seller primitives
+        (post-backfill), the composite is computed and surfaces in
+        signals with a confidence > 0."""
+        listings = sample_listings_df.copy()
+        # Strong-flipper signal on a1: 8 listings in 90d, 5 cars in
+        # current snapshot, pseudoprivate True. The other rows stay
+        # primitive-free → flipper_score=None for them.
+        for col in ["seller_listings_count_90d", "seller_cars_count",
+                    "seller_pseudoprivate", "plate_obscured"]:
+            listings[col] = None
+        a1_idx = listings.index[listings["olx_id"] == "a1"][0]
+        listings.at[a1_idx, "seller_listings_count_90d"] = 8
+        listings.at[a1_idx, "seller_cars_count"] = 5
+        listings.at[a1_idx, "seller_pseudoprivate"] = True
+        listings.at[a1_idx, "plate_obscured"] = True
+
+        with patched_gb_model(multiplier=1.5), patch(
+            "src.models.generations.load_generations",
+            return_value=generations_data,
+        ):
+            signals, *_ = compute_signals(listings, sample_history_df)
+        a1 = signals[signals["olx_id"] == "a1"].iloc[0]
+        assert a1["flipper_score"] == 1.0
+        assert a1["flipper_confidence"] == 1.0
 
     def test_skips_listings_without_gb_undervaluation(
         self, sample_history_df, generations_data, patched_gb_model,

@@ -351,6 +351,21 @@ for _, deal in deals.iterrows():
             if (pd.notna(parts_n) and parts_n and int(parts_n) > 0
                     and not deal.get("seller_is_business")):
                 tags.append(f"продаёт запчасти ({int(parts_n)})")
+            # Flipper composite. Show the score only when confidence
+            # crosses 0.4 — that's the lowest a single primitive can
+            # contribute (rotation count weight = 0.40), so anything
+            # below means literally zero signal and the badge would be
+            # noise. ≥0.5 is "leans flipper", ≥0.75 is "almost certainly
+            # a flipper" — emoji intensity follows.
+            fs = deal.get("flipper_score")
+            fc = deal.get("flipper_confidence")
+            if (pd.notna(fs) and pd.notna(fc) and fc >= 0.4):
+                fs_f = float(fs)
+                badge = ("🚨 flipper" if fs_f >= 0.75
+                         else "⚠️ likely flipper" if fs_f >= 0.5
+                         else None)
+                if badge is not None:
+                    tags.append(f"{badge} ({fs_f:.2f}, conf={fc:.0%})")
             if tags:
                 st.caption(" · ".join(tags))
 

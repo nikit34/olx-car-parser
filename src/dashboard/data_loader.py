@@ -598,6 +598,17 @@ def compute_signals(
     active = prepare_active_for_model(listings_df, turnover=turnover)
     _cs_step("prepare_active_for_model")
 
+    # Composite flipper score — soft weighted vote across seller-rotation,
+    # snapshot inventory, pseudo-private flag, and obscured-plate signal.
+    # Pure no-op until backfill_sellers + verify-photos populate the
+    # primitive columns; see src/analytics/flipper.py for the weighting
+    # rationale. Computed on `active` so downstream signal construction
+    # can attach flipper_score/flipper_confidence to each output row by
+    # olx_id without a second pass.
+    from src.analytics.flipper import compute_flipper_score
+    active = compute_flipper_score(active)
+    _cs_step("compute_flipper_score")
+
     # --- Generation-level stats ---
     priced_gen = active[(active["price_eur"] > 0) & active["generation"].notna()]
     gen_stats = (
@@ -1158,6 +1169,51 @@ def compute_signals(
             "prob_sold_within_horizon": (
                 round(hazard_lookup[olx_id], 3)
                 if olx_id in hazard_lookup else None
+            ),
+            # Flipper composite — populated from compute_flipper_score
+            # earlier in this function. ``flipper_score`` is None on
+            # rows where every primitive was NaN (typical pre-backfill
+            # state); ``flipper_confidence`` reflects the fraction of
+            # primitive weight that contributed and lets the dashboard
+            # decide whether to display the score or hide it.
+            "flipper_score": (
+                round(float(listing["flipper_score"]), 3)
+                if "flipper_score" in listing.index
+                and pd.notna(listing.get("flipper_score"))
+                else None
+            ),
+            "flipper_confidence": (
+                round(float(listing["flipper_confidence"]), 2)
+                if "flipper_confidence" in listing.index
+                and pd.notna(listing.get("flipper_confidence"))
+                else None
+            ),
+            # Surface the underlying seller-pseudoprivate flag too — the
+            # alert formatter and dashboard tag-row already read it from
+            # the listings DataFrame, but signal consumers (decide,
+            # ranker) need it at the per-row level too.
+            "seller_pseudoprivate": (
+                bool(listing.get("seller_pseudoprivate"))
+                if pd.notna(listing.get("seller_pseudoprivate"))
+                else None
+            ),
+            "seller_listings_count_90d": (
+                int(listing["seller_listings_count_90d"])
+                if "seller_listings_count_90d" in listing.index
+                and pd.notna(listing.get("seller_listings_count_90d"))
+                else None
+            ),
+            "seller_parts_count": (
+                int(listing["seller_parts_count"])
+                if "seller_parts_count" in listing.index
+                and pd.notna(listing.get("seller_parts_count"))
+                else None
+            ),
+            "seller_is_business": (
+                bool(listing["seller_is_business"])
+                if "seller_is_business" in listing.index
+                and pd.notna(listing.get("seller_is_business"))
+                else None
             ),
         }
         for col in ("days_listed", "price_change_eur", "price_change_pct", "eur_per_km"):
