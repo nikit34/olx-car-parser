@@ -341,6 +341,16 @@ for _, deal in deals.iterrows():
             mech = deal.get("mechanical_condition")
             if pd.notna(mech) and mech and mech != "null":
                 tags.append(f"мех: {mech}")
+            # Seller-profile flags. Same presence-only logic as the
+            # Telegram alert formatter — fire on definitive disagreements
+            # (pseudo-private) or category-mismatches (private seller
+            # listing parts), not on threshold-based heuristics.
+            if deal.get("seller_pseudoprivate"):
+                tags.append("псевдочастник")
+            parts_n = deal.get("seller_parts_count")
+            if (pd.notna(parts_n) and parts_n and int(parts_n) > 0
+                    and not deal.get("seller_is_business")):
+                tags.append(f"продаёт запчасти ({int(parts_n)})")
             if tags:
                 st.caption(" · ".join(tags))
 

@@ -80,6 +80,19 @@ def _format_deal(deal: dict) -> str:
     if warnings:
         lines.append(f"📝 Из описания: {', '.join(warnings)}")
 
+    # Seller-profile flags. Both are presence-only (no thresholds), so
+    # they fire identically on the first day of seller-backfill data and
+    # six months later — safe to ship without distribution analysis.
+    seller_warnings: list[str] = []
+    if deal.get("seller_pseudoprivate"):
+        seller_warnings.append("псевдочастник (Utilizador, но JSON=Empresa)")
+    parts_count = deal.get("seller_parts_count")
+    if (parts_count and parts_count > 0
+            and not deal.get("seller_is_business")):
+        seller_warnings.append(f"продаёт запчасти ({int(parts_count)})")
+    if seller_warnings:
+        lines.append(f"👤 Продавец: {', '.join(seller_warnings)}")
+
     # Photo classifier signal (set by `verify-photos` CLI, lives inside
     # llm_extras JSON). Borderline cases pass _blocking_deal_reason but
     # are still worth flagging visually in the alert.
