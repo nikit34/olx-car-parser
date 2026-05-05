@@ -61,17 +61,26 @@ def _lookup_gens(data: dict, brand: str, model: str) -> list | None:
 
 
 def get_generation(brand: str, model: str, year: int | None) -> str | None:
-    """Return generation name for a given car, or None if unknown."""
+    """Return generation name for a given car, or None if unknown.
+
+    On overlap (adjacent generations sharing a boundary year, e.g. Mk1
+    1996-2008 and Mk2 2008-2018), prefer the generation with the latest
+    ``year_from`` — the new generation has already started by that
+    calendar year. Without this, a 2008 listing would pick Mk1 just
+    because it's listed first in the JSON.
+    """
     if not year:
         return None
     data = load_generations()
     gens = _lookup_gens(data, brand, model)
     if not gens:
         return None
+    best = None
     for g in gens:
         if g["year_from"] <= year <= g["year_to"]:
-            return g["name"]
-    return None
+            if best is None or g["year_from"] > best["year_from"]:
+                best = g
+    return best["name"] if best else None
 
 
 _known_models_cache: dict[str, list[str]] = {}
