@@ -12,6 +12,7 @@ from sqlalchemy import text
 from src.models.listing import Base
 import src.models.portfolio  # noqa: F401 — register PortfolioDeal with Base
 import src.models.relist  # noqa: F401 — register RelistEvent with Base
+import src.models.seller  # noqa: F401 — register Seller with Base
 
 _engine = None
 _Session = None
@@ -61,7 +62,7 @@ def _get_table_columns(conn, table_name: str) -> set[str]:
     return {row[1] for row in rows}
 
 
-_SCHEMA_VERSION = 2  # bump when _migrate_columns or _dead_json_keys changes
+_SCHEMA_VERSION = 3  # bump when _migrate_columns or _dead_json_keys changes
 
 
 def _read_schema_version(conn) -> int:
@@ -120,9 +121,31 @@ def init_db(db_path: str | None = None):
         # Backfilled by `python -m src.cli enrich` (the pending query
         # re-runs LLM on rows whose llm_extras has no damage_severity yet).
         ("damage_severity", "INTEGER"),
+        # v3: seller-profile FK + per-listing trader-title claim +
+        # seller profile URL pointer (used by the backfill job to resolve
+        # seller_uuid from the profile page after scrape time).
+        ("seller_uuid", "TEXT"),
+        ("seller_displayed_as", "TEXT"),
+        ("seller_profile_url", "TEXT"),
     ]
     _migrate_unmatched_columns = [
         ("source", "TEXT DEFAULT 'olx'"),
+    ]
+    # Sellers-table additions. The table itself is created by ``create_all``
+    # for fresh DBs; these ALTERs cover dev DBs that ran an earlier v3
+    # migration before the bucketing/identity expansion landed. Production
+    # has no v3 yet, so these are belt-and-suspenders.
+    _migrate_seller_columns = [
+        ("family_lifestyle_count", "INTEGER"),
+        ("electronics_count", "INTEGER"),
+        ("realestate_count", "INTEGER"),
+        ("tools_industrial_count", "INTEGER"),
+        ("pets_hobby_count", "INTEGER"),
+        ("services_jobs_count", "INTEGER"),
+        ("social_account_type", "TEXT"),
+        ("has_user_photo", "BOOLEAN"),
+        ("position_lat", "REAL"),
+        ("position_lon", "REAL"),
     ]
     # Columns removed from ORM — drop from DB if present
     _drop_columns = [
@@ -143,6 +166,12 @@ def init_db(db_path: str | None = None):
         "reason_for_sale", "recent_maintenance", "tires_condition",
         "accident_free", "legal_issues",
     }
+    # Indexes that ADD COLUMN doesn't create automatically. ``create_all``
+    # builds them on fresh DBs, but existing rows added via ALTER TABLE
+    # need an explicit ``CREATE INDEX IF NOT EXISTS`` to match the ORM.
+    _migrate_indexes = [
+        ("ix_listings_seller_uuid", "listings", "seller_uuid"),
+    ]
     with engine.connect() as conn:
         for col_name, col_type in _migrate_columns:
             try:
@@ -150,9 +179,23 @@ def init_db(db_path: str | None = None):
                 conn.commit()
             except Exception:
                 conn.rollback()
+        for idx_name, table, column in _migrate_indexes:
+            try:
+                conn.execute(text(
+                    f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({column})"
+                ))
+                conn.commit()
+            except Exception:
+                conn.rollback()
         for col_name, col_type in _migrate_unmatched_columns:
             try:
                 conn.execute(text(f"ALTER TABLE unmatched_listings ADD COLUMN {col_name} {col_type}"))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+        for col_name, col_type in _migrate_seller_columns:
+            try:
+                conn.execute(text(f"ALTER TABLE sellers ADD COLUMN {col_name} {col_type}"))
                 conn.commit()
             except Exception:
                 conn.rollback()

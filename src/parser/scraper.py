@@ -17,6 +17,12 @@ from dataclasses import dataclass
 import httpx
 from bs4 import BeautifulSoup
 
+from src.parser.seller_profile import (
+    SellerProfile,
+    parse_seller_link,
+    parse_seller_profile_html,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -109,6 +115,17 @@ class RawListing:
     seller_type: str = "Particular"
     description: str = ""
     source: str = "olx"  # "olx" or "standvirtual"
+
+    # Seller pointer — extracted cheaply from the detail-page HTML during
+    # ``scrape_listing_detail``. ``seller_uuid`` stays None at scrape time;
+    # it's resolved by a follow-up profile-page fetch (see
+    # ``scripts/backfill_sellers.py``) which upserts ``sellers`` and links
+    # listings to the canonical seller record.
+    seller_profile_url: str | None = None
+    seller_short_id: str | None = None
+    seller_shop_slug: str | None = None
+    seller_display_name: str | None = None
+    seller_displayed_as: str | None = None
 
 
 class OlxScraper:
@@ -375,7 +392,41 @@ class OlxScraper:
                 if id_match:
                     details["olx_id"] = id_match.group(1)
 
+        # Seller pointer — cheap to grab from the same soup. We do NOT
+        # fetch the profile page here; that's a separate batch step
+        # (scripts/backfill_sellers.py) so multi-car sellers only get
+        # one HTTP hit per refresh window instead of one per listing.
+        seller_link = parse_seller_link(soup)
+        if seller_link:
+            details["seller_profile_url"] = seller_link.profile_url
+            details["seller_short_id"] = seller_link.short_id
+            details["seller_shop_slug"] = seller_link.shop_slug
+            details["seller_display_name"] = seller_link.display_name
+            details["seller_displayed_as"] = seller_link.displayed_as
+
         return details
+
+    # ------------------------------------------------------------------
+    # Seller profile page
+    # ------------------------------------------------------------------
+
+    def scrape_seller_profile(self, url: str) -> SellerProfile | None:
+        """Fetch and parse an OLX seller-profile or business-shop page.
+
+        Reuses the same throttle / retry / 403-cascade logic as listing-
+        detail fetches, so a backfill that processes thousands of sellers
+        in a row inherits the rate limiting we already validated against
+        OLX. Returns ``None`` if the page can't be fetched or its
+        ``__PRERENDERED_STATE__`` blob is missing/malformed — the caller
+        decides whether that's a skip or a hard fail.
+        """
+        if not url:
+            return None
+        result = self._fetch(url)
+        if not result:
+            return None
+        _final_url, html = result
+        return parse_seller_profile_html(html, profile_url=url)
 
     # ------------------------------------------------------------------
     # StandVirtual detail page

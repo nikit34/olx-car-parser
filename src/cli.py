@@ -178,6 +178,11 @@ def _db_worker(db_queue: Queue, result: dict):
             **{k: v for k, v in corrections.items() if not k.startswith("_")},
             "source": getattr(raw, "source", "olx"),
             "posted_at": getattr(raw, "_posted_at", None),
+            # Seller-profile pointer (resolved to seller_uuid asynchronously
+            # by scripts/backfill_sellers.py). seller_uuid is intentionally
+            # omitted here — it requires the profile-page fetch.
+            "seller_profile_url": getattr(raw, "seller_profile_url", None),
+            "seller_displayed_as": getattr(raw, "seller_displayed_as", None),
         }
 
         generation = get_generation(raw.brand, raw.model or "", raw.year)

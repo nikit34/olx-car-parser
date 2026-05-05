@@ -78,6 +78,21 @@ class Listing(Base):
     source = Column(String, default="olx")     # "olx" or "standvirtual"
     duplicate_of = Column(String)              # olx_id of the canonical listing (fuzzy dedup)
 
+    # Seller link — populated from the listing's user-profile-link element
+    # plus a one-shot fetch of the seller-profile page. Multiple listings
+    # may point at the same seller_uuid; see src/models/seller.py.
+    seller_uuid = Column(String, ForeignKey("sellers.uuid"), index=True)
+    # Raw "trader-title" text on this listing's card (e.g. "Utilizador",
+    # "Empresa"). Stored alongside the FK because it's a per-listing
+    # claim — a business seller can advertise as "Utilizador" on an
+    # individual ad, and the disagreement is itself a fraud signal.
+    seller_displayed_as = Column(String)
+    # Seller profile URL parsed at scrape time. Used by the seller-
+    # backfill job to find listings whose seller_uuid has not yet been
+    # resolved from the profile page (NULL == still pending the first
+    # backfill pass after introducing the column).
+    seller_profile_url = Column(Text)
+
     price_snapshots = relationship("PriceSnapshot", back_populates="listing", lazy="dynamic")
 
 
