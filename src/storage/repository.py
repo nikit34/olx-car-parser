@@ -14,12 +14,13 @@ def _utcnow() -> datetime:
 
 import httpx
 import pandas as pd
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text as sa_text
 from sqlalchemy.orm import Session
 
 from src.models.listing import Listing, PriceSnapshot, MarketStats, UnmatchedListing
 from src.models.portfolio import PortfolioDeal
 from src.models.relist import RelistEvent
+from src.models.seller import Seller
 
 
 def upsert_listing(session: Session, data: dict) -> Listing:
@@ -807,6 +808,47 @@ def get_listings_df(session: Session) -> pd.DataFrame:
     for s in snap_rows:
         snaps_by_listing.setdefault(s.listing_id, []).append(s)
 
+    # Batch-load sellers keyed by uuid. The dashboard's hot path runs
+    # this every load — issuing one IN-query is O(unique sellers) rather
+    # than O(listings) which would lazy-load through ``Listing.seller``.
+    # An empty dict on a fresh DB (no backfill yet) lets the row loop
+    # stay branch-free; missing sellers map to all-None columns.
+    seller_uuids = {l.seller_uuid for l in q if l.seller_uuid}
+    if seller_uuids:
+        sellers_by_uuid = {
+            s.uuid: s for s in
+            session.query(Seller).filter(Seller.uuid.in_(seller_uuids)).all()
+        }
+    else:
+        sellers_by_uuid = {}
+
+    # Per-seller rotation rate for flipper detection. Counts how many
+    # distinct listings each ``seller_uuid`` has had first-seen in the
+    # last 90 days — a flipper rotates many cars over time even if their
+    # current snapshot ``seller_cars_count`` is small. Capturing the time
+    # axis (rotation) separately from the snapshot (concurrent inventory)
+    # gives the price model two complementary primitives instead of one
+    # ambiguous count.
+    #
+    # Computed in SQL (single grouped count) rather than via DataFrame
+    # ``groupby`` so we don't pay an N-listing pandas pass when the
+    # dashboard hot path already takes ~3s. Listings without a resolved
+    # ``seller_uuid`` (backfill pending) map to NaN in the column,
+    # matching how every other seller_* field handles missing data.
+    listings_count_90d_by_uuid: dict[str, int] = {}
+    if seller_uuids:
+        cutoff_90d = _utcnow() - timedelta(days=90)
+        rows_90d = session.execute(
+            sa_text(
+                "SELECT seller_uuid, COUNT(*) FROM listings "
+                "WHERE seller_uuid IS NOT NULL "
+                "  AND first_seen_at >= :cutoff "
+                "GROUP BY seller_uuid"
+            ),
+            {"cutoff": cutoff_90d},
+        ).fetchall()
+        listings_count_90d_by_uuid = {uuid: int(n) for uuid, n in rows_90d}
+
     rows = []
     for l in q:
         snaps = snaps_by_listing.get(l.id, [])
@@ -896,8 +938,100 @@ def get_listings_df(session: Session) -> pd.DataFrame:
             "duplicate_of": l.duplicate_of,
             "deactivated_at": l.deactivated_at,
             "deactivation_reason": l.deactivation_reason,
+            # Seller pointer + per-listing trader-title claim. ``seller_uuid``
+            # stays NULL until the backfill job resolves it from the
+            # profile page (see scripts/backfill_sellers.py).
+            "seller_uuid": l.seller_uuid,
+            "seller_displayed_as": l.seller_displayed_as,
+            "seller_profile_url": l.seller_profile_url,
+            # Rotation rate (distinct listings under this uuid in last 90d).
+            # Complements the snapshot ``seller_cars_count`` from the profile
+            # page: a flipper rotates many cars over time even when only
+            # 1-2 are concurrently active.
+            "seller_listings_count_90d": (
+                listings_count_90d_by_uuid.get(l.seller_uuid)
+                if l.seller_uuid is not None else None
+            ),
+            **_seller_columns_for(sellers_by_uuid.get(l.seller_uuid),
+                                  l.seller_displayed_as),
         })
     return pd.DataFrame(rows)
+
+
+def _seller_columns_for(seller, displayed_as: str | None) -> dict:
+    """Flatten a ``Seller`` row into seller_* keys for ``get_listings_df``.
+
+    Returns all-None columns when *seller* is None (i.e. the listing's
+    seller_uuid hasn't been backfilled yet) — keeps the DataFrame schema
+    stable so downstream consumers can reference these columns
+    unconditionally without testing for presence.
+
+    Computes one derived flag here rather than in the dashboard:
+    ``seller_pseudoprivate`` is True when the JSON ``is_business`` flag
+    contradicts the listing's ``trader-title`` text (e.g. account is a
+    business but the ad is presented as ``Utilizador``). That mismatch
+    is the strongest fraud-adjacent signal we get out of this surface.
+    """
+    if seller is None:
+        return {
+            "seller_is_business": None,
+            "seller_business_type": None,
+            "seller_account_age_days": None,
+            "seller_total_ads": None,
+            "seller_cars_count": None,
+            "seller_parts_count": None,
+            "seller_commercial_count": None,
+            "seller_motos_count": None,
+            "seller_boats_count": None,
+            "seller_other_auto_count": None,
+            "seller_non_auto_count": None,
+            "seller_distinct_car_brands": None,
+            "seller_family_lifestyle_count": None,
+            "seller_electronics_count": None,
+            "seller_realestate_count": None,
+            "seller_tools_industrial_count": None,
+            "seller_pets_hobby_count": None,
+            "seller_services_jobs_count": None,
+            "seller_social_account_type": None,
+            "seller_has_user_photo": None,
+            "seller_position_lat": None,
+            "seller_position_lon": None,
+            "seller_pseudoprivate": None,
+            "seller_profile_fetched_at": None,
+        }
+    age_days = None
+    if seller.created_at is not None:
+        age_days = max(int((_utcnow() - seller.created_at).total_seconds() / 86400), 0)
+    is_biz = bool(seller.is_business) if seller.is_business is not None else None
+    pseudoprivate = (
+        bool(is_biz) and (displayed_as or "").strip() in ("Utilizador", "Particular")
+    ) if is_biz else False
+    return {
+        "seller_is_business": is_biz,
+        "seller_business_type": seller.business_type,
+        "seller_account_age_days": age_days,
+        "seller_total_ads": seller.total_ads,
+        "seller_cars_count": seller.cars_count,
+        "seller_parts_count": seller.parts_count,
+        "seller_commercial_count": seller.commercial_count,
+        "seller_motos_count": seller.motos_count,
+        "seller_boats_count": seller.boats_count,
+        "seller_other_auto_count": seller.other_auto_count,
+        "seller_non_auto_count": seller.non_auto_count,
+        "seller_distinct_car_brands": seller.distinct_car_brands,
+        "seller_family_lifestyle_count": seller.family_lifestyle_count,
+        "seller_electronics_count": seller.electronics_count,
+        "seller_realestate_count": seller.realestate_count,
+        "seller_tools_industrial_count": seller.tools_industrial_count,
+        "seller_pets_hobby_count": seller.pets_hobby_count,
+        "seller_services_jobs_count": seller.services_jobs_count,
+        "seller_social_account_type": seller.social_account_type,
+        "seller_has_user_photo": seller.has_user_photo,
+        "seller_position_lat": seller.position_lat,
+        "seller_position_lon": seller.position_lon,
+        "seller_pseudoprivate": pseudoprivate,
+        "seller_profile_fetched_at": seller.profile_fetched_at,
+    }
 
 
 def get_price_snapshots_df(

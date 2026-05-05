@@ -18,6 +18,144 @@ from src.storage.repository import (
 )
 
 
+class TestSellerColumnsInListingsDf:
+    def test_seller_cols_present_when_no_sellers(
+        self, db_session, sample_listing_data,
+    ):
+        """Fresh DB shape: listings carry no seller_uuid yet, sellers
+        table is empty. get_listings_df must still emit every seller_*
+        column (NULL-filled) so downstream code can reference them
+        unconditionally — Pandas raises on missing columns at access
+        time, which would crash the dashboard mid-load."""
+        upsert_listing(db_session, sample_listing_data)
+        df = get_listings_df(db_session)
+        for col in [
+            "seller_uuid", "seller_displayed_as", "seller_profile_url",
+            "seller_is_business", "seller_total_ads", "seller_cars_count",
+            "seller_parts_count", "seller_distinct_car_brands",
+            "seller_family_lifestyle_count", "seller_electronics_count",
+            "seller_realestate_count", "seller_tools_industrial_count",
+            "seller_pets_hobby_count", "seller_services_jobs_count",
+            "seller_social_account_type", "seller_has_user_photo",
+            "seller_position_lat", "seller_position_lon",
+            "seller_account_age_days", "seller_pseudoprivate",
+        ]:
+            assert col in df.columns, f"missing seller column: {col}"
+        row = df.iloc[0]
+        assert row["seller_is_business"] is None
+        assert row["seller_pseudoprivate"] is None
+
+    def test_seller_cols_filled_after_join(
+        self, db_session, sample_listing_data,
+    ):
+        """When the listing's seller_uuid resolves to a sellers row, the
+        flattened columns mirror the seller's snapshot and the derived
+        ``seller_pseudoprivate`` flag fires for is_business=True listings
+        whose trader-title still says 'Utilizador'."""
+        from src.models.seller import Seller
+        seller = Seller(
+            uuid="u-1",
+            profile_url="https://www.olx.pt/ads/user/abc/",
+            short_id="abc",
+            name="Filipe",
+            is_business=True,
+            total_ads=9,
+            cars_count=8,
+            parts_count=0,
+            distinct_car_brands=7,
+            family_lifestyle_count=1,
+            electronics_count=0,
+            social_account_type=None,
+            has_user_photo=False,
+            created_at=datetime.utcnow() - timedelta(days=365 * 9),
+            profile_fetched_at=datetime.utcnow(),
+        )
+        db_session.add(seller)
+        db_session.commit()
+
+        data = {**sample_listing_data,
+                "seller_uuid": "u-1",
+                "seller_displayed_as": "Utilizador",
+                "seller_profile_url": "https://www.olx.pt/ads/user/abc/"}
+        upsert_listing(db_session, data)
+        row = get_listings_df(db_session).iloc[0]
+        assert row["seller_uuid"] == "u-1"
+        assert bool(row["seller_is_business"]) is True
+        assert row["seller_total_ads"] == 9
+        assert row["seller_cars_count"] == 8
+        assert row["seller_distinct_car_brands"] == 7
+        assert row["seller_family_lifestyle_count"] == 1
+        # is_business=True + trader-title=Utilizador → pseudoprivate fires.
+        assert bool(row["seller_pseudoprivate"]) is True
+        assert row["seller_account_age_days"] >= 365 * 8
+
+    def test_seller_listings_count_90d_aggregates_recent_rotation(
+        self, db_session, sample_listing_data,
+    ):
+        """Per-seller 90d rotation count is computed off the listings
+        table (not the sellers snapshot) — captures flippers whose
+        concurrent inventory is small but whose throughput is high."""
+        from src.models.seller import Seller
+        db_session.add(Seller(
+            uuid="rotater", profile_url="x", is_business=False,
+            cars_count=2,  # snapshot says only 2 cars listed RIGHT NOW
+            profile_fetched_at=datetime.utcnow(),
+        ))
+        db_session.commit()
+        # Five listings under the same seller, all first-seen within 90d.
+        for i in range(5):
+            upsert_listing(db_session, {**sample_listing_data,
+                                        "olx_id": f"R-{i}",
+                                        "seller_uuid": "rotater"})
+        df = get_listings_df(db_session)
+        assert (df["seller_listings_count_90d"] == 5).all()
+        assert (df["seller_cars_count"] == 2).all()  # snapshot stays small
+
+    def test_seller_listings_count_90d_excludes_old_listings(
+        self, db_session, sample_listing_data,
+    ):
+        """Listings older than 90 days don't count toward the rotation
+        rate — first_seen_at filtering must exclude them."""
+        from src.models.seller import Seller
+        db_session.add(Seller(uuid="vet", profile_url="x",
+                              profile_fetched_at=datetime.utcnow()))
+        db_session.commit()
+        # Recent listing (default first_seen_at = now)
+        upsert_listing(db_session, {**sample_listing_data,
+                                    "olx_id": "RECENT", "seller_uuid": "vet"})
+        # Stale listing — manually backdate its first_seen_at.
+        upsert_listing(db_session, {**sample_listing_data,
+                                    "olx_id": "OLD", "seller_uuid": "vet"})
+        old_listing = db_session.query(Listing).filter_by(olx_id="OLD").first()
+        old_listing.first_seen_at = datetime.utcnow() - timedelta(days=120)
+        db_session.commit()
+
+        df = get_listings_df(db_session)
+        # Both rows still render (we don't filter listings by age in the
+        # output); only the OLD one's first_seen_at is outside the 90d
+        # window, so the GROUP BY should yield count=1 for both rows.
+        assert (df["seller_listings_count_90d"] == 1).all()
+
+    def test_pseudoprivate_false_for_business_advertising_as_business(
+        self, db_session, sample_listing_data,
+    ):
+        """A business that ALSO advertises as 'Empresa' isn't pseudo-
+        private — the disagreement signal needs both is_business=True
+        and the listing claiming to be a private user."""
+        from src.models.seller import Seller
+        db_session.add(Seller(
+            uuid="u-2", profile_url="x", is_business=True,
+            profile_fetched_at=datetime.utcnow(),
+        ))
+        db_session.commit()
+        upsert_listing(db_session, {**sample_listing_data,
+                                    "seller_uuid": "u-2",
+                                    "seller_displayed_as": "Empresa"})
+        row = get_listings_df(db_session).iloc[0]
+        assert bool(row["seller_is_business"]) is True
+        assert bool(row["seller_pseudoprivate"]) is False
+
+
 class TestUpsertListing:
     def test_insert_new(self, db_session, sample_listing_data):
         listing = upsert_listing(db_session, sample_listing_data)
