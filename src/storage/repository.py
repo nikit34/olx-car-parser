@@ -1001,7 +1001,17 @@ def _seller_columns_for(seller, displayed_as: str | None) -> dict:
         }
     age_days = None
     if seller.created_at is not None:
-        age_days = max(int((_utcnow() - seller.created_at).total_seconds() / 86400), 0)
+        # ``seller.created_at`` round-trips through SQLite as an offset-aware
+        # datetime when ``backfill_sellers`` stored it via .isoformat() —
+        # the source ``+01:00`` offset survives the string. ``_utcnow()``
+        # is naive (project convention) so direct subtraction errors with
+        # "can't subtract offset-naive and offset-aware datetimes". Coerce
+        # the stored side to naive first; the offset's wall-clock value is
+        # close enough to UTC for an age-in-days computation.
+        created_naive = seller.created_at
+        if created_naive.tzinfo is not None:
+            created_naive = created_naive.replace(tzinfo=None)
+        age_days = max(int((_utcnow() - created_naive).total_seconds() / 86400), 0)
     is_biz = bool(seller.is_business) if seller.is_business is not None else None
     pseudoprivate = (
         bool(is_biz) and (displayed_as or "").strip() in ("Utilizador", "Particular")
