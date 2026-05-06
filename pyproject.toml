@@ -26,6 +26,11 @@ dependencies = [
     "pillow>=10.0",
     # CLIP zero-shot exterior pre-filter for verify-photos (issue #3).
     "transformers>=4.40",
+    # PT-plate OCR for verify-photos. Pulls opencv-python-headless +
+    # scikit-image transitively (~150 MB venv); PlateReader defers the
+    # ``import easyocr`` to instantiation so consumers that only need
+    # ``normalize_plate`` don't pay the import cost.
+    "easyocr>=1.7",
 ]
 
 [project.optional-dependencies]

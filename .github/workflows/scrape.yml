@@ -181,6 +181,27 @@ jobs:
           ulimit -n 4096
           .venv/bin/python -m src.cli enrich --workers 6 --active-only
 
+      - name: Backfill seller profiles
+        # Resolves seller_uuid for newly-scraped listings (which only have
+        # seller_profile_url at this point) and refreshes any seller row
+        # whose profile_fetched_at is older than 14 days. Steady state
+        # after the initial 1278-profile bootstrap: ~10-50 new profiles
+        # per cron + a slow trickle of refreshes. Cheap (~1s/profile via
+        # OlxScraper's throttle-aware client) so 15-min timeout has wide
+        # headroom.
+        #
+        # Must run before train-model so seller_listings_count_90d /
+        # seller_pseudoprivate / seller_cars_count are populated when the
+        # price model rebuilds. continue-on-error: a flaky OLX day
+        # shouldn't block the rest of the cron.
+        if: ${{ !cancelled() }}
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        timeout-minutes: 15
+        continue-on-error: true
+        run: |
+          .venv/bin/python -m scripts.backfill_sellers --ttl-days 14 --progress-every 100
+
       - name: Ensure damage classifier weights present
         # Weights live in the persistent data/ dir alongside the DB.
         # First time on a fresh runner: pull them from the latest-data
@@ -220,6 +241,26 @@ jobs:
             exit 0
           fi
           .venv/bin/python -m src.cli verify-photos
+
+      - name: Backfill plate OCR for legacy listings
+        # Steady-state ``verify-photos`` only processes rows missing
+        # ``photo_damage_p`` (new listings). The legacy backlog of rows
+        # verified before plate detection landed (~10k at flipper-feature
+        # ship time) needs ``--backfill-plates`` to retro-fit the four
+        # plate_* keys without re-running the damage classifier.
+        # --limit 200 chips at the backlog incrementally — at ~30/min
+        # wall-clock with 2 workers that's ~7 min per cron, draining the
+        # 10k backlog in ~9 days while staying well under the timeout.
+        # Once the SQL filter (plate_readable IS NULL among damage-verified
+        # rows) returns empty, this step is a no-op and can be removed.
+        if: ${{ !cancelled() }}
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        timeout-minutes: 30
+        continue-on-error: true
+        run: |
+          ulimit -n 4096
+          .venv/bin/python -m src.cli verify-photos --backfill-plates --workers 2 --limit 200
 
       - name: Send Telegram alerts
         if: ${{ !cancelled() }}
