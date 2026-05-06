@@ -80,18 +80,44 @@ def _format_deal(deal: dict) -> str:
     if warnings:
         lines.append(f"📝 Из описания: {', '.join(warnings)}")
 
-    # Seller-profile flags. Both are presence-only (no thresholds), so
-    # they fire identically on the first day of seller-backfill data and
-    # six months later — safe to ship without distribution analysis.
+    # Seller-profile flags. Negatives fire on definitive disagreements
+    # (pseudoprivate, parts-as-private, ≥3 brands as private); positives
+    # surface identity strength so the buyer reads "this seller has
+    # more identity than the median". Thresholds for definitive flags
+    # are presence-only; the multi-brand cut at 3 sits in the top 1.6%
+    # of the 2026-05-06 corpus.
     seller_warnings: list[str] = []
+    seller_positives: list[str] = []
     if deal.get("seller_pseudoprivate"):
         seller_warnings.append("псевдочастник (Utilizador, но JSON=Empresa)")
     parts_count = deal.get("seller_parts_count")
     if (parts_count and parts_count > 0
             and not deal.get("seller_is_business")):
         seller_warnings.append(f"продаёт запчасти ({int(parts_count)})")
+    n_brands = deal.get("seller_distinct_car_brands")
+    if (n_brands and int(n_brands) >= 3
+            and not deal.get("seller_is_business")):
+        seller_warnings.append(f"{int(n_brands)} разных марок под Particular")
+    fs = deal.get("flipper_score")
+    fc = deal.get("flipper_confidence")
+    if (fs is not None and fc is not None and fc >= 0.4
+            and float(fs) >= 0.5):
+        emoji = "🚨" if float(fs) >= 0.75 else "⚠️"
+        seller_warnings.append(
+            f"{emoji} flipper-score {float(fs):.2f} (conf {fc:.0%})"
+        )
+    social = deal.get("seller_social_account_type")
+    if isinstance(social, str) and social:
+        seller_positives.append(f"{social} link")
+    if deal.get("seller_has_user_photo"):
+        seller_positives.append("фото профиля")
+    age_days = deal.get("seller_account_age_days")
+    if age_days and int(age_days) >= 365 * 7:
+        seller_positives.append(f"акк {int(age_days)//365}+ лет")
     if seller_warnings:
         lines.append(f"👤 Продавец: {', '.join(seller_warnings)}")
+    if seller_positives:
+        lines.append(f"✓ Доверие: {', '.join(seller_positives)}")
 
     # Photo classifier signal (set by `verify-photos` CLI, lives inside
     # llm_extras JSON). Borderline cases pass _blocking_deal_reason but

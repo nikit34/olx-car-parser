@@ -1215,6 +1215,36 @@ def compute_signals(
                 and pd.notna(listing.get("seller_is_business"))
                 else None
             ),
+            # Definitive flipper indicator on top of the composite: a
+            # private account with cars from 3+ distinct brands looks
+            # like Sergio's pattern (4 brands across 5 cars under the
+            # Particular label), which sits well above the typical
+            # 1-brand private seller (86% of population).
+            "seller_distinct_car_brands": (
+                int(listing["seller_distinct_car_brands"])
+                if "seller_distinct_car_brands" in listing.index
+                and pd.notna(listing.get("seller_distinct_car_brands"))
+                else None
+            ),
+            # Positive-trust signals — surface as green tags / decision
+            # multipliers on the dashboard. Facebook-linked accounts
+            # (24% of corpus) are harder to spin up for one-off scams;
+            # ``has_user_photo`` is rare (13.5% of private) and indicates
+            # the seller actually finished profile setup. ``account_age_days``
+            # supports rules like "veteran seller" (≥7y, top 45% of corpus).
+            "seller_social_account_type": listing.get("seller_social_account_type") or None,
+            "seller_has_user_photo": (
+                bool(listing["seller_has_user_photo"])
+                if "seller_has_user_photo" in listing.index
+                and pd.notna(listing.get("seller_has_user_photo"))
+                else None
+            ),
+            "seller_account_age_days": (
+                int(listing["seller_account_age_days"])
+                if "seller_account_age_days" in listing.index
+                and pd.notna(listing.get("seller_account_age_days"))
+                else None
+            ),
         }
         for col in ("days_listed", "price_change_eur", "price_change_pct", "eur_per_km"):
             if col in listing.index:

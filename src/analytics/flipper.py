@@ -40,28 +40,38 @@ import numpy as np
 import pandas as pd
 
 
-# Primitive weights — sum to 1.0. Tuned on pilot intuition; revisit
-# after backfill_sellers populates seller_uuid for the live corpus and
-# we can compute correlation between flipper_score and observed
-# margin (asking - sold price) on closed listings.
-_W_LISTINGS_90D = 0.40
-_W_CARS_COUNT = 0.20
-_W_PSEUDOPRIVATE = 0.25
-_W_PLATE_OBSCURED = 0.15
+# Primitive weights — sum to 1.0. Recalibrated 2026-05-06 on the first
+# backfilled corpus (1272 sellers): rotation count was severely under-
+# powered because ``seller_uuid`` had only been populated for one day
+# at calibration time, so ``seller_listings_count_90d`` floored at
+# max=5 across the whole table (vs. the 6+ threshold the original
+# weighting assumed). Until the backfill accumulates ≥ 60 days of
+# uuid-linked history, rotation stays demoted; the snapshot/cars-count
+# and pseudo-private primitives carry most of the signal. Revisit when
+# we have enough closed listings to correlate flipper_score against
+# observed margin (asking minus sold price).
+_W_LISTINGS_90D = 0.15
+_W_CARS_COUNT = 0.30
+_W_PSEUDOPRIVATE = 0.35
+_W_PLATE_OBSCURED = 0.20
 
 
 def _score_listings_90d(n: float | None) -> float | None:
     """Map 90-day rotation count to [0, 1]. None when missing.
 
-    Buckets reflect the prior: a normal private seller has 1-2 listings
-    over 90 days (sold the old car, listed a new one); 3-5 is suspect;
-    6+ is almost certainly a flipper or undeclared dealer."""
+    Buckets reflect the *currently observable* distribution: ``seller_uuid``
+    backfill only began 2026-05-06, so the 90-day window contains at most
+    one day of uuid-linked first_seen_at history. The 1-2/3-5/6+ split
+    used pre-backfill assumed 6+ would be the flipper tail; in practice
+    nobody crossed 6, so we tightened the brackets. The looser thresholds
+    will be re-evaluated once the window accumulates real history (target
+    re-tune date 2026-07: ~60 days of uuid-linked data accumulated)."""
     if n is None or (isinstance(n, float) and pd.isna(n)):
         return None
     n = int(n)
-    if n <= 2:
+    if n <= 1:
         return 0.0
-    if n <= 5:
+    if n == 2:
         return 0.5
     return 1.0
 

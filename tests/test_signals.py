@@ -71,7 +71,12 @@ class TestComputeSignals:
                     # alert formatter and decision engine read these.
                     "flipper_score", "flipper_confidence",
                     "seller_pseudoprivate", "seller_listings_count_90d",
-                    "seller_parts_count", "seller_is_business"}
+                    "seller_parts_count", "seller_is_business",
+                    "seller_distinct_car_brands",
+                    # Positive-trust signals (Facebook link, real
+                    # avatar, account age) for the "✓ Доверие" line.
+                    "seller_social_account_type", "seller_has_user_photo",
+                    "seller_account_age_days"}
         assert required.issubset(set(signals.columns))
 
     def test_flipper_score_null_when_no_seller_data(

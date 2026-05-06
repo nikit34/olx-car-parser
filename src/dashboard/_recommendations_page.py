@@ -345,18 +345,24 @@ for _, deal in deals.iterrows():
             # Telegram alert formatter — fire on definitive disagreements
             # (pseudo-private) or category-mismatches (private seller
             # listing parts), not on threshold-based heuristics.
+            # Negative seller flags
             if deal.get("seller_pseudoprivate"):
                 tags.append("псевдочастник")
             parts_n = deal.get("seller_parts_count")
             if (pd.notna(parts_n) and parts_n and int(parts_n) > 0
                     and not deal.get("seller_is_business")):
                 tags.append(f"продаёт запчасти ({int(parts_n)})")
-            # Flipper composite. Show the score only when confidence
-            # crosses 0.4 — that's the lowest a single primitive can
-            # contribute (rotation count weight = 0.40), so anything
-            # below means literally zero signal and the badge would be
-            # noise. ≥0.5 is "leans flipper", ≥0.75 is "almost certainly
-            # a flipper" — emoji intensity follows.
+            # Multiple distinct car brands under a private account is
+            # Sergio's pattern (4 brands / 5 cars at backfill snapshot).
+            # 3+ brands sits in the top 1.6 % of the corpus (21/1278) so
+            # firing definitively here is safe.
+            n_brands = deal.get("seller_distinct_car_brands")
+            if (pd.notna(n_brands) and n_brands and int(n_brands) >= 3
+                    and not deal.get("seller_is_business")):
+                tags.append(f"{int(n_brands)} разных марок")
+            # Flipper composite — gate on confidence ≥ 0.4 (the lowest
+            # any single non-rotation primitive contributes after 2026-05-06
+            # recalibration). ≥0.75 is "almost certainly", ≥0.5 is "leans".
             fs = deal.get("flipper_score")
             fc = deal.get("flipper_confidence")
             if (pd.notna(fs) and pd.notna(fc) and fc >= 0.4):
@@ -366,6 +372,21 @@ for _, deal in deals.iterrows():
                          else None)
                 if badge is not None:
                     tags.append(f"{badge} ({fs_f:.2f}, conf={fc:.0%})")
+            # Positive-trust signals (green tags). These read as
+            # supporting evidence the seller is a real private user
+            # rather than a flipper, NOT a guarantee — 24% of the
+            # corpus has a Facebook link and 13% have a user-set photo,
+            # so the bar is "more identity than the median seller."
+            social = deal.get("seller_social_account_type")
+            if isinstance(social, str) and social:
+                tags.append(f"✓ {social}")
+            if deal.get("seller_has_user_photo"):
+                tags.append("✓ фото профиля")
+            age_days = deal.get("seller_account_age_days")
+            if (pd.notna(age_days) and age_days
+                    and int(age_days) >= 365 * 7):
+                years = int(age_days) // 365
+                tags.append(f"✓ акк {years}+ лет")
             if tags:
                 st.caption(" · ".join(tags))
 

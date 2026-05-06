@@ -118,3 +118,61 @@ class TestSellerWarnings:
         # prefix line must not be emitted at all.
         msg = _format_deal(self._base())
         assert "Продавец" not in msg
+        assert "Доверие" not in msg
+
+    def test_distinct_brands_warning_under_private(self):
+        msg = _format_deal(self._base(
+            seller_distinct_car_brands=4, seller_is_business=False,
+        ))
+        assert "4 разных марок под Particular" in msg
+
+    def test_distinct_brands_silent_under_business(self):
+        msg = _format_deal(self._base(
+            seller_distinct_car_brands=8, seller_is_business=True,
+        ))
+        assert "разных марок" not in msg
+
+    def test_flipper_score_warning_at_strong_threshold(self):
+        msg = _format_deal(self._base(
+            flipper_score=0.78, flipper_confidence=0.85,
+        ))
+        assert "flipper-score 0.78" in msg
+        assert "🚨" in msg
+
+    def test_flipper_score_uses_warning_emoji_below_strong(self):
+        msg = _format_deal(self._base(
+            flipper_score=0.55, flipper_confidence=0.85,
+        ))
+        assert "⚠️" in msg
+        assert "flipper-score 0.55" in msg
+
+    def test_flipper_score_silent_below_05(self):
+        msg = _format_deal(self._base(
+            flipper_score=0.30, flipper_confidence=0.85,
+        ))
+        assert "flipper-score" not in msg
+
+    def test_flipper_score_silent_below_confidence_gate(self):
+        # Score ≥0.5 but confidence under 0.4 — too thin, must not fire.
+        msg = _format_deal(self._base(
+            flipper_score=0.80, flipper_confidence=0.20,
+        ))
+        assert "flipper-score" not in msg
+
+    def test_facebook_positive_signal(self):
+        msg = _format_deal(self._base(seller_social_account_type="facebook"))
+        assert "Доверие" in msg
+        assert "facebook link" in msg
+
+    def test_account_age_veteran_positive(self):
+        msg = _format_deal(self._base(seller_account_age_days=365 * 9))
+        assert "акк 9+ лет" in msg
+
+    def test_account_age_silent_below_seven_years(self):
+        msg = _format_deal(self._base(seller_account_age_days=365 * 5))
+        assert "лет" not in msg
+        assert "Доверие" not in msg
+
+    def test_user_photo_positive(self):
+        msg = _format_deal(self._base(seller_has_user_photo=True))
+        assert "фото профиля" in msg

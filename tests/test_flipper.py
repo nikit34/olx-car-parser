@@ -24,7 +24,7 @@ from src.analytics.flipper import (
 def _all_strong_signals() -> dict:
     """Row where every primitive votes flipper at maximum strength."""
     return {
-        "seller_listings_count_90d": 8,     # → 1.0
+        "seller_listings_count_90d": 5,     # → 1.0 (post-recalibration)
         "seller_cars_count": 5,              # → 1.0
         "seller_pseudoprivate": True,        # → 1.0
         "plate_obscured": True,              # → 1.0
@@ -58,31 +58,31 @@ class TestScoreListingPrimitives:
         assert bd.confidence == pytest.approx(1.0)
 
     def test_listings_90d_buckets(self):
-        """1-2 → 0.0, 3-5 → 0.5, 6+ → 1.0. Confidence drops to 0.40
-        because only one primitive is supplied."""
-        bd_low = score_listing({"seller_listings_count_90d": 2})
-        bd_mid = score_listing({"seller_listings_count_90d": 4})
+        """1 → 0.0, 2 → 0.5, 3+ → 1.0. Confidence is 0.15 because only
+        one primitive is supplied (recalibrated 2026-05-06: rotation
+        weight reduced from 0.40 to 0.15 until backfill accumulates a
+        full 90-day uuid-linked window)."""
+        bd_low = score_listing({"seller_listings_count_90d": 1})
+        bd_mid = score_listing({"seller_listings_count_90d": 2})
         bd_high = score_listing({"seller_listings_count_90d": 10})
         assert bd_low.score == pytest.approx(0.0)
         assert bd_mid.score == pytest.approx(0.5)
         assert bd_high.score == pytest.approx(1.0)
         for bd in (bd_low, bd_mid, bd_high):
-            # Only seller_listings_count_90d weight = 0.40 contributes.
-            assert bd.confidence == pytest.approx(0.40)
+            assert bd.confidence == pytest.approx(0.15)
 
     def test_partial_signals_use_only_available_weight(self):
         """Two primitives missing → composite normalises over the two
         available ones. Score is the weighted mean over what's present,
         confidence reflects the sum of those weights."""
-        # Only listings_90d (0.40) and pseudoprivate (0.25) present.
+        # Only listings_90d (0.15) and pseudoprivate (0.35) present.
         bd = score_listing({
-            "seller_listings_count_90d": 8,   # → 1.0
+            "seller_listings_count_90d": 5,   # → 1.0
             "seller_pseudoprivate": False,    # → 0.0
         })
-        # Weighted mean: (1.0 * 0.40 + 0.0 * 0.25) / (0.40 + 0.25)
-        expected = (1.0 * 0.40 + 0.0 * 0.25) / (0.40 + 0.25)
+        expected = (1.0 * 0.15 + 0.0 * 0.35) / (0.15 + 0.35)
         assert bd.score == pytest.approx(expected)
-        assert bd.confidence == pytest.approx(0.65)
+        assert bd.confidence == pytest.approx(0.50)
 
     def test_no_data_returns_none_score(self):
         """Freshly scraped listing — no seller_uuid backfill yet, plate
@@ -98,18 +98,18 @@ class TestScoreListingPrimitives:
         """plate_obscured == None means below-threshold photo coverage,
         not signal-absent. It's omitted from the composite (doesn't
         contribute weight), distinct from plate_obscured == False."""
-        # plate_obscured=None, only listings_90d present.
+        # plate_obscured=None, only listings_90d (0.15) present.
         bd_undef = score_listing({
             "seller_listings_count_90d": 1,
             "plate_obscured": None,
         })
-        # plate_obscured=False adds a 0.0 contribution worth 0.15 weight.
+        # plate_obscured=False adds a 0.0 contribution worth 0.20 weight.
         bd_clean = score_listing({
             "seller_listings_count_90d": 1,
             "plate_obscured": False,
         })
-        assert bd_undef.confidence == pytest.approx(0.40)
-        assert bd_clean.confidence == pytest.approx(0.40 + 0.15)
+        assert bd_undef.confidence == pytest.approx(0.15)
+        assert bd_clean.confidence == pytest.approx(0.15 + 0.20)
         # Both score 0.0 (clean), but the latter has higher confidence.
         assert bd_undef.score == pytest.approx(0.0)
         assert bd_clean.score == pytest.approx(0.0)
@@ -117,12 +117,12 @@ class TestScoreListingPrimitives:
     def test_breakdown_exposes_contributions(self):
         """Dashboard tooltip needs (raw, mapped, weight) per primitive."""
         bd = score_listing({
-            "seller_listings_count_90d": 8,
+            "seller_listings_count_90d": 5,
             "seller_pseudoprivate": True,
         })
         c = bd.contributions
-        assert c["seller_listings_count_90d"] == (8.0, 1.0, 0.40)
-        assert c["seller_pseudoprivate"] == (1.0, 1.0, 0.25)
+        assert c["seller_listings_count_90d"] == (5.0, 1.0, 0.15)
+        assert c["seller_pseudoprivate"] == (1.0, 1.0, 0.35)
         assert "seller_cars_count" not in c
 
     def test_handles_nan_pandas_inputs(self):
@@ -135,9 +135,9 @@ class TestScoreListingPrimitives:
             "plate_obscured": True,            # → 1.0
         })
         # Only the two non-NaN primitives count.
-        expected = (0.0 * 0.25 + 1.0 * 0.15) / (0.25 + 0.15)
+        expected = (0.0 * 0.35 + 1.0 * 0.20) / (0.35 + 0.20)
         assert bd.score == pytest.approx(expected)
-        assert bd.confidence == pytest.approx(0.40)
+        assert bd.confidence == pytest.approx(0.55)
 
 
 class TestComputeFlipperScoreDataFrame:
@@ -176,9 +176,9 @@ class TestComputeFlipperScoreDataFrame:
         assert "flipper_confidence" not in out.columns
 
     def test_partial_columns_still_score(self):
-        """Only ``plate_obscured`` available — confidence is 0.15 but
+        """Only ``plate_obscured`` available — confidence is 0.20 but
         score still computed. Dashboard can hide low-confidence rows."""
         df = pd.DataFrame([{"plate_obscured": True}])
         out = compute_flipper_score(df)
         assert out.iloc[0]["flipper_score"] == pytest.approx(1.0)
-        assert out.iloc[0]["flipper_confidence"] == pytest.approx(0.15)
+        assert out.iloc[0]["flipper_confidence"] == pytest.approx(0.20)
