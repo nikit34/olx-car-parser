@@ -677,14 +677,53 @@ else:
     )
     fig_t.update_xaxes(showgrid=True, gridcolor="rgba(128,128,128,0.10)")
     fig_t.update_yaxes(showgrid=True, gridcolor="rgba(128,128,128,0.10)")
-    st.plotly_chart(fig_t, use_container_width=True)
+    # `on_select="rerun"` makes Plotly clicks fire a Streamlit rerun and
+    # surface the clicked point's customdata. Each line/endpoint trace
+    # carries [olx_id, url] in customdata; band + median traces don't
+    # (their customdata entries are filtered out below by truthiness).
+    chart_event = st.plotly_chart(
+        fig_t,
+        use_container_width=True,
+        on_select="rerun",
+        selection_mode=("points",),
+        key="price_history_chart",
+    )
     n_changed = len(_changed_ids)
     n_total_listings = hist["olx_id"].nunique()
     st.caption(
         f"{n_total_listings} listings in window · {n_changed} changed price "
-        f"({n_changed / n_total_listings * 100:.0f}%)."
+        f"({n_changed / n_total_listings * 100:.0f}%) · "
+        f"click any line to open the listing."
         if n_total_listings else ""
     )
+
+    _clicked_oid = ""
+    _clicked_url = ""
+    _sel = getattr(chart_event, "selection", None) if chart_event else None
+    if _sel is None and isinstance(chart_event, dict):
+        _sel = chart_event.get("selection")
+    _pts = []
+    if _sel is not None:
+        _pts = (
+            _sel.get("points")
+            if isinstance(_sel, dict)
+            else getattr(_sel, "points", []) or []
+        )
+    for _pt in _pts:
+        _cd = (
+            _pt.get("customdata")
+            if isinstance(_pt, dict)
+            else getattr(_pt, "customdata", None)
+        )
+        if _cd and len(_cd) >= 2 and _cd[0] and _cd[1]:
+            _clicked_oid, _clicked_url = str(_cd[0]), str(_cd[1])
+            break
+    if _clicked_url:
+        st.link_button(
+            f"Open listing {_clicked_oid} ↗",
+            _clicked_url,
+            use_container_width=False,
+        )
 
 st.divider()
 
