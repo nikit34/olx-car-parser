@@ -227,6 +227,7 @@ def scrape(
     private_only: bool = typer.Option(None, help="Only private sellers (Particular)"),
     concurrency: int = typer.Option(None, help="Parallel detail page workers (default 8)"),
     llm_workers: int = typer.Option(None, help="Parallel LLM enrichment workers (default from config, or 1)"),
+    deep: bool = typer.Option(False, "--deep", help="Disable early-stop: walk all pages so stale tail listings get last_seen_at + price refreshed. Already-known olx_ids skip detail-fetch (just SERP-card refresh) so the LLM cost stays flat."),
 ):
     """Scrape OLX.pt car listings, enrich with LLM, save to database.
 
@@ -284,6 +285,22 @@ def scrape(
         "Already enriched: %d listings, %d duplicates, %d known olx_ids in DB",
         len(enriched_hashes), len(duplicate_ids), len(known_ids),
     )
+
+    # Deep sweep: walk every page (no early-stop), but skip detail-fetch for
+    # already-known olx_ids. SERP card alone refreshes last_seen_at and adds
+    # a price snapshot, so listings that sank below page ~30 — invisible to
+    # the shallow 4h cycle — still get their prices kept current. Detail
+    # fetch + LLM still fire for genuinely new listings.
+    if deep:
+        log.info(
+            "DEEP SWEEP: early-stop disabled, %d known olx_ids will skip detail-fetch",
+            len(known_ids),
+        )
+        scrape_skip_ids = duplicate_ids | known_ids
+        scrape_early_stop_ratio = 2.0  # impossible threshold ⇒ never trips
+    else:
+        scrape_skip_ids = duplicate_ids
+        scrape_early_stop_ratio = 0.95
 
     # --- Streaming pipeline: Scraper -> [LLM] -> DB ---
 
@@ -377,8 +394,9 @@ def scrape(
     with OlxScraper(config) as scraper:
         raw_listings = scraper.scrape_all(
             on_batch_ready=_on_batch,
-            skip_enrichment_ids=duplicate_ids,
+            skip_enrichment_ids=scrape_skip_ids,
             known_ids=known_ids,
+            early_stop_known_ratio=scrape_early_stop_ratio,
         )
 
     # --- Scrape StandVirtual (same pipeline) ---
@@ -394,8 +412,9 @@ def scrape(
     with StandVirtualScraper(sv_config) as sv_scraper:
         sv_listings = sv_scraper.scrape_all(
             on_batch_ready=_on_batch,
-            skip_enrichment_ids=duplicate_ids,
+            skip_enrichment_ids=scrape_skip_ids,
             known_ids=known_ids,
+            early_stop_known_ratio=scrape_early_stop_ratio,
         )
     raw_listings.extend(sv_listings)
 

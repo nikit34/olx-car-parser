@@ -94,6 +94,46 @@ def add_price_snapshot(session: Session, listing_id: int, price_eur: float,
     session.add(snap)
 
 
+def apply_freshness_refresh(session: Session, olx_id: str, details: dict) -> dict:
+    """Update last_seen_at + add a price_snapshot for an existing listing.
+
+    Used by the alerts pipeline to re-check a candidate's current price
+    before sending: if the seller raised the price after our last scrape,
+    the stale snapshot's discount no longer reflects reality.
+
+    Returns ``{olx_id, old_price, new_price, price_changed}``. ``new_price``
+    is None when the detail page didn't yield a parseable price (treat as
+    "no useful refresh"; caller decides whether to still alert on the
+    stale snapshot).
+    """
+    listing = session.query(Listing).filter_by(olx_id=olx_id).first()
+    if not listing:
+        return {"olx_id": olx_id, "old_price": None,
+                "new_price": None, "price_changed": False}
+
+    new_price = details.get("price_eur")
+    listing.last_seen_at = _utcnow()
+    last_snap = (
+        session.query(PriceSnapshot)
+        .filter_by(listing_id=listing.id)
+        .order_by(PriceSnapshot.scraped_at.desc())
+        .first()
+    )
+    old_price = last_snap.price_eur if last_snap else None
+
+    result = {"olx_id": olx_id, "old_price": old_price,
+              "new_price": new_price, "price_changed": False}
+    if new_price is None:
+        return result
+    # 0.5 EUR tolerance — float round-trip noise from JSON-LD shouldn't
+    # spawn a new snapshot row.
+    if last_snap is None or abs(last_snap.price_eur - new_price) > 0.5:
+        result["price_changed"] = True
+        add_price_snapshot(session, listing.id, new_price,
+                           bool(details.get("negotiable", False)))
+    return result
+
+
 def upsert_unmatched(session: Session, data: dict, reason: str) -> UnmatchedListing:
     """Insert or update an unmatched listing."""
     row = session.query(UnmatchedListing).filter_by(olx_id=data["olx_id"]).first()

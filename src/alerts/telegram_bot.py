@@ -3,12 +3,24 @@
 import json
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
 import yaml
 
 logger = logging.getLogger(__name__)
+
+# Refresh window: candidates whose latest price snapshot is older than this
+# get a detail-page re-fetch before the alert fires. Below this (i.e. the
+# regular 4h shallow cycle just hit them) the snapshot is fresh enough that
+# a probe is wasted HTTP.
+ALERT_REFRESH_AGE_HOURS = 6
+# Concurrency for the per-candidate detail fetch. Kept low because the
+# alert-time refresh runs on top of an already-completed scrape and we
+# don't want to elevate OLX's per-IP request rate right after a long
+# scrape session.
+ALERT_REFRESH_CONCURRENCY = 4
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 CONFIG_PATH = PROJECT_ROOT / "config" / "settings.yaml"
@@ -159,6 +171,122 @@ def _send_message(bot_token: str, chat_id: str, text: str) -> bool:
         return False
 
 
+def _refresh_stale_candidates(new_signals, listings_df,
+                              min_discount_pct: float):
+    """Re-fetch detail pages for candidates whose price snapshot is stale.
+
+    Why: the shallow 4h scrape only refreshes top-N pages of OLX's "newest
+    first" sort, so a listing that sank past page ~30 keeps an outdated
+    price in our DB. If the seller raised the price after our last snapshot,
+    the discount we compute is fictional. Probing the detail page right
+    before the alert fires costs at most a few HTTP calls per cron and
+    catches that exact failure mode.
+
+    Returns ``(filtered_signals, refresh_log)``: ``filtered_signals`` is
+    ``new_signals`` with any candidate that no longer qualifies after
+    refresh dropped + ``price_eur``/``discount_pct`` updated for those that
+    still qualify; ``refresh_log`` is a list of dicts for logging.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from src.parser.scraper import OlxScraper, ScraperConfig
+    from src.storage.database import get_session
+    from src.storage.repository import apply_freshness_refresh
+
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        hours=ALERT_REFRESH_AGE_HOURS,
+    )
+    by_olx = listings_df.set_index("olx_id")
+    candidates = []
+    for olx_id in new_signals["olx_id"]:
+        if olx_id not in by_olx.index:
+            continue
+        last_seen = by_olx.at[olx_id, "last_seen_at"]
+        url = by_olx.at[olx_id, "url"]
+        # NaT-safe: any non-datetime falls through as "treat as stale".
+        if not isinstance(last_seen, datetime) or last_seen < cutoff:
+            candidates.append((olx_id, url))
+
+    if not candidates:
+        return new_signals, []
+
+    logger.info("Alert refresh: probing %d stale candidates (>%.0fh old)",
+                len(candidates), ALERT_REFRESH_AGE_HOURS)
+
+    scraper_cfg = ScraperConfig(concurrency=ALERT_REFRESH_CONCURRENCY)
+    refreshed: dict[str, dict] = {}
+    with OlxScraper(scraper_cfg) as scraper:
+        def _probe(item):
+            olx_id, url = item
+            if not url:
+                return olx_id, None
+            try:
+                if "standvirtual.com" in url:
+                    details = scraper.scrape_standvirtual_detail(url)
+                else:
+                    details = scraper.scrape_listing_detail(url)
+                return olx_id, details if details else None
+            except Exception as e:
+                logger.warning("Alert refresh probe failed for %s: %s", olx_id, e)
+                return olx_id, None
+
+        with ThreadPoolExecutor(max_workers=ALERT_REFRESH_CONCURRENCY) as ex:
+            for olx_id, details in ex.map(_probe, candidates):
+                if details is not None:
+                    refreshed[olx_id] = details
+
+    if not refreshed:
+        logger.info("Alert refresh: no detail pages returned usable data")
+        return new_signals, []
+
+    # Persist the fresh snapshots so the next dashboard load reflects truth.
+    session = get_session()
+    refresh_log = []
+    try:
+        for olx_id, details in refreshed.items():
+            res = apply_freshness_refresh(session, olx_id, details)
+            refresh_log.append(res)
+        session.commit()
+    finally:
+        session.close()
+
+    # Re-evaluate each candidate against the freshly-fetched price. Median
+    # in `new_signals` is segment-level and barely shifts from one snapshot,
+    # so we keep it and just recompute discount_pct from the new price.
+    drop_ids: set[str] = set()
+    new_signals = new_signals.copy()
+    for res in refresh_log:
+        olx_id = res["olx_id"]
+        new_price = res["new_price"]
+        if new_price is None:
+            continue
+        mask = new_signals["olx_id"] == olx_id
+        if not mask.any():
+            continue
+        median = float(new_signals.loc[mask, "median_price_eur"].iloc[0])
+        if median <= 0:
+            continue
+        new_discount = round((1 - new_price / median) * 100, 1)
+        old_price = float(new_signals.loc[mask, "price_eur"].iloc[0])
+        new_signals.loc[mask, "price_eur"] = new_price
+        new_signals.loc[mask, "discount_pct"] = new_discount
+        if new_discount < min_discount_pct:
+            drop_ids.add(olx_id)
+            logger.info(
+                "Alert refresh: dropping %s — price %.0f→%.0f, discount now %.1f%% (<%.0f%%)",
+                olx_id, old_price, new_price, new_discount, min_discount_pct,
+            )
+        elif res["price_changed"]:
+            logger.info(
+                "Alert refresh: %s price %.0f→%.0f, discount now %.1f%%",
+                olx_id, old_price, new_price, new_discount,
+            )
+
+    if drop_ids:
+        new_signals = new_signals[~new_signals["olx_id"].isin(drop_ids)]
+    return new_signals, refresh_log
+
+
 def check_and_send_alerts() -> int:
     """Check for new deals and send Telegram alerts. Returns count sent."""
     cfg = _load_config()
@@ -193,6 +321,20 @@ def check_and_send_alerts() -> int:
 
     if new_signals.empty:
         logger.info("No new deals since last alert run.")
+        return 0
+
+    # Re-probe stale candidates to catch sellers who raised the price after
+    # our last snapshot. Filters out anything whose new price no longer
+    # qualifies for the discount threshold.
+    try:
+        new_signals, _ = _refresh_stale_candidates(
+            new_signals, listings, cfg["min_discount_pct"],
+        )
+    except Exception as e:
+        logger.warning("Alert refresh stage failed (%s) — proceeding with stale prices", e)
+
+    if new_signals.empty:
+        logger.info("All candidates dropped by refresh stage (prices no longer qualify).")
         return 0
 
     sent = 0

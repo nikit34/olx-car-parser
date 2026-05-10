@@ -6,6 +6,7 @@ from src.models.listing import Listing, PriceSnapshot, MarketStats, UnmatchedLis
 from src.storage.repository import (
     upsert_listing,
     add_price_snapshot,
+    apply_freshness_refresh,
     upsert_unmatched,
     mark_inactive,
     revalidate_recent_sold,
@@ -228,6 +229,65 @@ class TestPriceSnapshot:
         snap = db_session.query(PriceSnapshot).filter_by(listing_id=listing.id).first()
         assert snap.price_eur == 12500.0
         assert snap.negotiable is True
+
+
+class TestApplyFreshnessRefresh:
+    def test_price_change_creates_new_snapshot(self, db_session, sample_listing_data):
+        listing = upsert_listing(db_session, sample_listing_data)
+        add_price_snapshot(db_session, listing.id, 5500.0)
+        db_session.commit()
+
+        res = apply_freshness_refresh(
+            db_session, sample_listing_data["olx_id"],
+            {"price_eur": 9000.0, "negotiable": False},
+        )
+        db_session.commit()
+
+        assert res["old_price"] == 5500.0
+        assert res["new_price"] == 9000.0
+        assert res["price_changed"] is True
+        snaps = (db_session.query(PriceSnapshot)
+                 .filter_by(listing_id=listing.id)
+                 .order_by(PriceSnapshot.scraped_at).all())
+        assert [s.price_eur for s in snaps] == [5500.0, 9000.0]
+
+    def test_unchanged_price_no_new_snapshot(self, db_session, sample_listing_data):
+        listing = upsert_listing(db_session, sample_listing_data)
+        add_price_snapshot(db_session, listing.id, 5500.0)
+        db_session.commit()
+
+        res = apply_freshness_refresh(
+            db_session, sample_listing_data["olx_id"],
+            {"price_eur": 5500.0},
+        )
+        db_session.commit()
+
+        assert res["price_changed"] is False
+        snap_count = (db_session.query(PriceSnapshot)
+                      .filter_by(listing_id=listing.id).count())
+        assert snap_count == 1
+
+    def test_missing_price_does_not_crash(self, db_session, sample_listing_data):
+        listing = upsert_listing(db_session, sample_listing_data)
+        add_price_snapshot(db_session, listing.id, 5500.0)
+        db_session.commit()
+        before_seen = listing.last_seen_at
+
+        res = apply_freshness_refresh(
+            db_session, sample_listing_data["olx_id"], {},
+        )
+        db_session.commit()
+
+        assert res["new_price"] is None
+        assert res["price_changed"] is False
+        # last_seen_at still bumped — listing was seen, just price unparseable.
+        db_session.refresh(listing)
+        assert listing.last_seen_at >= before_seen
+
+    def test_unknown_olx_id_returns_empty(self, db_session):
+        res = apply_freshness_refresh(db_session, "ghost-id", {"price_eur": 1000.0})
+        assert res["new_price"] is None
+        assert res["price_changed"] is False
 
 
 class TestMarkInactive:

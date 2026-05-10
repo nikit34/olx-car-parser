@@ -2,24 +2,32 @@ name: Scrape OLX
 
 on:
   schedule:
-    # Every 4 hours (00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC).
-    # Each run completes in ~35-45 min on the self-hosted runner, so the
-    # ~3h idle gap leaves room for manual verify-photos / enrich-llm
-    # passes without contending for the SQLite write lock.
-    - cron: "0 */4 * * *"
+    # Every 4 hours, except 04:00 UTC — 5 shallow + 1 deep at 04:00. The
+    # shallow runs hit ~30 pages of "newest first" (early-stop), so deep-tail
+    # listings invisible to that window only get last_seen_at + price refresh
+    # via the daily deep sweep. Without the split, a listing that sinks past
+    # page 30 the day it's posted never has its price re-checked.
+    - cron: "0 0,8,12,16,20 * * *"
+    - cron: "0 4 * * *"
   workflow_dispatch:
     inputs:
       with_llm:
         description: "Enable LLM enrichment (start Ollama, enrich inline + final pass)"
         type: boolean
         default: true
+      deep:
+        description: "Deep sweep (no early-stop, walk all pages — refreshes prices on the stale tail)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
 # Schedule always runs with LLM; manual trigger respects the input.
+# Deep sweep fires on the dedicated 04:00 cron OR when manually requested.
 env:
   WITH_LLM: ${{ github.event_name == 'schedule' && 'true' || inputs.with_llm }}
+  IS_DEEP: ${{ github.event.schedule == '0 4 * * *' || inputs.deep == 'true' }}
 
 # Single-runner self-hosted setup — only one scrape can hold the SQLite DB
 # at a time anyway, so we cancel any in-flight run when a new cron fires
@@ -151,7 +159,9 @@ jobs:
         # queue and saves what's enriched. Anything still pending is
         # finished by the next step (`Enrich with LLM`), which now has its
         # own 90-min slice instead of competing for the same 4h pool.
-        timeout-minutes: 90
+        # Deep sweep walks all 200 pages instead of ~30, so we extend the
+        # cap to 150 min on its dedicated cron.
+        timeout-minutes: ${{ env.IS_DEEP == 'true' && 150 || 90 }}
         # scrape auto-detects Ollama: if reachable → inline LLM enrichment,
         # otherwise saves raw. When with_llm=false the previous step doesn't
         # start Ollama, so this naturally falls back to raw-only.
@@ -164,7 +174,12 @@ jobs:
         # `kern.maxfilesperproc=32768` ceiling.
         run: |
           ulimit -n 4096
-          .venv/bin/python -m src.cli scrape
+          if [ "$IS_DEEP" = "true" ]; then
+            echo "🔍 DEEP SWEEP — walking every page, skipping detail-fetch on known olx_ids"
+            .venv/bin/python -m src.cli scrape --deep
+          else
+            .venv/bin/python -m src.cli scrape
+          fi
 
       - name: Enrich with LLM
         # Runs on success or scrape-side failure (timeout, exception) —
