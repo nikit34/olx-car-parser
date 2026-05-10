@@ -27,6 +27,7 @@ from data_loader import _force_next_check, get_last_release_error
 from _cache import (
     release_signature as _release_cache_signature,
     load_all_cached,
+    load_snapshots_cached,
 )
 from src.analytics.decision import (
     build_context as _build_decision_context,
@@ -454,6 +455,111 @@ else:
             st.link_button(
                 f"Open listing {olx_id} ↗", url, use_container_width=True,
             )
+
+# --- Panel: Per-listing price trajectories ---
+# Each listing's ask over time, one line per olx_id, colored by current
+# status. Snapshots come from price_snapshots (one row per scrape per
+# listing — see src/cli.py:193). Flat line = seller never moved; step
+# down = price cut; line ending mid-window = listing deactivated.
+#
+# Single Scatter trace per status group with ``None`` separators between
+# listings — much cheaper than N traces when the segment has 100+ lines.
+st.subheader("Price history — every listing")
+st.caption(
+    "One line per listing, colored by current status. Step-downs are "
+    "price cuts, abrupt ends mark deactivation (sold / expired). "
+    "Snapshots are capped at the last 365 days, so older listings may "
+    "appear truncated on the left."
+)
+_snapshots_all = load_snapshots_cached(_release_cache_signature(), 365)
+_seg_ids = set(seg["olx_id"].dropna().astype(str).tolist())
+hist = (
+    _snapshots_all[_snapshots_all["olx_id"].isin(_seg_ids)].copy()
+    if _snapshots_all is not None and not _snapshots_all.empty
+    else pd.DataFrame()
+)
+if hist.empty:
+    st.info("No snapshot history for this segment yet.")
+else:
+    hist["scraped_at"] = pd.to_datetime(
+        hist["scraped_at"], errors="coerce", utc=True,
+    )
+    hist = (
+        hist.dropna(subset=["scraped_at", "price_eur"])
+        .sort_values(["olx_id", "scraped_at"])
+    )
+    # Map olx_id -> status using the page-level is_active / is_sold
+    # masks (indexed by seg.index, not olx_id).
+    _status_by_oid: dict[str, str] = {}
+    _url_by_oid: dict[str, str] = {}
+    for _idx, _oid in seg["olx_id"].items():
+        if is_active.get(_idx, False):
+            _status_by_oid[_oid] = "active"
+        elif is_sold.get(_idx, False):
+            _status_by_oid[_oid] = "sold"
+        else:
+            _status_by_oid[_oid] = "expired"
+        _url_by_oid[_oid] = str(seg.at[_idx, "url"]) if "url" in seg.columns else ""
+    hist["__status"] = hist["olx_id"].map(_status_by_oid)
+    hist = hist.dropna(subset=["__status"])
+
+    fig_t = go.Figure()
+    _color_map = {
+        "active":  "rgba(31, 119, 180, 0.40)",
+        "sold":    "rgba(176, 92, 92, 0.55)",
+        "expired": "rgba(120, 120, 120, 0.30)",
+    }
+    for _status_val in ("expired", "sold", "active"):  # active drawn on top
+        sub = hist[hist["__status"] == _status_val]
+        if sub.empty:
+            continue
+        xs: list = []
+        ys: list = []
+        cds: list = []
+        for _oid, g in sub.groupby("olx_id", sort=False):
+            xs.extend(g["scraped_at"].tolist())
+            ys.extend(g["price_eur"].tolist())
+            cds.extend([[_oid, _url_by_oid.get(_oid, "")]] * len(g))
+            xs.append(None); ys.append(None); cds.append([None, None])
+        n_listings = sub["olx_id"].nunique()
+        fig_t.add_scatter(
+            x=xs, y=ys, mode="lines",
+            line=dict(color=_color_map[_status_val], width=1.1),
+            name=f"{_status_val} ({n_listings})",
+            customdata=cds,
+            hovertemplate=(
+                "<b>€%{y:,.0f}</b> · %{x|%Y-%m-%d}<br>"
+                "%{customdata[0]}<extra></extra>"
+            ),
+        )
+    # Median trajectory across the visible (status-filtered) set, as a
+    # reference line so individual moves can be read against the segment
+    # drift. Bucket weekly when the window is wide enough.
+    _med = (
+        hist.set_index("scraped_at")
+        .groupby(pd.Grouper(freq="W"))["price_eur"]
+        .median()
+        .dropna()
+    )
+    if len(_med) >= 3:
+        fig_t.add_scatter(
+            x=_med.index, y=_med.values,
+            mode="lines",
+            line=dict(color="#ff9900", width=2.6, dash="dot"),
+            name="weekly median",
+            hovertemplate="weekly median: €%{y:,.0f}<br>%{x|%Y-%m-%d}<extra></extra>",
+        )
+    fig_t.update_layout(
+        xaxis_title="Date", yaxis_title="Ask (EUR)",
+        yaxis=dict(tickformat=","),
+        height=440, margin=dict(l=10, r=10, t=10, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="right", x=1),
+        hovermode="closest",
+    )
+    st.plotly_chart(fig_t, use_container_width=True)
+
+st.divider()
 
 # --- Panel: Time-on-market histogram (sold only) ---
 st.subheader("Time on market — sold listings")
