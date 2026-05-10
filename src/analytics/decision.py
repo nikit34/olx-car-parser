@@ -299,20 +299,29 @@ def decide(
     reasons: list[str] = []
     components: dict[str, float | None] = {}
 
+    # NaN-safe coercion. `float(v or 0)` looks safe but breaks on numpy.NaN
+    # because `nan or 0` short-circuits to nan (nan is truthy), and the
+    # resulting NaN poisons net_margin → score and forces every row into SKIP.
+    # Hits in production whenever signals_df has any row with a real
+    # repair_cost — pandas upcasts the column to float64 and the None
+    # sentinels turn into NaN.
+    def _num(v, default=0.0):
+        return float(v) if v is not None and pd.notna(v) else float(default)
+
     brand = g("brand")
     model = g("model")
     gen = g("generation") or None
-    price = float(g("price_eur") or 0)
+    price = _num(g("price_eur"))
     predicted = g("predicted_price")
     predicted = float(predicted) if predicted is not None and pd.notna(predicted) else None
     fair_low = g("fair_price_low")
     fair_low = float(fair_low) if fair_low is not None and pd.notna(fair_low) else None
     fair_high = g("fair_price_high")
     fair_high = float(fair_high) if fair_high is not None and pd.notna(fair_high) else None
-    sample = int(g("sample_size") or 0)
+    sample = int(_num(g("sample_size")))
     band_pct_value = g("band_pct")  # 0–100, *not* fraction. None when bundle missing.
     band_frac = float(band_pct_value) / 100 if band_pct_value is not None and pd.notna(band_pct_value) else None
-    repair_cost = float(g("repair_cost_eur") or 0)
+    repair_cost = _num(g("repair_cost_eur"))
 
     # ---- Step 1: hard gates. signals_df already drops most of these,
     # but we re-check so the function works on raw listings_df rows too.

@@ -637,8 +637,10 @@ class TestRepairCostAdjustment:
     def test_severity_0_or_1_unchanged_by_repair_path(
         self, sample_history_df, generations_data, patched_gb_model,
     ):
-        """Pristine / normal-wear cars get repair_cost_eur = None, and
-        adjusted_undervaluation_pct == undervaluation_pct (no haircut)."""
+        """Pristine / normal-wear cars get repair_cost_eur = 0 (was None
+        until pandas float-promotion silently turned it into NaN once a
+        real-cost row joined the column). adjusted_undervaluation_pct
+        stays equal to undervaluation_pct (no haircut)."""
         listings = pd.DataFrame(
             [{"olx_id": "clean", "url": "", "brand": "Volkswagen", "model": "Golf",
               "year": 2015, "price_eur": 8000, "mileage_km": 150000, "engine_cc": 1600,
@@ -652,7 +654,7 @@ class TestRepairCostAdjustment:
         ):
             signals, *_ = compute_signals(listings, sample_history_df)
         row = signals[signals["olx_id"] == "clean"].iloc[0]
-        assert row["repair_cost_eur"] is None
+        assert row["repair_cost_eur"] == 0
         assert row["est_profit_after_repair_eur"] is None
         assert row["adjusted_undervaluation_pct"] == row["undervaluation_pct"]
 

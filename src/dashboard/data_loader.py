@@ -1114,7 +1114,11 @@ def compute_signals(
             "discount_pct": discount_pct,
             "undervaluation_pct": undervaluation_pct,
             "damage_severity": severity_int,
-            "repair_cost_eur": round(repair_cost) if repair_cost > 0 else None,
+            # 0 (not None) when no repair: pandas upcasts the column to
+            # float64 once any row has a real cost and turns None → NaN,
+            # which downstream `decide()` couldn't tell apart from a real
+            # cost and used to poison net_margin → score.
+            "repair_cost_eur": round(repair_cost) if repair_cost > 0 else 0,
             "est_profit_after_repair_eur": (
                 round(profit_after_repair) if repair_cost > 0 else None
             ),

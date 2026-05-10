@@ -134,6 +134,18 @@ def test_buy_in_firming_market():
     assert d.score > 0
 
 
+@pytest.mark.parametrize("missing_repair", [None, float("nan")])
+def test_score_not_poisoned_by_missing_repair_cost(missing_repair):
+    """Regression: `float(v or 0)` returned NaN when v was numpy.NaN
+    because nan is truthy. NaN propagated into net_margin → score and
+    forced every otherwise-BUY row into SKIP. signals_df gets NaN here
+    in production whenever any row has a real cost (pandas float64
+    promotion of the column). Both None and NaN must coerce to 0."""
+    d = decide(_row(price_eur=8500, predicted_price=13000, repair_cost_eur=missing_repair), _ctx())
+    assert pd.notna(d.score), f"score was NaN for repair_cost_eur={missing_repair!r}"
+    assert d.verdict == VERDICT_BUY
+
+
 # ---- Step 8 liquidity -----------------------------------------------------
 
 
