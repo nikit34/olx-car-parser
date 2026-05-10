@@ -489,10 +489,10 @@ else:
 # listings — much cheaper than N traces when the segment has 100+ lines.
 st.subheader("Price history — every listing")
 st.caption(
-    "One line per listing, colored by current status. Step-downs are "
-    "price cuts, abrupt ends mark deactivation (sold / expired). "
-    "Snapshots are capped at the last 365 days, so older listings may "
-    "appear truncated on the left."
+    "Each line = one listing's ask over time, colored by current status. "
+    "Step-downs are price cuts, abrupt ends mark deactivation. "
+    "Shaded band = weekly p25–p75 of the segment. "
+    "Snapshots are capped at the last 365 days."
 )
 _snapshots_all = load_snapshots_cached(_release_cache_signature(), 365)
 _seg_ids = set(seg["olx_id"].dropna().astype(str).tolist())
@@ -526,47 +526,141 @@ else:
     hist["__status"] = hist["olx_id"].map(_status_by_oid)
     hist = hist.dropna(subset=["__status"])
 
+    # Listings whose ask actually moved are the only informative
+    # trajectories — flat lines just clutter. Pre-compute the set so
+    # the user can toggle to it.
+    _price_range = hist.groupby("olx_id")["price_eur"].agg(["min", "max"])
+    _changed_ids = set(
+        _price_range[_price_range["max"] > _price_range["min"]].index.tolist()
+    )
+
+    _ctrl_l, _ctrl_r = st.columns([3, 2])
+    with _ctrl_l:
+        view_mode = st.radio(
+            "Show",
+            options=("all listings", "only with price cuts", "band only"),
+            index=0,
+            horizontal=True,
+            key="price_history_view_mode",
+            label_visibility="collapsed",
+        )
+    with _ctrl_r:
+        show_endpoints = st.checkbox(
+            "Mark deactivation points",
+            value=True,
+            key="price_history_endpoints",
+            help="Dot at the last snapshot of each sold/expired listing.",
+        )
+
+    if view_mode == "only with price cuts":
+        hist_view = hist[hist["olx_id"].isin(_changed_ids)]
+    elif view_mode == "band only":
+        hist_view = hist.iloc[0:0]
+    else:
+        hist_view = hist
+
     fig_t = go.Figure()
+
+    # Weekly p25 / median / p75 band — drawn first so listing lines and
+    # the median trace render on top. The band uses the *full* segment,
+    # not the filtered view, so the reference is stable regardless of
+    # which listings the user toggles.
+    _wk = (
+        hist.set_index("scraped_at")
+        .groupby(pd.Grouper(freq="W"))["price_eur"]
+        .agg(["median", lambda s: s.quantile(0.25), lambda s: s.quantile(0.75)])
+    )
+    _wk.columns = ["median", "p25", "p75"]
+    _wk = _wk.dropna()
+    if len(_wk) >= 3:
+        fig_t.add_scatter(
+            x=_wk.index, y=_wk["p75"],
+            mode="lines", line=dict(width=0),
+            name="p75", showlegend=False, hoverinfo="skip",
+        )
+        fig_t.add_scatter(
+            x=_wk.index, y=_wk["p25"],
+            mode="lines", line=dict(width=0),
+            fill="tonexty", fillcolor="rgba(255, 153, 0, 0.10)",
+            name="p25–p75 band",
+            hovertemplate="p25–p75<extra></extra>",
+        )
+
     _color_map = {
-        "active":  "rgba(31, 119, 180, 0.40)",
-        "sold":    "rgba(176, 92, 92, 0.55)",
-        "expired": "rgba(120, 120, 120, 0.30)",
+        "active":  "rgba(31, 119, 180, 0.28)",
+        "sold":    "rgba(200, 70, 70, 0.65)",
+        "expired": "rgba(140, 140, 140, 0.20)",
     }
-    for _status_val in ("expired", "sold", "active"):  # active drawn on top
-        sub = hist[hist["__status"] == _status_val]
+    _endpoint_color_map = {
+        "sold":    "rgba(200, 70, 70, 0.95)",
+        "expired": "rgba(140, 140, 140, 0.70)",
+    }
+    # Draw expired first (background), then active, then sold on top —
+    # sold are the most informative outcomes, so they should win z-order.
+    for _status_val in ("expired", "active", "sold"):
+        sub = hist_view[hist_view["__status"] == _status_val]
+        n_total = (hist["__status"] == _status_val).sum()
+        n_listings_total = (
+            hist[hist["__status"] == _status_val]["olx_id"].nunique()
+        )
         if sub.empty:
+            # Still register the trace name in the legend with count = 0
+            # so users see the breakdown even when filtering hides them.
+            fig_t.add_scatter(
+                x=[None], y=[None], mode="lines",
+                line=dict(color=_color_map[_status_val], width=1.4),
+                name=f"{_status_val} ({n_listings_total})",
+                showlegend=True, hoverinfo="skip",
+            )
             continue
         xs: list = []
         ys: list = []
         cds: list = []
+        end_xs: list = []
+        end_ys: list = []
+        end_cds: list = []
         for _oid, g in sub.groupby("olx_id", sort=False):
             xs.extend(g["scraped_at"].tolist())
             ys.extend(g["price_eur"].tolist())
             cds.extend([[_oid, _url_by_oid.get(_oid, "")]] * len(g))
             xs.append(None); ys.append(None); cds.append([None, None])
+            if _status_val in ("sold", "expired"):
+                last = g.iloc[-1]
+                end_xs.append(last["scraped_at"])
+                end_ys.append(last["price_eur"])
+                end_cds.append([_oid, _url_by_oid.get(_oid, "")])
         n_listings = sub["olx_id"].nunique()
         fig_t.add_scatter(
             x=xs, y=ys, mode="lines",
-            line=dict(color=_color_map[_status_val], width=1.1),
-            name=f"{_status_val} ({n_listings})",
+            line=dict(color=_color_map[_status_val], width=1.2),
+            name=f"{_status_val} ({n_listings_total})",
             customdata=cds,
             hovertemplate=(
                 "<b>€%{y:,.0f}</b> · %{x|%Y-%m-%d}<br>"
                 "%{customdata[0]}<extra></extra>"
             ),
         )
-    # Median trajectory across the visible (status-filtered) set, as a
-    # reference line so individual moves can be read against the segment
-    # drift. Bucket weekly when the window is wide enough.
-    _med = (
-        hist.set_index("scraped_at")
-        .groupby(pd.Grouper(freq="W"))["price_eur"]
-        .median()
-        .dropna()
-    )
-    if len(_med) >= 3:
+        if show_endpoints and end_xs and _status_val in _endpoint_color_map:
+            fig_t.add_scatter(
+                x=end_xs, y=end_ys, mode="markers",
+                marker=dict(
+                    color=_endpoint_color_map[_status_val],
+                    size=5, symbol="circle",
+                    line=dict(width=0),
+                ),
+                name=f"{_status_val} ended",
+                customdata=end_cds,
+                showlegend=False,
+                hovertemplate=(
+                    f"{_status_val} · last seen<br>"
+                    "<b>€%{y:,.0f}</b> · %{x|%Y-%m-%d}<br>"
+                    "%{customdata[0]}<extra></extra>"
+                ),
+            )
+    # Median trajectory drawn last so it sits on top of everything.
+    if len(_wk) >= 3:
         fig_t.add_scatter(
-            x=_med.index, y=_med.values,
+            x=_wk.index, y=_wk["median"],
             mode="lines",
             line=dict(color="#ff9900", width=2.6, dash="dot"),
             name="weekly median",
@@ -579,8 +673,18 @@ else:
         legend=dict(orientation="h", yanchor="bottom", y=1.02,
                     xanchor="right", x=1),
         hovermode="closest",
+        plot_bgcolor="rgba(0,0,0,0)",
     )
+    fig_t.update_xaxes(showgrid=True, gridcolor="rgba(128,128,128,0.10)")
+    fig_t.update_yaxes(showgrid=True, gridcolor="rgba(128,128,128,0.10)")
     st.plotly_chart(fig_t, use_container_width=True)
+    n_changed = len(_changed_ids)
+    n_total_listings = hist["olx_id"].nunique()
+    st.caption(
+        f"{n_total_listings} listings in window · {n_changed} changed price "
+        f"({n_changed / n_total_listings * 100:.0f}%)."
+        if n_total_listings else ""
+    )
 
 st.divider()
 
