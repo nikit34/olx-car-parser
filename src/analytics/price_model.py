@@ -1248,6 +1248,133 @@ def predict_prices(
 
 
 # ---------------------------------------------------------------------------
+# SHAP-style feature attribution for the dashboard
+# ---------------------------------------------------------------------------
+
+def _format_contrib_label(feat: str, val) -> str:
+    """Render 'year=2018', 'mileage=85k', 'generation=C7' for the waterfall.
+
+    Listings come in with raw categorical strings (LightGBM ordinal-encodes
+    them inside ``_prepare_X``, but the source df is untouched), so we read
+    the displayable value directly from ``listings_df``.
+    """
+    if val is None or (isinstance(val, float) and np.isnan(val)):
+        return f"{feat}=—"
+    if feat == "mileage_km":
+        try:
+            return f"mileage={int(round(float(val) / 1000))}k"
+        except (TypeError, ValueError):
+            return f"{feat}={val}"
+    if feat in ("year", "engine_cc", "horsepower", "photo_count",
+                "description_length", "seats", "doors",
+                "seller_listings_count_90d"):
+        try:
+            return f"{feat}={int(float(val))}"
+        except (TypeError, ValueError):
+            return f"{feat}={val}"
+    if feat == "plate_obscured":
+        try:
+            return "plate_obscured=" + ("yes" if int(float(val)) else "no")
+        except (TypeError, ValueError):
+            return f"{feat}={val}"
+    if isinstance(val, float):
+        return f"{feat}={val:.2f}"
+    return f"{feat}={val}"
+
+
+def compute_price_contributions(
+    models: dict[str, lgb.LGBMRegressor],
+    cat_maps: dict[str, dict[str, int]],
+    listings_df: pd.DataFrame,
+    top_k: int = 5,
+) -> dict[str, dict]:
+    """TreeSHAP attribution of the median price prediction to features.
+
+    Uses LightGBM's built-in ``pred_contrib=True`` (path-dependent TreeSHAP)
+    on the median model. Contributions are returned in log1p(EUR) by LGBM;
+    we convert them to a EUR waterfall by walking the features in order of
+    descending |contrib| and recording the EUR delta at each step:
+
+        running_log = baseline_log
+        for feat in sorted(feats, key=|contrib| desc):
+            new_log = running_log + contrib[feat]
+            delta_eur = expm1(new_log) - expm1(running_log)
+            running_log = new_log
+
+    This makes ``baseline_eur + sum(deltas) == raw_median_eur`` exactly,
+    independent of how the dashboard displays it. Note the displayed
+    ``predicted_price`` may differ from ``raw_median_eur`` because of
+    isotonic calibration and OOF overrides applied downstream in
+    ``predict_prices`` — the waterfall explains the *model's raw view*,
+    which is what the user asks when they click "why this price".
+
+    Returns ``{olx_id: {"baseline_eur": float, "predicted_eur": float,
+    "deltas": [(label, eur_delta), ...]}}``. ``deltas`` is sorted by
+    |eur_delta| desc, truncated to ``top_k``, with the tail bundled
+    into a single ``("прочие", sum)`` entry when it exists.
+    """
+    if "olx_id" not in listings_df.columns or listings_df.empty:
+        return {}
+
+    X_arr, _ = _prepare_X(listings_df, cat_maps)
+    median_model = models["median"]
+
+    # Shape: (n_samples, n_features + 1). Last column is expected_value.
+    contribs = median_model.predict(X_arr, pred_contrib=True)
+    n_features = len(_ALL_FEATURES)
+
+    result: dict[str, dict] = {}
+    olx_ids = listings_df["olx_id"].astype(str).values
+
+    # Reset index so positional .iloc[i] aligns with X_arr rows even when
+    # the caller passed a non-default index.
+    src = listings_df.reset_index(drop=True)
+
+    for i, oid in enumerate(olx_ids):
+        if not oid or oid == "nan":
+            continue
+
+        baseline_log = float(contribs[i, -1])
+        feat_contribs = contribs[i, :n_features]
+        baseline_eur = float(np.expm1(baseline_log))
+
+        # Order: biggest absolute log-contrib first. Ties broken by feature
+        # order in _ALL_FEATURES (numpy's argsort is stable).
+        order = np.argsort(-np.abs(feat_contribs), kind="stable")
+
+        running_log = baseline_log
+        deltas: list[tuple[str, float]] = []
+        for idx in order:
+            c = float(feat_contribs[idx])
+            if abs(c) < 1e-9:
+                continue
+            new_log = running_log + c
+            delta_eur = float(np.expm1(new_log) - np.expm1(running_log))
+            running_log = new_log
+
+            feat = _ALL_FEATURES[idx]
+            raw_val = src.iloc[i].get(feat)
+            deltas.append((_format_contrib_label(feat, raw_val), delta_eur))
+
+        predicted_eur = float(np.expm1(running_log))
+
+        if len(deltas) > top_k:
+            head = deltas[:top_k]
+            rest = deltas[top_k:]
+            rest_sum = float(sum(d for _, d in rest))
+            head.append((f"прочие (×{len(rest)})", rest_sum))
+            deltas = head
+
+        result[oid] = {
+            "baseline_eur": baseline_eur,
+            "predicted_eur": predicted_eur,
+            "deltas": deltas,
+        }
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Model persistence
 # ---------------------------------------------------------------------------
 

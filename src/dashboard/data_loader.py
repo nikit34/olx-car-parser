@@ -584,7 +584,10 @@ def compute_signals(
       gets ±27% bands).
     """
     if listings_df.empty:
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        return (
+            pd.DataFrame(), pd.DataFrame(), pd.DataFrame(),
+            pd.DataFrame(), {},
+        )
 
     import numpy as np
     import time as _time
@@ -689,6 +692,7 @@ def compute_signals(
     # --- Gradient boosting price model (uses LLM fields + market data) ---
     from src.analytics.price_model import (
         predict_prices,
+        compute_price_contributions,
         compute_feature_completeness,
         load_importance,
         load_grouped_importance,
@@ -724,6 +728,12 @@ def compute_signals(
     gb_predictions: dict[str, float] = {}
     gb_fair_low: dict[str, float] = {}
     gb_fair_high: dict[str, float] = {}
+    # TreeSHAP attribution of the median price prediction. Populated only
+    # for active listings (the sold-side block doesn't compute contribs —
+    # dashboard surfaces them on deal cards, which are active by
+    # definition). Shape: {olx_id: {"baseline_eur", "predicted_eur",
+    # "deltas": [(label, eur_delta), ...]}}. Empty dict when no model.
+    gb_contributions: dict[str, dict] = {}
     # Defined here so the anomaly/hazard scoring blocks below can
     # safely read it whether or not the price model branch ran.
     price_df: pd.DataFrame | None = None
@@ -774,6 +784,22 @@ def compute_signals(
                     gb_predictions[oid] = float(pred)
                     gb_fair_low[oid] = float(lo)
                     gb_fair_high[oid] = float(hi)
+
+        # Per-listing feature attribution for the deal-card "why this
+        # price?" expander. TreeSHAP on the median model — fast (one tree
+        # walk per row), no extra dependency. Computed once here next to
+        # predict_prices so it lands in the same cache entry.
+        try:
+            gb_contributions = compute_price_contributions(
+                gb_models, gb_cat_maps, active, top_k=5,
+            )
+            _cs_step(f"contributions(active n={len(gb_contributions)})")
+        except Exception as _c_err:  # noqa: BLE001
+            import logging as _l
+            _l.getLogger(__name__).warning(
+                "price contributions skipped: %s", _c_err,
+            )
+            gb_contributions = {}
 
         # Sold-side predictions — feed the calibration_resid_pct map in
         # ``decision.build_context``. We re-run the GB pipeline on the
@@ -1275,7 +1301,10 @@ def compute_signals(
         "fair_price_low": [gb_fair_low.get(o) for o in gb_predictions],
         "fair_price_high": [gb_fair_high.get(o) for o in gb_predictions],
     })
-    return df, importance_df, grouped_importance_df, predictions_df
+    return (
+        df, importance_df, grouped_importance_df, predictions_df,
+        gb_contributions,
+    )
 
 
 
@@ -1350,7 +1379,10 @@ def load_all():
         _ts = _step("enrich_listings", _ts)
         turnover = compute_turnover_stats(listings)
         _ts = _step("compute_turnover_stats", _ts)
-        signals, importance, grouped_importance, predictions = compute_signals(
+        (
+            signals, importance, grouped_importance, predictions,
+            contributions,
+        ) = compute_signals(
             listings, history, turnover=turnover,
         )
         _ts = _step("compute_signals", _ts)
@@ -1361,6 +1393,7 @@ def load_all():
         importance = pd.DataFrame()
         grouped_importance = pd.DataFrame()
         predictions = pd.DataFrame()
+        contributions = {}
         turnover = pd.DataFrame()
 
     portfolio = load_portfolio()
@@ -1379,5 +1412,5 @@ def load_all():
     return (
         listings, history, signals, brands_models, turnover,
         portfolio, unmatched, importance, predictions,
-        grouped_importance,
+        grouped_importance, contributions,
     )

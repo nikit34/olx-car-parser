@@ -47,6 +47,10 @@ turnover_df = _loaded[4] if len(_loaded) > 4 else pd.DataFrame()
 importance_df = _loaded[7] if len(_loaded) > 7 else pd.DataFrame()
 predictions_df = _loaded[8] if len(_loaded) > 8 else pd.DataFrame()
 grouped_importance_df = _loaded[9] if len(_loaded) > 9 else pd.DataFrame()
+# Per-listing TreeSHAP contributions for the "why this price?" expander.
+# Slot 10 added 2026-05-10 — safe default keeps older cache entries from
+# crashing the page during the rollover.
+contributions_lookup = _loaded[10] if len(_loaded) > 10 else {}
 
 
 # Build a DecisionContext once per data refresh. ``predictions_df`` is
@@ -489,5 +493,31 @@ for _, deal in deals.iterrows():
                         _bits.append(f"confidence ×{_comp['confidence']:.2f}")
                     if _bits:
                         st.caption(" · ".join(_bits))
+
+        # Per-listing TreeSHAP breakdown of the model's price. Sums in
+        # log1p, displayed as a EUR waterfall: baseline + ordered deltas.
+        # The bottom line ("raw model") may differ from the predicted_price
+        # shown above the card because predicted_price has isotonic
+        # calibration + CQR widening applied on top — the waterfall
+        # explains the raw model view, which is what the user asks when
+        # clicking "why this price". Difference is usually 2–5%.
+        _attr = contributions_lookup.get(str(deal["olx_id"]))
+        if _attr and _attr.get("deltas"):
+            with st.expander("Почему такая цена? (разбор модели)"):
+                base = _attr["baseline_eur"]
+                raw = _attr["predicted_eur"]
+                st.markdown(f"**Baseline:** {base:,.0f} EUR  *(средняя цена в обучающем наборе)*")
+                for _label, _delta in _attr["deltas"]:
+                    _sign = "🟢 +" if _delta >= 0 else "🔴 "
+                    st.markdown(f"- {_label}: {_sign}{_delta:,.0f} EUR")
+                st.markdown(f"**Raw model:** {raw:,.0f} EUR")
+                if pd.notna(deal.get("predicted_price")):
+                    _calib_diff = float(deal["predicted_price"]) - raw
+                    if abs(_calib_diff) >= 1:
+                        _sign = "+" if _calib_diff >= 0 else ""
+                        st.caption(
+                            f"После калибровки: {int(deal['predicted_price']):,} EUR "
+                            f"({_sign}{_calib_diff:,.0f} EUR isotonic adjustment)"
+                        )
 
         st.divider()
