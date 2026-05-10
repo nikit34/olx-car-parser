@@ -330,7 +330,7 @@ class TestMarkInactiveURLVerify:
         rows = self._seed(db_session, sample_listing_data, 1)
 
         fake_resp = Mock(status_code=200, text="<html>Alfa Romeo 147 ...</html>")
-        with patch("src.storage.repository.httpx.get", return_value=fake_resp):
+        with patch("src.storage.repository._PROBE_CLIENT.get", return_value=fake_resp):
             mark_inactive(db_session, "olx", {"some-other-id"})
         db_session.commit()
         l = db_session.query(Listing).filter_by(olx_id=rows[0][0]).one()
@@ -342,7 +342,7 @@ class TestMarkInactiveURLVerify:
         rows = self._seed(db_session, sample_listing_data, 1)
 
         fake_resp = Mock(status_code=404, text="")
-        with patch("src.storage.repository.httpx.get", return_value=fake_resp):
+        with patch("src.storage.repository._PROBE_CLIENT.get", return_value=fake_resp):
             mark_inactive(db_session, "olx", {"some-other-id"})
         db_session.commit()
         l = db_session.query(Listing).filter_by(olx_id=rows[0][0]).one()
@@ -361,7 +361,7 @@ class TestMarkInactiveURLVerify:
             status_code=200,
             text="<html>O anúncio que tentas aceder não existe ou foi eliminado</html>",
         )
-        with patch("src.storage.repository.httpx.get", return_value=fake_resp):
+        with patch("src.storage.repository._PROBE_CLIENT.get", return_value=fake_resp):
             mark_inactive(db_session, "olx", {"some-other-id"})
         db_session.commit()
         l = db_session.query(Listing).filter_by(olx_id=rows[0][0]).one()
@@ -378,7 +378,7 @@ class TestMarkInactiveURLVerify:
         rows = self._seed(db_session, sample_listing_data, 1)
 
         with patch(
-            "src.storage.repository.httpx.get",
+            "src.storage.repository._PROBE_CLIENT.get",
             side_effect=httpx.TimeoutException("timeout"),
         ):
             mark_inactive(db_session, "olx", {"some-other-id"})
@@ -403,7 +403,7 @@ class TestMarkInactiveURLVerify:
                 return Mock(status_code=404, text="")
             raise httpx.TimeoutException("timeout")
 
-        with patch("src.storage.repository.httpx.get", side_effect=_fake):
+        with patch("src.storage.repository._PROBE_CLIENT.get", side_effect=_fake):
             mark_inactive(db_session, "olx", {"some-other-id"}, max_workers=1)
         db_session.commit()
 
@@ -450,7 +450,7 @@ class TestRevalidateRecentSold:
         from unittest.mock import patch, Mock
         rows = self._seed_sold(db_session, sample_listing_data, 1)
         fake = Mock(status_code=200, text="<html>still listed</html>")
-        with patch("src.storage.repository.httpx.get", return_value=fake):
+        with patch("src.storage.repository._PROBE_CLIENT.get", return_value=fake):
             stats = revalidate_recent_sold(db_session, "olx")
         db_session.commit()
         assert stats["restored"] == 1
@@ -463,7 +463,7 @@ class TestRevalidateRecentSold:
         from unittest.mock import patch, Mock
         rows = self._seed_sold(db_session, sample_listing_data, 1)
         fake = Mock(status_code=404, text="")
-        with patch("src.storage.repository.httpx.get", return_value=fake):
+        with patch("src.storage.repository._PROBE_CLIENT.get", return_value=fake):
             stats = revalidate_recent_sold(db_session, "olx")
         db_session.commit()
         assert stats["restored"] == 0
@@ -480,7 +480,7 @@ class TestRevalidateRecentSold:
         rows = self._seed_sold(
             db_session, sample_listing_data, 1, days_ago=30,
         )
-        with patch("src.storage.repository.httpx.get") as mock_get:
+        with patch("src.storage.repository._PROBE_CLIENT.get") as mock_get:
             stats = revalidate_recent_sold(
                 db_session, "olx", max_age_days=14,
             )
@@ -504,7 +504,7 @@ class TestRevalidateRecentSold:
         l.deactivated_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)
         db_session.commit()
 
-        with patch("src.storage.repository.httpx.get") as mock_get:
+        with patch("src.storage.repository._PROBE_CLIENT.get") as mock_get:
             stats = revalidate_recent_sold(db_session, "olx")
         mock_get.assert_not_called()
         assert stats["checked"] == 0

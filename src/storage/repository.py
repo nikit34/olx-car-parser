@@ -23,6 +23,30 @@ from src.models.relist import RelistEvent
 from src.models.seller import Seller
 
 
+# Pooled probe client: ``revalidate_recent_sold`` and ``mark_inactive``
+# fan out _verify_listing_alive across a ThreadPoolExecutor, so each
+# scrape can fire hundreds of probes against olx.pt / standvirtual.com.
+# Sharing a Client gives HTTP keep-alive and bounds the open-socket
+# count to ``max_connections`` instead of one ephemeral port per probe
+# (the pattern that hit the 16 384-port pool ceiling on 2026-05-10 and
+# made the host reject every outbound TCP connect for ~10 minutes).
+_PROBE_CLIENT = httpx.Client(
+    headers={
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+    },
+    follow_redirects=True,
+    limits=httpx.Limits(
+        max_keepalive_connections=20,
+        max_connections=50,
+        keepalive_expiry=60.0,
+    ),
+)
+
+
 def upsert_listing(session: Session, data: dict) -> Listing:
     """Insert or update a listing by olx_id. Returns the Listing object."""
     # Canonicalise brand at write time so "VW" / "Citroen" don't land
@@ -153,17 +177,8 @@ def _verify_listing_alive(url: str, timeout: float = 8.0) -> bool | None:
     one cycle (promoted-slot rotation, pagination drift) doesn't get
     flagged "sold" while still actively listed.
     """
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
-    }
     try:
-        resp = httpx.get(
-            url, timeout=timeout, follow_redirects=True, headers=headers,
-        )
+        resp = _PROBE_CLIENT.get(url, timeout=timeout)
     except (httpx.TimeoutException, httpx.HTTPError, OSError):
         return None
     if resp.status_code in (404, 410):

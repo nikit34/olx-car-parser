@@ -31,6 +31,28 @@ _DEFAULT_HEADERS = {"User-Agent": "Mozilla/5.0"}
 _DEFAULT_TIMEOUT = 30
 
 
+# Module-level pooled client. ``verify-photos`` runs this through a
+# ThreadPoolExecutor and fires ~10–20 photo downloads per listing, all
+# against the same handful of hosts (apollo.olxcdn.com, standvirtual.com,
+# olx.pt). One-shot ``httpx.get`` opens a fresh TCP connection per call,
+# burns a fresh ephemeral port per call, and on 2026-05-10 starved the
+# scrape host's ephemeral pool — 16 597 sockets stuck in TIME_WAIT
+# against a 16 384-port range, so even ``git fetch`` started failing
+# with "Can't assign requested address". A persistent Client keeps
+# HTTP keep-alive across requests, so 20 sockets serve thousands of
+# fetches and the pool never saturates.
+_CLIENT = httpx.Client(
+    headers=_DEFAULT_HEADERS,
+    timeout=_DEFAULT_TIMEOUT,
+    follow_redirects=True,
+    limits=httpx.Limits(
+        max_keepalive_connections=20,
+        max_connections=50,
+        keepalive_expiry=60.0,
+    ),
+)
+
+
 # OLX serves photos via ``ireland.apollo.olxcdn.com`` with size variants —
 # ``;s=4080x3072`` is the original, ``;s=1000x700`` is medium. The 1000x700
 # variant is a good balance: ~50–150 KB/photo, classifier resizes to 224
@@ -53,8 +75,7 @@ def fetch_standvirtual_advert(url: str) -> dict:
     that means "skip this listing" or "raise".
     """
     try:
-        r = httpx.get(url, follow_redirects=True, timeout=_DEFAULT_TIMEOUT,
-                      headers=_DEFAULT_HEADERS)
+        r = _CLIENT.get(url)
         r.raise_for_status()
     except httpx.HTTPError:
         return {}
@@ -88,8 +109,7 @@ def fetch_photos_olx(url: str) -> list[str]:
     1000x700-sized URLs.
     """
     try:
-        r = httpx.get(url, follow_redirects=True, timeout=_DEFAULT_TIMEOUT,
-                      headers=_DEFAULT_HEADERS)
+        r = _CLIENT.get(url)
         r.raise_for_status()
     except httpx.HTTPError:
         return []
@@ -125,7 +145,7 @@ def download_photo(url: str, dest: Path) -> bool:
     if dest.exists():
         return True
     try:
-        r = httpx.get(url, follow_redirects=True, timeout=_DEFAULT_TIMEOUT)
+        r = _CLIENT.get(url)
         r.raise_for_status()
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(r.content)
