@@ -34,6 +34,11 @@ from src.analytics.decision import (
     decide as _decide_one,
     VERDICT_ICON,
 )
+from src.analytics.seller_segment import (
+    SEGMENT_LABELS,
+    SEGMENT_UNKNOWN,
+    add_seller_segment_column,
+)
 
 
 st.title("Model Details")
@@ -256,6 +261,23 @@ seg["__decision_score"] = seg["olx_id"].map(
 )
 
 # Order rows: active+highest score first, then sold by deactivation desc, then expired.
+# Seller-side segmentation. Reads the flat seller_* columns produced by
+# Repository.fetch_listings_df; no-op when those columns aren't present
+# (very old releases). Used both as a table column and as the grouping
+# key for the calibration breakdown further down.
+add_seller_segment_column(seg)
+_segment_short = {
+    "genuine_private": "private",
+    "pseudo_private": "pseudo-priv",
+    "specialist_dealer": "specialist",
+    "volume_dealer": "volume",
+    "unknown": "—",
+}
+if "seller_segment" in seg.columns:
+    seg["__seller_seg"] = seg["seller_segment"].map(_segment_short).fillna("—")
+else:
+    seg["__seller_seg"] = "—"
+
 seg["__sort_bucket"] = seg["__status"].map({"🟢 active": 0, "🔵 sold": 1, "⚫ expired": 2})
 seg = seg.sort_values(
     ["__sort_bucket", "__score", "__deact_dt"],
@@ -273,6 +295,7 @@ table = pd.DataFrame({
     "predicted €": pd.to_numeric(seg["__predicted"], errors="coerce").round(0).astype("Int64"),
     "flip": pd.to_numeric(seg["__score"], errors="coerce").round(0).astype("Int64"),
     "DoM (d)": pd.to_numeric(seg["__dom"], errors="coerce").astype("Int64"),
+    "seller": seg["__seller_seg"],
     "trim": seg.get("trim_level", "").fillna(""),
     "sub_model": seg.get("sub_model", "").fillna(""),
     "fuel": seg.get("fuel_type", "").fillna(""),
@@ -624,3 +647,59 @@ else:
             f"Median residual: €{residual:+,.0f} ({med_pct:+.1f}%). "
             f"Model {bias} this segment by that amount on sold rows."
         )
+
+        # Per-seller-segment breakdown. The headline residual blends
+        # private / dealer / flipper rows; if those sub-distributions
+        # have different bias signs, the global number is uninformative.
+        # Surfacing per-segment medians makes it obvious whether the
+        # bias is uniform (→ retrain) or driven by one bucket
+        # (→ feature engineering / per-segment threshold).
+        if "seller_segment" in cal.columns:
+            cal_seg = cal.copy()
+            cal_seg["__residual"] = cal_seg["price_eur"] - cal_seg["predicted"]
+            cal_seg["__residual_pct"] = (
+                cal_seg["__residual"] / cal_seg["predicted"] * 100
+            )
+            grp = cal_seg.groupby("seller_segment", dropna=False)
+            breakdown = pd.DataFrame({
+                "n_sold": grp.size(),
+                "median_residual_eur": grp["__residual"].median().round(0),
+                "median_residual_pct": grp["__residual_pct"].median().round(1),
+            }).reset_index()
+            breakdown["seller_segment"] = breakdown["seller_segment"].map(
+                lambda s: SEGMENT_LABELS.get(s, SEGMENT_LABELS[SEGMENT_UNKNOWN])
+            )
+            breakdown = breakdown.rename(columns={
+                "seller_segment": "Seller segment",
+                "n_sold": "n",
+                "median_residual_eur": "median residual €",
+                "median_residual_pct": "median residual %",
+            })
+            # Hide noise — segments with <3 sold rows can't support a
+            # stable median, so they'd just clutter the table. Keep
+            # the row count visible in the caption below.
+            n_total = int(breakdown["n"].sum())
+            visible = breakdown[breakdown["n"] >= 3].copy()
+            if visible.empty:
+                st.caption(
+                    f"Seller-segment breakdown unavailable: "
+                    f"only {n_total} sold rows, need ≥3 per bucket."
+                )
+            else:
+                st.markdown("**Residual by seller segment**")
+                st.dataframe(
+                    visible.sort_values("n", ascending=False),
+                    hide_index=True, use_container_width=True,
+                    column_config={
+                        "n": st.column_config.NumberColumn(format="%d"),
+                        "median residual €": st.column_config.NumberColumn(format="%+d"),
+                        "median residual %": st.column_config.NumberColumn(format="%+.1f"),
+                    },
+                )
+                st.caption(
+                    "Same metric as above, split by the seller's segment "
+                    "(see ``src/analytics/seller_segment.py``). A uniform "
+                    "sign across segments → systemic bias, retrain "
+                    "candidate. Different signs → segment-specific "
+                    "feature gap, not a global model issue."
+                )
