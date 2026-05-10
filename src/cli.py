@@ -1256,7 +1256,9 @@ def train_model():
     from src.analytics.turnover import compute_turnover_stats
     from src.analytics.price_model import (
         train_price_model, save_model, save_importance,
+        save_grouped_importance,
         compute_permutation_importance,
+        compute_grouped_permutation_importance,
     )
     from src.dashboard.data_loader import prepare_active_for_model
 
@@ -1301,11 +1303,17 @@ def train_model():
     )
     save_importance(importance_df)
 
+    grouped_importance_df = compute_grouped_permutation_importance(
+        models, cat_maps, active,
+    )
+    save_grouped_importance(grouped_importance_df)
+
     console.print(
         f"[green]Model saved.[/green] MAE={metrics['mae']:.0f} € · "
         f"MAPE={metrics['mape']:.1f}% · R²={metrics['r2']:.3f} · "
         f"n={metrics['n_samples']} · "
-        f"importance rows={len(importance_df)}"
+        f"importance rows={len(importance_df)} · "
+        f"grouped rows={len(grouped_importance_df)}"
     )
 
 

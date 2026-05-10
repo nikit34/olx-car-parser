@@ -46,6 +46,7 @@ brands_models = _loaded[3] if len(_loaded) > 3 else {}
 turnover_df = _loaded[4] if len(_loaded) > 4 else pd.DataFrame()
 importance_df = _loaded[7] if len(_loaded) > 7 else pd.DataFrame()
 predictions_df = _loaded[8] if len(_loaded) > 8 else pd.DataFrame()
+grouped_importance_df = _loaded[9] if len(_loaded) > 9 else pd.DataFrame()
 
 
 # Build a DecisionContext once per data refresh. ``predictions_df`` is
@@ -165,6 +166,20 @@ if not importance_df.empty:
         chart_df = chart_df[chart_df["median_importance"] > 0]
         chart_df = chart_df.set_index("feature").sort_values("median_importance")
         st.bar_chart(chart_df)
+
+if not grouped_importance_df.empty:
+    with st.sidebar.expander("Feature importance (grouped)"):
+        st.caption(
+            "Correlated features (brand+model+sub_model+generation+trim_level, "
+            "engine_cc+horsepower+fuel_type+transmission+drive_type, "
+            "segment+doors+seats) are permuted as a block, so the bar reflects "
+            "their joint contribution instead of being diluted by within-group "
+            "correlation."
+        )
+        gchart_df = grouped_importance_df[["group", "median_importance"]].copy()
+        gchart_df = gchart_df[gchart_df["median_importance"] > 0]
+        gchart_df = gchart_df.set_index("group").sort_values("median_importance")
+        st.bar_chart(gchart_df)
 
 from src.analytics.price_model import load_metrics_history
 

@@ -31,6 +31,7 @@ _MODEL_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 _MODEL_PATH = _MODEL_DIR / "price_model.joblib"
 _METRICS_PATH = _MODEL_DIR / "price_metrics.json"
 _IMPORTANCE_PATH = _MODEL_DIR / "price_importance.json"
+_GROUPED_IMPORTANCE_PATH = _MODEL_DIR / "price_grouped_importance.json"
 _MODEL_MAX_AGE_HOURS = 24
 _MIN_CATEGORY_COUNT = 3
 _OTHER_CATEGORY = "__other__"
@@ -1425,3 +1426,114 @@ def compute_permutation_importance(
     imp = pd.concat(rows, axis=1).reset_index()
     imp.columns = ["feature", "low_importance", "median_importance", "high_importance"]
     return imp.sort_values("median_importance", ascending=False).reset_index(drop=True)
+
+
+# Per-feature permutation under-counts the contribution of correlated
+# features: shuffling `brand` alone leaves `model`/`generation`/`sub_model`
+# intact, and the tree recovers the brand from those siblings, so the
+# measured drop in pinball loss is small. Grouping the correlated columns
+# and applying a SINGLE row-permutation to the whole block forces the
+# model to lose all the correlated signal at once, which exposes the true
+# joint contribution.
+_FEATURE_GROUPS: dict[str, tuple[str, ...]] = {
+    "vehicle_identity": ("brand", "model", "sub_model", "generation", "trim_level"),
+    "powertrain": ("engine_cc", "horsepower", "fuel_type", "transmission", "drive_type"),
+    "body": ("segment", "doors", "seats"),
+}
+
+
+def _expand_groups(
+    groups: dict[str, tuple[str, ...]],
+) -> dict[str, tuple[str, ...]]:
+    """Return groups + a singleton group for every feature not yet covered."""
+    covered = {f for fs in groups.values() for f in fs}
+    expanded = dict(groups)
+    for feat in _ALL_FEATURES:
+        if feat not in covered:
+            expanded[feat] = (feat,)
+    return expanded
+
+
+def compute_grouped_permutation_importance(
+    models: dict[str, lgb.LGBMRegressor],
+    cat_maps: dict[str, dict[str, int]],
+    listings_df: pd.DataFrame,
+    groups: dict[str, tuple[str, ...]] | None = None,
+    n_repeats: int = 10,
+    random_state: int = 42,
+) -> pd.DataFrame:
+    """Permutation importance with synchronized intra-group shuffling.
+
+    For each group, all member columns are shuffled together with the SAME
+    row permutation: row i gets row j's entire (brand, model, sub_model,
+    generation, trim_level) tuple. Singleton groups (one feature) reduce
+    to ordinary per-feature permutation, so the chart still surfaces
+    `year`, `mileage_km`, etc. individually.
+
+    Returns a DataFrame with columns
+    [group, members, low_importance, median_importance, high_importance].
+    Importance = mean increase in pinball loss when the group is permuted,
+    averaged over `n_repeats` trials. Same scoring convention as
+    `compute_permutation_importance`.
+    """
+    df = listings_df[
+        listings_df["price_eur"].notna()
+        & listings_df["year"].notna()
+        & listings_df["mileage_km"].notna()
+    ].copy()
+
+    y_log = np.log1p(np.maximum(df["price_eur"].values.astype(float), 0))
+    X_arr, _ = _prepare_X(df, cat_maps)
+    n_rows = len(X_arr)
+
+    expanded = _expand_groups(groups or _FEATURE_GROUPS)
+    feat_to_idx = {f: i for i, f in enumerate(_ALL_FEATURES)}
+    rng = np.random.default_rng(random_state)
+
+    # Pre-generate one permutation index per repeat so all groups and all
+    # quantile models see the same set of perturbations — keeps comparisons
+    # apples-to-apples and the result deterministic.
+    perms = [rng.permutation(n_rows) for _ in range(n_repeats)]
+
+    rows = []
+    for name, alpha in _QUANTILES.items():
+        baseline_pred = models[name].predict(X_arr)
+        baseline_loss = mean_pinball_loss(y_log, baseline_pred, alpha=alpha)
+
+        importances: dict[str, float] = {}
+        for grp_name, feats in expanded.items():
+            cols = [feat_to_idx[f] for f in feats if f in feat_to_idx]
+            if not cols:
+                continue
+            losses = []
+            for perm in perms:
+                X_perm = X_arr.copy()
+                X_perm[:, cols] = X_arr[perm][:, cols]
+                pred = models[name].predict(X_perm)
+                losses.append(mean_pinball_loss(y_log, pred, alpha=alpha))
+            importances[grp_name] = float(np.mean(losses) - baseline_loss)
+
+        rows.append(pd.Series(importances, name=f"{name}_importance"))
+
+    imp = pd.concat(rows, axis=1).reset_index()
+    imp.columns = ["group", "low_importance", "median_importance", "high_importance"]
+    imp["members"] = imp["group"].map(lambda g: ", ".join(expanded[g]))
+    return imp.sort_values("median_importance", ascending=False).reset_index(drop=True)
+
+
+def save_grouped_importance(importance_df: pd.DataFrame) -> None:
+    """Persist grouped permutation importance alongside the model."""
+    if importance_df is None or importance_df.empty:
+        return
+    _MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    _GROUPED_IMPORTANCE_PATH.write_text(importance_df.to_json(orient="records"))
+
+
+def load_grouped_importance() -> pd.DataFrame:
+    """Return the shipped grouped-importance frame, or empty if missing."""
+    if not _GROUPED_IMPORTANCE_PATH.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_json(_GROUPED_IMPORTANCE_PATH, orient="records")
+    except (ValueError, json.JSONDecodeError):
+        return pd.DataFrame()
