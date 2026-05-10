@@ -48,7 +48,7 @@ _OTHER_CATEGORY = "__other__"
 # scan kept running on every train/predict for nothing.
 # v8: drop the dead pipeline + helpers entirely. Bundle no longer carries
 # `text_pipeline`; `_prepare_X` stops fitting a TF-IDF/SVD on every call.
-_SCHEMA_VERSION = 10  # v10: uncertainty model uses 3 extra meta-features
+_SCHEMA_VERSION = 11  # v11: drop {color, drive_type, doors} after 2026-05-10 ablation
 # Fraction of the dataset (newest rows by first_seen_at) used as the
 # time-honest conformal calibration window. Random-KFold CQR mixes
 # time-adjacent rows across folds and over-estimates coverage on real future
@@ -111,9 +111,17 @@ BOOL_FEATURES: list[str] = []
 CATEGORICAL_FEATURES = [
     "brand", "model", "fuel_type", "transmission", "segment",
     "generation",
-    "color", "district", "drive_type", "sub_model", "trim_level",
-    "doors",
+    "district", "sub_model", "trim_level",
     # urgency and mechanical_condition (LLM-inferred) dropped in v7.
+    # color, drive_type, doors dropped in v11 (schema v11, 2026-05-10).
+    # Ablation on 18,376 listings: dropping all three improved R² +0.001,
+    # MAE −7 €, conformal_q_pct −0.6 pp (≈120 € narrower interval on a
+    # 20k € car), and cut training time 2.9× (186→64s). drive_type alone
+    # is recoverable from (brand, model, generation, segment, horsepower);
+    # color and doors carried no signal at all (median permutation
+    # importance ≤0.001). Raw fields still scraped and persisted —
+    # dashboard listing cards still show them, relist matching still
+    # uses them — they just don't enter the gradient-boosting model.
 ]
 
 _ALL_FEATURES = NUMERIC_FEATURES + BOOL_FEATURES + CATEGORICAL_FEATURES
@@ -1437,8 +1445,8 @@ def compute_permutation_importance(
 # joint contribution.
 _FEATURE_GROUPS: dict[str, tuple[str, ...]] = {
     "vehicle_identity": ("brand", "model", "sub_model", "generation", "trim_level"),
-    "powertrain": ("engine_cc", "horsepower", "fuel_type", "transmission", "drive_type"),
-    "body": ("segment", "doors", "seats"),
+    "powertrain": ("engine_cc", "horsepower", "fuel_type", "transmission"),
+    "body": ("segment", "seats"),
 }
 
 
