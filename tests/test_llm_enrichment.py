@@ -31,6 +31,8 @@ class FakeListing:
     description: str = "Vendo BMW 320d com 180.000km"
     mileage_km: int | None = 150000
     origin: str | None = None
+    brand: str = "BMW"
+    title: str = ""
 
 
 VALID_LLM_JSON = {
@@ -273,6 +275,71 @@ class TestCorrectListingData:
         corrections = correct_listing_data(listing)
         assert corrections["sub_model"] == "320d"
         assert corrections["trim_level"] == "M Sport"
+
+    # 2026-05-10 audit regression — see _validate_sub_model docstring.
+
+    def test_sub_model_drops_psa_tag_on_vag_brand(self):
+        listing = FakeListing(brand="Audi")
+        listing._llm_extras = {"sub_model": "2.0 HDi"}
+        corrections = correct_listing_data(listing)
+        assert "sub_model" not in corrections
+
+    def test_sub_model_drops_psa_tag_on_mercedes(self):
+        listing = FakeListing(brand="Mercedes-Benz")
+        listing._llm_extras = {"sub_model": "2.0 HDi"}
+        corrections = correct_listing_data(listing)
+        assert "sub_model" not in corrections
+
+    def test_sub_model_drops_gm_tag_on_fiat(self):
+        listing = FakeListing(brand="Fiat")
+        listing._llm_extras = {"sub_model": "1.3 CDTI"}
+        corrections = correct_listing_data(listing)
+        assert "sub_model" not in corrections
+
+    def test_sub_model_drops_vag_tag_on_bmw(self):
+        listing = FakeListing(brand="BMW")
+        listing._llm_extras = {"sub_model": "1.6 TDI"}
+        corrections = correct_listing_data(listing)
+        assert "sub_model" not in corrections
+
+    def test_sub_model_keeps_correct_family_tag(self):
+        listing = FakeListing(brand="Audi")
+        listing._llm_extras = {"sub_model": "2.0 TDI"}
+        corrections = correct_listing_data(listing)
+        assert corrections["sub_model"] == "2.0 TDI"
+
+    def test_sub_model_keeps_mercedes_cdi(self):
+        listing = FakeListing(brand="Mercedes-Benz")
+        listing._llm_extras = {"sub_model": "220 CDI"}
+        corrections = correct_listing_data(listing)
+        assert corrections["sub_model"] == "220 CDI"
+
+    def test_sub_model_keeps_renault_dci(self):
+        listing = FakeListing(brand="Renault")
+        listing._llm_extras = {"sub_model": "1.5 dCi"}
+        corrections = correct_listing_data(listing)
+        assert corrections["sub_model"] == "1.5 dCi"
+
+    def test_sub_model_keeps_bmw_xxxd(self):
+        listing = FakeListing(brand="BMW")
+        listing._llm_extras = {"sub_model": "320d"}
+        corrections = correct_listing_data(listing)
+        assert corrections["sub_model"] == "320d"
+
+    def test_sub_model_passes_through_unmapped_brand(self):
+        # Opel straddles GM/PSA eras — validator must not reject either.
+        listing = FakeListing(brand="Opel")
+        listing._llm_extras = {"sub_model": "1.6 CDTI"}
+        corrections = correct_listing_data(listing)
+        assert corrections["sub_model"] == "1.6 CDTI"
+
+    def test_sub_model_no_tech_tag_unaffected(self):
+        # Bare displacement / Mercedes class names have no recognized tech
+        # tag — validator must pass them through unchanged regardless of brand.
+        listing = FakeListing(brand="Audi")
+        listing._llm_extras = {"sub_model": "2.0"}
+        corrections = correct_listing_data(listing)
+        assert corrections["sub_model"] == "2.0"
 
     def test_damage_severity_derived_from_text(self):
         # Parts-car phrasing in description → severity 3 even when extras are empty.

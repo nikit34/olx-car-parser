@@ -173,7 +173,7 @@ _SYSTEM_PROMPT = """\
 Extract structured features from a Portuguese (pt-PT) car listing as ONE JSON object. Use null when a field cannot be determined from the text.
 
 Field rules:
-sub_model: engine/body variant only (displacement+fuel+power), e.g. "320d","1.6 TDI","2.0 TFSI","A 200","CLA 45". NOT a trim/package, NOT a bare model name.
+sub_model: engine/body variant only (displacement+fuel+power), e.g. "320d","1.6 TDI","2.0 TFSI","A 200","CLA 45". NOT a trim/package, NOT a bare model name. Tech tags belong to specific brand families — never assign a tag from the wrong family: TDI/TFSI/TSI = VAG only (VW/Audi/Seat/Skoda); HDi/BlueHDi/PureTech = PSA only (Peugeot/Citroën/DS); CDI/BlueTec = Mercedes only; dCi/TCe = Renault/Dacia/Nissan only; M-Jet/Multijet = FCA only (Fiat/Alfa Romeo); TDCi/EcoBoost = Ford only. BMW uses its own model-code form (116d, 320d, 535d) — never "1.6 TDI" and never just "Touring"/"xDrive". If unsure, output null.
 trim_level: equipment line e.g. "AMG Line","M Sport","S-Line","GTI","FR","Tekna". null if basic.
 mileage_in_description_km: integer km. "mil"=thousand only as separate word ("150 mil km"→150000; "89.500km"→89500). Service-interval km ("revisão aos 60.000 km") is NOT current mileage.
 
@@ -181,6 +181,12 @@ Examples:
 
 "BMW Série 3 320d Pack M com 180.000 km, 1 dono, garantia até 2026."
 → {"sub_model":"320d","trim_level":"Pack M","mileage_in_description_km":180000}
+
+"BMW 318d Touring Navigation Sport 143cv."
+→ {"sub_model":"318d","trim_level":null,"mileage_in_description_km":null}
+
+"Audi A4 B7 2.0 TDI 140cv."
+→ {"sub_model":"2.0 TDI","trim_level":null,"mileage_in_description_km":null}
 
 "Audi A3 1.6 TDI S-Line, 150 mil km."
 → {"sub_model":"1.6 TDI","trim_level":"S-Line","mileage_in_description_km":150000}
@@ -190,6 +196,84 @@ Examples:
 
 "Vendo Honda Civic Impecável." → {"sub_model":null,"trim_level":null,"mileage_in_description_km":null}
 """
+
+
+# ---------------------------------------------------------------------------
+# Brand-family validator for sub_model
+# ---------------------------------------------------------------------------
+# 2026-05-10 audit (1016 regex/LLM disagreements over 10.5k labeled rows)
+# found two repeating LLM hallucinations:
+#   - cross-brand tech tags ("2.0 HDi" on Audi/VW/Mercedes; "1.3 CDTI" on Fiat)
+#   - BMW losing the model code ("BMW 318d Touring" → "Touring"; "BMW 116d"
+#     → "1.6 TDI" — both wrong: Touring is body, TDI is VAG-only)
+# Defense-in-depth: even if the prompt fix lapses, this validator drops the
+# sub_model to NULL when its tech tag belongs to a different brand family.
+# Conservative: brands without a clear tag namespace (Opel — straddles
+# GM/PSA eras; Toyota/Volvo/Porsche — own conventions) pass through.
+
+_BRAND_FAMILY: dict[str, str] = {
+    "Volkswagen": "VAG", "VW": "VAG", "Audi": "VAG",
+    "Seat": "VAG", "SEAT": "VAG", "Skoda": "VAG", "Škoda": "VAG",
+    "Peugeot": "PSA", "Citroen": "PSA", "Citroën": "PSA", "DS": "PSA",
+    "Mercedes-Benz": "MB", "Mercedes": "MB",
+    "Renault": "RNO", "Dacia": "RNO", "Nissan": "RNO",
+    "Fiat": "FCA", "Alfa Romeo": "FCA", "Lancia": "FCA", "Jeep": "FCA",
+    "Ford": "FORD",
+    "Hyundai": "HK", "Kia": "HK",
+    "Mazda": "MAZDA",
+    "BMW": "BMW", "Mini": "BMW", "MINI": "BMW",
+}
+
+_TAG_FAMILY: dict[str, str] = {
+    "tdi": "VAG", "tfsi": "VAG", "tsi": "VAG",
+    "hdi": "PSA", "bluehdi": "PSA", "puretech": "PSA", "ehdi": "PSA",
+    "cdi": "MB", "bluetec": "MB",
+    "dci": "RNO", "tce": "RNO", "bluedci": "RNO", "digt": "RNO",
+    "multijet": "FCA", "mjet": "FCA", "jtd": "FCA",
+    "tdci": "FORD", "ecoboost": "FORD",
+    "crdi": "HK",
+    "skyactived": "MAZDA",
+    # CDTI is GM/Opel — kept as its own family so non-Opel/non-GM brands
+    # (e.g. Fiat with "1.3 CDTI") get rejected. Opel itself is omitted
+    # from _BRAND_FAMILY because post-2017 it's PSA, so the validator
+    # passes Opel CDTI/HDi/BlueHDi through without judgment.
+    "cdti": "GM",
+}
+
+_TAG_RE = re.compile(
+    r"\b(BlueHDi|BlueTec|Blue\s+dCi|Blue\s+HDi|PureTech|EcoBoost|"
+    r"Multijet|M-?Jet|SkyActive-?D|DIG-?T|"
+    r"TDI|TFSI|TSI|HDI|HDi|CDTI|CDI|dCi|DCI|TCe|TDCi|JTD|CRDi|e-HDi)\b",
+    re.IGNORECASE,
+)
+
+
+def _validate_sub_model(brand: str, sub_model: str) -> str | None:
+    """Drop sub_model whose tech tag belongs to the wrong brand family.
+
+    Returns the original string when the brand is not in the family map,
+    when no recognized tech tag is present, or when the tag's family
+    matches the brand's. Returns None only on confirmed cross-family
+    mismatch (e.g. "2.0 HDi" on an Audi).
+    """
+    if not brand or not sub_model:
+        return sub_model
+    brand_fam = _BRAND_FAMILY.get(brand)
+    if not brand_fam:
+        return sub_model
+    m = _TAG_RE.search(sub_model)
+    if not m:
+        return sub_model
+    tag_key = re.sub(r"[\s\-]", "", m.group(1).lower())
+    tag_fam = _TAG_FAMILY.get(tag_key)
+    if tag_fam and tag_fam != brand_fam:
+        logger.info(
+            "Dropped LLM sub_model %r for brand %s — tag family %s "
+            "doesn't match brand family %s",
+            sub_model, brand, tag_fam, brand_fam,
+        )
+        return None
+    return sub_model
 
 
 # ---------------------------------------------------------------------------
@@ -632,7 +716,11 @@ def correct_listing_data(listing) -> dict:
 
     sub_model = extras.get("sub_model")
     if sub_model and isinstance(sub_model, str) and sub_model.strip():
-        corrections["sub_model"] = sub_model.strip()
+        validated = _validate_sub_model(
+            getattr(listing, "brand", "") or "", sub_model.strip(),
+        )
+        if validated:
+            corrections["sub_model"] = validated
 
     trim = extras.get("trim_level")
     if trim and isinstance(trim, str) and trim.strip():
