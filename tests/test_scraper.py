@@ -199,6 +199,33 @@ class TestSearchPageWithStandVirtual:
         assert sv.year == 2014
         assert sv.mileage_km == 160000
 
+    def test_title_wrapper_layout_does_not_leak_price(self):
+        # OLX rolled out a new card layout ~2026-04-28 where the
+        # ``data-cy='ad-card-title'`` element is a *div wrapper* that
+        # also contains the price <p> and the "Negociável" badge.
+        # Reading the wrapper's text concatenated everything together
+        # ("Vw scirocco 20155.500 €Negociável"); the parser must drill
+        # into the inner <a>/<h4>.
+        html = """\
+<html><body>
+<div data-testid="l-card">
+  <div data-cy="ad-card-title" data-testid="ad-card-title">
+    <a href="https://www.olx.pt/d/anuncio/vw-scirocco-2015-IDJnpP1.html">
+      <h4>Vw scirocco 2015</h4>
+    </a>
+    <p data-testid="ad-price">5.500 €</p>
+    <span>Negociável</span>
+  </div>
+</div>
+</body></html>
+"""
+        scraper = OlxScraper(ScraperConfig())
+        listings = scraper._parse_search_page(html)
+        scraper.close()
+        assert len(listings) == 1
+        assert listings[0].title == "Vw scirocco 2015"
+        assert listings[0].price_eur == 5500.0
+
 
 # ---------------------------------------------------------------------------
 # _enrich_one routes by domain

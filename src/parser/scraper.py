@@ -243,8 +243,20 @@ class OlxScraper:
                 if not olx_id:
                     continue
 
-                title_el = card.select_one("[data-cy='ad-card-title']")
-                if not title_el:
+                # OLX rolled out a new card layout around 2026-04-28: the
+                # ``data-cy='ad-card-title'`` div is now a *wrapper* that
+                # also contains the price <p> and the "Negociável" badge
+                # <span>. Reading its .get_text() concatenates everything
+                # ("Vw scirocco 20155.500 €Negociável"). Drill into the
+                # inner <a>/<h4> which holds the title alone.
+                title_root = card.select_one("[data-cy='ad-card-title']")
+                if title_root:
+                    title_el = (
+                        title_root.find("a")
+                        or title_root.find(["h4", "h5", "h6"])
+                        or title_root
+                    )
+                else:
                     title_el = card.find("h6") or card.find("h4") or card.find("h5")
                 title = title_el.get_text(strip=True) if title_el else ""
 
