@@ -8,7 +8,13 @@ on:
     # via the daily deep sweep. Without the split, a listing that sinks past
     # page 30 the day it's posted never has its price re-checked.
     - cron: "0 0,8,12,16,20 * * *"
-    - cron: "0 4 * * *"
+    # Off-hour minute (xx:37) instead of 04:00 — GitHub silently drops
+    # scheduled runs at the top of the hour during peak load (we saw
+    # the deep sweep skipped 9 days in a row, May 2 → May 11, while
+    # every shallow xx:00 cron also missed occasionally but recovered
+    # within 4h). Per GitHub Actions docs: "schedule your workflow to
+    # run at a different time of the hour" to reduce delay/skip risk.
+    - cron: "37 4 * * *"
   workflow_dispatch:
     inputs:
       with_llm:
@@ -27,7 +33,7 @@ permissions:
 # Deep sweep fires on the dedicated 04:00 cron OR when manually requested.
 env:
   WITH_LLM: ${{ github.event_name == 'schedule' && 'true' || inputs.with_llm }}
-  IS_DEEP: ${{ github.event.schedule == '0 4 * * *' || inputs.deep == 'true' }}
+  IS_DEEP: ${{ github.event.schedule == '37 4 * * *' || inputs.deep == 'true' }}
 
 # Single-runner self-hosted setup — only one scrape can hold the SQLite DB
 # at a time anyway, so we cancel any in-flight run when a new cron fires
