@@ -107,7 +107,8 @@ def _format_deal(deal: dict) -> str:
             and not deal.get("seller_is_business")):
         seller_warnings.append(f"продаёт запчасти ({int(parts_count)})")
     n_brands = deal.get("seller_distinct_car_brands")
-    if (n_brands and int(n_brands) >= 3
+    if (n_brands and not (isinstance(n_brands, float) and n_brands != n_brands)
+            and int(n_brands) >= 3
             and not deal.get("seller_is_business")):
         seller_warnings.append(f"{int(n_brands)} разных марок под Particular")
     fs = deal.get("flipper_score")
@@ -124,7 +125,8 @@ def _format_deal(deal: dict) -> str:
     if deal.get("seller_has_user_photo"):
         seller_positives.append("фото профиля")
     age_days = deal.get("seller_account_age_days")
-    if age_days and int(age_days) >= 365 * 7:
+    if (age_days and not (isinstance(age_days, float) and age_days != age_days)
+            and int(age_days) >= 365 * 7):
         seller_positives.append(f"акк {int(age_days)//365}+ лет")
     if seller_warnings:
         lines.append(f"👤 Продавец: {', '.join(seller_warnings)}")
