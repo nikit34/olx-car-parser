@@ -237,14 +237,12 @@ listings, history, turnover, competition = get_data(_release_cache_signature())
 
 if listings.empty:
     st.error("No data yet. Scraper runs every 4 hours via GitHub Actions.")
-    from data_loader import get_last_release_error, _force_next_check
+    from data_loader import get_last_release_error, reboot_dashboard
     err = get_last_release_error()
     if err:
         st.warning(f"Release fetch failed: {err}")
     if st.button("Force refresh"):
-        _force_next_check()
-        st.cache_data.clear()
-        st.rerun()
+        reboot_dashboard()
     st.stop()
 
 active = listings[listings["is_active"]].copy() if "is_active" in listings.columns else listings.copy()

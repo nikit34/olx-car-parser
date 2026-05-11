@@ -18,7 +18,7 @@ _sys.path.insert(0, str(_dashboard_dir))
 _sys.path.insert(0, str(_project_root))
 
 from data_loader import (
-    _force_next_check, get_last_release_error, _fuel_group,
+    _force_next_check, reboot_dashboard, get_last_release_error, _fuel_group,
 )
 from _cache import (
     release_signature as _release_cache_signature,
@@ -106,9 +106,7 @@ if listings_df.empty:
     if err:
         st.sidebar.error(f"Release fetch failed: {err}")
     if st.sidebar.button("Force refresh"):
-        _force_next_check()
-        st.cache_data.clear()
-        st.rerun()
+        reboot_dashboard()
     st.stop()
 else:
     st.sidebar.success(f"{len(listings_df)} listings")

@@ -216,6 +216,38 @@ def _force_next_check():
             pass
 
 
+def reboot_dashboard():
+    """Closest user-code equivalent of Streamlit's "Reboot app".
+
+    A plain ``st.cache_data.clear() + st.rerun()`` is not enough on a
+    failed cold start: ``src.storage.database`` keeps the SQLAlchemy
+    engine as a module-level singleton, and Streamlit does NOT
+    re-import modules on rerun. If ``init_db()`` ran while the local
+    DB was missing it created an ~80 KB stub with just the schema; the
+    engine's connection pool + WAL sidecars are then anchored to that
+    stub and keep serving empty rows even after the CDN fallback
+    downloads a real DB over the file. The only fix short of killing
+    the process is to dispose the engine, drop the singletons, and let
+    the next query open fresh handles against the real file.
+    """
+    import streamlit as st
+    from src.storage import database as _db
+
+    global _LAST_RELEASE_ERROR
+    _force_next_check()
+    if _db._engine is not None:
+        try:
+            _db._engine.dispose()
+        except Exception:
+            pass
+    _db._engine = None
+    _db._Session = None
+    _LAST_RELEASE_ERROR = None
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    st.rerun()
+
+
 # Model + metrics live alongside the DB in the data release — shipped by CI
 # (see .github/workflows/scrape.yml `train-model` step). The dashboard never
 # trains locally; it just consumes what the pipeline produced.

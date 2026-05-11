@@ -23,7 +23,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from data_loader import _force_next_check, get_last_release_error
+from data_loader import reboot_dashboard, get_last_release_error
 from _cache import (
     release_signature as _release_cache_signature,
     load_all_cached,
@@ -64,9 +64,7 @@ if listings_df.empty:
     if err:
         st.error(f"Release fetch failed: {err}")
     if st.button("Force refresh"):
-        _force_next_check()
-        st.cache_data.clear()
-        st.rerun()
+        reboot_dashboard()
     st.stop()
 
 # --- Sidebar ---
