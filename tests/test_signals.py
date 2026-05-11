@@ -10,7 +10,7 @@ from src.dashboard.data_loader import compute_signals
 
 class TestComputeSignals:
     def test_empty_inputs(self):
-        signals, importance, predictions = compute_signals(pd.DataFrame(), pd.DataFrame())
+        signals, *_ = compute_signals(pd.DataFrame(), pd.DataFrame())
         assert signals.empty
 
     def test_without_gb_model_no_signals(

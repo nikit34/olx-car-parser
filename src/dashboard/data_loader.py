@@ -74,7 +74,7 @@ def _estimate_repair_cost(
         return 0.0
     if severity >= 3:
         return predicted_price
-    poor = (mech_condition or "").strip().lower() == "poor"
+    poor = isinstance(mech_condition, str) and mech_condition.strip().lower() == "poor"
     pct = _REPAIR_COST_PCT_POOR if poor else _REPAIR_COST_PCT_DEFAULT
     floor = _REPAIR_COST_FLOOR_POOR if poor else _REPAIR_COST_FLOOR_DEFAULT
     return max(predicted_price * pct, floor)
@@ -588,7 +588,7 @@ def compute_signals(
     if listings_df.empty:
         return (
             pd.DataFrame(), pd.DataFrame(), pd.DataFrame(),
-            pd.DataFrame(), {},
+            pd.DataFrame(), {}, pd.DataFrame(),
         )
 
     import numpy as np
