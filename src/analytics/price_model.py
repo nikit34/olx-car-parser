@@ -1322,48 +1322,83 @@ def compute_price_contributions(
     # Shape: (n_samples, n_features + 1). Last column is expected_value.
     contribs = median_model.predict(X_arr, pred_contrib=True)
     n_features = len(_ALL_FEATURES)
+    feat_contribs = contribs[:, :n_features]                 # (n, F)
+    baseline_log = contribs[:, -1]                           # (n,)
+
+    # Vectorized waterfall — replaces the per-row Python loop. Profiling
+    # showed the previous shape ate ~18s on 10k listings, dominated by
+    # ``listings_df.iloc[i].get(feat)`` in the inner loop (each call goes
+    # through pandas row-construction). All the math here is O(n × F) in
+    # numpy, and the per-row work that remains is bounded by
+    # top_k + 1 cells — ~50k label formats at most.
+    order = np.argsort(-np.abs(feat_contribs), axis=1, kind="stable")
+    sorted_contribs = np.take_along_axis(feat_contribs, order, axis=1)
+
+    # Running log1p price after each step; expm1 it to get EUR; diff gives
+    # the EUR delta per step. Prepending baseline makes the first diff be
+    # ``expm1(base + c0) - expm1(base)`` — the delta from baseline.
+    cumlog = baseline_log[:, None] + np.cumsum(sorted_contribs, axis=1)
+    cumlog_full = np.concatenate([baseline_log[:, None], cumlog], axis=1)
+    cum_eur = np.expm1(cumlog_full)                          # (n, F+1)
+    deltas_eur = np.diff(cum_eur, axis=1)                    # (n, F)
+
+    baseline_eur_arr = cum_eur[:, 0]                         # (n,)
+    predicted_eur_arr = cum_eur[:, -1]                       # (n,)
+
+    # Skip features with effectively-zero contribution so they don't
+    # crowd the top_k slots or inflate the "прочие" count.
+    nonzero_mask = np.abs(sorted_contribs) >= 1e-9           # (n, F)
+
+    head_slice = slice(0, top_k)
+    head_deltas = deltas_eur[:, head_slice]
+    head_idx = order[:, head_slice]
+    head_mask = nonzero_mask[:, head_slice]
+
+    if n_features > top_k:
+        tail_deltas = deltas_eur[:, top_k:]
+        tail_mask = nonzero_mask[:, top_k:]
+        rest_sum_arr = (tail_deltas * tail_mask).sum(axis=1)
+        rest_count_arr = tail_mask.sum(axis=1).astype(int)
+    else:
+        rest_sum_arr = np.zeros(len(deltas_eur))
+        rest_count_arr = np.zeros(len(deltas_eur), dtype=int)
+
+    # Pre-extract feature columns as numpy arrays for O(1) per-cell lookup
+    # in the label loop. Going through ``listings_df.iloc[i].get(feat)``
+    # was the bottleneck — pandas rebuilds a Series per row.
+    feat_values: dict[str, np.ndarray] = {}
+    src = listings_df.reset_index(drop=True)
+    for f in _ALL_FEATURES:
+        if f in src.columns:
+            feat_values[f] = src[f].to_numpy()
+        else:
+            feat_values[f] = np.full(len(src), None, dtype=object)
 
     result: dict[str, dict] = {}
-    olx_ids = listings_df["olx_id"].astype(str).values
+    olx_ids = listings_df["olx_id"].astype(str).to_numpy()
 
-    # Reset index so positional .iloc[i] aligns with X_arr rows even when
-    # the caller passed a non-default index.
-    src = listings_df.reset_index(drop=True)
-
-    for i, oid in enumerate(olx_ids):
+    for i in range(len(olx_ids)):
+        oid = olx_ids[i]
         if not oid or oid == "nan":
             continue
 
-        baseline_log = float(contribs[i, -1])
-        feat_contribs = contribs[i, :n_features]
-        baseline_eur = float(np.expm1(baseline_log))
-
-        # Order: biggest absolute log-contrib first. Ties broken by feature
-        # order in _ALL_FEATURES (numpy's argsort is stable).
-        order = np.argsort(-np.abs(feat_contribs), kind="stable")
-
-        running_log = baseline_log
         deltas: list[tuple[str, float]] = []
-        for idx in order:
-            c = float(feat_contribs[idx])
-            if abs(c) < 1e-9:
+        for j in range(head_idx.shape[1]):
+            if not head_mask[i, j]:
                 continue
-            new_log = running_log + c
-            delta_eur = float(np.expm1(new_log) - np.expm1(running_log))
-            running_log = new_log
+            f_idx = int(head_idx[i, j])
+            feat = _ALL_FEATURES[f_idx]
+            label = _format_contrib_label(feat, feat_values[feat][i])
+            deltas.append((label, float(head_deltas[i, j])))
 
-            feat = _ALL_FEATURES[idx]
-            raw_val = src.iloc[i].get(feat)
-            deltas.append((_format_contrib_label(feat, raw_val), delta_eur))
+        if rest_count_arr[i] > 0:
+            deltas.append(
+                (f"прочие (×{int(rest_count_arr[i])})",
+                 float(rest_sum_arr[i])),
+            )
 
-        predicted_eur = float(np.expm1(running_log))
-
-        if len(deltas) > top_k:
-            head = deltas[:top_k]
-            rest = deltas[top_k:]
-            rest_sum = float(sum(d for _, d in rest))
-            head.append((f"прочие (×{len(rest)})", rest_sum))
-            deltas = head
+        baseline_eur = float(baseline_eur_arr[i])
+        predicted_eur = float(predicted_eur_arr[i])
 
         result[oid] = {
             "baseline_eur": baseline_eur,
