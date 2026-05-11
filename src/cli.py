@@ -1275,9 +1275,7 @@ def train_model():
     from src.analytics.turnover import compute_turnover_stats
     from src.analytics.price_model import (
         train_price_model, save_model, save_importance,
-        save_grouped_importance,
-        compute_permutation_importance,
-        compute_grouped_permutation_importance,
+        save_grouped_importance, save_shap_importance,
     )
     from src.dashboard.data_loader import prepare_active_for_model
 
@@ -1308,7 +1306,10 @@ def train_model():
         console.print("[red]Training failed: insufficient data after filtering.[/red]")
         raise typer.Exit(1)
 
-    models, cat_maps, metrics, oof_preds, calibrator, uncertainty = result
+    (
+        models, cat_maps, metrics, oof_preds, calibrator, uncertainty,
+        importance_df, grouped_importance_df, shap_importance_df,
+    ) = result
     save_model(
         models, cat_maps, metrics,
         oof_preds=oof_preds,
@@ -1316,23 +1317,20 @@ def train_model():
         uncertainty_bundle=uncertainty,
     )
 
-    console.print("Computing permutation importance...")
-    importance_df = compute_permutation_importance(
-        models, cat_maps, active,
-    )
+    # All three importance frames are CV-honest — computed on val folds
+    # inside _cv_metrics during the same 5-fold CV that produced OOF preds.
+    # No extra fits, no in-sample bias to disclaim.
     save_importance(importance_df)
-
-    grouped_importance_df = compute_grouped_permutation_importance(
-        models, cat_maps, active,
-    )
     save_grouped_importance(grouped_importance_df)
+    save_shap_importance(shap_importance_df)
 
     console.print(
         f"[green]Model saved.[/green] MAE={metrics['mae']:.0f} € · "
         f"MAPE={metrics['mape']:.1f}% · R²={metrics['r2']:.3f} · "
         f"n={metrics['n_samples']} · "
         f"importance rows={len(importance_df)} · "
-        f"grouped rows={len(grouped_importance_df)}"
+        f"grouped rows={len(grouped_importance_df)} · "
+        f"shap rows={len(shap_importance_df)}"
     )
 
 

@@ -143,13 +143,17 @@ def get_model_data(_active_df, _listings_df):
     active = _active_df.copy()
 
     saved = load_model()
+    fallback_importance: pd.DataFrame | None = None
     if saved is not None:
         models, cat_maps, metrics, oof_preds, calibrator, uncertainty = saved
     else:
         result = train_price_model(active)
         if result is None:
             return None
-        models, cat_maps, metrics, oof_preds, calibrator, uncertainty = result
+        (
+            models, cat_maps, metrics, oof_preds, calibrator, uncertainty,
+            fallback_importance, _grouped, _shap,
+        ) = result
         save_model(
             models, cat_maps, metrics,
             oof_preds=oof_preds,
@@ -170,9 +174,16 @@ def get_model_data(_active_df, _listings_df):
         conformal_q_bucket_edges=bucket_edges,
         uncertainty_bundle=uncertainty,
     )
-    importance = compute_permutation_importance(
-        models, cat_maps, active,
-    )
+    # Importance: prefer CV-honest perm frame from the just-finished train,
+    # otherwise fall back to the legacy on-sample helper (saved model path —
+    # the CI bundle's importance.json is the source of truth for the prod
+    # dashboard; this branch only runs in dev/local-train mode).
+    if fallback_importance is not None:
+        importance = fallback_importance
+    else:
+        importance = compute_permutation_importance(
+            models, cat_maps, active,
+        )
     fill_rate = compute_feature_completeness(active)
 
     active = active.join(price_df)

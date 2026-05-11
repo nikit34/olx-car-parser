@@ -165,19 +165,38 @@ hide_non_buy = st.sidebar.checkbox(
 )
 
 if not importance_df.empty:
-    with st.sidebar.expander("Feature importance"):
+    with st.sidebar.expander("Feature importance (CV permutation)"):
+        st.caption(
+            "Pinball-loss delta when each feature is shuffled on the val "
+            "fold (5-fold CV, no in-sample bias). Tail features rank low "
+            "because the median model recovers them from siblings."
+        )
         chart_df = importance_df[["feature", "median_importance"]].copy()
         chart_df = chart_df[chart_df["median_importance"] > 0]
         chart_df = chart_df.set_index("feature").sort_values("median_importance")
         st.bar_chart(chart_df)
 
-if not grouped_importance_df.empty:
-    with st.sidebar.expander("Feature importance (grouped)"):
+# Slot 11 added 2026-05-11 — safe default keeps older cache entries from
+# crashing the page during the rollover.
+shap_importance_df = _loaded[11] if len(_loaded) > 11 else pd.DataFrame()
+if not shap_importance_df.empty:
+    with st.sidebar.expander("Feature importance (mean |SHAP|)"):
         st.caption(
-            "Correlated features (brand+model+sub_model+generation+trim_level, "
-            "engine_cc+horsepower+fuel_type+transmission+drive_type, "
-            "segment+doors+seats) are permuted as a block, so the bar reflects "
-            "their joint contribution instead of being diluted by within-group "
+            "Mean |TreeSHAP| contribution in log1p(EUR) units, averaged over "
+            "val-fold predictions. SHAP fairly splits credit across "
+            "correlated features without needing manual grouping."
+        )
+        schart_df = shap_importance_df[["feature", "median_importance"]].copy()
+        schart_df = schart_df[schart_df["median_importance"] > 0]
+        schart_df = schart_df.set_index("feature").sort_values("median_importance")
+        st.bar_chart(schart_df)
+
+if not grouped_importance_df.empty:
+    with st.sidebar.expander("Feature importance (grouped permutation)"):
+        st.caption(
+            "Correlated features (vehicle_identity, powertrain, body) are "
+            "permuted as a block on val folds, so each bar reflects the "
+            "joint contribution instead of being diluted by within-group "
             "correlation."
         )
         gchart_df = grouped_importance_df[["group", "median_importance"]].copy()

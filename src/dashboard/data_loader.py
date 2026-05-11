@@ -223,6 +223,7 @@ _MODEL_PATH = PROJECT_ROOT / "data" / "price_model.joblib"
 _METRICS_PATH = PROJECT_ROOT / "data" / "price_metrics.json"
 _IMPORTANCE_PATH = PROJECT_ROOT / "data" / "price_importance.json"
 _GROUPED_IMPORTANCE_PATH = PROJECT_ROOT / "data" / "price_grouped_importance.json"
+_SHAP_IMPORTANCE_PATH = PROJECT_ROOT / "data" / "price_shap_importance.json"
 
 _RELEASE_ASSETS: tuple[tuple[str, Path], ...] = (
     ("olx_cars.db", DB_PATH),
@@ -230,6 +231,7 @@ _RELEASE_ASSETS: tuple[tuple[str, Path], ...] = (
     ("price_metrics.json", _METRICS_PATH),
     ("price_importance.json", _IMPORTANCE_PATH),
     ("price_grouped_importance.json", _GROUPED_IMPORTANCE_PATH),
+    ("price_shap_importance.json", _SHAP_IMPORTANCE_PATH),
 )
 
 
@@ -696,6 +698,7 @@ def compute_signals(
         compute_feature_completeness,
         load_importance,
         load_grouped_importance,
+        load_shap_importance,
         load_model,
     )
 
@@ -742,6 +745,7 @@ def compute_signals(
     # 690-predict permutation loop per signal recompute.
     importance_df = load_importance()
     grouped_importance_df = load_grouped_importance()
+    shap_importance_df = load_shap_importance()
     if gb_models is not None:
         _conformal_q = _gb_metrics.get("conformal_q", 0.0) if _gb_metrics else 0.0
         _per_bucket_q = (
@@ -1303,7 +1307,7 @@ def compute_signals(
     })
     return (
         df, importance_df, grouped_importance_df, predictions_df,
-        gb_contributions,
+        gb_contributions, shap_importance_df,
     )
 
 
@@ -1381,7 +1385,7 @@ def load_all():
         _ts = _step("compute_turnover_stats", _ts)
         (
             signals, importance, grouped_importance, predictions,
-            contributions,
+            contributions, shap_importance,
         ) = compute_signals(
             listings, history, turnover=turnover,
         )
@@ -1394,6 +1398,7 @@ def load_all():
         grouped_importance = pd.DataFrame()
         predictions = pd.DataFrame()
         contributions = {}
+        shap_importance = pd.DataFrame()
         turnover = pd.DataFrame()
 
     portfolio = load_portfolio()
@@ -1412,5 +1417,5 @@ def load_all():
     return (
         listings, history, signals, brands_models, turnover,
         portfolio, unmatched, importance, predictions,
-        grouped_importance, contributions,
+        grouped_importance, contributions, shap_importance,
     )

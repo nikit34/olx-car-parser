@@ -87,7 +87,7 @@ def trained():
     fold above the 100-row train minimum that time_backtest requires.
     """
     df = _sample_listings(600)
-    models, cat_maps, metrics, oof_preds, calibrator, _unc = train_price_model(df)
+    models, cat_maps, metrics, oof_preds, calibrator, _unc, *_imp = train_price_model(df)
     return df, models, cat_maps, metrics, oof_preds, calibrator
 
 

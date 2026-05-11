@@ -32,6 +32,7 @@ _MODEL_PATH = _MODEL_DIR / "price_model.joblib"
 _METRICS_PATH = _MODEL_DIR / "price_metrics.json"
 _IMPORTANCE_PATH = _MODEL_DIR / "price_importance.json"
 _GROUPED_IMPORTANCE_PATH = _MODEL_DIR / "price_grouped_importance.json"
+_SHAP_IMPORTANCE_PATH = _MODEL_DIR / "price_shap_importance.json"
 _MODEL_MAX_AGE_HOURS = 24
 _MIN_CATEGORY_COUNT = 3
 _OTHER_CATEGORY = "__other__"
@@ -815,9 +816,11 @@ def _per_row_conformal_q(
 def _cv_metrics(
     df: pd.DataFrame,
     n_splits: int = 5,
+    n_perm_repeats: int = 10,
 ) -> tuple[
     dict, dict[str, int], np.ndarray, IsotonicRegression | None,
     tuple[lgb.LGBMRegressor, float] | None,
+    pd.DataFrame, pd.DataFrame, pd.DataFrame,
 ]:
     """K-fold CV for all three quantile models with per-fold categorical
     encoding (no leakage) and early stopping to tune n_estimators.
@@ -828,6 +831,16 @@ def _cv_metrics(
     R², pinball) are reported on the price scale by back-transforming OOF
     predictions with expm1.
 
+    Three importance frames are computed on val folds inside the same loop —
+    each fold model scores its held-out slice, so in-sample bias disappears.
+    Cost is essentially zero extra fits (fold models are already trained for
+    OOF preds + early-stop), just extra predicts on permuted inputs:
+      * cv_perm_df       — per-feature permutation (single column shuffled)
+      * cv_grouped_df    — block permutation over `_FEATURE_GROUPS`
+                           (correlated features shuffled together)
+      * cv_shap_df       — mean(|TreeSHAP|) via LGBM `pred_contrib=True`,
+                           inherently correlation-aware
+
     Returns:
       metrics: dict of CV metrics for the dashboard
       suggested: per-quantile early-stop iteration counts (log-pinball converges
@@ -835,6 +848,9 @@ def _cv_metrics(
       oof_band: (3, n) array of [low, median, high] OOF predictions in price
                 space — already calibrated with conformal_q, sorted to repair
                 crossings, and clamped at 0. Indexed by df row position.
+      median_calibrator: isotonic post-cal for the median quantile.
+      uncertainty_bundle: per-row CQR widening bundle or None.
+      cv_perm_df, cv_grouped_df, cv_shap_df: CV-honest importance frames.
     """
     raw_price = df["price_eur"].values.astype(float)
     # Apply the same sold-listing target discount + sample-weight haircut
@@ -854,7 +870,21 @@ def _cv_metrics(
     oof_log = {name: np.full(len(y_all), np.nan) for name in _QUANTILES}
     best_iters: dict[str, list[int]] = {name: [] for name in _QUANTILES}
 
-    for train_idx, val_idx in kf.split(df):
+    # Honest-importance accumulators. Each fold contributes its val-fold view;
+    # we average after the loop. Same scoring convention as the OOF metrics
+    # above (pinball loss in log space, sample-weighted), so the numbers are
+    # directly comparable across quantiles.
+    n_features = len(_ALL_FEATURES)
+    feat_to_idx = {f: i for i, f in enumerate(_ALL_FEATURES)}
+    expanded_groups = _expand_groups(_FEATURE_GROUPS)
+    perm_accum = {name: np.zeros(n_features) for name in _QUANTILES}
+    grouped_perm_accum: dict[str, dict[str, float]] = {
+        name: {g: 0.0 for g in expanded_groups} for name in _QUANTILES
+    }
+    shap_abs_sum = {name: np.zeros(n_features) for name in _QUANTILES}
+    shap_n: dict[str, int] = {name: 0 for name in _QUANTILES}
+
+    for fold_idx, (train_idx, val_idx) in enumerate(kf.split(df)):
         train_df = df.iloc[train_idx]
         val_df = df.iloc[val_idx]
         # Encode categoricals on train only — no leakage into the val fold.
@@ -877,10 +907,59 @@ def _cv_metrics(
                 categorical_feature=cat_indices,
                 callbacks=[lgb.early_stopping(_EARLY_STOPPING_ROUNDS, verbose=False)],
             )
-            oof_log[name][val_idx] = model.predict(X_val)
+            base_val_pred = model.predict(X_val)
+            oof_log[name][val_idx] = base_val_pred
             best_iters[name].append(
                 int(model.best_iteration_ or _LGB_PARAMS["n_estimators"])
             )
+
+            # CV permutation importance — sklearn helper handles n_repeats +
+            # parallelism. Different seed per fold so the val-fold shuffles
+            # aren't identical across folds.
+            scorer = make_scorer(
+                mean_pinball_loss, alpha=alpha, greater_is_better=False,
+            )
+            perm_result = permutation_importance(
+                model, X_val, y_val_log,
+                n_repeats=n_perm_repeats,
+                random_state=42 + fold_idx,
+                n_jobs=-1,
+                scoring=scorer,
+                sample_weight=sw_val,
+            )
+            perm_accum[name] += perm_result.importances_mean
+
+            # CV grouped permutation — synchronized intra-group shuffle on
+            # val rows. Same baseline (no perm) loss subtracted; same set
+            # of permutations reused across groups for apples-to-apples.
+            base_loss = mean_pinball_loss(
+                y_val_log, base_val_pred, alpha=alpha, sample_weight=sw_val,
+            )
+            rng = np.random.default_rng(42 + fold_idx)
+            perms = [rng.permutation(len(X_val)) for _ in range(n_perm_repeats)]
+            for grp_name, feats in expanded_groups.items():
+                cols = [feat_to_idx[f] for f in feats if f in feat_to_idx]
+                if not cols:
+                    continue
+                losses = []
+                for perm in perms:
+                    X_perm = X_val.copy()
+                    X_perm[:, cols] = X_val[perm][:, cols]
+                    losses.append(mean_pinball_loss(
+                        y_val_log, model.predict(X_perm),
+                        alpha=alpha, sample_weight=sw_val,
+                    ))
+                grouped_perm_accum[name][grp_name] += float(
+                    np.mean(losses) - base_loss
+                )
+
+            # CV mean(|TreeSHAP|) — LightGBM's path-dependent contributions in
+            # log1p(EUR) space. Sum |contrib| across val rows, divide by total
+            # val count at the end → arithmetic mean over the OOF distribution.
+            # Last column is the expected_value (baseline), drop it.
+            contribs = model.predict(X_val, pred_contrib=True)
+            shap_abs_sum[name] += np.abs(contribs[:, :n_features]).sum(axis=0)
+            shap_n[name] += len(X_val)
 
     # Per-quantile early-stop suggestion (median across folds). Tails converge
     # at different rates than median, so each gets its own count. Compute now
@@ -1038,7 +1117,68 @@ def _cv_metrics(
         "monotone_constraints": True,
         "n_features": len(_ALL_FEATURES),
     }
-    return metrics, suggested, oof_band, median_calibrator, uncertainty_bundle
+
+    cv_perm_df = _build_importance_df(perm_accum, n_splits)
+    cv_grouped_df = _build_grouped_importance_df(
+        grouped_perm_accum, n_splits, expanded_groups,
+    )
+    cv_shap_df = _build_shap_importance_df(shap_abs_sum, shap_n)
+    return (
+        metrics, suggested, oof_band, median_calibrator, uncertainty_bundle,
+        cv_perm_df, cv_grouped_df, cv_shap_df,
+    )
+
+
+def _build_importance_df(
+    accum: dict[str, np.ndarray], n_splits: int,
+) -> pd.DataFrame:
+    """Average per-fold permutation accumulators → tidy DataFrame."""
+    rows = []
+    for name in ("low", "median", "high"):
+        rows.append(pd.Series(
+            accum[name] / max(n_splits, 1),
+            index=_ALL_FEATURES, name=f"{name}_importance",
+        ))
+    imp = pd.concat(rows, axis=1).reset_index()
+    imp.columns = ["feature", "low_importance", "median_importance", "high_importance"]
+    return imp.sort_values("median_importance", ascending=False).reset_index(drop=True)
+
+
+def _build_grouped_importance_df(
+    accum: dict[str, dict[str, float]], n_splits: int,
+    expanded: dict[str, tuple[str, ...]],
+) -> pd.DataFrame:
+    """Average per-fold grouped permutation accumulators → tidy DataFrame."""
+    rows = []
+    for name in ("low", "median", "high"):
+        rows.append(pd.Series(
+            {g: v / max(n_splits, 1) for g, v in accum[name].items()},
+            name=f"{name}_importance",
+        ))
+    imp = pd.concat(rows, axis=1).reset_index()
+    imp.columns = ["group", "low_importance", "median_importance", "high_importance"]
+    imp["members"] = imp["group"].map(lambda g: ", ".join(expanded[g]))
+    return imp.sort_values("median_importance", ascending=False).reset_index(drop=True)
+
+
+def _build_shap_importance_df(
+    abs_sum: dict[str, np.ndarray], n: dict[str, int],
+) -> pd.DataFrame:
+    """Mean |TreeSHAP| per feature → tidy DataFrame.
+
+    Values are in log1p(EUR) space (LightGBM's `pred_contrib` units). Not
+    directly comparable to permutation importance numbers (which are pinball
+    deltas); the chart x-axis label spells this out.
+    """
+    rows = []
+    for name in ("low", "median", "high"):
+        rows.append(pd.Series(
+            abs_sum[name] / max(n[name], 1),
+            index=_ALL_FEATURES, name=f"{name}_importance",
+        ))
+    imp = pd.concat(rows, axis=1).reset_index()
+    imp.columns = ["feature", "low_importance", "median_importance", "high_importance"]
+    return imp.sort_values("median_importance", ascending=False).reset_index(drop=True)
 
 
 def train_price_model(
@@ -1051,11 +1191,15 @@ def train_price_model(
     dict[str, tuple[float, float, float]],
     IsotonicRegression | None,
     tuple[lgb.LGBMRegressor, float] | None,
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
 ] | None:
     """Train quantile regression models: median, low (10th), high (90th).
 
     Returns (models, category_maps, metrics, oof_preds, median_calibrator,
-    uncertainty_bundle) or None if insufficient data.
+    uncertainty_bundle, cv_perm_df, cv_grouped_df, cv_shap_df) or None if
+    insufficient data.
 
     - ``oof_preds``: dict olx_id → (low, median, high) of cross-validated,
       calibrated, crossing-repaired predictions in price space.
@@ -1065,6 +1209,9 @@ def train_price_model(
       CQR widening, or ``None`` if the time-aware split was too small
       to fit. ``predict_prices`` prefers this over the per-bucket q
       lookup when present.
+    - ``cv_perm_df`` / ``cv_grouped_df`` / ``cv_shap_df``: importance
+      frames computed on val folds inside the CV loop (no in-sample bias).
+      Persisted alongside the model by ``cli.py train-model``.
     """
     needed = {"price_eur", "year", "mileage_km"}
     if not needed.issubset(listings_df.columns):
@@ -1089,10 +1236,11 @@ def train_price_model(
 
     # CV with per-fold cat encoding + per-quantile early stopping → tuned
     # n_estimators dict + OOF predictions in price space + isotonic calibrator
-    # for the median quantile.
+    # for the median quantile. Importance frames (perm/grouped/shap) are
+    # computed on val folds inside the same CV loop — free of in-sample bias.
     (
         metrics, best_iters_per_q, oof_band, median_calibrator,
-        uncertainty_bundle,
+        uncertainty_bundle, cv_perm_df, cv_grouped_df, cv_shap_df,
     ) = _cv_metrics(df)
     metrics["filter_stats"] = filter_stats
     n_sold = int((sold_w != 1.0).sum())
@@ -1131,7 +1279,10 @@ def train_price_model(
                 float(oof_band[2, i]),
             )
 
-    return models, cat_maps, metrics, oof_preds, median_calibrator, uncertainty_bundle
+    return (
+        models, cat_maps, metrics, oof_preds, median_calibrator,
+        uncertainty_bundle, cv_perm_df, cv_grouped_df, cv_shap_df,
+    )
 
 
 def predict_prices(
@@ -1565,10 +1716,12 @@ def compute_permutation_importance(
     sense for the tail quantiles. Targets are in log space because the models
     predict log1p(price).
 
-    Note: importance is computed on the same data the model was trained on,
-    which mildly overstates feature contributions. A cleaner version would
-    score on a held-out fold, but that costs a re-fit per quantile and the
-    current ranking is already stable enough for the dashboard's purpose.
+    On-sample fallback. The CI path inside ``_cv_metrics`` computes a CV-honest
+    version (val-fold permutation, no in-sample bias) that ships as
+    ``price_importance.json``. This function stays around for the dev-mode
+    local-train path in ``visualizations.get_model_data`` and any standalone
+    re-compute over a single (model, dataset) pair where running full CV
+    would be overkill.
     """
     df = listings_df[
         listings_df["price_eur"].notna()
@@ -1705,5 +1858,29 @@ def load_grouped_importance() -> pd.DataFrame:
         return pd.DataFrame()
     try:
         return pd.read_json(_GROUPED_IMPORTANCE_PATH, orient="records")
+    except (ValueError, json.JSONDecodeError):
+        return pd.DataFrame()
+
+
+def save_shap_importance(importance_df: pd.DataFrame) -> None:
+    """Persist mean(|TreeSHAP|) global importance next to the model.
+
+    Same column shape as permutation importance — feature/low/median/high —
+    so the dashboard renders both with the same chart code. Values are in
+    log1p(EUR) units (LightGBM `pred_contrib` output), which is a different
+    scale from the permutation pinball deltas — chart axes label this.
+    """
+    if importance_df is None or importance_df.empty:
+        return
+    _MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    _SHAP_IMPORTANCE_PATH.write_text(importance_df.to_json(orient="records"))
+
+
+def load_shap_importance() -> pd.DataFrame:
+    """Return the shipped SHAP-importance frame, or empty if missing."""
+    if not _SHAP_IMPORTANCE_PATH.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_json(_SHAP_IMPORTANCE_PATH, orient="records")
     except (ValueError, json.JSONDecodeError):
         return pd.DataFrame()
