@@ -21,9 +21,19 @@ from __future__ import annotations
 
 import re
 import threading
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
+
+# easyocr's internal DataLoader hardcodes pin_memory=True (recognition.py
+# lines 201, 215) — no API knob. On MPS that fires a UserWarning per
+# readtext() call. Suppress the exact message, not all pin_memory warnings.
+warnings.filterwarnings(
+    "ignore",
+    message=r"'pin_memory' argument is set as true but not supported on MPS.*",
+    category=UserWarning,
+)
 
 
 # Portuguese plate eras (each group is 2 chars):
