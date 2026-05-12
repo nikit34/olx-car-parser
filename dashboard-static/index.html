@@ -30,6 +30,25 @@
       font-size: 14px; text-align: center; z-index: 0;
       pointer-events: none;
     }
+    /* Hide Streamlit's branding chrome — top-right toolbar (Deploy button,
+       hamburger with Print/Record screen/"Made with Streamlit v…"), the
+       footer badge, and the "Hosted with Streamlit" viewer-badge. The
+       ``client.toolbarMode: "minimal"`` config below covers the toolbar
+       on supported versions, but stlite pins an older Streamlit where the
+       config knob doesn't fully take effect — belt + braces. */
+    [data-testid="stToolbar"],
+    [data-testid="stStatusWidget"],
+    [data-testid="stDecoration"],
+    [data-testid="stMainMenu"],
+    #MainMenu,
+    header [data-testid="stHeader"] button[kind="header"],
+    footer,
+    .viewerBadge_container__1QSob,
+    [class*="viewerBadge_container__"],
+    a[href*="streamlit.io"][href*="cloud"] {
+      display: none !important;
+      visibility: hidden !important;
+    }
   </style>
 </head>
 <body>
@@ -115,6 +134,11 @@
             "theme.secondaryBackgroundColor": "#262730",
             "theme.textColor": "#FAFAFA",
             "browser.gatherUsageStats": false,
+            // Hide the top-right hamburger (Print / Record screen / Made
+            // with Streamlit v…) and the Deploy button. Belt-and-braces
+            // CSS in <head> covers older Streamlit versions where this
+            // knob doesn't fully suppress the toolbar.
+            "client.toolbarMode": "minimal",
           },
         },
         document.getElementById("root"),
