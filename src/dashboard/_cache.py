@@ -20,8 +20,6 @@ from __future__ import annotations
 
 import streamlit as st
 
-import pandas as pd
-
 from data_loader import (
     load_all as _load_all,
     load_snapshots as _load_snapshots,
@@ -42,38 +40,3 @@ def load_all_cached(_sig: tuple[str, int]):
 @st.cache_data(ttl=1800)
 def load_snapshots_cached(_sig: tuple[str, int], since_days: int):
     return _load_snapshots(since_days)
-
-
-def render_context_badge(
-    listings_df: pd.DataFrame | None,
-    signals_df: pd.DataFrame | None,
-) -> None:
-    """Render a one-line data context caption at the top of a page.
-
-    ``19,308 listings · 10,058 active · 1,492 deals · built 2026-05-12 11:00 UTC``
-
-    The same snapshot drives every page, so this caption lets a viewer
-    see the corpus scope on any page without flipping back to the
-    Recommendations sidebar (which used to be the only place the count
-    was shown).
-    """
-    total = len(listings_df) if isinstance(listings_df, pd.DataFrame) else 0
-    if (
-        isinstance(listings_df, pd.DataFrame)
-        and not listings_df.empty
-        and "is_active" in listings_df.columns
-    ):
-        active = int(listings_df["is_active"].fillna(False).astype(bool).sum())
-    else:
-        active = 0
-    deals = len(signals_df) if isinstance(signals_df, pd.DataFrame) else 0
-
-    built_at, _ = dashboard_data_signature()
-    if built_at:
-        built_short = built_at.replace("T", " ").replace("Z", " UTC")
-    else:
-        built_short = "—"
-
-    st.caption(
-        f"{total:,} listings · {active:,} active · {deals:,} deals · built {built_short}"
-    )

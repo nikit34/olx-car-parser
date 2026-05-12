@@ -28,7 +28,6 @@ from _cache import (
     release_signature as _release_cache_signature,
     load_all_cached,
     load_snapshots_cached,
-    render_context_badge,
 )
 from src.analytics.decision import (
     build_context as _build_decision_context,
@@ -58,7 +57,6 @@ history_df = _loaded[1] if len(_loaded) > 1 else pd.DataFrame()
 signals_df = _loaded[2] if len(_loaded) > 2 else pd.DataFrame()
 brands_models = _loaded[3] if len(_loaded) > 3 else {}
 predictions_df = _loaded[8] if len(_loaded) > 8 else pd.DataFrame()
-render_context_badge(listings_df, signals_df)
 if listings_df.empty:
     st.warning("No data yet.")
     err = get_last_release_error()

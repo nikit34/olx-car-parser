@@ -31,7 +31,6 @@ from _cache import (
     release_signature as _release_cache_signature,
     load_all_cached,
     load_snapshots_cached,
-    render_context_badge,
 )
 
 
@@ -43,11 +42,7 @@ st.caption(
 )
 
 
-_loaded = load_all_cached(_release_cache_signature())
-listings_df = _loaded[0]
-_signals_df = _loaded[2] if len(_loaded) > 2 else pd.DataFrame()
-render_context_badge(listings_df, _signals_df)
-_rest = _loaded[1:]
+listings_df, *_rest = load_all_cached(_release_cache_signature())
 if listings_df.empty:
     st.warning("No data yet.")
     err = get_last_release_error()
