@@ -287,7 +287,12 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           PYTHONPATH: ${{ github.workspace }}
-        timeout-minutes: 5
+        # Internal retry envelope is ~8 min (src/alerts/telegram_bot.py
+        # _REFRESH_RETRY_*), sized to outlast the scrape worker's 3-5 min
+        # market_stats lock. Step timeout must exceed that envelope with
+        # buffer for the non-retry work, otherwise Actions kills the
+        # process mid-retry (see retry 4/12 timeouts in old runs).
+        timeout-minutes: 10
         run: .venv/bin/python -m src.cli alerts
 
       - name: Checkpoint WAL
