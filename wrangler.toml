@@ -1,0 +1,30 @@
+# Cloudflare Workers Static Assets config for the stlite dashboard bundle.
+#
+# This is the "no-Worker, just static" deploy mode: wrangler uploads every
+# file under ``./dashboard-static`` as a static asset and serves them via
+# the Workers runtime. There is no ``main`` field — without a Worker
+# script, all requests are answered straight from the asset CDN.
+#
+# CI flow (configured in the Cloudflare dashboard, not here):
+#   1. CF Pages clones master.
+#   2. Runs the build command (``python3 scripts/build_stlite_bundle.py``)
+#      which materialises ``dashboard-static/files/*.py``.
+#   3. Runs ``npx wrangler deploy`` which reads THIS file, finds the
+#      ``[assets]`` directory, and uploads its contents.
+#
+# Data witnesses are NOT bundled here — the browser fetches them from the
+# ``latest-data`` GitHub Release at mount time (see dashboard-static/index.html).
+
+name = "olx-car-parser"
+compatibility_date = "2024-12-01"
+
+[assets]
+directory = "./dashboard-static"
+# Streamlit's filename-based multipage nav generates URLs like
+# ``/Market_Direction`` and ``/Model_Details`` that don't exist as
+# static files; SPA mode routes every miss back to ``index.html``
+# so stlite/Streamlit can take over client-side.
+not_found_handling = "single-page-application"
+
+[observability]
+enabled = true
