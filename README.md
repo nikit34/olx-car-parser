@@ -7,14 +7,20 @@ the standout deals.
 
 ## Live dashboard
 
-**[olx-car-parser-aaktpavdhgpbdqs4bmbdw7.streamlit.app](https://olx-car-parser-aaktpavdhgpbdqs4bmbdw7.streamlit.app/)**
+**[olx-car-parser.permikov134.workers.dev](https://olx-car-parser.permikov134.workers.dev/)**
 
-Auto-deployed from `master` on every push. Reads the `latest-data` GitHub
-Release as its source of truth — no LAN access, no SSH, no local DB.
-Cold-starts pull the 90 MB SQLite snapshot via the GitHub CDN; subsequent
-reruns use a marker-gated 2 h TTL plus an `(mtime, size)` cache key on
-`@st.cache_data` so a release refresh invalidates the in-memory cache the
-moment the underlying file changes.
+A Streamlit app running entirely in the visitor's browser via
+[stlite](https://github.com/whitphx/stlite) (Pyodide), hosted as static
+assets on Cloudflare Pages. Auto-deploys from `master` on every push;
+``scripts/build_stlite_bundle.py`` copies the Python source into the
+bundle and downloads the latest witness parquets from the `latest-data`
+GitHub Release at build time, so the entire dashboard ships same-origin
+and starts cold in ~25 s. No server, no sleep, no auth.
+
+The deal-scoring inference pipeline (LightGBM predict + TreeSHAP +
+anomaly + hazard) does **not** run in the browser — it's baked into
+parquet witnesses in CI (`scripts/build_dashboard_data.py`, fired by
+``scrape-ci`` after `train-model`).
 
 ## Pipeline
 
@@ -46,8 +52,9 @@ flowchart TD
       Checkpoint --> Train[Train price model + backtest<br/>LightGBM 5-split CQR]
     end
 
-    Train --> Upload[Upload to latest-data Release<br/>olx_cars.db, *.joblib, *.json,<br/>damage_classifier_v2.pt]
-    Upload --> Dashboard[Streamlit Cloud<br/>pulls release on cold-start]
+    Train --> Witnesses[Build dashboard witnesses<br/>predict_prices + TreeSHAP<br/>→ data/dashboard/*.parquet]
+    Witnesses --> Upload[Upload to latest-data Release<br/>olx_cars.db, *.joblib, *.json,<br/>damage_classifier_v2.pt, dashboard parquets]
+    Upload --> Dashboard[Cloudflare Pages rebuild<br/>fetches release at build time<br/>serves stlite same-origin]
 
     classDef gate fill:#fef3c7,stroke:#92400e,color:#78350f
     classDef step fill:#dbeafe,stroke:#1e40af,color:#1e3a8a
@@ -158,8 +165,10 @@ veto signal that gets cross-checked against text damage_severity in
 - **Photo cache**: `/tmp/photo_verify/cache/{olx_id}/{i}.jpg` — survives
   for the cron runtime, not persisted across runs.
 - **Release artifacts**: `latest-data` carries the DB, the price model
-  bundle, training metrics, and the damage classifier weights. This is
-  the **only** surface the Streamlit Cloud dashboard reads from.
+  bundle, training metrics, the damage classifier weights, and the
+  dashboard witness parquets. Cloudflare Pages reads the dashboard
+  parquets at build time and ships them same-origin; the DB / model /
+  weights are server-side artifacts the next scrape uses.
 
 ## Layout
 
@@ -176,11 +185,19 @@ src/
 │   ├── model_eval.py       # 5-split time backtest
 │   └── computed_columns.py # depreciation / liquidity / per-segment stats
 ├── dashboard/
-│   ├── app.py              # Streamlit Cloud entrypoint
-│   ├── data_loader.py      # release-asset sync, compute_signals, _blocking_deal_reason
-│   └── visualizations.py   # plotly charts
+│   ├── 🔥_Recommendations.py   # stlite entry — deal-cards home page
+│   ├── pages/
+│   │   ├── 2_📈_Market_Direction.py
+│   │   └── 3_🔍_Model_Details.py
+│   ├── _cache.py               # @st.cache_data wrappers shared across pages
+│   └── data_loader.py          # parquet fetch + compute_signals + _blocking_deal_reason
 └── alerts/
-    └── telegram_bot.py     # deal alerts, format_deal
+    └── telegram_bot.py         # deal alerts, format_deal
+
+dashboard-static/               # CF Pages static bundle
+├── index.html                  # stlite mount config (pinned @stlite/browser 1.7.x)
+├── README.md                   # one-time CF Pages setup
+└── files/, data/               # build outputs from build_stlite_bundle.py (gitignored)
 
 scripts/
 ├── rederive_damage_severity.py        # rule-based severity backfill (no LLM)

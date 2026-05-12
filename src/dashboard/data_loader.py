@@ -148,8 +148,8 @@ def _public_download_url(repo: str, asset_name: str) -> str:
     Bypasses the GitHub API rate limit entirely — works even when
     ``_list_release_assets`` returned None due to a 403/429. Costs us
     the ``updated_at`` comparison (we always download on this path),
-    but on Streamlit Cloud cold-starts the local file doesn't exist
-    anyway so the comparison wouldn't have skipped the download.
+    but on a fresh cold-start the local file doesn't exist anyway so
+    the comparison wouldn't have skipped the download.
     """
     return f"https://github.com/{repo}/releases/download/latest-data/{asset_name}"
 
@@ -306,8 +306,8 @@ def _ensure_release_assets() -> bool:
     # to the public CDN URL — it has no API rate limit and works for
     # public release assets. We download unconditionally because we
     # lost the ability to compare remote.updated_at vs local.mtime;
-    # on Streamlit Cloud cold-starts the local file is missing or stub
-    # anyway, so this is the correct behaviour. Marker is NOT stamped
+    # on cold-starts the local file is missing or stub anyway, so this
+    # is the correct behaviour. Marker is NOT stamped
     # so the next call retries the API in case the rate-limit window
     # cleared (which would let us recover the mtime short-circuit).
     if not _looks_like_real_db():

@@ -42,11 +42,9 @@ from src.analytics.decision import (
 )
 
 
-# Defensive unpack — Streamlit Cloud can serve a stale 8-tuple from
-# its in-memory cache right after a deploy that grew the return shape
-# to 9 (predictions added 2026-05-03). Index with safe defaults; the
-# next cache miss returns the new shape and predictions_df becomes
-# populated.
+# Defensive unpack — st.cache_data can serve a stale tuple from a
+# previous deploy where load_all returned a shorter shape. Index with
+# safe defaults; the next cache miss returns the new shape.
 _loaded = load_all_cached(_release_cache_signature())
 listings_df = _loaded[0] if len(_loaded) > 0 else pd.DataFrame()
 history_df = _loaded[1] if len(_loaded) > 1 else pd.DataFrame()

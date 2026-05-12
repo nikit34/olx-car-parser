@@ -48,10 +48,9 @@ st.caption(
 )
 
 
-# Defensive unpack — Streamlit Cloud can serve a previously-cached
-# 8-tuple right after a redeploy that adds a 9th element (predictions
-# was added 2026-05-03). Index into the tuple with safe defaults so
-# the page boots either way; the next cache miss returns the new shape.
+# Defensive unpack — st.cache_data can serve a previously-cached tuple
+# of a shorter shape across a redeploy. Index with safe defaults so the
+# page boots either way; the next cache miss returns the new shape.
 _loaded = load_all_cached(_release_cache_signature())
 listings_df = _loaded[0] if len(_loaded) > 0 else pd.DataFrame()
 history_df = _loaded[1] if len(_loaded) > 1 else pd.DataFrame()
