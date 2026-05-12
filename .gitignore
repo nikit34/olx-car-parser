@@ -16,6 +16,12 @@ data/raw/
 data/processed/
 data/.last_release_check
 data/dashboard/
+
+# stlite bundle output — everything under dashboard-static/files/ is derived
+# from sources in src/. CI runs ``scripts/build_stlite_bundle.py`` to regenerate
+# the bundle before deploy. Only the hand-edited ``dashboard-static/index.html``
+# is checked in.
+dashboard-static/files/
 *.egg-info/
 dist/
 build/

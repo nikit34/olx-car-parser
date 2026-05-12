@@ -1385,7 +1385,25 @@ def load_portfolio() -> pd.DataFrame:
 # has been switched to the parquet path.
 # ---------------------------------------------------------------------------
 
-DASHBOARD_DATA_DIR = PROJECT_ROOT / "data" / "dashboard"
+def _dashboard_data_dir() -> Path:
+    """Where ``_load_witness`` looks for the precomputed parquets.
+
+    In CPython this is ``<repo>/data/dashboard/`` — what
+    ``scripts/build_dashboard_data.py`` writes to. In Pyodide (stlite)
+    the entry file sits at MEMFS root, so ``Path(__file__).resolve()
+    .parent.parent.parent`` walks past root and lands at ``/``, losing
+    the project anchor. Use the current working directory as fallback,
+    matching where stlite mounts user files (``/home/pyodide`` by
+    default) — the witnesses are mounted at ``data/dashboard/…`` under
+    that root via ``index.html``'s files map.
+    """
+    import sys as _sys
+    if "pyodide" in _sys.modules:
+        return Path.cwd() / "data" / "dashboard"
+    return PROJECT_ROOT / "data" / "dashboard"
+
+
+DASHBOARD_DATA_DIR = _dashboard_data_dir()
 
 # Files produced by build_dashboard_data.py. Map: (attribute_name, filename,
 # kind) where kind is "parquet" (DataFrame) or "json" (raw dict/list).
@@ -1418,18 +1436,13 @@ def _dashboard_release_url(filename: str) -> str:
 
 
 def _fetch_bytes(url: str) -> bytes | None:
-    """Cross-runtime GET that works under both CPython and Pyodide.
+    """Best-effort sync GET — CPython only.
 
-    Pyodide ships ``pyodide.http.pyfetch`` which is the only way to do
-    sync network I/O in the browser. CPython falls back to urllib (no
-    httpx import — we want this module Pyodide-clean).
+    The stlite bundle preloads every witness into MEMFS at mount time
+    (see dashboard-static/index.html), so the browser path never hits
+    this function. CPython callers (local dev without a prior
+    ``build_dashboard_data.py`` run) fall through here and use urllib.
     """
-    try:
-        import pyodide.http  # type: ignore  # only present in browser
-        resp = pyodide.http.open_url(url)
-        return resp.read().encode("utf-8") if isinstance(resp.read(), str) else resp.read()
-    except Exception:
-        pass
     try:
         from urllib.request import Request, urlopen
         with urlopen(Request(url, headers={"User-Agent": "olx-dashboard-fetch"}), timeout=30) as r:

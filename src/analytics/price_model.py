@@ -17,14 +17,34 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-import joblib
 import numpy as np
 import pandas as pd
-import lightgbm as lgb
-from sklearn.inspection import permutation_importance
-from sklearn.isotonic import IsotonicRegression
-from sklearn.metrics import make_scorer, mean_pinball_loss
-from sklearn.model_selection import KFold
+
+# joblib / lightgbm / sklearn are all unavailable under Pyodide unless we
+# explicitly pin them in the stlite ``requirements``. The dashboard only
+# calls ``load_metrics_history`` from this module — a pure-JSON reader —
+# so we tolerate missing libs at import time and let the training / predict
+# functions fail at call site instead. CPython server-side callers (CLI,
+# alerts, build_dashboard_data.py) have all libs installed and work as before.
+try:
+    import joblib  # noqa: F401
+except ImportError:
+    joblib = None  # type: ignore[assignment]
+try:
+    import lightgbm as lgb  # noqa: F401
+except ImportError:
+    lgb = None  # type: ignore[assignment]
+try:
+    from sklearn.inspection import permutation_importance  # noqa: F401
+    from sklearn.isotonic import IsotonicRegression  # noqa: F401
+    from sklearn.metrics import make_scorer, mean_pinball_loss  # noqa: F401
+    from sklearn.model_selection import KFold  # noqa: F401
+except ImportError:
+    permutation_importance = None  # type: ignore[assignment]
+    IsotonicRegression = None  # type: ignore[assignment]
+    make_scorer = None  # type: ignore[assignment]
+    mean_pinball_loss = None  # type: ignore[assignment]
+    KFold = None  # type: ignore[assignment]
 
 
 _MODEL_DIR = Path(__file__).resolve().parent.parent.parent / "data"

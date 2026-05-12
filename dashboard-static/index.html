@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OLX Car Deals</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%9A%97%3C/text%3E%3C/svg%3E" />
+  <link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/@stlite/browser@1.7.3/build/style.css"
+  />
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #0E1117; }
+    #root { display: block; min-height: 100vh; position: relative; z-index: 1; }
+    #boot-status {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      color: #FAFAFA; font-family: -apple-system, system-ui, sans-serif;
+      font-size: 14px; text-align: center; z-index: 0;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="boot-status">
+    <div style="font-size: 32px; margin-bottom: 12px;">🚗</div>
+    <div>Booting Pyodide + fetching market data…</div>
+    <div style="opacity: 0.5; margin-top: 8px; font-size: 12px;">
+      First load ~15–25 s · refreshes are cached
+    </div>
+  </div>
+  <div id="root"></div>
+  <script type="module">
+    import { mount } from "https://cdn.jsdelivr.net/npm/@stlite/browser@1.7.3/build/stlite.js";
+
+    // Witnesses live on the latest-data GitHub Release in production —
+    // scrape-ci re-uploads on every scrape, GitHub's CDN serves them with
+    // CORS=*. For ``localhost`` / ``127.0.0.1`` we redirect to bundled
+    // copies under ``./files/data/dashboard/`` so the dev loop doesn't
+    // need a fresh release every time.
+    const IS_LOCAL = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+    const RELEASE_BASE = IS_LOCAL
+      ? "./files/data/dashboard"
+      : "https://github.com/nikit34/olx-car-parser/releases/download/latest-data";
+    const PY_BASE = "./files";
+
+    const files = {
+      // Dashboard sources — emoji-prefixed MEMFS paths so Streamlit's
+      // filename-based multipage nav reads the right icons in the sidebar.
+      // The on-disk bundle uses ASCII filenames (scripts/build_stlite_bundle.py
+      // does the rename) to keep CF Pages URLs clean.
+      "\u{1F525}_Recommendations.py":
+        { url: `${PY_BASE}/dashboard/Recommendations.py` },
+      "_cache.py":
+        { url: `${PY_BASE}/dashboard/_cache.py` },
+      "data_loader.py":
+        { url: `${PY_BASE}/dashboard/data_loader.py` },
+      "pages/2_\u{1F4C8}_Market_Direction.py":
+        { url: `${PY_BASE}/dashboard/pages/2_Market_Direction.py` },
+      "pages/3_\u{1F50D}_Model_Details.py":
+        { url: `${PY_BASE}/dashboard/pages/3_Model_Details.py` },
+
+      // src/ package — only the modules transitively reached from the
+      // dashboard's top-level imports. Heavy stuff (LightGBM/torch/
+      // sqlalchemy) lives in modules the dashboard never imports at
+      // module-level — see scripts/build_stlite_bundle.py for the AST walker.
+      "src/__init__.py":                    { url: `${PY_BASE}/src/__init__.py` },
+      "src/analytics/__init__.py":          { url: `${PY_BASE}/src/analytics/__init__.py` },
+      "src/analytics/decision.py":          { url: `${PY_BASE}/src/analytics/decision.py` },
+      "src/analytics/price_model.py":       { url: `${PY_BASE}/src/analytics/price_model.py` },
+      "src/analytics/seller_segment.py":    { url: `${PY_BASE}/src/analytics/seller_segment.py` },
+
+      // Daily witnesses — fetched from GitHub Release at mount time and
+      // placed into MEMFS at the path the dashboard's data_loader expects
+      // (DASHBOARD_DATA_DIR = PROJECT_ROOT / "data" / "dashboard"; in
+      // Pyodide PROJECT_ROOT resolves to "/" so this is "/data/dashboard/…").
+      "data/dashboard/manifest.json":              { url: `${RELEASE_BASE}/manifest.json` },
+      "data/dashboard/listings.parquet":           { url: `${RELEASE_BASE}/listings.parquet` },
+      "data/dashboard/history.parquet":            { url: `${RELEASE_BASE}/history.parquet` },
+      "data/dashboard/snapshots.parquet":          { url: `${RELEASE_BASE}/snapshots.parquet` },
+      "data/dashboard/signals.parquet":            { url: `${RELEASE_BASE}/signals.parquet` },
+      "data/dashboard/predictions.parquet":        { url: `${RELEASE_BASE}/predictions.parquet` },
+      "data/dashboard/contributions.parquet":      { url: `${RELEASE_BASE}/contributions.parquet` },
+      "data/dashboard/importance.parquet":         { url: `${RELEASE_BASE}/importance.parquet` },
+      "data/dashboard/grouped_importance.parquet": { url: `${RELEASE_BASE}/grouped_importance.parquet` },
+      "data/dashboard/shap_importance.parquet":    { url: `${RELEASE_BASE}/shap_importance.parquet` },
+      "data/dashboard/turnover.parquet":           { url: `${RELEASE_BASE}/turnover.parquet` },
+      "data/dashboard/portfolio.parquet":          { url: `${RELEASE_BASE}/portfolio.parquet` },
+      "data/dashboard/unmatched.parquet":          { url: `${RELEASE_BASE}/unmatched.parquet` },
+      "data/dashboard/brands_models.json":         { url: `${RELEASE_BASE}/brands_models.json` },
+    };
+
+    try {
+      mount(
+        {
+          // Pyodide packages installed via micropip during boot. We deliberately
+          // omit lightgbm/joblib/scikit-learn — the dashboard reads precomputed
+          // parquets and never runs inference, so leaving these out saves
+          // ~20 MB of WASM and several seconds of cold-start.
+          requirements: ["pandas", "plotly", "pyarrow", "numpy"],
+          entrypoint: "\u{1F525}_Recommendations.py",
+          files,
+          streamlitConfig: {
+            "theme.base": "dark",
+            "theme.primaryColor": "#FF6B35",
+            "theme.backgroundColor": "#0E1117",
+            "theme.secondaryBackgroundColor": "#262730",
+            "theme.textColor": "#FAFAFA",
+            "browser.gatherUsageStats": false,
+          },
+        },
+        document.getElementById("root"),
+      );
+    } catch (err) {
+      const status = document.getElementById("boot-status");
+      if (status) {
+        status.innerHTML = `<div style="color:#FF6B35">⚠️ Failed to boot</div>
+          <pre style="opacity:.7;margin-top:8px;font-size:11px;text-align:left;
+                      max-width:90vw;overflow:auto;">${String(err)}</pre>`;
+      }
+    }
+  </script>
+</body>
+</html>
