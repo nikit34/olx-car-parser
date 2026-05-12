@@ -10,13 +10,18 @@ this directory is the **static bundle** stlite serves to visitors.
 visitor → dashboard-static/index.html
             │
             ├─ <script type="module"> calls stlite.mount(...)
-            │     ├─ fetches ./files/dashboard/*.py     (this repo's sources)
-            │     ├─ fetches ./files/src/analytics/*.py (transitive imports)
-            │     └─ fetches github.com/.../releases/download/latest-data/*.parquet
+            │     ├─ fetches ./files/dashboard/*.py     (python sources, same-origin)
+            │     ├─ fetches ./files/src/analytics/*.py (transitive imports, same-origin)
+            │     └─ fetches ./data/dashboard/*.parquet (witnesses, same-origin)
             │
             └─ stlite spins up Pyodide → installs pandas/plotly/pyarrow/numpy
               → mounts all files into MEMFS → runs 🔥_Recommendations.py
 ```
+
+Both code and data are served **same-origin** from CF Pages — Release
+asset URLs don't return CORS headers, so direct browser fetch from a
+cross-origin page fails. ``scripts/build_stlite_bundle.py`` materialises
+both into ``dashboard-static/`` at build time.
 
 ## Local development
 
@@ -42,7 +47,7 @@ every push to `master`.
    application** → **Pages** → **Connect to Git**.
 3. Pick the `olx-car-parser` repo. Build configuration:
    - **Framework preset:** *None*
-   - **Build command:** `python3 scripts/build_stlite_bundle.py`
+   - **Build command:** `python3 scripts/build_stlite_bundle.py --fetch-from-release`
    - **Build output directory:** `dashboard-static`
    - **Root directory (Advanced):** `/` (leave default)
    - **Environment variables → Build → Add:**
@@ -55,11 +60,17 @@ That's it — every push to `master` triggers a new build automatically.
 
 ### Data refresh cadence
 
-The dashboard fetches witness parquets from the `latest-data` GitHub Release
-at browser mount time. `scrape-ci` re-uploads those files at the end of
-every scrape run (see `.github/workflows/scrape.yml` → "Build dashboard
-witnesses" + the upload step). GitHub's CDN caches them with `ETag` headers
-so the browser sees fresh data within minutes of CI finishing.
+Witnesses are baked into the CF Pages deploy at build time, so a data
+update requires a CF Pages rebuild. Two ways to trigger one:
 
-You do **not** need to redeploy CF Pages when data refreshes — only when
-dashboard code or layout changes.
+1. **Manual:** open the deployment in CF Pages → "Retry deployment". Build
+   downloads the current `latest-data` Release and ships it.
+2. **Automatic (recommended):** create a CF Pages Deploy Hook in the
+   project settings, copy the URL into a GH secret named
+   `CF_PAGES_DEPLOY_HOOK`, then add a `curl -X POST` step to
+   `scrape.yml` after the release upload. CF will rebuild within ~1 min
+   of every scrape run.
+
+(Same-origin serving is non-negotiable: GitHub Release assets don't
+return `Access-Control-Allow-Origin`, so direct browser fetch fails
+with `ERR_FAILED` even on public repos.)

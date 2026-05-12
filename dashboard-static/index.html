@@ -32,15 +32,12 @@
   <script type="module">
     import { mount } from "https://cdn.jsdelivr.net/npm/@stlite/browser@1.7.3/build/stlite.js";
 
-    // Witnesses live on the latest-data GitHub Release in production —
-    // scrape-ci re-uploads on every scrape, GitHub's CDN serves them with
-    // CORS=*. For ``localhost`` / ``127.0.0.1`` we redirect to bundled
-    // copies under ``./files/data/dashboard/`` so the dev loop doesn't
-    // need a fresh release every time.
-    const IS_LOCAL = ["localhost", "127.0.0.1"].includes(window.location.hostname);
-    const RELEASE_BASE = IS_LOCAL
-      ? "./files/data/dashboard"
-      : "https://github.com/nikit34/olx-car-parser/releases/download/latest-data";
+    // Witnesses are materialised under ``./data/dashboard/`` at build
+    // time — either from local data/dashboard/ (``--include-data`` for
+    // dev) or downloaded from the latest-data GitHub Release
+    // (``--fetch-from-release`` for CF Pages). Same-origin fetch sidesteps
+    // the missing CORS headers on release-assets.githubusercontent.com.
+    const DATA_BASE = "./data/dashboard";
     const PY_BASE = "./files";
 
     const files = {
@@ -73,20 +70,20 @@
       // placed into MEMFS at the path the dashboard's data_loader expects
       // (DASHBOARD_DATA_DIR = PROJECT_ROOT / "data" / "dashboard"; in
       // Pyodide PROJECT_ROOT resolves to "/" so this is "/data/dashboard/…").
-      "data/dashboard/manifest.json":              { url: `${RELEASE_BASE}/manifest.json` },
-      "data/dashboard/listings.parquet":           { url: `${RELEASE_BASE}/listings.parquet` },
-      "data/dashboard/history.parquet":            { url: `${RELEASE_BASE}/history.parquet` },
-      "data/dashboard/snapshots.parquet":          { url: `${RELEASE_BASE}/snapshots.parquet` },
-      "data/dashboard/signals.parquet":            { url: `${RELEASE_BASE}/signals.parquet` },
-      "data/dashboard/predictions.parquet":        { url: `${RELEASE_BASE}/predictions.parquet` },
-      "data/dashboard/contributions.parquet":      { url: `${RELEASE_BASE}/contributions.parquet` },
-      "data/dashboard/importance.parquet":         { url: `${RELEASE_BASE}/importance.parquet` },
-      "data/dashboard/grouped_importance.parquet": { url: `${RELEASE_BASE}/grouped_importance.parquet` },
-      "data/dashboard/shap_importance.parquet":    { url: `${RELEASE_BASE}/shap_importance.parquet` },
-      "data/dashboard/turnover.parquet":           { url: `${RELEASE_BASE}/turnover.parquet` },
-      "data/dashboard/portfolio.parquet":          { url: `${RELEASE_BASE}/portfolio.parquet` },
-      "data/dashboard/unmatched.parquet":          { url: `${RELEASE_BASE}/unmatched.parquet` },
-      "data/dashboard/brands_models.json":         { url: `${RELEASE_BASE}/brands_models.json` },
+      "data/dashboard/manifest.json":              { url: `${DATA_BASE}/manifest.json` },
+      "data/dashboard/listings.parquet":           { url: `${DATA_BASE}/listings.parquet` },
+      "data/dashboard/history.parquet":            { url: `${DATA_BASE}/history.parquet` },
+      "data/dashboard/snapshots.parquet":          { url: `${DATA_BASE}/snapshots.parquet` },
+      "data/dashboard/signals.parquet":            { url: `${DATA_BASE}/signals.parquet` },
+      "data/dashboard/predictions.parquet":        { url: `${DATA_BASE}/predictions.parquet` },
+      "data/dashboard/contributions.parquet":      { url: `${DATA_BASE}/contributions.parquet` },
+      "data/dashboard/importance.parquet":         { url: `${DATA_BASE}/importance.parquet` },
+      "data/dashboard/grouped_importance.parquet": { url: `${DATA_BASE}/grouped_importance.parquet` },
+      "data/dashboard/shap_importance.parquet":    { url: `${DATA_BASE}/shap_importance.parquet` },
+      "data/dashboard/turnover.parquet":           { url: `${DATA_BASE}/turnover.parquet` },
+      "data/dashboard/portfolio.parquet":          { url: `${DATA_BASE}/portfolio.parquet` },
+      "data/dashboard/unmatched.parquet":          { url: `${DATA_BASE}/unmatched.parquet` },
+      "data/dashboard/brands_models.json":         { url: `${DATA_BASE}/brands_models.json` },
     };
 
     try {

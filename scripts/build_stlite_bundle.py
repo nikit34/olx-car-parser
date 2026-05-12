@@ -3,19 +3,20 @@
 
 Copies the dashboard's Python sources into ``dashboard-static/files/`` with
 ASCII-safe filenames; the emoji-prefixed names live only in MEMFS (mapped
-via ``index.html``'s ``files: {}`` table). CF Pages serves the directory
-as static content; the browser fetches each file via stlite's mount
-config, and the witness parquets stream directly from the
-``latest-data`` GitHub Release at mount time.
+via ``index.html``'s ``files: {}`` table).
 
-With ``--include-data`` we also copy ``data/dashboard/*`` into the bundle
-so local ``python -m http.server`` testing works without a fresh release.
-``index.html`` auto-detects localhost and routes parquet URLs to the
-bundled copies in that case.
+The witness parquets must come from somewhere the browser can fetch
+same-origin: GitHub Release URLs return no ``Access-Control-Allow-Origin``
+header, so browser fetch fails with ``ERR_FAILED``. We solve this by
+materialising them under ``dashboard-static/data/dashboard/`` at BUILD
+time — either copied from ``data/dashboard/`` (``--include-data`` for
+local dev) or downloaded from the ``latest-data`` GitHub Release via
+``--fetch-from-release`` (the production CF Pages build path).
 
 Run:
-    python scripts/build_stlite_bundle.py
-    python scripts/build_stlite_bundle.py --include-data   # for local dev
+    python scripts/build_stlite_bundle.py                       # code only
+    python scripts/build_stlite_bundle.py --include-data        # local dev
+    python scripts/build_stlite_bundle.py --fetch-from-release  # CF Pages prod
 """
 from __future__ import annotations
 
@@ -28,7 +29,31 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
 DASHBOARD = SRC / "dashboard"
-BUNDLE_DIR = ROOT / "dashboard-static" / "files"
+DEPLOY_DIR = ROOT / "dashboard-static"           # CF Pages output directory
+BUNDLE_DIR = DEPLOY_DIR / "files"                # python sources here
+DATA_DIR = DEPLOY_DIR / "data" / "dashboard"     # witness parquets here (same-origin)
+
+# Files produced by scripts/build_dashboard_data.py — must match the
+# ``files: {}`` map in dashboard-static/index.html.
+WITNESS_FILES = (
+    "manifest.json",
+    "brands_models.json",
+    "listings.parquet",
+    "history.parquet",
+    "snapshots.parquet",
+    "signals.parquet",
+    "predictions.parquet",
+    "contributions.parquet",
+    "importance.parquet",
+    "grouped_importance.parquet",
+    "shap_importance.parquet",
+    "turnover.parquet",
+    "portfolio.parquet",
+    "unmatched.parquet",
+)
+RELEASE_BASE = (
+    "https://github.com/nikit34/olx-car-parser/releases/download/latest-data"
+)
 
 # Hand-curated entry points. The walker below traces every other Python
 # module these reach via top-level imports. Keep the dashboard entry +
@@ -113,11 +138,64 @@ def _bundle_path(source: Path) -> str:
         return f"dashboard/{rel.as_posix()}"
 
 
+def _materialise_witnesses_from_local() -> int:
+    """Copy data/dashboard/*.parquet+json into the bundle (local dev path)."""
+    data_src = ROOT / "data" / "dashboard"
+    if not data_src.exists():
+        print(
+            "!! data/dashboard missing — run build_dashboard_data.py first",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    if DATA_DIR.exists():
+        shutil.rmtree(DATA_DIR)
+    shutil.copytree(data_src, DATA_DIR)
+    return sum(1 for f in DATA_DIR.rglob("*") if f.is_file())
+
+
+def _materialise_witnesses_from_release() -> int:
+    """Download every witness from the latest-data GitHub Release.
+
+    Same-origin serving via CF Pages dodges the CORS / signed-URL mess
+    that release-assets.githubusercontent.com (the redirect target) hits
+    on cross-origin browser fetches.
+    """
+    from urllib.error import HTTPError, URLError
+    from urllib.request import Request, urlopen
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    fetched = 0
+    for name in WITNESS_FILES:
+        url = f"{RELEASE_BASE}/{name}"
+        dst = DATA_DIR / name
+        req = Request(url, headers={"User-Agent": "olx-stlite-build"})
+        try:
+            with urlopen(req, timeout=60) as r:
+                dst.write_bytes(r.read())
+        except (HTTPError, URLError) as exc:
+            # Missing witnesses degrade gracefully — dashboard shows
+            # empty-state with the release error in the sidebar — but
+            # we still want to know the build dropped one.
+            print(
+                f"::warning::fetch {name} from release failed: "
+                f"{type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            continue
+        fetched += 1
+    return fetched
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument(
+    src = ap.add_mutually_exclusive_group()
+    src.add_argument(
         "--include-data", action="store_true",
-        help="Also copy data/dashboard/* into the bundle (for localhost dev).",
+        help="Copy local data/dashboard/* into the bundle (localhost dev).",
+    )
+    src.add_argument(
+        "--fetch-from-release", action="store_true",
+        help="Download witnesses from latest-data GitHub Release (CF Pages prod).",
     )
     args = ap.parse_args()
 
@@ -176,17 +254,14 @@ def main() -> None:
         print(f"  {k:<45} ← {v}")
 
     if args.include_data:
-        data_src = ROOT / "data" / "dashboard"
-        if not data_src.exists():
-            print(f"!! data/dashboard missing — run build_dashboard_data.py first", file=sys.stderr)
-            sys.exit(2)
-        data_dst = BUNDLE_DIR / "data" / "dashboard"
-        if data_dst.exists():
-            shutil.rmtree(data_dst)
-        shutil.copytree(data_src, data_dst)
-        n = sum(1 for _ in data_dst.rglob("*") if _.is_file())
-        size = sum(f.stat().st_size for f in data_dst.rglob("*") if f.is_file())
+        n = _materialise_witnesses_from_local()
+        size = sum(f.stat().st_size for f in DATA_DIR.rglob("*") if f.is_file())
         print(f"[stlite] +{n} data files ({size / 1e6:.2f} MB) under data/dashboard/")
+    elif args.fetch_from_release:
+        n = _materialise_witnesses_from_release()
+        size = sum(f.stat().st_size for f in DATA_DIR.rglob("*") if f.is_file())
+        print(f"[stlite] fetched {n}/{len(WITNESS_FILES)} witnesses from release "
+              f"({size / 1e6:.2f} MB)")
 
 
 if __name__ == "__main__":
