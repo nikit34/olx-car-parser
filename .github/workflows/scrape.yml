@@ -420,8 +420,10 @@ jobs:
           if [ "$TRAIN_RC" = "0" ]; then
             [ -f data/price_model.joblib ]     && gh release upload latest-data data/price_model.joblib     --clobber || true
             [ -f data/price_metrics.json ]     && gh release upload latest-data data/price_metrics.json     --clobber || true
-            [ -f data/price_importance.json ]  && gh release upload latest-data data/price_importance.json  --clobber || true
-            [ -f data/price_backtest.json ]    && gh release upload latest-data data/price_backtest.json    --clobber || true
+            [ -f data/price_importance.json ]          && gh release upload latest-data data/price_importance.json          --clobber || true
+            [ -f data/price_grouped_importance.json ]  && gh release upload latest-data data/price_grouped_importance.json  --clobber || true
+            [ -f data/price_shap_importance.json ]     && gh release upload latest-data data/price_shap_importance.json     --clobber || true
+            [ -f data/price_backtest.json ]            && gh release upload latest-data data/price_backtest.json            --clobber || true
           else
             echo "::warning::Skipping model upload — train-model rc=${TRAIN_RC:-<unset>} (preserves last-known-good artifact in release)"
           fi
