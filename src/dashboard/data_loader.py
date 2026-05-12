@@ -208,10 +208,22 @@ def _looks_like_real_db() -> bool:
 
 
 def _force_next_check():
-    """Reset the check timer so the next _ensure_db() call hits GitHub API."""
+    """Invalidate the local dashboard-data cache so the next fetch hits CDN.
+
+    Browser path: ``_load_witness`` always prefers a local file when it
+    exists. Removing the manifest forces the witnesses to be refetched
+    on next call (since ``dashboard_data_signature`` falls through to
+    the CDN once the local manifest is gone).
+    """
     if _RELEASE_CHECK_MARKER.exists():
         try:
             _RELEASE_CHECK_MARKER.unlink()
+        except OSError:
+            pass
+    local_manifest = DASHBOARD_DATA_DIR / "manifest.json"
+    if local_manifest.exists():
+        try:
+            local_manifest.unlink()
         except OSError:
             pass
 
@@ -219,29 +231,13 @@ def _force_next_check():
 def reboot_dashboard():
     """Closest user-code equivalent of Streamlit's "Reboot app".
 
-    A plain ``st.cache_data.clear() + st.rerun()`` is not enough on a
-    failed cold start: ``src.storage.database`` keeps the SQLAlchemy
-    engine as a module-level singleton, and Streamlit does NOT
-    re-import modules on rerun. If ``init_db()`` ran while the local
-    DB was missing it created an ~80 KB stub with just the schema; the
-    engine's connection pool + WAL sidecars are then anchored to that
-    stub and keep serving empty rows even after the CDN fallback
-    downloads a real DB over the file. The only fix short of killing
-    the process is to dispose the engine, drop the singletons, and let
-    the next query open fresh handles against the real file.
+    Drops the local-witness cache and clears Streamlit's @cache_data /
+    @cache_resource so the next rerun re-fetches the latest-data release.
     """
     import streamlit as st
-    from src.storage import database as _db
 
     global _LAST_RELEASE_ERROR
     _force_next_check()
-    if _db._engine is not None:
-        try:
-            _db._engine.dispose()
-        except Exception:
-            pass
-    _db._engine = None
-    _db._Session = None
     _LAST_RELEASE_ERROR = None
     st.cache_data.clear()
     st.cache_resource.clear()
@@ -1375,79 +1371,193 @@ def load_portfolio() -> pd.DataFrame:
 
 
 
-def load_all():
-    """Load listings, history, signals, brand map, turnover, and portfolio.
+# ---------------------------------------------------------------------------
+# Browser data path: fetch precomputed witnesses from the latest-data release.
+#
+# scripts/build_dashboard_data.py runs compute_signals + predict_prices +
+# TreeSHAP in CI and uploads parquets to ``latest-data``. The browser
+# dashboard (stlite on Cloudflare Pages) can't run LightGBM/sklearn
+# inference in Pyodide, so load_all() fetches those parquets instead of
+# computing them.
+#
+# The legacy SQLite + compute_signals stack remains in this file for
+# server-side callers (CLI, alerts/telegram_bot, tests) — only load_all
+# has been switched to the parquet path.
+# ---------------------------------------------------------------------------
 
-    Per-step timing logged to stdout so cold-load bottlenecks show up
-    in Streamlit Cloud logs. If wall-clock approaches 30 s, the
-    websocket keepalive ping fires and the connection drops with
-    1011 — the timings tell us which step to attack.
+DASHBOARD_DATA_DIR = PROJECT_ROOT / "data" / "dashboard"
+
+# Files produced by build_dashboard_data.py. Map: (attribute_name, filename,
+# kind) where kind is "parquet" (DataFrame) or "json" (raw dict/list).
+_DASHBOARD_WITNESSES: tuple[tuple[str, str, str], ...] = (
+    ("listings",            "listings.parquet",            "parquet"),
+    ("history",             "history.parquet",             "parquet"),
+    ("signals",             "signals.parquet",             "parquet"),
+    ("predictions",         "predictions.parquet",         "parquet"),
+    ("contributions_long",  "contributions.parquet",       "parquet"),
+    ("importance",          "importance.parquet",          "parquet"),
+    ("grouped_importance",  "grouped_importance.parquet",  "parquet"),
+    ("shap_importance",     "shap_importance.parquet",     "parquet"),
+    ("turnover",            "turnover.parquet",            "parquet"),
+    ("portfolio",           "portfolio.parquet",           "parquet"),
+    ("unmatched",           "unmatched.parquet",           "parquet"),
+    ("brands_models",       "brands_models.json",          "json"),
+)
+
+
+def _dashboard_repo() -> str:
+    """GitHub repo slug that hosts the latest-data release."""
+    return os.environ.get("DASHBOARD_DATA_REPO") or os.environ.get(
+        "GITHUB_REPOSITORY", "nikit34/olx-car-parser",
+    )
+
+
+def _dashboard_release_url(filename: str) -> str:
+    """Public CDN URL for a witness file in the latest-data release."""
+    return f"https://github.com/{_dashboard_repo()}/releases/download/latest-data/{filename}"
+
+
+def _fetch_bytes(url: str) -> bytes | None:
+    """Cross-runtime GET that works under both CPython and Pyodide.
+
+    Pyodide ships ``pyodide.http.pyfetch`` which is the only way to do
+    sync network I/O in the browser. CPython falls back to urllib (no
+    httpx import — we want this module Pyodide-clean).
+    """
+    try:
+        import pyodide.http  # type: ignore  # only present in browser
+        resp = pyodide.http.open_url(url)
+        return resp.read().encode("utf-8") if isinstance(resp.read(), str) else resp.read()
+    except Exception:
+        pass
+    try:
+        from urllib.request import Request, urlopen
+        with urlopen(Request(url, headers={"User-Agent": "olx-dashboard-fetch"}), timeout=30) as r:
+            return r.read()
+    except Exception as exc:  # noqa: BLE001
+        global _LAST_RELEASE_ERROR
+        _LAST_RELEASE_ERROR = f"fetch {url} failed: {type(exc).__name__}: {exc}"
+        return None
+
+
+def _load_witness(filename: str, kind: str):
+    """Fetch a witness — prefer local (built by ``build_dashboard_data.py``),
+    else fall back to release CDN.
+
+    Local-first lets a developer iterate on the dashboard without pushing
+    a fresh release; CI builds local artifacts before deploy, browser
+    only sees the release URL (no local FS exists in Pyodide).
+    """
+    import io
+    local = DASHBOARD_DATA_DIR / filename
+    if local.exists():
+        if kind == "parquet":
+            return pd.read_parquet(local)
+        return json.loads(local.read_text(encoding="utf-8"))
+
+    raw = _fetch_bytes(_dashboard_release_url(filename))
+    if raw is None:
+        return None
+    if kind == "parquet":
+        return pd.read_parquet(io.BytesIO(raw))
+    return json.loads(raw.decode("utf-8"))
+
+
+def _contributions_long_to_dict(long_df: pd.DataFrame) -> dict[str, dict]:
+    """Inverse of build_dashboard_data._contributions_to_long.
+
+    Rehydrates ``{olx_id: {"baseline_eur", "predicted_eur", "deltas": [(label, delta), ...]}}``
+    so downstream deal-card code that expects the dict shape keeps working
+    without per-call lookup.
+    """
+    if long_df is None or long_df.empty:
+        return {}
+    out: dict[str, dict] = {}
+    for olx_id, grp in long_df.sort_values("rank").groupby("olx_id", sort=False):
+        first = grp.iloc[0]
+        out[str(olx_id)] = {
+            "baseline_eur": float(first["baseline_eur"]) if pd.notna(first.get("baseline_eur")) else None,
+            "predicted_eur": float(first["predicted_eur"]) if pd.notna(first.get("predicted_eur")) else None,
+            "deltas": [
+                (str(r.feature_label), float(r.delta_eur) if pd.notna(r.delta_eur) else 0.0)
+                for r in grp.itertuples(index=False)
+            ],
+        }
+    return out
+
+
+def load_snapshots(since_days: int) -> pd.DataFrame:
+    """Per-listing price snapshots filtered to ``since_days``.
+
+    Replaces the SQLite-backed ``get_price_snapshots_df`` for browser use.
+    The full 365-day snapshot parquet ships in the release; we filter in
+    pandas to avoid shipping multiple windowed files.
+    """
+    df = _load_witness("snapshots.parquet", "parquet")
+    if df is None or df.empty:
+        return pd.DataFrame()
+    if "scraped_at" not in df.columns:
+        return df
+    df = df.copy()
+    df["scraped_at"] = pd.to_datetime(df["scraped_at"], errors="coerce")
+    cutoff = pd.Timestamp.now() - pd.Timedelta(days=int(since_days))
+    return df[df["scraped_at"] >= cutoff].reset_index(drop=True)
+
+
+def dashboard_data_signature() -> tuple[str, int]:
+    """Cache key that changes whenever the witnesses are refreshed.
+
+    Reads ``manifest.json`` for the build timestamp + total bytes — local
+    first, release CDN second. The current Streamlit ``@st.cache_data``
+    hashes the tuple so we don't need a stable monotonic value, just
+    something that changes when data changes.
+    """
+    manifest = _load_witness("manifest.json", "json")
+    if not isinstance(manifest, dict):
+        return ("", 0)
+    return (str(manifest.get("built_at", "")), int(manifest.get("total_bytes", 0)))
+
+
+def load_all():
+    """Load every dashboard witness from the release / local build dir.
+
+    Returns the same 12-tuple shape ``load_all`` has always returned, so
+    page code (``_recommendations_page``, ``pages/2_*``, ``pages/3_*``)
+    keeps working without changes. The heavy ML inference that the old
+    SQLite-backed path ran on every cold start now lives in
+    ``scripts/build_dashboard_data.py`` and runs once per CI cycle.
     """
     import time as _time
     _t0 = _time.perf_counter()
-    def _step(label: str, since: float) -> float:
-        now = _time.perf_counter()
-        print(f"[load_all] {label}: {now - since:.2f}s (total {now - _t0:.2f}s)", flush=True)
-        return now
 
-    from src.analytics.computed_columns import enrich_listings
-    from src.analytics.turnover import compute_turnover_stats
+    fetched: dict[str, object] = {}
+    for attr, filename, kind in _DASHBOARD_WITNESSES:
+        _ts = _time.perf_counter()
+        fetched[attr] = _load_witness(filename, kind)
+        print(f"[load_all] {filename}: {_time.perf_counter() - _ts:.2f}s", flush=True)
 
-    _ts = _time.perf_counter()
-    db_data = load_from_db()
-    _ts = _step("load_from_db", _ts)
-
-    if db_data is not None:
-        listings, history = db_data
-        listings = enrich_listings(listings)
-        # Use LLM-corrected mileage everywhere (sellers game filters with fake low values).
-        # Sanity gate: existing rows include parse-errors like Honda Civic
-        # JmuYR at 278_000_000 km (LLM mis-read "278 mil km"). Drop anything
-        # above 1M km before the fillna so it never overrides the
-        # structured ``mileage_km`` attribute. The same cap exists at
-        # write-time in :func:`correct_listing_data`, but we keep the
-        # read-time gate so legacy bad rows don't poison segment medians
-        # while the DB hasn't been re-enriched.
-        if "real_mileage_km" in listings.columns:
-            real_km = listings["real_mileage_km"]
-            plausible = (real_km > 0) & (real_km <= _SANITY_MAX_MILEAGE_KM)
-            listings["mileage_km"] = real_km.where(plausible).fillna(listings["mileage_km"])
-        _ts = _step("enrich_listings", _ts)
-        turnover = compute_turnover_stats(listings)
-        _ts = _step("compute_turnover_stats", _ts)
-        (
-            signals, importance, grouped_importance, predictions,
-            contributions, shap_importance,
-        ) = compute_signals(
-            listings, history, turnover=turnover,
+    listings = fetched.get("listings")
+    if not isinstance(listings, pd.DataFrame) or listings.empty:
+        # Empty-state — release missing / fetch failed. Mirror the legacy
+        # tuple shape so pages render the "no data yet" banner instead
+        # of crashing on attribute access.
+        empty = pd.DataFrame()
+        return (
+            empty, empty, empty, {}, empty,
+            empty, empty, empty, empty, empty, {}, empty,
         )
-        _ts = _step("compute_signals", _ts)
-    else:
-        listings = pd.DataFrame()
-        history = pd.DataFrame()
-        signals = pd.DataFrame()
-        importance = pd.DataFrame()
-        grouped_importance = pd.DataFrame()
-        predictions = pd.DataFrame()
-        contributions = {}
-        shap_importance = pd.DataFrame()
-        turnover = pd.DataFrame()
 
-    portfolio = load_portfolio()
-    _ts = _step("load_portfolio", _ts)
+    contributions = _contributions_long_to_dict(fetched.get("contributions_long"))
+    brands_models = fetched.get("brands_models") or {}
 
-    brands_models: dict[str, list[str]] = {}
-    if not listings.empty:
-        pairs = listings[["brand", "model"]].drop_duplicates()
-        for brand, grp in pairs.groupby("brand", sort=False):
-            brands_models[brand] = grp["model"].tolist()
+    def _df(name: str) -> pd.DataFrame:
+        v = fetched.get(name)
+        return v if isinstance(v, pd.DataFrame) else pd.DataFrame()
 
-    unmatched = load_unmatched()
-    _ts = _step("load_unmatched", _ts)
     print(f"[load_all] DONE total {_time.perf_counter() - _t0:.2f}s", flush=True)
-
     return (
-        listings, history, signals, brands_models, turnover,
-        portfolio, unmatched, importance, predictions,
-        grouped_importance, contributions, shap_importance,
+        listings, _df("history"), _df("signals"), brands_models,
+        _df("turnover"), _df("portfolio"), _df("unmatched"),
+        _df("importance"), _df("predictions"),
+        _df("grouped_importance"), contributions, _df("shap_importance"),
     )
