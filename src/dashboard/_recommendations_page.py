@@ -146,16 +146,17 @@ price_range = st.sidebar.slider("Price (EUR)", min_value=0, max_value=price_max_
 only_private = st.sidebar.checkbox("Private sellers only", value=False)
 hide_accidents = st.sidebar.checkbox("Hide accidents", value=False)
 hide_repair = st.sidebar.checkbox("Hide repair needed", value=False)
-sort_by_decision = st.sidebar.checkbox(
-    "Sort by decision score",
+sort_by_flip = st.sidebar.checkbox(
+    "Sort by flip score",
     value=False,
     help=(
-        "Re-rank cards by the resale-decision algorithm's score "
-        "instead of the default flip_score. The decision score "
-        "factors in calibration residual, segment trend, DoM and "
+        "Re-rank cards by the raw flip_score instead of the "
+        "default decision score. The decision score factors in "
+        "calibration residual, segment trend, DoM and "
         "seller-side multipliers."
     ),
 )
+sort_by_decision = not sort_by_flip
 hide_non_buy = st.sidebar.checkbox(
     "Hide non-BUY verdicts",
     value=False,
