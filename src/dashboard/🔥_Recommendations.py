@@ -1,7 +1,9 @@
-"""Recommendations — main deal-cards view.
+"""Dashboard entry point — Recommendations (deal cards) is the home page.
 
-Loaded by ``app.py`` (the st.navigation router). The router owns
-``set_page_config``; this file only renders the page body.
+stlite (the Pyodide build that runs the dashboard on Cloudflare Pages)
+does not support ``st.navigation`` / ``st.Page``, so we use the older
+filename-based multipage convention: this file is the entry, and
+``pages/2_*.py`` / ``pages/3_*.py`` show up in the sidebar automatically.
 """
 
 import numpy as np
@@ -16,6 +18,13 @@ _dashboard_dir = _Path(__file__).resolve().parent
 _project_root = _dashboard_dir.parent.parent
 _sys.path.insert(0, str(_dashboard_dir))
 _sys.path.insert(0, str(_project_root))
+
+st.set_page_config(
+    page_title="OLX Car Deals",
+    page_icon="🚗",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 from data_loader import (
     _force_next_check, reboot_dashboard, get_last_release_error, _fuel_group,
