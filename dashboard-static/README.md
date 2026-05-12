@@ -47,11 +47,15 @@ every push to `master`.
    application** → **Pages** → **Connect to Git**.
 3. Pick the `olx-car-parser` repo. Build configuration:
    - **Framework preset:** *None*
-   - **Build command:** `python3 scripts/build_stlite_bundle.py --fetch-from-release`
+   - **Build command:** `python3 scripts/build_stlite_bundle.py`
    - **Build output directory:** `dashboard-static`
    - **Root directory (Advanced):** `/` (leave default)
    - **Environment variables → Build → Add:**
      `PYTHON_VERSION` = `3.11`
+
+   The default build behaviour fetches every witness parquet from the
+   ``latest-data`` GitHub Release into ``dashboard-static/data/dashboard/``
+   so they ship same-origin with the HTML.
 4. Save and Deploy. First build takes ~2 min. The default URL is
    `<project-name>.pages.dev`; add a custom domain in **Custom domains** if
    you want.

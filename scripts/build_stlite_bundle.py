@@ -194,10 +194,19 @@ def main() -> None:
         help="Copy local data/dashboard/* into the bundle (localhost dev).",
     )
     src.add_argument(
+        "--skip-data", action="store_true",
+        help="Don't materialise witnesses — useful for code-only iteration.",
+    )
+    src.add_argument(
         "--fetch-from-release", action="store_true",
-        help="Download witnesses from latest-data GitHub Release (CF Pages prod).",
+        help="(default) Download witnesses from latest-data GitHub Release.",
     )
     args = ap.parse_args()
+    # Default behaviour fetches from release so the production CF Pages
+    # build command (``python3 scripts/build_stlite_bundle.py``) just
+    # works without an explicit flag.
+    if not (args.include_data or args.skip_data or args.fetch_from_release):
+        args.fetch_from_release = True
 
     visited: set[Path] = set()
     for entry in ENTRYPOINTS:
