@@ -459,6 +459,23 @@ jobs:
           print('load_model accepted the fresh bundle')
           "
 
+      - name: Build dashboard witnesses
+        # Bakes predict_prices / TreeSHAP / anomaly / hazard / signals into
+        # parquet+json artifacts under data/dashboard/. The browser dashboard
+        # (stlite on CF Pages) fetches these at mount time instead of running
+        # the LightGBM/sklearn inference in Pyodide — see commit 9c4f236 for
+        # the full architecture. Gated on train_model success because empty
+        # predictions break the deal feed; we'd rather keep yesterday's
+        # release than publish a no-deal build.
+        id: build_dashboard
+        if: ${{ !cancelled() && steps.train_model.outputs.train_rc == '0' }}
+        timeout-minutes: 10
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          .venv/bin/python scripts/build_dashboard_data.py
+          ls -lh data/dashboard/
+
       - name: Upload DB + model to GitHub Releases
         if: always()
         env:
@@ -509,3 +526,17 @@ jobs:
           # detect_relists writes directly to the SQLite DB
           # (relist_events table); no separate file to upload — it
           # rides the data/olx_cars.db release alongside everything else.
+
+          # Dashboard witnesses — only re-publish if build_dashboard_data
+          # succeeded. CF Pages serves the stlite bundle from a separate
+          # static deploy and fetches these parquets at browser mount time;
+          # the old set stays in the release as a fallback if today's
+          # build flaked.
+          if [ -d data/dashboard ] && [ -f data/dashboard/manifest.json ]; then
+            for f in data/dashboard/*.parquet data/dashboard/*.json; do
+              [ -f "$f" ] && gh release upload latest-data "$f" --clobber || true
+            done
+            echo "Uploaded dashboard witnesses ($(ls data/dashboard | wc -l | tr -d ' ') files)"
+          else
+            echo "::warning::Skipping dashboard witness upload — data/dashboard/manifest.json missing"
+          fi
