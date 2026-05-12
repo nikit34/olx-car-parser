@@ -66,6 +66,67 @@ jobs:
           /opt/homebrew/bin/python3.14 -m venv .venv 2>/dev/null || true
           .venv/bin/pip install -q -e .
 
+      - name: Ensure damage classifier weights present
+        # Moved to the top of the pipeline so the next step can kick off
+        # plate-OCR backfill in background concurrent with Scrape. Weights
+        # live in the persistent data/ dir (already symlinked above);
+        # steady-state this is a 1-line no-op. First time on a fresh runner
+        # pulls them from latest-data release. Missing weights downgrade
+        # verify-photos and plate-OCR backfill to no-ops, not a hard fail.
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+        run: |
+          if [ -f data/damage_classifier_v2.pt ]; then
+            echo "Weights already present at data/damage_classifier_v2.pt"
+          else
+            gh release download latest-data --pattern damage_classifier_v2.pt --dir data/ \
+              || echo "::warning::damage_classifier_v2.pt not in latest-data release; verify-photos + plate-OCR will be skipped"
+          fi
+
+      - name: Kick off background plate-OCR backfill
+        # Plate-OCR backfill works on legacy rows (photo_damage_p IS NOT NULL
+        # AND plate_readable IS NULL) — completely disjoint from listings
+        # Scrape is currently writing, so the only shared resource is the
+        # SQLite write lock. With --limit 200 at ~30/min the backfill runs
+        # ~7 min; scrape's heavy market_stats commit doesn't kick in until
+        # the very tail of scrape (~30+ min in on shallow, later on deep),
+        # so the lock contention window is small. No Ollama dependency
+        # either (cli.py:873 — backfill_plates skips DamageClassifier and
+        # uses CLIP + EasyOCR only), so this doesn't fight inline LLM
+        # workers for the model pool. The matching "Wait for background
+        # plate-OCR backfill" step downstream blocks on the PID and
+        # surfaces the log; that step's 30-min timeout backstops a stuck
+        # background job.
+        if: ${{ !cancelled() }}
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          # Reap any stale process from a previous cancelled run before
+          # starting a new one — otherwise two backfills would race on
+          # the same rows.
+          if [ -f /tmp/plate_backfill.pid ]; then
+            OLD_PID=$(cat /tmp/plate_backfill.pid)
+            if kill -0 "$OLD_PID" 2>/dev/null; then
+              echo "Killing stale plate-OCR PID=$OLD_PID from previous run"
+              kill "$OLD_PID" 2>/dev/null || true
+              sleep 2
+              kill -9 "$OLD_PID" 2>/dev/null || true
+            fi
+            rm -f /tmp/plate_backfill.pid /tmp/plate_backfill.rc /tmp/plate_backfill.log
+          fi
+          if [ ! -f data/damage_classifier_v2.pt ]; then
+            echo "::warning::Skipping plate-OCR backfill — weights missing"
+            exit 0
+          fi
+          ulimit -n 4096
+          nohup bash -c '.venv/bin/python -m src.cli verify-photos --backfill-plates --workers 2 --limit 200 > /tmp/plate_backfill.log 2>&1; echo $? > /tmp/plate_backfill.rc' &
+          PID=$!
+          echo $PID > /tmp/plate_backfill.pid
+          disown
+          echo "Background plate-OCR backfill started (PID=$PID, log=/tmp/plate_backfill.log)"
+
       - name: Ensure Ollama is running
         if: env.WITH_LLM == 'true'
         timeout-minutes: 5
@@ -223,24 +284,6 @@ jobs:
         run: |
           .venv/bin/python -m scripts.backfill_sellers --ttl-days 14 --progress-every 100
 
-      - name: Ensure damage classifier weights present
-        # Weights live in the persistent data/ dir alongside the DB.
-        # First time on a fresh runner: pull them from the latest-data
-        # release. Subsequent runs see the cached file and skip download.
-        # If the release lacks the asset, the next step's weights check
-        # will skip verify-photos with a warning.
-        if: ${{ !cancelled() }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
-        run: |
-          if [ -f data/damage_classifier_v2.pt ]; then
-            echo "Weights already present at data/damage_classifier_v2.pt"
-          else
-            gh release download latest-data --pattern damage_classifier_v2.pt --dir data/ \
-              || echo "::warning::damage_classifier_v2.pt not in latest-data release; verify-photos will be skipped"
-          fi
-
       - name: Verify photos with damage classifier
         # Runs the v2 ResNet50 classifier on listings' photos and stores
         # photo_damage_p in llm_extras. Photo signal feeds the alerts
@@ -263,25 +306,39 @@ jobs:
           fi
           .venv/bin/python -m src.cli verify-photos
 
-      - name: Backfill plate OCR for legacy listings
-        # Steady-state ``verify-photos`` only processes rows missing
-        # ``photo_damage_p`` (new listings). The legacy backlog of rows
-        # verified before plate detection landed (~10k at flipper-feature
-        # ship time) needs ``--backfill-plates`` to retro-fit the four
-        # plate_* keys without re-running the damage classifier.
-        # --limit 200 chips at the backlog incrementally — at ~30/min
-        # wall-clock with 2 workers that's ~7 min per cron, draining the
-        # 10k backlog in ~9 days while staying well under the timeout.
-        # Once the SQL filter (plate_readable IS NULL among damage-verified
-        # rows) returns empty, this step is a no-op and can be removed.
+      - name: Wait for background plate-OCR backfill
+        # Backfill was kicked off right after venv setup and has been
+        # running concurrently with Scrape / Enrich / Backfill sellers /
+        # Verify photos. By the time we hit this step, the ~7-min job is
+        # almost always done — this just collects the log and surfaces
+        # the exit code. Polls on the PID instead of `wait` because the
+        # process was started from a different shell session (GHA step).
+        # Fallback to synchronous run only if no background job is
+        # tracked (kickoff was skipped for missing weights, then weights
+        # appeared somehow) — preserves the old behavior as a safety net.
         if: ${{ !cancelled() }}
         env:
           PYTHONPATH: ${{ github.workspace }}
         timeout-minutes: 30
         continue-on-error: true
         run: |
-          ulimit -n 4096
-          .venv/bin/python -m src.cli verify-photos --backfill-plates --workers 2 --limit 200
+          if [ -f /tmp/plate_backfill.pid ]; then
+            PID=$(cat /tmp/plate_backfill.pid)
+            while kill -0 "$PID" 2>/dev/null; do sleep 5; done
+            echo "===== background plate-OCR output ====="
+            cat /tmp/plate_backfill.log 2>/dev/null || echo "(no log captured)"
+            RC=$(cat /tmp/plate_backfill.rc 2>/dev/null || echo "?")
+            echo "===== plate-OCR rc=$RC ====="
+            rm -f /tmp/plate_backfill.pid /tmp/plate_backfill.rc /tmp/plate_backfill.log
+            if [ "$RC" != "0" ]; then
+              echo "::warning::plate-OCR backfill failed (rc=$RC)"
+            fi
+          elif [ -f data/damage_classifier_v2.pt ]; then
+            ulimit -n 4096
+            .venv/bin/python -m src.cli verify-photos --backfill-plates --workers 2 --limit 200
+          else
+            echo "Skipping plate-OCR — weights missing and no background job ran"
+          fi
 
       - name: Send Telegram alerts
         if: ${{ !cancelled() }}
