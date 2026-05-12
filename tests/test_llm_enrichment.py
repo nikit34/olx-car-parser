@@ -257,6 +257,15 @@ class TestCorrectListingData:
         corrections = correct_listing_data(listing)
         assert corrections["real_mileage_km"] == 100000
 
+    def test_description_too_low_falls_back_to_attribute(self):
+        # JltT9 (2026-05) — title polluted with price ("9.000 €") made the
+        # LLM emit 9000 km against an OLX attr of 355000. 10×-or-more gap
+        # downward is treated as a parse error, like the symmetric upward case.
+        listing = FakeListing(mileage_km=355000)
+        listing._llm_extras = {"mileage_in_description_km": 9000}
+        corrections = correct_listing_data(listing)
+        assert corrections["real_mileage_km"] == 355000
+
     def test_no_attribute_mileage_uses_description(self):
         listing = FakeListing(mileage_km=0)
         listing._llm_extras = {"mileage_in_description_km": 120000}

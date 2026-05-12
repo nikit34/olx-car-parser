@@ -164,7 +164,10 @@ _FIELD_NAMES = [
 # car ever recorded crossed ~5M km, but those don't show up on OLX). The
 # relative gate fires when the LLM read picks up a malformed unit suffix —
 # ``listing.mileage_km`` from the structured attribute is the trusted
-# baseline, and any LLM read more than 10× larger is a parse error.
+# baseline, and any LLM read more than 10× larger *or* 10× smaller is a
+# parse error. The downward direction is what caught 2026-05 cases like
+# JltT9, where price-leaked-into-title ("BMW-520-f10 20129.000 €") made
+# the LLM emit 9000 km against an attr of 355000.
 _MILEAGE_SANITY_MAX_KM = 1_000_000
 _MILEAGE_SANITY_RELATIVE_MAX = 10
 
@@ -686,12 +689,17 @@ def correct_listing_data(listing) -> dict:
         # extracted value is >10× the structured attribute, which catches
         # mis-parsed unit-suffixes too.
         implausible_absolute = desc_km > _MILEAGE_SANITY_MAX_KM
-        implausible_relative = (
+        implausible_relative_high = (
             attr_km is not None
             and attr_km > 0
             and desc_km > attr_km * _MILEAGE_SANITY_RELATIVE_MAX
         )
-        if implausible_absolute or implausible_relative:
+        implausible_relative_low = (
+            attr_km is not None
+            and attr_km > 0
+            and desc_km * _MILEAGE_SANITY_RELATIVE_MAX < attr_km
+        )
+        if implausible_absolute or implausible_relative_high or implausible_relative_low:
             logger.warning(
                 "Implausible description mileage %d km (attr=%s) for %s — "
                 "discarding LLM mileage",
