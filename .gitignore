@@ -17,15 +17,11 @@ data/processed/
 data/.last_release_check
 data/dashboard/
 
-# stlite bundle output — code + data are both build-time outputs.
-# ``dashboard-static/files/``: python sources copied by build_stlite_bundle.py.
-# ``dashboard-static/data/``:  witness parquets, either copied from
-#                              local ``data/dashboard/`` (``--include-data``)
-#                              or downloaded from the latest-data Release
-#                              (``--fetch-from-release``).
-# Only the hand-edited ``dashboard-static/index.html`` + README are checked in.
+# stlite bundle output — everything under dashboard-static/files/ is derived
+# from sources in src/. CI runs ``scripts/build_stlite_bundle.py`` to regenerate
+# the bundle before deploy. Only the hand-edited ``dashboard-static/index.html``
+# is checked in.
 dashboard-static/files/
-dashboard-static/data/
 *.egg-info/
 dist/
 build/
@@ -39,3 +35,9 @@ build/
 .cursor/
 .playwright-mcp/
 .DS_Store
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+!.env.example
