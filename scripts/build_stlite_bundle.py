@@ -50,6 +50,11 @@ WITNESS_FILES = (
     "turnover.parquet",
     "portfolio.parquet",
     "unmatched.parquet",
+    # Model-side artefacts the dashboard reads directly (not via the
+    # data_loader parquet path). ``price_metrics.json`` backs the
+    # "Model quality" sidebar expander on Recommendations
+    # (load_metrics_history → R² / MAE / MAPE / 80% coverage).
+    "price_metrics.json",
 )
 RELEASE_BASE = (
     "https://github.com/nikit34/olx-car-parser/releases/download/latest-data"
@@ -139,9 +144,16 @@ def _bundle_path(source: Path) -> str:
 
 
 def _materialise_witnesses_from_local() -> int:
-    """Copy data/dashboard/*.parquet+json into the bundle (local dev path)."""
-    data_src = ROOT / "data" / "dashboard"
-    if not data_src.exists():
+    """Copy WITNESS_FILES into the bundle (local dev path).
+
+    Most witnesses live under ``data/dashboard/`` (produced by
+    ``build_dashboard_data.py``); model-side artefacts like
+    ``price_metrics.json`` live at ``data/`` top-level (written by
+    ``train-model``). Look in both.
+    """
+    data_dashboard = ROOT / "data" / "dashboard"
+    data_root = ROOT / "data"
+    if not data_dashboard.exists():
         print(
             "!! data/dashboard missing — run build_dashboard_data.py first",
             file=sys.stderr,
@@ -149,8 +161,17 @@ def _materialise_witnesses_from_local() -> int:
         sys.exit(2)
     if DATA_DIR.exists():
         shutil.rmtree(DATA_DIR)
-    shutil.copytree(data_src, DATA_DIR)
-    return sum(1 for f in DATA_DIR.rglob("*") if f.is_file())
+    DATA_DIR.mkdir(parents=True)
+    fetched = 0
+    for name in WITNESS_FILES:
+        for candidate in (data_dashboard / name, data_root / name):
+            if candidate.exists():
+                shutil.copy(candidate, DATA_DIR / name)
+                fetched += 1
+                break
+        else:
+            print(f"::warning::local copy missing: {name}", file=sys.stderr)
+    return fetched
 
 
 def _materialise_witnesses_from_release() -> int:

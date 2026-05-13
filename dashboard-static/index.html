@@ -115,6 +115,14 @@
       "data/dashboard/portfolio.parquet":          { url: `${DATA_BASE}/portfolio.parquet` },
       "data/dashboard/unmatched.parquet":          { url: `${DATA_BASE}/unmatched.parquet` },
       "data/dashboard/brands_models.json":         { url: `${DATA_BASE}/brands_models.json` },
+
+      // Model-side artefact — load_metrics_history() reads it via
+      // ``_METRICS_PATH = data/price_metrics.json`` (one level above
+      // data/dashboard/), so we mount it at the bare ``data/`` path
+      // rather than under data/dashboard/. The on-disk source still
+      // sits inside ${DATA_BASE} because scripts/build_stlite_bundle.py
+      // dumps every fetched file into a single bucket.
+      "data/price_metrics.json":                   { url: `${DATA_BASE}/price_metrics.json` },
     };
 
     try {
