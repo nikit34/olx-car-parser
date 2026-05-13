@@ -392,8 +392,15 @@ for _, deal in deals.iterrows():
                 tags.append("ДТП")
             if deal.get("desc_mentions_repair"):
                 tags.append("ремонт")
-            if deal.get("right_hand_drive"):
-                tags.append("правый руль")
+            # "правый руль" tag dropped 2026-05-13: the current LLM schema
+            # (v7-slim) doesn't extract right_hand_drive, so the column is
+            # never refreshed. The 33 surviving True values were legacy LLM
+            # hallucinations on clearly LHD PT-market cars (Audi A3 2022,
+            # BMW 220, Nissan Qashqai, …) and were cleared to NULL. Until
+            # we wire up a deterministic detector ("volante à direita" /
+            # "RHD" regex on title+description), there's no useful signal
+            # to render. Decision-engine still reads the column — it'll
+            # just always see False/NULL and not REJECT on RHD grounds.
             if deal.get("taxi_fleet_rental"):
                 tags.append("такси/прокат")
             n_own = deal.get("desc_mentions_num_owners")
