@@ -497,7 +497,7 @@ for _, deal in deals.iterrows():
                 deal["generation"] if pd.notna(deal.get("generation")) and deal.get("generation")
                 else None
             )
-            st.switch_page("pages/3_Model_Details.py")
+            st.switch_page("pages/3_🔍_Model_Details.py")
 
         if _decision is not None and _decision.reasons:
             with st.expander(f"Why {_decision.verdict}? ({len(_decision.reasons)} reasons)"):
