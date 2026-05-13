@@ -50,10 +50,8 @@ def load_active() -> pd.DataFrame:
     listings = get_listings_df(s)
     s.close()
     listings = enrich_listings(listings)
-    if "real_mileage_km" in listings.columns:
-        listings["mileage_km"] = listings["real_mileage_km"].fillna(
-            listings["mileage_km"]
-        )
+    from src.parser.llm_enrichment import merge_real_mileage
+    listings = merge_real_mileage(listings)
     turnover = compute_turnover_stats(listings)
     return prepare_active_for_model(listings, turnover=turnover, include_sold=True)
 

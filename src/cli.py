@@ -1289,8 +1289,8 @@ def train_model():
         raise typer.Exit(1)
 
     listings = enrich_listings(listings)
-    if "real_mileage_km" in listings.columns:
-        listings["mileage_km"] = listings["real_mileage_km"].fillna(listings["mileage_km"])
+    from src.parser.llm_enrichment import merge_real_mileage
+    listings = merge_real_mileage(listings)
 
     turnover = compute_turnover_stats(listings)
     active = prepare_active_for_model(listings, turnover=turnover, include_sold=True)
@@ -1394,8 +1394,8 @@ def eval_model(
         raise typer.Exit(1)
 
     listings = enrich_listings(listings)
-    if "real_mileage_km" in listings.columns:
-        listings["mileage_km"] = listings["real_mileage_km"].fillna(listings["mileage_km"])
+    from src.parser.llm_enrichment import merge_real_mileage
+    listings = merge_real_mileage(listings)
     turnover = compute_turnover_stats(listings)
     # Match the training-side row set so eval_oof can join sold-row OOF
     # predictions back to the rows they were trained on.
@@ -1612,10 +1612,8 @@ def train_anomaly():
         raise typer.Exit(1)
 
     listings = enrich_listings(listings)
-    if "real_mileage_km" in listings.columns:
-        listings["mileage_km"] = (
-            listings["real_mileage_km"].fillna(listings["mileage_km"])
-        )
+    from src.parser.llm_enrichment import merge_real_mileage
+    listings = merge_real_mileage(listings)
     turnover = compute_turnover_stats(listings)
     active = prepare_active_for_model(listings, turnover=turnover, include_sold=True)
 
@@ -1669,10 +1667,8 @@ def train_hazard(
         raise typer.Exit(1)
 
     listings = enrich_listings(listings)
-    if "real_mileage_km" in listings.columns:
-        listings["mileage_km"] = (
-            listings["real_mileage_km"].fillna(listings["mileage_km"])
-        )
+    from src.parser.llm_enrichment import merge_real_mileage
+    listings = merge_real_mileage(listings)
     turnover = compute_turnover_stats(listings)
     active = prepare_active_for_model(listings, turnover=turnover, include_sold=True)
 

@@ -109,12 +109,13 @@ def _build(db_path: Path, out_dir: Path) -> dict:
 
     listings = enrich_listings(listings)
 
-    # Read-time mileage sanity gate — mirrors the dashboard's load_all logic.
-    _SANITY_MAX_MILEAGE_KM = 1_000_000
-    if "real_mileage_km" in listings.columns:
-        real_km = listings["real_mileage_km"]
-        plausible = (real_km > 0) & (real_km <= _SANITY_MAX_MILEAGE_KM)
-        listings["mileage_km"] = real_km.where(plausible).fillna(listings["mileage_km"])
+    # Sanity-gate the LLM mileage read against the structured attribute
+    # before letting it override (absolute cap + 10× relative gate). Without
+    # the relative gate, pre-2026-05-11 dirty-title rows like JltT9 (price
+    # leaked as mileage: 9000 vs the real 355000) would render as 9 km on
+    # the deal card.
+    from src.parser.llm_enrichment import merge_real_mileage
+    listings = merge_real_mileage(listings)
 
     t0 = time.perf_counter()
     turnover = compute_turnover_stats(listings)

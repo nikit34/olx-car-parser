@@ -766,3 +766,31 @@ def apply_corrections(listings: list) -> int:
 
     logger.info("Applied corrections to %d / %d listings", corrected, len(listings))
     return corrected
+
+
+def merge_real_mileage(listings):
+    """Overlay ``real_mileage_km`` (LLM description read) onto ``mileage_km``
+    where the LLM value is sane.
+
+    Mirrors the per-row gate in :func:`correct_listing_data`: a description
+    read is trusted only when it's positive, within the absolute cap, and —
+    if a structured attribute exists — within ``_SANITY_RELATIVE_MAX`` ratio
+    of it. Without the relative gate, pre-2026-05-11 dirty-title rows
+    (where the LLM read the price as mileage, e.g. JltT9's 9000 vs the
+    real 355000) sneak through and the dashboard renders the price as km.
+
+    Mutates and returns the DataFrame so callers can chain.
+    """
+    if "real_mileage_km" not in listings.columns:
+        return listings
+    real_km = listings["real_mileage_km"]
+    attr_km = listings["mileage_km"]
+    plausible_abs = (real_km > 0) & (real_km <= _MILEAGE_SANITY_MAX_KM)
+    both_present = real_km.notna() & attr_km.notna() & (attr_km > 0)
+    ratio_ok = (
+        (real_km <= attr_km * _MILEAGE_SANITY_RELATIVE_MAX)
+        & (real_km * _MILEAGE_SANITY_RELATIVE_MAX >= attr_km)
+    )
+    plausible = plausible_abs & (~both_present | ratio_ok)
+    listings["mileage_km"] = real_km.where(plausible).fillna(attr_km)
+    return listings
