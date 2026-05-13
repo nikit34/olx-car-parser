@@ -797,22 +797,42 @@ def _merge_details(listing: RawListing, details: dict):
     for key, value in details.items():
         if value is not None and hasattr(listing, key):
             current = getattr(listing, key)
-            # Title from JSON-LD ``Vehicle.name`` is canonical: it heals the
-            # pre-2026-05-11 search-card titles that fused year+price ("BMW
-            # 20129.000 €"). Overwrite when the existing title carries price
-            # residue — "€" or a fused-number stretch (>=4 consecutive digits
-            # touching another digit/dot) — but otherwise keep the card text.
+            # Title from JSON-LD ``Vehicle.name`` is canonical, but the
+            # search-card title can carry richer descriptive text. Overwrite
+            # only when the existing title shows price residue — "€" or a
+            # 5+ digit run (clean titles never have either; year ≤ 4 digits).
             if key == "title" and current:
-                # "€" or 5+ fused digits = price residue (clean OLX titles
-                # never have either; year is at most 4 digits).
                 dirty = "€" in current or bool(re.search(r"\d{5,}", current))
                 if dirty:
                     setattr(listing, key, value)
+                continue
+            # Canonical detail-page fields (JSON-LD ``Vehicle`` + the
+            # ``ad-parameters-container`` rows) override whatever the
+            # search card produced. Pre-2026-05 search cards sometimes
+            # rendered the *price* number where the parser expected
+            # mileage ("2012 - 9.000 km" patterns), so 377 / 19,308
+            # listings ended up with ``mileage_km == price_eur``. The
+            # detail page's "Quilómetros: 355.000 km" param is the
+            # ground truth and must win.
+            if key in _DETAIL_AUTHORITATIVE_FIELDS:
+                setattr(listing, key, value)
                 continue
             if not current or current == "" or current == 0:
                 setattr(listing, key, value)
     # Fix mileage after all fields are populated
     listing.mileage_km = _fix_mileage(listing.mileage_km, listing.year)
+
+
+# Fields written by ``scrape_listing_detail`` / ``scrape_standvirtual_detail``
+# from canonical sources (JSON-LD ``Vehicle`` + the ad-parameters-container).
+# When detail has a non-None value for one of these, it must override the
+# search-card value — the card is a preview, the detail page is the ground
+# truth.
+_DETAIL_AUTHORITATIVE_FIELDS = frozenset({
+    "brand", "model", "year", "price_eur", "mileage_km", "engine_cc",
+    "fuel_type", "horsepower", "transmission", "doors", "seats", "color",
+    "drive_type", "condition", "segment", "registration_month", "city",
+})
 
 
 def _parse_eur_price(text: str) -> float | None:
