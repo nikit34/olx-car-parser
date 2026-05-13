@@ -321,6 +321,15 @@ class OlxScraper:
                     details["brand"] = data.get("brand", "")
                     details["model"] = data.get("model", "")
                     details["year"] = _safe_int(data.get("productionDate"))
+                    # JSON-LD ``Vehicle.name`` is the canonical headline; the
+                    # search-card title can carry price residue when the OLX
+                    # card layout fuses title+price under one wrapper (the
+                    # pre-2026-05-11 cards stored "BMW-520-f10 20129.000 €"
+                    # — year and price glued without a separator). Pull from
+                    # the detail page so any re-fetch heals the bad rows.
+                    title_clean = (data.get("name") or "").strip()
+                    if title_clean:
+                        details["title"] = title_clean
                     offers = data.get("offers", {})
                     details["price_eur"] = _safe_float(offers.get("price"))
                     area = offers.get("areaServed", {})
@@ -788,6 +797,18 @@ def _merge_details(listing: RawListing, details: dict):
     for key, value in details.items():
         if value is not None and hasattr(listing, key):
             current = getattr(listing, key)
+            # Title from JSON-LD ``Vehicle.name`` is canonical: it heals the
+            # pre-2026-05-11 search-card titles that fused year+price ("BMW
+            # 20129.000 €"). Overwrite when the existing title carries price
+            # residue — "€" or a fused-number stretch (>=4 consecutive digits
+            # touching another digit/dot) — but otherwise keep the card text.
+            if key == "title" and current:
+                # "€" or 5+ fused digits = price residue (clean OLX titles
+                # never have either; year is at most 4 digits).
+                dirty = "€" in current or bool(re.search(r"\d{5,}", current))
+                if dirty:
+                    setattr(listing, key, value)
+                continue
             if not current or current == "" or current == 0:
                 setattr(listing, key, value)
     # Fix mileage after all fields are populated
