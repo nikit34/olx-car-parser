@@ -216,23 +216,44 @@ _metrics_history = load_metrics_history()
 if _metrics_history:
     with st.sidebar.expander("Model quality"):
         _latest = _metrics_history[-1]
-        _mq1, _mq2, _mq3 = st.columns(3)
+        _mq1, _mq2 = st.columns(2)
         _mq1.metric("MAE", f"{_latest['mae']:,.0f} €")
-        _mq2.metric("MAPE", f"{_latest['mape']:.1f}%")
-        _mq3.metric("R²", f"{_latest['r2']:.2f}")
+        _mq2.metric("R²", f"{_latest['r2']:.3f}")
         _cov = _latest.get("coverage_80_calibrated") or _latest.get("coverage_80")
+        _mq3, _mq4 = st.columns(2)
+        _mq3.metric("MAPE", f"{_latest['mape']:.1f}%")
         if _cov is not None:
-            _mq4, _mq5 = st.columns(2)
             _mq4.metric("80% coverage (CQR)", f"{_cov:.1%}", delta=f"{(_cov - 0.80):+.1%}")
-            _best_n = _latest.get("best_n_estimators")
-            if _best_n is not None:
-                _mq5.metric("Trees (CV-tuned)", f"{_best_n}")
-        st.caption(f"CV {_latest.get('cv_folds', '?')}-fold · {_latest['n_samples']:,} samples")
+        _best_n = _latest.get("best_n_estimators")
+        if _best_n is not None:
+            st.caption(
+                f"CV {_latest.get('cv_folds', '?')}-fold · "
+                f"{_latest['n_samples']:,} samples · {_best_n} trees"
+            )
+        else:
+            st.caption(f"CV {_latest.get('cv_folds', '?')}-fold · {_latest['n_samples']:,} samples")
+        st.caption(
+            "MAE/R² are the honest health signal. MAPE depends on the price "
+            "mix of the eval set — when sold rows skewed cheap on 2026-05-03, "
+            "MAPE rose while MAE fell."
+        )
 
         if len(_metrics_history) > 1:
             _hist_df = pd.DataFrame(_metrics_history)
             _hist_df["timestamp"] = pd.to_datetime(_hist_df["timestamp"])
-            st.line_chart(_hist_df.set_index("timestamp")[["mape"]])
+            st.caption("MAE (€) over time")
+            st.line_chart(_hist_df.set_index("timestamp")[["mae"]])
+
+        _per_bucket = _latest.get("conformal_q_per_bucket") or {}
+        _edges = _latest.get("conformal_q_bucket_edges") or []
+        if _per_bucket and _edges:
+            _order = [row[2] for row in _edges]
+            _bucket_df = pd.DataFrame(
+                [(label, _per_bucket[label] * 100) for label in _order if label in _per_bucket],
+                columns=["bucket", "rel_spread_pct"],
+            ).set_index("bucket")
+            st.caption("80% CI half-width by price bucket (%, cheap → expensive)")
+            st.bar_chart(_bucket_df)
 
 # ---------------------------------------------------------------------------
 # Apply filters
