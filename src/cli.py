@@ -1376,7 +1376,7 @@ def eval_model(
             "Run [bold]train-model[/bold] first."
         )
         raise typer.Exit(1)
-    _models, _maps, metrics, oof_preds, _calibrator = saved
+    _models, _maps, metrics, oof_preds, _calibrator, _uncertainty = saved
 
     if not oof_preds:
         console.print(
