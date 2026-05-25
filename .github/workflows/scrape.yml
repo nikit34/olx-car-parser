@@ -476,6 +476,21 @@ jobs:
           .venv/bin/python scripts/build_dashboard_data.py
           ls -lh data/dashboard/
 
+      - name: Build hot_deals feeds for flipper-club
+        # Per-zone JSON of the top flip candidates the flipper-club Cloudflare
+        # Worker serves to paying flippers. Same model/vetoes as the dashboard,
+        # but trimmed to ~30 per zone with og:image URLs fetched live from OLX
+        # so the cards have working thumbnails. Worker fetches each JSON from
+        # the latest-data Release and caches 5 min in KV.
+        id: build_hot_deals
+        if: ${{ !cancelled() && steps.train_model.outputs.train_rc == '0' }}
+        timeout-minutes: 15
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          .venv/bin/python scripts/build_hot_deals.py
+          ls -lh data/hot_deals/
+
       - name: Upload DB + model to GitHub Releases
         if: always()
         env:
@@ -539,4 +554,16 @@ jobs:
             echo "Uploaded dashboard witnesses ($(ls data/dashboard | wc -l | tr -d ' ') files)"
           else
             echo "::warning::Skipping dashboard witness upload — data/dashboard/manifest.json missing"
+          fi
+
+          # Hot-deals JSONs for the flipper-club Worker. Each zone is a tiny
+          # (~30 deals) artifact; the Worker fetches at request time.
+          if [ -d data/hot_deals ]; then
+            uploaded=0
+            for f in data/hot_deals/hot_deals_*.json; do
+              [ -f "$f" ] && gh release upload latest-data "$f" --clobber && uploaded=$((uploaded+1))
+            done
+            echo "Uploaded $uploaded hot_deals JSONs"
+          else
+            echo "::warning::Skipping hot_deals upload — data/hot_deals/ missing"
           fi
