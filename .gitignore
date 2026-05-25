@@ -39,3 +39,7 @@ build/
 .cursor/
 .playwright-mcp/
 .DS_Store
+node_modules/
+.wrangler/
+.dev.vars
+*.log

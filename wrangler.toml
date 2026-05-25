@@ -1,30 +1,52 @@
-# Cloudflare Workers Static Assets config for the stlite dashboard bundle.
-#
-# This is the "no-Worker, just static" deploy mode: wrangler uploads every
-# file under ``./dashboard-static`` as a static asset and serves them via
-# the Workers runtime. There is no ``main`` field — without a Worker
-# script, all requests are answered straight from the asset CDN.
+# Unified Cloudflare Worker — serves both:
+#   1. The flipper-club B2B feed (PIN-gated, KV-backed sessions) — main Worker
+#      script under flipper-club/src/. This is the public product entry point
+#      at https://olx-car-parser.permikov134.workers.dev/.
+#   2. The internal stlite analytics dashboard at /analytics/* — admin-only,
+#      served from the ./dashboard-static asset bundle via the ASSETS binding.
+#      Not a product — this is the internal tool for inspecting the model,
+#      market direction, and per-listing decision context.
 #
 # CI flow (configured in the Cloudflare dashboard, not here):
 #   1. CF Pages clones master.
-#   2. Runs the build command (``python3 scripts/build_stlite_bundle.py``)
-#      which materialises ``dashboard-static/files/*.py``.
+#   2. Runs the build command: ``python3 scripts/build_stlite_bundle.py``
+#      which materialises ``dashboard-static/files/*.py`` and downloads the
+#      latest data witnesses.
 #   3. Runs ``npx wrangler deploy`` which reads THIS file, finds the
-#      ``[assets]`` directory, and uploads its contents.
-#
-# Data witnesses are NOT bundled here — the browser fetches them from the
-# ``latest-data`` GitHub Release at mount time (see dashboard-static/index.html).
+#      [assets] directory, registers the KV binding, and deploys the Worker.
 
 name = "olx-car-parser"
+main = "flipper-club/src/index.js"
 compatibility_date = "2024-12-01"
+account_id = "6545f93bd664df2dfebb147bda85a191"
 
+# Assets are served via env.ASSETS.fetch() — the Worker chooses which paths
+# get to them (admin-only /analytics dashboard) vs. which are intercepted
+# (the flipper-club product routes).
 [assets]
+binding = "ASSETS"
 directory = "./dashboard-static"
 # Streamlit's filename-based multipage nav generates URLs like
-# ``/Market_Direction`` and ``/Model_Details`` that don't exist as
-# static files; SPA mode routes every miss back to ``index.html``
-# so stlite/Streamlit can take over client-side.
+# /analytics/Market_Direction that don't exist as static files; SPA mode
+# routes every miss back to index.html so stlite takes over client-side.
 not_found_handling = "single-page-application"
+# Run the Worker BEFORE checking static assets. Default CF behavior is the
+# opposite — static files win and the Worker only runs on 404. That makes
+# / serve dashboard-static/index.html directly, bypassing our auth/routing.
+# With this flag, every request hits our Worker, which then chooses when
+# to delegate to env.ASSETS.fetch().
+run_worker_first = true
+
+# Single KV namespace holds both PINs (prefix "pin:") and sessions
+# (prefix "session:"). Run once: ``npx wrangler kv namespace create KV``
+# and paste the returned id below. For local dev (``wrangler dev --local``)
+# the id can be any string — local state lives under .wrangler/state/.
+[[kv_namespaces]]
+binding = "KV"
+id = "5ae27bd650e94beeb2de2adf5ac2108c"
+
+[vars]
+ZONES = "norte,centro,sul,all"
 
 [observability]
 enabled = true

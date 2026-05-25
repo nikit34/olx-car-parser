@@ -3,6 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- This is the internal analytics surface — admin-only, not a product
+       page. The unified Worker mounts this bundle at /analytics/ and gates
+       access on an admin PIN. Setting <base> means the stlite relative
+       paths in mountFiles below (./files/*, ./data/*) resolve under
+       /analytics/ regardless of which page the SPA is currently on
+       (/analytics/Market_Direction, /analytics/Model_Details, etc). -->
+  <base href="/analytics/" />
   <title>OLX Car Deals</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%9A%97%3C/text%3E%3C/svg%3E" />
   <link

@@ -1,0 +1,15 @@
+{
+  "name": "olx-flipper-club",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Closed B2B feed of OLX/SV flip candidates — PIN auth, geo-sharded by district.",
+  "scripts": {
+    "dev": "wrangler dev --local",
+    "deploy": "wrangler deploy",
+    "kv:create": "wrangler kv:namespace create KV",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^3.90.0"
+  }
+}
