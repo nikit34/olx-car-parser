@@ -164,6 +164,13 @@ def _format_deal(deal: dict) -> str:
     return "\n".join(lines)
 
 
+class ChatUnreachable(Exception):
+    """Telegram refused the message because the chat is permanently
+    unreachable for this bot (user blocked it, never started it, or was
+    deactivated). Future sends to the same chat will fail the same way,
+    so the caller should stop the loop rather than retry per-deal."""
+
+
 def _send_message(bot_token: str, chat_id: str, text: str) -> bool:
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     try:
@@ -175,8 +182,12 @@ def _send_message(bot_token: str, chat_id: str, text: str) -> bool:
         }, timeout=15)
         if resp.status_code == 200:
             return True
+        if resp.status_code == 403:
+            raise ChatUnreachable(resp.text)
         logger.warning("Telegram API error: %s %s", resp.status_code, resp.text)
         return False
+    except ChatUnreachable:
+        raise
     except Exception as e:
         logger.error("Failed to send Telegram message: %s", e)
         return False
@@ -375,9 +386,20 @@ def check_and_send_alerts() -> int:
         return 0
 
     sent = 0
+    total = len(new_signals)
     for _, deal in new_signals.iterrows():
         msg = _format_deal(deal.to_dict())
-        if _send_message(cfg["bot_token"], cfg["chat_id"], msg):
+        try:
+            ok = _send_message(cfg["bot_token"], cfg["chat_id"], msg)
+        except ChatUnreachable as e:
+            logger.error(
+                "Telegram chat %s is unreachable (403): %s. "
+                "Aborting after %d/%d alerts — re-engage the bot in the chat "
+                "and the next run will resume.",
+                cfg["chat_id"], e, sent, total,
+            )
+            break
+        if ok:
             seen.add(deal["olx_id"])
             sent += 1
 

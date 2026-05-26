@@ -1,6 +1,10 @@
 """Tests for Telegram alert formatting."""
 
-from src.alerts.telegram_bot import _format_deal
+from unittest.mock import patch
+
+import pytest
+
+from src.alerts.telegram_bot import ChatUnreachable, _format_deal, _send_message
 
 
 class TestFormatDeal:
@@ -176,3 +180,33 @@ class TestSellerWarnings:
     def test_user_photo_positive(self):
         msg = _format_deal(self._base(seller_has_user_photo=True))
         assert "фото профиля" in msg
+
+
+class TestSendMessage:
+    """A 403 from Telegram means the chat is permanently unreachable for
+    this bot (blocked / never started / deactivated). It must escape as
+    ChatUnreachable so the alert loop bails instead of burning the
+    10-minute step budget retrying every remaining deal."""
+
+    def _resp(self, status_code: int, text: str = ""):
+        class _R:
+            def __init__(self, sc, t):
+                self.status_code = sc
+                self.text = t
+        return _R(status_code, text)
+
+    def test_403_raises_chat_unreachable(self):
+        with patch("src.alerts.telegram_bot.httpx.post",
+                   return_value=self._resp(403, '{"description":"blocked"}')):
+            with pytest.raises(ChatUnreachable):
+                _send_message("tok", "chat", "msg")
+
+    def test_200_returns_true(self):
+        with patch("src.alerts.telegram_bot.httpx.post",
+                   return_value=self._resp(200)):
+            assert _send_message("tok", "chat", "msg") is True
+
+    def test_non_403_error_returns_false(self):
+        with patch("src.alerts.telegram_bot.httpx.post",
+                   return_value=self._resp(429, "rate-limited")):
+            assert _send_message("tok", "chat", "msg") is False
