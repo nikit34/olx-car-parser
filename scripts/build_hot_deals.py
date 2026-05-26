@@ -134,6 +134,15 @@ def _format_deal(row: dict, photo_urls: list[str]) -> dict:
         except (TypeError, ValueError):
             return None
 
+    def _s(v):
+        # String fields straight off pandas rows can be float NaN (missing).
+        # json.dumps emits those as the literal `NaN`, which is valid Python
+        # but NOT valid JSON — the worker's JSON.parse then throws and we
+        # fall back to mock for the whole zone. Coerce to None up front.
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return None
+        return v
+
     discount_pct_raw = _f(row.get("adjusted_undervaluation_pct"))
     discount_pct = round(discount_pct_raw / 100, 4) if discount_pct_raw is not None else None
     # Fallback: if est_profit_after_repair_eur is None (no repair cost), the
@@ -146,15 +155,15 @@ def _format_deal(row: dict, photo_urls: list[str]) -> dict:
             profit = int(round(median - price))
 
     return {
-        "olx_id": row.get("olx_id"),
-        "url": row.get("url"),
-        "title": row.get("title") or f"{row.get('brand', '')} {row.get('model', '')}".strip(),
-        "brand": row.get("brand"),
-        "model": row.get("model"),
+        "olx_id": _s(row.get("olx_id")),
+        "url": _s(row.get("url")),
+        "title": _s(row.get("title")) or f"{_s(row.get('brand')) or ''} {_s(row.get('model')) or ''}".strip(),
+        "brand": _s(row.get("brand")),
+        "model": _s(row.get("model")),
         "year": _i(row.get("year")),
         "mileage_km": _i(row.get("mileage_km")),
-        "fuel_type": row.get("fuel_type"),
-        "transmission": row.get("transmission"),
+        "fuel_type": _s(row.get("fuel_type")),
+        "transmission": _s(row.get("transmission")),
         "price_eur": _i(row.get("price_eur")),
         "fair_low": _i(row.get("fair_price_low")),
         "fair_median": _i(row.get("predicted_price")),
@@ -164,9 +173,9 @@ def _format_deal(row: dict, photo_urls: list[str]) -> dict:
         "flip_score": _f(row.get("flip_score")),
         "first_seen_at": first_seen_iso,
         "days_on_market": days_on_market,
-        "district": row.get("district"),
-        "city": row.get("city"),
-        "seller_type": row.get("seller_type"),
+        "district": _s(row.get("district")),
+        "city": _s(row.get("city")),
+        "seller_type": _s(row.get("seller_type")),
         "damage_severity": _i(row.get("damage_severity")) or 0,
         "photo_damage_p": float(extras.get("photo_damage_p") or 0),
         "photo_damage_flagged": bool(extras.get("photo_damage_flagged")),
@@ -286,7 +295,12 @@ def main() -> None:
             "built_at": built_at,
             "deals": deals,
         }
-        out_path.write_text(json.dumps(payload, ensure_ascii=False, default=str, indent=2))
+        # allow_nan=False makes json.dumps raise ValueError on NaN/Infinity
+        # instead of emitting the literal `NaN` (invalid JSON, kills the
+        # worker's JSON.parse). _format_deal already sanitises all fields,
+        # so this is belt-and-braces — if it ever fires, fix _format_deal.
+        out_path.write_text(json.dumps(payload, ensure_ascii=False, default=str,
+                                       indent=2, allow_nan=False))
         overall_counts[zone] = len(deals)
         print(f"[hot_deals]   {zone:<6} {len(deals):>3} deals → {out_path.name}", flush=True)
 
