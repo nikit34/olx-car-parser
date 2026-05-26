@@ -243,8 +243,9 @@ export function renderLogin({ error } = {}) {
 function renderCard(deal) {
   const photos = Array.isArray(deal.photo_urls) ? deal.photo_urls : [];
   const cover = photos[0] || "";
+  const name = deal.title || [deal.brand, deal.model].filter(Boolean).join(" ") || "Viatura";
   const galleryHtml = photos.length > 0 ? `<div class="gallery ${photos.length === 1 ? 'single' : ''}" data-count="${photos.length}">
-        <div class="gallery-track">${photos.map(u => `<img loading="lazy" src="${escapeHtml(u)}" alt="">`).join("")}</div>
+        <div class="gallery-track">${photos.map((u, i) => `<img loading="lazy" src="${escapeHtml(u)}" alt="${escapeHtml(name)} — foto ${i + 1}">`).join("")}</div>
         <button type="button" class="gallery-nav prev" aria-label="Anterior">‹</button>
         <button type="button" class="gallery-nav next" aria-label="Próxima">›</button>
         <div class="gallery-counter">1 / ${photos.length}</div>
@@ -252,10 +253,10 @@ function renderCard(deal) {
   return `<div class="card">
     <div class="card-summary">
       ${cover
-        ? `<img loading="lazy" src="${escapeHtml(cover)}" alt="">`
+        ? `<img loading="lazy" src="${escapeHtml(cover)}" alt="${escapeHtml(name)}">`
         : `<div style="width:120px;height:90px;background:#e5e7eb;border-radius:4px"></div>`}
       <div class="meta">
-        <h3>${escapeHtml(deal.title || (deal.brand + " " + deal.model))}</h3>
+        <h3>${escapeHtml(name)}</h3>
         <div class="sub">${escapeHtml(deal.brand)} ${escapeHtml(deal.model)} · ${deal.year} · ${fmtKm(deal.mileage_km)} · ${escapeHtml(deal.fuel_type || "")}</div>
         <div class="tags">
           <span>📍 ${escapeHtml(deal.city || "")}, ${escapeHtml(deal.district || "")}</span>
@@ -274,7 +275,7 @@ function renderCard(deal) {
     <div class="card-detail">
       ${galleryHtml}
       <h4>Descrição</h4>
-      <div class="desc">${escapeHtml(deal.description_excerpt || "")}</div>
+      <div class="desc">${escapeHtml(deal.description ?? deal.description_excerpt ?? "")}</div>
       <h4>Sinais</h4>
       <div class="signals">
         <div class="signal"><div class="label">Preço pedido</div><div class="value">${fmtEur(deal.price_eur)}</div></div>
@@ -297,10 +298,16 @@ function renderCard(deal) {
   </div>`;
 }
 
-export function renderDashboard({ deals, zone, sort, isAdmin }) {
+export function renderDashboard({ deals, zone, sort, isAdmin, degraded }) {
+  // Degraded = feed unavailable. Distinct from "no deals" so the user knows
+  // it's a service issue, not an empty market — and doesn't act on stale data.
+  if (degraded) {
+    const banner = `<div class="empty">⚠ Serviço temporariamente indisponível — não foi possível carregar os deals. Tenta novamente dentro de instantes.</div>`;
+    return layout({ title: "Deals", body: banner, zone, isAdmin, pageType: "dashboard" });
+  }
   const sorted = [...deals];
   if (sort === "newest") {
-    sorted.sort((a, b) => (b.first_seen_at || "").localeCompare(a.first_seen_at || ""));
+    sorted.sort((a, b) => new Date(b.first_seen_at || 0) - new Date(a.first_seen_at || 0));
   } else if (sort === "profit") {
     sorted.sort((a, b) => (b.est_profit_eur || 0) - (a.est_profit_eur || 0));
   } else {
@@ -337,7 +344,7 @@ export function renderAdmin({ pins, newPin, error, zones, isAdmin }) {
     <td>${p.expires_at ? escapeHtml(p.expires_at.slice(0, 16).replace("T", " ")) : "—"}</td>
     <td>${escapeHtml(p.created_at?.slice(0, 16).replace("T", " ") || "—")}</td>
     <td>
-      ${!p.revoked && !p.is_admin ? `<form action="/admin/pins/${p.id}/revoke" method="post" style="display:inline" onsubmit="return confirm('Revogar PIN ${p.value}?')">
+      ${!p.revoked ? `<form action="/admin/pins/${p.id}/revoke" method="post" style="display:inline" onsubmit="return confirm('Revogar PIN ${p.value}${p.is_admin ? ' (ADMIN)' : ''}?')">
         <button class="revoke" type="submit">Revoke</button>
       </form>` : ""}
     </td>
@@ -361,11 +368,11 @@ export function renderAdmin({ pins, newPin, error, zones, isAdmin }) {
           </div>
           <div>
             <label>Zona</label>
-            <select name="zone">${zoneOpts}</select>
+            <select name="zone" id="f-zone">${zoneOpts}</select>
           </div>
           <div>
             <label>Validade (horas)</label>
-            <input type="number" name="ttl_hours" placeholder="24" min="1" max="876000">
+            <input type="number" name="ttl_hours" id="f-ttl" placeholder="24" min="1" max="876000">
           </div>
           <div>
             <label>Notas</label>
@@ -374,7 +381,8 @@ export function renderAdmin({ pins, newPin, error, zones, isAdmin }) {
         </div>
         <div style="margin-bottom:12px;font-size:13px;">
           <label style="display:inline-flex;align-items:center;gap:6px;color:#374151;">
-            <input type="checkbox" name="is_admin" value="1" style="width:auto;">
+            <input type="checkbox" name="is_admin" value="1" id="f-admin" style="width:auto;"
+              onchange="['f-zone','f-ttl'].forEach(id=>{var el=document.getElementById(id);el.disabled=this.checked;el.style.opacity=this.checked?0.45:1;});">
             Admin PIN (vê admin panel, zona ignorada, não expira — apenas revoke)
           </label>
         </div>

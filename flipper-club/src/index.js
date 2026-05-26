@@ -10,8 +10,9 @@
 //   POST /admin/pins/:id/revoke → flip revoked=true; takes effect on next req
 //   GET  /healthz           → unauthenticated liveness
 //
-// Data source: chunk 1 uses mock.js. Chunk 2 will swap getDeals() to fetch
-// hot_deals_{zone}.json from the latest-data GitHub Release.
+// Data source: getDeals() fetches hot_deals_{zone}.json from the latest-data
+// GitHub Release and caches it in KV for 5 min. On a missing/broken feed it
+// returns a degraded marker (no fake data) — see getDeals/degrade below.
 
 import {
   COOKIE_NAME, cookieHeader, clearCookieHeader,
@@ -20,7 +21,6 @@ import {
   hasAnyAdmin, countActiveAdmins, isExpired,
 } from "./auth.js";
 import { renderLogin, renderDashboard, renderAdmin, renderSetup } from "./templates.js";
-import { getMockDeals } from "./mock.js";
 
 const ZONES_DEFAULT = "norte,centro,sul,all";
 
@@ -100,11 +100,12 @@ export default {
         if (!session) return redirect("/login");
         const sort = url.searchParams.get("sort") || "discount";
         const zone = session.pin.zone || "all";
-        const deals = await getDeals(env, zone);
+        const { deals, degraded } = await getDeals(env, zone);
         return html(renderDashboard({
           deals,
           zone,
           sort,
+          degraded,
           isAdmin: !!session.pin.is_admin,
         }));
       }
@@ -259,27 +260,30 @@ async function handleLogout(request, env) {
 const HOT_DEALS_BASE =
   "https://github.com/nikit34/olx-car-parser/releases/download/latest-data";
 const DEALS_CACHE_TTL_SEC = 300;
+// When the release is missing/broken we negative-cache a degraded marker for
+// a short window so a prolonged outage doesn't hammer GitHub on every hit.
+const DEGRADED_CACHE_TTL_SEC = 30;
 
+// Returns { deals, degraded }. `degraded: true` means we could not load the
+// real feed (network/HTTP/parse failure) — the dashboard surfaces that
+// honestly rather than showing stale or fake listings the user might act on.
 async function getDeals(env, zone) {
   const safeZone = ["norte", "centro", "sul", "all"].includes(zone) ? zone : "all";
-  // Try KV cache first — survives across requests but ages out after 5 min so
-  // a fresh CI run propagates fast.
   const cacheKey = `cache:deals:${safeZone}`;
   const cached = await env.KV.get(cacheKey);
   if (cached) {
     try {
       const parsed = JSON.parse(cached);
-      if (Array.isArray(parsed.deals)) return parsed.deals;
+      if (parsed && parsed.__degraded) return { deals: [], degraded: true };
+      if (Array.isArray(parsed.deals)) return { deals: parsed.deals, degraded: false };
     } catch {}
   }
-  // Miss → fetch from Release.
+  const url = `${HOT_DEALS_BASE}/hot_deals_${safeZone}.json`;
   try {
-    const url = `${HOT_DEALS_BASE}/hot_deals_${safeZone}.json`;
     const r = await fetch(url, { cf: { cacheTtl: 60, cacheEverything: true } });
     if (!r.ok) {
       console.warn(`hot_deals fetch ${url} → ${r.status}`);
-      // Fall back to mock so a bad release doesn't blank the UI.
-      return getMockDeals(safeZone);
+      return degrade(env, cacheKey);
     }
     const body = await r.text();
     // Parse + validate BEFORE caching. A malformed body (e.g. NaN literals
@@ -291,15 +295,21 @@ async function getDeals(env, zone) {
       parsed = JSON.parse(body);
     } catch (e) {
       console.warn(`hot_deals parse fail ${url}`, e && e.message);
-      return getMockDeals(safeZone);
+      return degrade(env, cacheKey);
     }
-    if (!Array.isArray(parsed.deals)) return getMockDeals(safeZone);
+    if (!Array.isArray(parsed.deals)) return degrade(env, cacheKey);
     await env.KV.put(cacheKey, body, { expirationTtl: DEALS_CACHE_TTL_SEC });
-    return parsed.deals;
+    return { deals: parsed.deals, degraded: false };
   } catch (err) {
     console.warn("hot_deals fetch error", err && err.message);
-    return getMockDeals(safeZone);
+    return degrade(env, cacheKey);
   }
+}
+
+async function degrade(env, cacheKey) {
+  await env.KV.put(cacheKey, JSON.stringify({ __degraded: true }),
+    { expirationTtl: DEGRADED_CACHE_TTL_SEC });
+  return { deals: [], degraded: true };
 }
 
 function html(body, status = 200) {

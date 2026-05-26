@@ -185,7 +185,7 @@ def _format_deal(row: dict, photo_urls: list[str]) -> dict:
         "photo_damage_p": float(extras.get("photo_damage_p") or 0),
         "photo_damage_flagged": bool(extras.get("photo_damage_flagged")),
         "photo_urls": photo_urls,
-        "description_excerpt": desc,
+        "description": desc,
     }
 
 

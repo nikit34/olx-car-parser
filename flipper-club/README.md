@@ -9,7 +9,7 @@ Separate Cloudflare Worker from the public stlite dashboard at the repo root —
 - Cloudflare Workers (the Worker script itself) — `src/index.js`
 - Cloudflare KV (one binding) for PIN records and session tokens
 - Server-rendered HTML — no build step, no framework, no client framework
-- Chunk 1 ships with mock data inline (`src/mock.js`). Chunk 2 wires real data from a `hot_deals_{zone}.json` artifact uploaded to the `latest-data` Release by `scrape.yml` (TODO).
+- Data comes from `hot_deals_{zone}.json` artifacts uploaded to the `latest-data` Release by `scrape.yml`; the Worker fetches per-zone at request time and caches in KV for 5 min. A missing/broken feed renders a degraded banner (no fake data).
 
 ## First-time setup
 
