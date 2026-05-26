@@ -87,7 +87,18 @@ const BASE_CSS = `
   .card-detail { display: none; padding: 16px 20px 20px 20px; border-top: 1px solid #e5e7eb; background: #fafbfc; }
   .card.open .card-detail { display: block; }
   .card-detail h4 { margin: 0 0 8px 0; font-size: 14px; color: #6b7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
-  .card-detail .desc { font-size: 14px; line-height: 1.55; color: #1f2937; margin-bottom: 16px; }
+  .card-detail .desc { font-size: 14px; line-height: 1.55; color: #1f2937; margin-bottom: 16px; word-wrap: break-word; }
+  .gallery { position: relative; margin: 0 0 16px 0; border-radius: 6px; overflow: hidden; background: #000; }
+  .gallery-track { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scroll-behavior: smooth; -webkit-overflow-scrolling: touch; }
+  .gallery-track::-webkit-scrollbar { display: none; }
+  .gallery-track { scrollbar-width: none; }
+  .gallery-track img { flex: 0 0 100%; width: 100%; max-height: 480px; object-fit: contain; scroll-snap-align: center; user-select: none; -webkit-user-drag: none; }
+  .gallery-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 36px; height: 36px; border-radius: 50%; border: 0; background: rgba(0,0,0,0.5); color: #fff; font-size: 22px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
+  .gallery-nav.prev { left: 8px; }
+  .gallery-nav.next { right: 8px; }
+  .gallery-nav:hover { background: rgba(0,0,0,0.75); }
+  .gallery-counter { position: absolute; bottom: 8px; right: 8px; background: rgba(0,0,0,0.6); color: #fff; font-size: 12px; padding: 3px 8px; border-radius: 4px; pointer-events: none; font-variant-numeric: tabular-nums; }
+  .gallery.single .gallery-nav, .gallery.single .gallery-counter { display: none; }
   .signals { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 16px; }
   .signal { background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px 12px; }
   .signal .label { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.04em; }
@@ -167,6 +178,24 @@ document.querySelectorAll(".card-summary").forEach(el => {
     el.parentElement.classList.toggle("open");
   });
 });
+document.querySelectorAll(".gallery").forEach(g => {
+  const track = g.querySelector(".gallery-track");
+  const counter = g.querySelector(".gallery-counter");
+  const total = parseInt(g.dataset.count, 10) || 1;
+  const update = () => {
+    if (!counter || !track.clientWidth) return;
+    const idx = Math.min(total - 1, Math.max(0, Math.round(track.scrollLeft / track.clientWidth)));
+    counter.textContent = (idx + 1) + " / " + total;
+  };
+  track.addEventListener("scroll", update, { passive: true });
+  g.querySelectorAll(".gallery-nav").forEach(btn => {
+    btn.addEventListener("click", e => {
+      e.stopPropagation();
+      const dir = btn.classList.contains("next") ? 1 : -1;
+      track.scrollBy({ left: dir * track.clientWidth, behavior: "smooth" });
+    });
+  });
+});
 </script>` : ""}
 </body></html>`;
 }
@@ -212,11 +241,18 @@ export function renderLogin({ error } = {}) {
 }
 
 function renderCard(deal) {
-  const photo = (deal.photo_urls && deal.photo_urls[0]) || "";
+  const photos = Array.isArray(deal.photo_urls) ? deal.photo_urls : [];
+  const cover = photos[0] || "";
+  const galleryHtml = photos.length > 0 ? `<div class="gallery ${photos.length === 1 ? 'single' : ''}" data-count="${photos.length}">
+        <div class="gallery-track">${photos.map(u => `<img loading="lazy" src="${escapeHtml(u)}" alt="">`).join("")}</div>
+        <button type="button" class="gallery-nav prev" aria-label="Anterior">‹</button>
+        <button type="button" class="gallery-nav next" aria-label="Próxima">›</button>
+        <div class="gallery-counter">1 / ${photos.length}</div>
+      </div>` : "";
   return `<div class="card">
     <div class="card-summary">
-      ${photo
-        ? `<img loading="lazy" src="${escapeHtml(photo)}" alt="">`
+      ${cover
+        ? `<img loading="lazy" src="${escapeHtml(cover)}" alt="">`
         : `<div style="width:120px;height:90px;background:#e5e7eb;border-radius:4px"></div>`}
       <div class="meta">
         <h3>${escapeHtml(deal.title || (deal.brand + " " + deal.model))}</h3>
@@ -236,6 +272,7 @@ function renderCard(deal) {
       </div>
     </div>
     <div class="card-detail">
+      ${galleryHtml}
       <h4>Descrição</h4>
       <div class="desc">${escapeHtml(deal.description_excerpt || "")}</div>
       <h4>Sinais</h4>

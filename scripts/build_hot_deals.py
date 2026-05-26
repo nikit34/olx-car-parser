@@ -45,15 +45,22 @@ MAX_LISTING_AGE_DAYS = 14
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
       "(KHTML, like Gecko) Version/17.0 Safari/605.1.15")
-OG_IMAGE_RE = re.compile(r'<meta[^>]*property="og:image"[^>]*content="([^"]+)"')
+# Same pattern src/parser/photo_fetch.py uses — apollo CDN URL + optional
+# size variant. We filter out related-listing thumbnails by requiring at
+# least one ≥1000-px variant per photo id, then emit the 1000x700 URL.
+_OLX_PHOTO_RE = re.compile(
+    r"apollo\.olxcdn\.com[:\d]*/v1/files/([\w-]+)-PT/image"
+    r"(?:;s=(\d+)x(\d+))?"
+)
 
-_PHOTO_CACHE: dict[str, str | None] = {}
+_PHOTO_CACHE: dict[str, list[str]] = {}
 
 
-def fetch_og_image(url: str, timeout: int = 10) -> str | None:
-    """Fetch the OLX listing page and extract its og:image. Cached in-memory
-    per process so the same listing-URL appearing in multiple zones (e.g. "all"
-    + "norte") only triggers one HTTP request."""
+def fetch_photo_urls(url: str, timeout: int = 10) -> list[str]:
+    """Fetch the OLX listing page and return all gallery photo URLs in
+    page order. Empty list means the listing is dead (410/redirect) or
+    has no usable photos. Cached in-memory per process so the same
+    listing-URL across zones triggers one HTTP request."""
     if url in _PHOTO_CACHE:
         return _PHOTO_CACHE[url]
     try:
@@ -63,17 +70,29 @@ def fetch_og_image(url: str, timeout: int = 10) -> str | None:
         })
         with urlopen(req, timeout=timeout) as r:
             html = r.read().decode("utf-8", errors="ignore")
-        m = OG_IMAGE_RE.search(html)
-        photo = m.group(1) if m else None
+        sizes_by_id: dict[str, set[int]] = {}
+        order: list[str] = []
+        for m in _OLX_PHOTO_RE.finditer(html):
+            pid = m.group(1)
+            if pid not in sizes_by_id:
+                sizes_by_id[pid] = set()
+                order.append(pid)
+            if m.group(2):
+                sizes_by_id[pid].add(int(m.group(2)))
+        photos = [
+            f"https://ireland.apollo.olxcdn.com:443/v1/files/{pid}-PT/image;s=1000x700"
+            for pid in order
+            if any(w >= 1000 for w in sizes_by_id[pid])
+        ]
     except Exception as e:
-        print(f"[hot_deals]   og:image fail ({type(e).__name__}): {url[:60]}…",
+        print(f"[hot_deals]   photos fail ({type(e).__name__}): {url[:60]}…",
               file=sys.stderr, flush=True)
-        photo = None
-    _PHOTO_CACHE[url] = photo
-    return photo
+        photos = []
+    _PHOTO_CACHE[url] = photos
+    return photos
 
 
-def _format_deal(row: dict, photo_url: str | None) -> dict:
+def _format_deal(row: dict, photo_urls: list[str]) -> dict:
     """Shape one signals/listings-merged row into the worker's JSON contract."""
     extras: dict = {}
     raw_extras = row.get("llm_extras")
@@ -83,9 +102,12 @@ def _format_deal(row: dict, photo_url: str | None) -> dict:
         except json.JSONDecodeError:
             pass
 
+    # Full description — the card's expanded view shows it in full.
+    # \r/\n normalised to spaces so single-line CSS layouts don't choke;
+    # the rendered <div class="desc"> uses pre-wrap so paragraph breaks
+    # would survive if we ever wanted them back, but the source listings
+    # rarely have meaningful paragraphing.
     desc = (row.get("description") or "").strip().replace("\r", " ").replace("\n", " ")
-    if len(desc) > 280:
-        desc = desc[:280].rsplit(" ", 1)[0] + "..."
 
     first_seen_raw = row.get("first_seen_at")
     first_seen_iso = None
@@ -148,7 +170,7 @@ def _format_deal(row: dict, photo_url: str | None) -> dict:
         "damage_severity": _i(row.get("damage_severity")) or 0,
         "photo_damage_p": float(extras.get("photo_damage_p") or 0),
         "photo_damage_flagged": bool(extras.get("photo_damage_flagged")),
-        "photo_urls": [photo_url] if photo_url else [],
+        "photo_urls": photo_urls,
         "description_excerpt": desc,
     }
 
@@ -246,17 +268,17 @@ def main() -> None:
         picked = _pick_zone_deals(signals, zone, districts, args.top_n, args.max_age_days)
         deals: list[dict] = []
         for _, row in picked.iterrows():
-            photo: str | None = None
+            photos: list[str] = []
             if args.fetch_photos and row.get("url"):
-                photo = fetch_og_image(row["url"])
-                if photo:
+                photos = fetch_photo_urls(row["url"])
+                if photos:
                     time.sleep(args.photo_sleep_sec)
                 else:
                     # Skip listings whose OLX page is 410/redirected — we
                     # can't show them without a working image, and the link
                     # would be dead anyway.
                     continue
-            deals.append(_format_deal(row.to_dict(), photo))
+            deals.append(_format_deal(row.to_dict(), photos))
 
         out_path = args.out_dir / f"hot_deals_{zone}.json"
         payload = {
