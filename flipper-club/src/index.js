@@ -121,6 +121,7 @@ export default {
 
       if (pathname === "/admin/pins/create" && method === "POST") {
         if (!session || !session.pin.is_admin) return notFound();
+        if (!sameOrigin(request, url)) return forbidden();
         const form = await request.formData();
         const isAdminFlag = form.get("is_admin") === "1";
         // Admins don't expire (createPin sets expires_at: null). Flippers
@@ -139,6 +140,7 @@ export default {
       const revokeMatch = pathname.match(/^\/admin\/pins\/([a-f0-9]+)\/revoke$/);
       if (revokeMatch && method === "POST") {
         if (!session || !session.pin.is_admin) return notFound();
+        if (!sameOrigin(request, url)) return forbidden();
         const target = await getPinById(env, revokeMatch[1]);
         if (!target) return redirect("/admin");
         // Block revoking the last active admin — would lock the user out.
@@ -224,6 +226,11 @@ async function handleSetup(request, env) {
   const form = await request.formData();
   const label = (form.get("label") || "Admin").toString().slice(0, 80);
   const pin = await createPin(env, {
+    // Fixed hex id (matches the randomToken(8) shape + the revoke route regex)
+    // so two racing /setup POSTs that both clear the hasAnyAdmin gate — KV is
+    // eventually consistent — collide on this one key instead of creating
+    // duplicate admin PINs. Last write wins; exactly one admin survives.
+    id: "00000000000000ad",
     label,
     zone: "all",
     is_admin: true,
@@ -275,9 +282,20 @@ async function getDeals(env, zone) {
       return getMockDeals(safeZone);
     }
     const body = await r.text();
+    // Parse + validate BEFORE caching. A malformed body (e.g. NaN literals
+    // from a bad build) must never land in KV — the cache-hit branch above
+    // would silently fail to parse it and we'd re-fetch + re-cache the same
+    // garbage on every request for the whole TTL window.
+    let parsed;
+    try {
+      parsed = JSON.parse(body);
+    } catch (e) {
+      console.warn(`hot_deals parse fail ${url}`, e && e.message);
+      return getMockDeals(safeZone);
+    }
+    if (!Array.isArray(parsed.deals)) return getMockDeals(safeZone);
     await env.KV.put(cacheKey, body, { expirationTtl: DEALS_CACHE_TTL_SEC });
-    const parsed = JSON.parse(body);
-    return Array.isArray(parsed.deals) ? parsed.deals : [];
+    return parsed.deals;
   } catch (err) {
     console.warn("hot_deals fetch error", err && err.message);
     return getMockDeals(safeZone);
@@ -297,6 +315,27 @@ function redirect(loc) {
 
 function notFound() {
   return new Response("Not found", { status: 404 });
+}
+
+function forbidden() {
+  return new Response("Forbidden", { status: 403 });
+}
+
+// CSRF guard for state-changing admin POSTs. SameSite=Lax on the session
+// cookie still lets top-level navigation POSTs ride along, so we also verify
+// the request originated from our own host. Browsers send Origin on
+// cross-origin POSTs; we fall back to Referer, and reject when neither is
+// present on a mutating request.
+function sameOrigin(request, url) {
+  const origin = request.headers.get("Origin");
+  if (origin) {
+    try { return new URL(origin).host === url.host; } catch { return false; }
+  }
+  const referer = request.headers.get("Referer");
+  if (referer) {
+    try { return new URL(referer).host === url.host; } catch { return false; }
+  }
+  return false;
 }
 
 function sleep(ms) {

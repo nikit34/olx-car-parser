@@ -118,7 +118,12 @@ def _format_deal(row: dict, photo_urls: list[str]) -> dict:
             if ts.tz is not None:
                 ts = ts.tz_convert("UTC").tz_localize(None)
             first_seen_iso = ts.isoformat(timespec="seconds") + "Z"
-            days_on_market = max(0, int((pd.Timestamp.now() - ts).days))
+            # first_seen_at is stored naive-UTC (src/models/listing.py:_utcnow).
+            # Diff against naive-UTC now, NOT pd.Timestamp.now() (naive LOCAL) —
+            # the latter skews days_on_market by the runner's TZ offset and
+            # flips the int-rounded day count near midnight.
+            now_utc = pd.Timestamp.now("UTC").tz_localize(None)
+            days_on_market = max(0, int((now_utc - ts).days))
         except Exception:
             pass
 

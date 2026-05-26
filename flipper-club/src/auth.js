@@ -67,8 +67,11 @@ function constantTimeEq(a, b) {
   return diff === 0;
 }
 
-export async function createPin(env, { label, zone, ttl_hours, is_admin, notes }) {
-  const id = randomToken(8);
+export async function createPin(env, { id, label, zone, ttl_hours, is_admin, notes }) {
+  // Callers may pass a fixed `id` to make the write idempotent (the initial
+  // /setup admin uses this so a double-submit collides on one KV key instead
+  // of minting N admin records). Everything else gets a random id.
+  const pinId = id || randomToken(8);
   const value = generatePinValue();
   const now = new Date();
   // Admin PINs don't expire — they're managed by revoke. Flippers get a TTL.
@@ -85,8 +88,8 @@ export async function createPin(env, { label, zone, ttl_hours, is_admin, notes }
     created_at: now.toISOString(),
     expires_at: expiresAt,
   };
-  await env.KV.put(`pin:${id}`, JSON.stringify(record));
-  return { id, ...record };
+  await env.KV.put(`pin:${pinId}`, JSON.stringify(record));
+  return { id: pinId, ...record };
 }
 
 // Returns true iff the PIN's expires_at exists and is in the past.
