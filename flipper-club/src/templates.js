@@ -115,6 +115,10 @@ const BASE_CSS = `
   .login-wrap input:focus { outline: 2px solid #1d4ed8; outline-offset: -1px; border-color: #1d4ed8; }
   .login-wrap button { width: 100%; padding: 12px; margin-top: 12px; background: #1d4ed8; color: #fff; border: 0; border-radius: 8px; font-size: 15px; font-weight: 500; cursor: pointer; }
   .login-wrap button:hover { background: #1e40af; }
+  .login-wrap .pin-field { position: relative; }
+  .login-wrap .pin-field input { padding-right: 46px; }
+  .login-wrap .pin-field .toggle { position: absolute; top: 0; right: 0; width: 46px; height: 100%; margin: 0; padding: 0; background: transparent; color: #6b7280; font-size: 18px; line-height: 1; display: flex; align-items: center; justify-content: center; }
+  .login-wrap .pin-field .toggle:hover { background: transparent; color: #1d4ed8; }
   .login-wrap .error { color: #b91c1c; font-size: 13px; margin-top: 12px; min-height: 18px; }
   table.pins { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; }
   table.pins th, table.pins td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; font-size: 13px; }
@@ -197,6 +201,20 @@ document.querySelectorAll(".gallery").forEach(g => {
   });
 });
 </script>` : ""}
+${pageType === "login" ? `<script>
+(function () {
+  var inp = document.getElementById("pin-input");
+  var btn = document.getElementById("pin-toggle");
+  if (!inp || !btn) return;
+  btn.addEventListener("click", function () {
+    var show = inp.type === "password";
+    inp.type = show ? "text" : "password";
+    btn.textContent = show ? "🙈" : "👁";
+    btn.setAttribute("aria-label", show ? "Esconder PIN" : "Mostrar PIN");
+    inp.focus();
+  });
+})();
+</script>` : ""}
 </body></html>`;
 }
 
@@ -231,8 +249,11 @@ export function renderLogin({ error } = {}) {
   <div class="login-wrap">
     <h1>Flipper Club</h1>
     <p class="tag">Acesso por PIN — clube fechado de revenda de viaturas em Portugal.</p>
-    <form action="/login" method="post" autocomplete="off">
-      <input type="text" name="pin" placeholder="PIN" maxlength="16" autofocus required>
+    <form action="/login" method="post">
+      <div class="pin-field">
+        <input type="password" name="pin" id="pin-input" placeholder="PIN" maxlength="16" autocomplete="current-password" autofocus required>
+        <button class="toggle" type="button" id="pin-toggle" aria-label="Mostrar PIN">👁</button>
+      </div>
       <button type="submit">Entrar</button>
       ${error ? `<div class="error">${escapeHtml(error)}</div>` : `<div class="error"></div>`}
     </form>
