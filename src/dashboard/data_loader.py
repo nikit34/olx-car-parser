@@ -57,6 +57,29 @@ _REPAIR_COST_PCT_POOR = 0.18
 _REPAIR_COST_FLOOR_DEFAULT = 1000.0
 _REPAIR_COST_FLOOR_POOR = 1500.0
 
+# Deal-quality gates. The flip_score ranking used to be dominated by
+# cheap / end-of-life cars: the metric is relative (% under predicted) and
+# the cheap segment has huge relative price dispersion + concentrates
+# salvage stock the price model can't price (a €700 dead Mazda 6 gets
+# predicted €3.5k because the features don't encode "engine gone"). The
+# 2026-06-03 audit on signals.parquet measured price↔flip_score Spearman
+# −0.52 and a published feed that was 93% sub-€3k. Three gates fix it
+# (simulated 2396→194 deals, median €1.1k→€11.6k):
+#   1. BAND_PCT hard gate — when the CQR [low,high] band is wide relative
+#      to its own median the model is saying "I don't know"; drop instead
+#      of merely down-weighting (the old band_confidence_mult=0.4 was too
+#      soft to overcome a 35% raw discount).
+#   2. UNDERVALUATION cap — the band misses *confidently-wrong* floor
+#      predictions (€700→€3.5k carries a tight band); no genuine private
+#      sale is 60%+ under fair value, so treat it as a model artefact.
+#   3. NET-€ floor after fees — economic sanity; nearly redundant after (1)
+#      but kills thin-margin survivors. Fee = decision.py default
+#      (150 flat + 1.30/day × 45-day default hold ≈ 208).
+_FLIP_BAND_PCT_MAX = 0.40
+_FLIP_UNDERVALUATION_PCT_MAX = 60.0
+_FLIP_FEES_EUR = 210.0
+_FLIP_NET_EUR_MIN = 500.0
+
 
 def _estimate_repair_cost(
     severity: int | None,
@@ -1029,6 +1052,12 @@ def compute_signals(
         undervaluation_pct = round((1 - price / predicted) * 100, 1)
         if undervaluation_pct <= 0:
             continue
+        # Implausible-discount guard: a band-width gate alone misses
+        # *confidently-wrong* floor predictions (the model can be tight-banded
+        # and still value a €700 dead car at €3.5k). No genuine private sale
+        # sits 60%+ under fair value — treat it as a model artefact, not a deal.
+        if undervaluation_pct > _FLIP_UNDERVALUATION_PCT_MAX:
+            continue
 
         # Severity-2 listings (needs repair / accident history) aren't
         # blocked but get their flip_score basis discounted by an
@@ -1047,6 +1076,11 @@ def compute_signals(
         profit_after_repair = float(predicted) - float(price) - repair_cost
         adjusted_pct = round(profit_after_repair / float(predicted) * 100, 1)
         if adjusted_pct <= 0:
+            continue
+        # Absolute net-€ floor after transaction costs. A relative metric
+        # rates a €450 gross gap the same as a €4 500 one; this keeps the
+        # ranking honest about what actually clears the fees + a 45-day hold.
+        if profit_after_repair - _FLIP_FEES_EUR < _FLIP_NET_EUR_MIN:
             continue
         discount_pct = round((1 - price / median) * 100, 1)
 
@@ -1122,23 +1156,26 @@ def compute_signals(
         # relative to its own median, the model is saying "I don't know".
         # Decile-CQR surfaces this honestly: <€3k bin gets ±27% bands
         # because salvage / commercial / orphan-brand cars cluster there.
-        # We don't drop those rows (the user might still want to see them)
-        # but we deprioritise them so tight-band high-confidence deals
-        # dominate the top of the list. None when the bundle didn't ship
-        # bands — gracefully no-op.
+        # A band wider than ``_FLIP_BAND_PCT_MAX`` of its own median means the
+        # model has no real opinion, so we now hard-drop those rows rather
+        # than merely down-weighting them — the old band_confidence_mult=0.4
+        # was too soft to stop a 35% raw discount from topping the list.
+        # Surviving rows still get a tie-break multiplier by tightness. None
+        # when the bundle didn't ship bands — gracefully no-op (kept, not
+        # gated, so a missing-band run doesn't empty the feed).
         if (
             fair_low is not None and fair_high is not None
             and predicted and predicted > 0
         ):
             band_pct = (fair_high - fair_low) / predicted
+            if band_pct > _FLIP_BAND_PCT_MAX:
+                continue
             if band_pct <= 0.15:
                 band_confidence_mult = 1.15
             elif band_pct <= 0.25:
                 band_confidence_mult = 1.0
-            elif band_pct <= 0.40:
+            else:  # ≤ _FLIP_BAND_PCT_MAX
                 band_confidence_mult = 0.7
-            else:
-                band_confidence_mult = 0.4
         else:
             band_pct = None
             band_confidence_mult = 1.0  # no band → don't penalise
