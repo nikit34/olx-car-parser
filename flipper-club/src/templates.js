@@ -357,11 +357,20 @@ export function renderAdmin({ pins, newPin, error, zones, isAdmin }) {
     if (p.expires_at && new Date(p.expires_at) < now) return `<span class="pill pill-expired">expired</span>`;
     return `<span class="pill pill-active">active</span>`;
   };
+  // Logins for this PIN. Bold count = returning user (logged in more than once).
+  const accessFor = p => {
+    const n = p.login_count || 0;
+    if (!n) return `<span style="color:#9ca3af">—</span>`;
+    const when = p.last_login ? escapeHtml(p.last_login.slice(0, 16).replace("T", " ")) : "";
+    const count = n > 1 ? `<strong>${n}×</strong>` : `${n}×`;
+    return `${count} <span style="color:#9ca3af;font-size:12px">${when}</span>`;
+  };
   const rows = pins.map(p => `<tr>
     <td><span class="pin-value">${escapeHtml(p.value)}</span></td>
     <td>${escapeHtml(p.label || "—")}${p.is_admin ? `<span class="pill pill-admin">admin</span>` : ""}</td>
     <td>${escapeHtml(p.zone || "—")}</td>
     <td>${statusFor(p)}</td>
+    <td>${accessFor(p)}</td>
     <td>${p.expires_at ? escapeHtml(p.expires_at.slice(0, 16).replace("T", " ")) : "—"}</td>
     <td>${escapeHtml(p.created_at?.slice(0, 16).replace("T", " ") || "—")}</td>
     <td>
@@ -413,9 +422,9 @@ export function renderAdmin({ pins, newPin, error, zones, isAdmin }) {
 
     <table class="pins">
       <thead><tr>
-        <th>PIN</th><th>Label</th><th>Zona</th><th>Status</th><th>Expira</th><th>Criado</th><th></th>
+        <th>PIN</th><th>Label</th><th>Zona</th><th>Status</th><th>Acessos</th><th>Expira</th><th>Criado</th><th></th>
       </tr></thead>
-      <tbody>${rows || `<tr><td colspan="7" style="text-align:center;color:#9ca3af;padding:40px">Sem PINs ainda — cria o primeiro acima.</td></tr>`}</tbody>
+      <tbody>${rows || `<tr><td colspan="8" style="text-align:center;color:#9ca3af;padding:40px">Sem PINs ainda — cria o primeiro acima.</td></tr>`}</tbody>
     </table>`;
   return layout({ title: "Admin", body, isAdmin: true, pageType: "admin" });
 }

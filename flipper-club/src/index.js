@@ -16,7 +16,7 @@
 
 import {
   COOKIE_NAME, cookieHeader, clearCookieHeader,
-  readSession, findPinByValue, createSession, destroySession,
+  readSession, findPinByValue, createSession, destroySession, recordLogin,
   listPins, createPin, revokePin, getPinById,
   hasAnyAdmin, countActiveAdmins, isExpired,
 } from "./auth.js";
@@ -181,6 +181,9 @@ async function handleLogin(request, env) {
   }
   const ip = request.headers.get("cf-connecting-ip") || "";
   const session = await createSession(env, pin, ip);
+  // Record the login on the PIN record (login_count/last_login) so returning
+  // users are observable. Best-effort: failures here must not block sign-in.
+  await recordLogin(env, pin, ip);
   return new Response(null, {
     status: 302,
     headers: {

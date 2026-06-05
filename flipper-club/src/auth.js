@@ -2,8 +2,16 @@
 //
 // Storage layout in the single KV binding:
 //   pin:{id}         → JSON { value, label, zone, created_at, expires_at,
-//                              revoked, is_admin, notes }
+//                              revoked, is_admin, notes,
+//                              login_count, last_login, last_login_ip,
+//                              login_history }
 //   session:{token}  → JSON { pin_id, expires_at, created_at, ip }
+//
+// login_count/last_login/login_history are written by recordLogin() on every
+// successful sign-in. They're the only persistent record of who came back —
+// sessions are TTL'd and GC'd, so without this a "returning user" (login_count
+// > 1) is unobservable. Older PINs created before this existed simply have the
+// fields absent until their next login.
 //
 // PINs are looked up by iterating `pin:*` on login (n ≤ 50 in practice).
 // Revocation is enforced on EVERY request by re-reading the PIN record —
@@ -117,6 +125,39 @@ export async function revokePin(env, id) {
 
 export async function deletePin(env, id) {
   await env.KV.delete(`pin:${id}`);
+}
+
+// Bounded recent-login tail kept per PIN. login_count holds the lifetime
+// total; login_history is only the trailing window so a frequently-used PIN's
+// KV value can't grow without bound.
+const LOGIN_HISTORY_MAX = 20;
+
+// Stamp a successful login onto the PIN record: bump the lifetime counter,
+// record last_login / last_login_ip, and append to the bounded history tail.
+// "Returning user" is then simply login_count > 1.
+//
+// Read-modify-write on one KV key. On the rare concurrent-login race (same PIN,
+// two requests) the later write wins and one increment can be lost — acceptable
+// for this low-traffic B2B tool. Re-put carries NO expirationTtl, matching
+// createPin/revokePin: pin:* keys persist and expiry is logical (isExpired
+// against expires_at), not KV-level. Best-effort — never throws into the login
+// path, so a tracking hiccup can't block a valid sign-in.
+export async function recordLogin(env, pin, ip) {
+  try {
+    const raw = await env.KV.get(`pin:${pin.id}`);
+    if (!raw) return;
+    const rec = JSON.parse(raw);
+    const now = new Date().toISOString();
+    rec.login_count = (rec.login_count || 0) + 1;
+    rec.last_login = now;
+    rec.last_login_ip = ip || "";
+    const history = Array.isArray(rec.login_history) ? rec.login_history : [];
+    history.push({ at: now, ip: ip || "" });
+    rec.login_history = history.slice(-LOGIN_HISTORY_MAX);
+    await env.KV.put(`pin:${pin.id}`, JSON.stringify(rec));
+  } catch {
+    // tracking is best-effort; a valid PIN must still be able to log in
+  }
 }
 
 // Used by the setup-gate: returns true iff at least one un-revoked,
