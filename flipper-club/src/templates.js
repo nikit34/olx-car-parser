@@ -343,9 +343,9 @@ export function renderDashboard({ deals, zone, sort, isAdmin, degraded }) {
     // "score" (default) — the decision engine's risk-adjusted ranking.
     sorted.sort((a, b) => (b.decision_score || 0) - (a.decision_score || 0));
   }
-  const tabLabel = s => s === 'score' ? 'Melhor aposta'
-    : s === 'newest' ? 'Mais recentes'
-    : 'Maior lucro';
+  const tabLabel = s => s === 'score' ? '🏆 Melhor aposta'
+    : s === 'newest' ? '🆕 Mais recentes'
+    : '💰 Maior lucro';
   const tab = s => `<a href="/?sort=${s}" class="${sort === s ? 'active' : ''}">${tabLabel(s)}</a>`;
   const cards = sorted.length === 0
     ? `<div class="empty">Sem deals quentes na tua zona neste momento. Volta dentro de 4h — o próximo scrape vai colocar novos.</div>`
