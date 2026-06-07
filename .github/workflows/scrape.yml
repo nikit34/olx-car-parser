@@ -567,3 +567,37 @@ jobs:
           else
             echo "::warning::Skipping hot_deals upload — data/hot_deals/ missing"
           fi
+
+      - name: Trigger Cloudflare rebuild (refresh /analytics witnesses)
+        # The flipper-club hot_deals feed (/) fetches its JSON from the release
+        # at *request* time, so the uploads above are live within ~5 min. The
+        # stlite dashboard at /analytics does NOT: build_stlite_bundle.py bakes
+        # the parquet witnesses into the asset bundle at CF *build* time
+        # (--fetch-from-release), so fresh witnesses in the release stay
+        # invisible to /analytics until CF rebuilds — which otherwise only
+        # happens on a push to master. This Deploy Hook kicks a Workers Builds
+        # rebuild so the dashboard tracks the latest scrape instead of freezing
+        # at the last code push. (Workers Builds Deploy Hooks, GA 2026-04-01.)
+        #
+        # Gated on build_dashboard success: if this run produced no new
+        # witnesses, a rebuild would just re-bake the release's existing set —
+        # no point spending a build. No-ops with a warning when the secret is
+        # unset, so a missing/rotated hook never reds out the scrape; the data
+        # is already safely in the release and /analytics will catch up on the
+        # next push regardless.
+        if: ${{ !cancelled() && steps.build_dashboard.outcome == 'success' }}
+        env:
+          CF_DEPLOY_HOOK_URL: ${{ secrets.CF_DEPLOY_HOOK_URL }}
+          PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+        run: |
+          if [ -z "$CF_DEPLOY_HOOK_URL" ]; then
+            echo "::warning::CF_DEPLOY_HOOK_URL secret not set — skipping /analytics rebuild. Create a Deploy Hook in Workers & Pages → olx-car-parser → Settings → Builds → Deploy Hooks, then add the URL as the CF_DEPLOY_HOOK_URL repo secret."
+            exit 0
+          fi
+          # Best-effort: -f surfaces an HTTP error, but a CF hiccup must never
+          # fail the scrape — the release is already updated above.
+          if curl -fsS -X POST "$CF_DEPLOY_HOOK_URL" -o /tmp/cf_deploy_resp.json; then
+            echo "Triggered CF rebuild: $(cat /tmp/cf_deploy_resp.json)"
+          else
+            echo "::warning::CF deploy hook POST failed — /analytics will refresh on the next push instead."
+          fi
