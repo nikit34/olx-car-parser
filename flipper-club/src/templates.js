@@ -84,6 +84,9 @@ const BASE_CSS = `
   .discount-mild { background: #f3f4f6; color: #4b5563; }
   .discount-neutral { background: #f3f4f6; color: #9ca3af; }
   .profit-chip { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; background: #ecfdf5; color: #047857; margin-left: 6px; }
+  .verdict-chip { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: 0.03em; margin-bottom: 4px; }
+  .verdict-buy { background: #d1fae5; color: #065f46; }
+  .verdict-watch { background: #fef3c7; color: #92400e; }
   .card-detail { display: none; padding: 16px 20px 20px 20px; border-top: 1px solid #e5e7eb; background: #fafbfc; }
   .card.open .card-detail { display: block; }
   .card-detail h4 { margin: 0 0 8px 0; font-size: 14px; color: #6b7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
@@ -289,6 +292,7 @@ function renderCard(deal) {
       <div class="price-block">
         <div class="price">${fmtEur(deal.price_eur)}</div>
         <div class="fair">justo ${fmtEur(deal.fair_low)}–${fmtEur(deal.fair_high)}</div>
+        ${deal.verdict ? `<span class="verdict-chip verdict-${escapeHtml(String(deal.verdict).toLowerCase())}">${deal.verdict === 'BUY' ? '🟢' : '🟡'} ${escapeHtml(deal.verdict)}</span>` : ""}
         <span class="discount-chip ${discountClass(deal.discount_pct)}">↓ ${fmtPct(deal.discount_pct)}</span>
         ${deal.est_profit_eur ? `<span class="profit-chip">+${fmtEur(deal.est_profit_eur)}</span>` : ""}
       </div>
@@ -332,17 +336,21 @@ export function renderDashboard({ deals, zone, sort, isAdmin, degraded }) {
   } else if (sort === "profit") {
     sorted.sort((a, b) => (b.est_profit_eur || 0) - (a.est_profit_eur || 0));
   } else {
-    sorted.sort((a, b) => (b.discount_pct || 0) - (a.discount_pct || 0));
+    // "score" (default) — the decision engine's risk-adjusted ranking.
+    sorted.sort((a, b) => (b.decision_score || 0) - (a.decision_score || 0));
   }
-  const tab = s => `<a href="/?sort=${s}" class="${sort === s ? 'active' : ''}">${s === 'discount' ? 'Maior desconto' : s === 'newest' ? 'Mais recentes' : 'Maior lucro'}</a>`;
+  const tabLabel = s => s === 'score' ? 'Melhor aposta'
+    : s === 'newest' ? 'Mais recentes'
+    : 'Maior lucro';
+  const tab = s => `<a href="/?sort=${s}" class="${sort === s ? 'active' : ''}">${tabLabel(s)}</a>`;
   const cards = sorted.length === 0
     ? `<div class="empty">Sem deals quentes na tua zona neste momento. Volta dentro de 4h — o próximo scrape vai colocar novos.</div>`
     : sorted.map(renderCard).join("\n");
   const body = `
     <div class="toolbar">
-      ${tab("discount")}
-      ${tab("newest")}
+      ${tab("score")}
       ${tab("profit")}
+      ${tab("newest")}
       <span class="count">${sorted.length} ${sorted.length === 1 ? 'deal' : 'deals'}</span>
     </div>
     ${cards}`;

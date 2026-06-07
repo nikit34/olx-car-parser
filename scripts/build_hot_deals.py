@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build hot_deals_{zone}.json — top flip candidates per geographic zone,
+"""Build hot_deals_{zone}.json — flip candidates per geographic zone,
 scored by the production price model and filtered through the production
 veto rules (``_blocking_deal_reason`` is already applied inside
 ``compute_signals``).
@@ -40,8 +40,16 @@ ZONE_DISTRICTS = {
     "sul":    ["Lisboa", "Setúbal", "Évora", "Beja", "Portalegre", "Faro",
                "Ilha da Madeira", "Ilha de São Miguel"],
 }
-TOP_N_PER_ZONE = 30
-MAX_LISTING_AGE_DAYS = 14
+# Per-zone cap on number of deals. 0 = no cap: ship every candidate that
+# passes the active + freshness + zone + verdict filters. The feed is already
+# bounded by MAX_LISTING_AGE_DAYS + the BUY/WATCH gate, so no runaway risk.
+TOP_N_PER_ZONE = 0
+MAX_LISTING_AGE_DAYS = 30
+# Quality gate: only surface deals the production decision engine rates BUY or
+# WATCH (same engine + thresholds the /analytics dashboard uses). SKIP/REJECT/
+# NO_OPINION are dropped — we'd rather show fewer, vetted deals than pad the
+# feed with marginal ones.
+ALLOWED_VERDICTS = ("BUY", "WATCH")
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
       "(KHTML, like Gecko) Version/17.0 Safari/605.1.15")
@@ -180,6 +188,8 @@ def _format_deal(row: dict, photo_urls: list[str]) -> dict:
         "discount_pct": discount_pct,
         "est_profit_eur": profit,
         "flip_score": _f(row.get("flip_score")),
+        "verdict": _s(row.get("verdict")),
+        "decision_score": _f(row.get("decision_score")),
         "first_seen_at": first_seen_iso,
         "days_on_market": days_on_market,
         "district": _s(row.get("district")),
@@ -235,7 +245,63 @@ def _build_signals(db_path: Path) -> pd.DataFrame:
                   "first_seen_at", "seller_type", "transmission", "is_active"]
     extra = listings[[c for c in extra_cols if c in listings.columns]].drop_duplicates("olx_id")
     merged = signals.merge(extra, on="olx_id", how="left", suffixes=("", "_l"))
+    merged = _annotate_decisions(merged, listings)
     return merged
+
+
+def _annotate_decisions(signals: pd.DataFrame, listings: pd.DataFrame) -> pd.DataFrame:
+    """Attach ``verdict`` + ``decision_score`` columns using the same decision
+    engine the /analytics dashboard runs (``src.analytics.decision``).
+
+    The segment context (sold-side DoM, 90d trend, calibration residuals)
+    needs snapshots + the full GB predictions; we reuse the dashboard witnesses
+    ``data/dashboard/{snapshots,predictions}.parquet`` built by the preceding
+    ``build_dashboard_data.py`` step instead of recomputing. If a witness is
+    missing (e.g. this script run standalone), the corresponding step degrades
+    to neutral (no trend / no calibration nudge) rather than failing."""
+    if signals.empty:
+        return signals
+    from src.analytics.decision import build_context, decide
+
+    dash_dir = REPO_ROOT / "data" / "dashboard"
+
+    snapshots = pd.DataFrame()
+    snap_path = dash_dir / "snapshots.parquet"
+    if snap_path.exists():
+        try:
+            snapshots = pd.read_parquet(snap_path)
+        except Exception as e:  # noqa: BLE001 — witness optional, degrade loudly
+            print(f"[hot_deals]   snapshots witness unreadable ({e}) — trend step skipped", flush=True)
+
+    predicted_lookup: dict = {}
+    pred_path = dash_dir / "predictions.parquet"
+    if pred_path.exists():
+        try:
+            pred = pd.read_parquet(pred_path)
+            if {"olx_id", "predicted_price"}.issubset(pred.columns):
+                predicted_lookup = dict(zip(pred["olx_id"], pred["predicted_price"]))
+        except Exception as e:  # noqa: BLE001
+            print(f"[hot_deals]   predictions witness unreadable ({e}) — calibration step skipped", flush=True)
+
+    coverage_80 = None
+    try:
+        from src.analytics.price_model import load_metrics_history
+        mh = load_metrics_history()
+        if mh:
+            last = mh[-1]
+            coverage_80 = last.get("coverage_80_calibrated") or last.get("coverage_80")
+    except Exception as e:  # noqa: BLE001
+        print(f"[hot_deals]   coverage history unavailable ({e}) — band-confidence neutral", flush=True)
+
+    ctx = build_context(listings, snapshots, coverage_80=coverage_80,
+                        predicted_lookup=predicted_lookup)
+    decisions = [decide(row, ctx) for _, row in signals.iterrows()]
+    signals = signals.copy()
+    signals["verdict"] = [d.verdict for d in decisions]
+    signals["decision_score"] = [d.score for d in decisions]
+    counts = signals["verdict"].value_counts().to_dict()
+    print(f"[hot_deals]   decisions over {len(signals):,} signals: {counts}", flush=True)
+    return signals
 
 
 def _pick_zone_deals(signals: pd.DataFrame, zone: str, districts: list[str] | None,
@@ -249,17 +315,28 @@ def _pick_zone_deals(signals: pd.DataFrame, zone: str, districts: list[str] | No
         df = df[ts >= cutoff]
     if districts is not None:
         df = df[df["district"].isin(districts)]
+    # Quality gate — only BUY/WATCH verdicts from the decision engine.
+    if "verdict" in df.columns:
+        df = df[df["verdict"].isin(ALLOWED_VERDICTS)]
     if df.empty:
         return df
-    sort_col = "flip_score" if "flip_score" in df.columns else "adjusted_undervaluation_pct"
-    return df.sort_values(sort_col, ascending=False).head(top_n).copy()
+    # Rank by the decision engine's risk-adjusted score (falls back to the
+    # simpler flip_score / undervaluation if decisions weren't annotated).
+    sort_col = next((c for c in ("decision_score", "flip_score",
+                                 "adjusted_undervaluation_pct") if c in df.columns), None)
+    if sort_col:
+        df = df.sort_values(sort_col, ascending=False)
+    if top_n and top_n > 0:
+        df = df.head(top_n)
+    return df.copy()
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--db", type=Path, default=REPO_ROOT / "data" / "olx_cars.db")
     ap.add_argument("--out-dir", type=Path, default=REPO_ROOT / "data" / "hot_deals")
-    ap.add_argument("--top-n", type=int, default=TOP_N_PER_ZONE)
+    ap.add_argument("--top-n", type=int, default=TOP_N_PER_ZONE,
+                    help="per-zone deal cap; 0 = no cap (default)")
     ap.add_argument("--max-age-days", type=int, default=MAX_LISTING_AGE_DAYS)
     ap.add_argument("--fetch-photos", dest="fetch_photos", action="store_true",
                     default=True, help="(default) fetch og:image from OLX per deal")

@@ -98,7 +98,7 @@ export default {
 
       if (pathname === "/" && method === "GET") {
         if (!session) return redirect("/login");
-        const sort = url.searchParams.get("sort") || "discount";
+        const sort = url.searchParams.get("sort") || "score";
         const zone = session.pin.zone || "all";
         const { deals, degraded } = await getDeals(env, zone);
         return html(renderDashboard({
