@@ -159,6 +159,10 @@ function layout({ title, body, zone, isAdmin, pageType }) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
+<!-- 🚗 emoji favicon — matches the /analytics dashboard's page_icon so both
+     browser tabs share the same car icon. Rendered as an inline SVG data URI
+     (same trick Streamlit uses for emoji page icons). -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚗</text></svg>">
 <title>${escapeHtml(title)} · Flipper Club</title>
 <style>${BASE_CSS}</style>
 </head>
