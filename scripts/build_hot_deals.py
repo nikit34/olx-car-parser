@@ -102,12 +102,16 @@ def _format_deal(row: dict, photo_urls: list[str]) -> dict:
         except json.JSONDecodeError:
             pass
 
-    # Full description — the card's expanded view shows it in full.
-    # \r/\n normalised to spaces so single-line CSS layouts don't choke;
-    # the rendered <div class="desc"> uses pre-wrap so paragraph breaks
-    # would survive if we ever wanted them back, but the source listings
-    # rarely have meaningful paragraphing.
-    desc = (row.get("description") or "").strip().replace("\r", " ").replace("\n", " ")
+    # Full description — the card's expanded view shows it in full. Preserve
+    # the source's line breaks: OLX descriptions are commonly a "• ..." list
+    # (scraper.py captures them via get_text(separator="\n")), and the card's
+    # <div class="desc"> uses white-space: pre-wrap to render them on their own
+    # lines instead of one run-on paragraph. Only normalise CRLF, trim trailing
+    # spaces per line, and collapse 3+ blank lines to one so a paragraph gap
+    # survives without yawning vertical gaps.
+    desc = (row.get("description") or "").replace("\r\n", "\n").replace("\r", "\n")
+    desc = re.sub(r"[ \t]+\n", "\n", desc)
+    desc = re.sub(r"\n{3,}", "\n\n", desc).strip()
 
     first_seen_raw = row.get("first_seen_at")
     first_seen_iso = None

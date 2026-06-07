@@ -87,7 +87,7 @@ const BASE_CSS = `
   .card-detail { display: none; padding: 16px 20px 20px 20px; border-top: 1px solid #e5e7eb; background: #fafbfc; }
   .card.open .card-detail { display: block; }
   .card-detail h4 { margin: 0 0 8px 0; font-size: 14px; color: #6b7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
-  .card-detail .desc { font-size: 14px; line-height: 1.55; color: #1f2937; margin-bottom: 16px; word-wrap: break-word; }
+  .card-detail .desc { font-size: 14px; line-height: 1.55; color: #1f2937; margin-bottom: 16px; word-wrap: break-word; white-space: pre-wrap; }
   .gallery { position: relative; margin: 0 0 16px 0; border-radius: 6px; overflow: hidden; background: #000; }
   .gallery-track { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scroll-behavior: smooth; -webkit-overflow-scrolling: touch; }
   .gallery-track::-webkit-scrollbar { display: none; }
