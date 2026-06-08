@@ -69,7 +69,12 @@ _OTHER_CATEGORY = "__other__"
 # scan kept running on every train/predict for nothing.
 # v8: drop the dead pipeline + helpers entirely. Bundle no longer carries
 # `text_pipeline`; `_prepare_X` stops fitting a TF-IDF/SVD on every call.
-_SCHEMA_VERSION = 11  # v11: drop {color, drive_type, doors} after 2026-05-10 ablation
+# v12: add `enc_plat` — credibility-smoothed platform target-encoding keyed on
+# brand+generation (no fixed year-band: `generation` already IS the coherent
+# lifecycle unit and the model's `year` feature handles within-gen aging).
+# Marginal/niche signal (see project_mileage_not_the_lever); the platform→price
+# map rides in the bundle (metrics["plat_enc"]) and is stripped from history JSON.
+_SCHEMA_VERSION = 12
 # Fraction of the dataset (newest rows by first_seen_at) used as the
 # time-honest conformal calibration window. Random-KFold CQR mixes
 # time-adjacent rows across folds and over-estimates coverage on real future
@@ -104,6 +109,12 @@ NUMERIC_FEATURES = [
     # 0.003 threshold the team has applied to all soft signals since v7.
     "seller_listings_count_90d",
     "plate_obscured",
+    # v12: credibility-smoothed platform target-encoding keyed on
+    # brand+generation. Injects "what do coherent neighbours sell for" as a
+    # numeric the tree can lean on where a leaf (brand+model+gen+fuel) is
+    # data-starved but the platform isn't. Computed leakage-safe (OOF on train,
+    # persisted map for inference). Small/niche (project_mileage_not_the_lever).
+    "enc_plat",
     # NOTE: price-history features (num_price_drops, max_drop_pct,
     # price_drop_velocity, days_since_last_drop) are intentionally excluded.
     # They are post-hoc — known only after observing the listing for days —
@@ -158,6 +169,12 @@ _ALL_FEATURES = NUMERIC_FEATURES + BOOL_FEATURES + CATEGORICAL_FEATURES
 _MONOTONE_BY_FEATURE: dict[str, int] = {
     "year": 1,
     "mileage_km": -1,
+    # NOTE: enc_plat is intentionally NOT constrained. A +1 prior seems
+    # natural (higher platform price → higher prediction) but backtests showed
+    # it HURTS — the platform mean already bakes in year/mileage averages, so
+    # conditional on those features the relationship isn't cleanly monotone and
+    # the "advanced" constraint method degrades the fit (ALL ΔMAPE +0.04 with
+    # the constraint vs −0.09 without). Left at 0.
 }
 
 
@@ -215,17 +232,100 @@ def _encode_categoricals(
     return out, maps
 
 
+# --- Platform target-encoding (schema v12) ---------------------------------
+# Borrow strength across a COHERENT neighbourhood: same brand + chassis
+# generation (e.g. BMW G30 pools 530e/530d/525d/520d across powertrain).
+# No fixed year-band — `generation` already IS the lifecycle-aware unit (a G30
+# is a G30 whether the gen ran 4 or 7 years) and the model's `year` feature
+# handles within-generation aging; a fixed band only fragments platforms
+# (1246 groups vs 539) for no measurable gain. Credibility-smoothed mean
+# log1p(price) blends toward the global mean for thin platforms (n→0) so a
+# 5-sale platform can't dominate. Leakage-safe: the map is fit on TRAIN targets
+# only (per CV fold, and on the full train set for the persisted inference map);
+# training rows get out-of-fold values. Marginal/niche — see
+# project_mileage_not_the_lever.
+#
+# K = credibility (shrinkage) strength: enc = (Σy + K·gmean)/(n + K), so a
+# platform with n=K sales gets 50% weight on its own mean and thinner ones
+# shrink toward the global mean. MAPE sensitivity is provably FLAT here (swept
+# K∈[0.3, 80] → ALL ΔMAPE −0.05..−0.13, all noise-floor). The Bühlmann
+# data-optimal K* = σ²_within/σ²_between ≈ 0.3 is deliberately NOT used: it
+# barely shrinks (a 2-sale platform would get 0.87 weight on its own noisy
+# mean) — a robustness cost MAPE can't detect because thin platforms are a tiny
+# fraction of rows, yet they're exactly where this feature is supposed to help.
+# 20 is a mid-range value chosen for thin-platform robustness, not MAPE-tuned.
+_PLAT_CRED_K = 20.0
+
+
+def _platform_key(df: pd.DataFrame) -> np.ndarray:
+    """brand|generation — the coherent pooling key (generation = lifecycle unit)."""
+    idx = df.index
+    brand = df["brand"].astype(str) if "brand" in df.columns else pd.Series("NA", index=idx)
+    gen = df["generation"].astype(str) if "generation" in df.columns else pd.Series("NA", index=idx)
+    return brand.values + "|" + gen.values
+
+
+def _fit_platform_encoding(
+    df: pd.DataFrame, y_log: np.ndarray,
+) -> tuple[dict[str, float], float]:
+    """Credibility-smoothed platform → mean-log-price map (+ global-mean fallback)."""
+    keys = _platform_key(df)
+    gmean = float(np.mean(y_log)) if len(y_log) else 0.0
+    grp = pd.DataFrame({"k": keys, "y": y_log}).groupby("k")["y"].agg(["sum", "size"])
+    enc = (grp["sum"] + _PLAT_CRED_K * gmean) / (grp["size"] + _PLAT_CRED_K)
+    return {k: float(v) for k, v in enc.items()}, gmean
+
+
+def _apply_platform_encoding(
+    df: pd.DataFrame, enc_map: dict[str, float], gmean: float,
+) -> np.ndarray:
+    keys = pd.Series(_platform_key(df))
+    return keys.map(enc_map).fillna(gmean).values.astype(float)
+
+
+def _oof_platform_encoding(
+    df: pd.DataFrame, y_log: np.ndarray, n_splits: int = 5,
+) -> np.ndarray:
+    """Out-of-fold platform encoding for TRAINING rows (no self-leakage in the
+    final fit). Each row is encoded from a map fit on the *other* folds."""
+    keys = _platform_key(df)
+    out = np.empty(len(df), dtype=float)
+    n_splits = min(n_splits, max(2, len(df) // 20))
+    kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+    for tr, te in kf.split(np.arange(len(df))):
+        gmean = float(np.mean(y_log[tr])) if len(tr) else 0.0
+        grp = pd.DataFrame({"k": keys[tr], "y": y_log[tr]}).groupby("k")["y"].agg(["sum", "size"])
+        enc = ((grp["sum"] + _PLAT_CRED_K * gmean) / (grp["size"] + _PLAT_CRED_K)).to_dict()
+        out[te] = pd.Series(keys[te]).map(enc).fillna(gmean).values
+    return out
+
+
 def _prepare_X(
     df: pd.DataFrame,
     cat_maps: dict[str, dict[str, int]] | None = None,
+    plat_enc: tuple[dict[str, float], float] | None = None,
 ) -> tuple[np.ndarray, dict[str, dict[str, int]]]:
     """Prepare feature matrix from listings DataFrame.
 
     Returns (X_arr, cat_maps). cat_maps is the ordinal-encoding mapping
     fitted on this dataframe; pass it back in to reuse the encoding for
     new rows (CV folds, calibration slice, ``predict_prices``).
+
+    ``plat_enc`` is the (platform_map, global_mean) tuple for the v12
+    ``enc_plat`` feature. If the caller already attached an ``enc_plat`` column
+    (training uses OOF values), it's used as-is. Otherwise the column is
+    computed from ``plat_enc``; with no map it stays NaN and LightGBM treats it
+    as missing (feature inert) — so call sites that don't pass a map keep working.
     """
     X = df.reindex(columns=_ALL_FEATURES).copy()
+
+    if (
+        "enc_plat" in _ALL_FEATURES
+        and "enc_plat" not in df.columns
+        and plat_enc is not None
+    ):
+        enc_map, gmean = plat_enc
+        X["enc_plat"] = _apply_platform_encoding(df, enc_map, gmean)
 
     for col in BOOL_FEATURES:
         if col in X.columns:
@@ -246,14 +346,18 @@ _LGB_PARAMS = dict(
     # the search.  On ~8k rows early stopping was pegged at 699/700 before
     # this bump, meaning the old cap was the bottleneck, not overfitting.
     n_estimators=2000,
-    # max_depth and num_leaves must be consistent: a tree of depth d can have
-    # at most 2^d leaves. With max_depth=4, num_leaves was silently capped at
-    # 16 — depth=6 lets num_leaves=31 actually be reached.
-    max_depth=6,
-    learning_rate=0.05,
-    min_child_samples=10,
-    reg_lambda=1.5,
-    num_leaves=31,
+    # max_depth and num_leaves must be consistent: a tree of depth d has at
+    # most 2^d leaves (2^9=512 ≥ 41, fine).
+    # v12 retune (2026-06-08): joint time-aware random search (scripts/
+    # tune_lgb_params.py, 150 trials), HOLDOUT-confirmed ROBUST (5/8 top-CV
+    # configs clear the untouched newest-30% holdout, 0 worse; ΔMAPE −0.32, CI
+    # [−0.48,−0.16]). As the corpus grew, the old shallow/fast config was
+    # under-capacity; deeper + slower-learning wins. See data/price_lgb_tuned.json.
+    max_depth=9,           # was 6
+    learning_rate=0.023,   # was 0.05
+    min_child_samples=8,   # was 10
+    reg_lambda=0.73,       # was 1.5
+    num_leaves=41,         # was 31
     random_state=42,
     verbose=-1,
     n_jobs=-1,
@@ -907,9 +1011,11 @@ def _cv_metrics(
     for fold_idx, (train_idx, val_idx) in enumerate(kf.split(df)):
         train_df = df.iloc[train_idx]
         val_df = df.iloc[val_idx]
-        # Encode categoricals on train only — no leakage into the val fold.
-        X_train, cat_maps_fold = _prepare_X(train_df)
-        X_val, _ = _prepare_X(val_df, cat_maps_fold)
+        # Encode categoricals AND the platform target-encoding on train only —
+        # no leakage into the val fold (val rows get the train-fold map).
+        plat_enc_fold = _fit_platform_encoding(train_df, y_log[train_idx])
+        X_train, cat_maps_fold = _prepare_X(train_df, plat_enc=plat_enc_fold)
+        X_val, _ = _prepare_X(val_df, cat_maps_fold, plat_enc=plat_enc_fold)
         y_train_log = y_log[train_idx]
         y_val_log = y_log[val_idx]
         sw_train = sample_weight_all[train_idx]
@@ -1263,6 +1369,19 @@ def train_price_model(
         uncertainty_bundle, cv_perm_df, cv_grouped_df, cv_shap_df,
     ) = _cv_metrics(df)
     metrics["filter_stats"] = filter_stats
+
+    # v12 platform target-encoding. Persist the full-train map for inference
+    # (predict_prices), and attach OOF values as the training column so the
+    # final fit below doesn't memorize each row's own platform mean.
+    plat_map, plat_gmean = _fit_platform_encoding(df, y_log)
+    df = df.copy()
+    df["enc_plat"] = _oof_platform_encoding(df, y_log)
+    metrics["plat_enc"] = {
+        "map": plat_map,
+        "gmean": plat_gmean,
+        "cred_k": _PLAT_CRED_K,
+    }
+
     n_sold = int((sold_w != 1.0).sum())
     n_dropped_sold = int((sold_w == 0.0).sum())
     metrics["sold_inclusion"] = {
@@ -1315,6 +1434,7 @@ def predict_prices(
     conformal_q_per_bucket: dict[str, float] | None = None,
     conformal_q_bucket_edges: list[tuple[float, float, str]] | None = None,
     uncertainty_bundle: tuple[lgb.LGBMRegressor, float] | None = None,
+    plat_enc: tuple[dict[str, float], float] | None = None,
 ) -> pd.DataFrame:
     """Predict fair price range for each listing.
 
@@ -1341,8 +1461,11 @@ def predict_prices(
     applied to the median for new rows only (OOF preds are already
     calibrated). The band assembly below brackets the calibrated median by
     min/max so isotonic-induced crossings don't leak into the [low, high].
+
+    *plat_enc* — (platform_map, global_mean) for the v12 ``enc_plat`` feature,
+    read from ``metrics["plat_enc"]``. None → the feature stays NaN (inert).
     """
-    X_arr, _ = _prepare_X(listings_df, cat_maps)
+    X_arr, _ = _prepare_X(listings_df, cat_maps, plat_enc=plat_enc)
 
     # Model output is in log1p(price) space.
     log_median = models["median"].predict(X_arr)
@@ -1606,7 +1729,11 @@ def save_model(
         "saved_at": datetime.now(timezone.utc).isoformat(),
     }
     joblib.dump(bundle, _MODEL_PATH)
-    _append_metrics(metrics)
+    # The v12 platform map (potentially thousands of entries, numpy floats)
+    # lives in the joblib bundle's metrics. Strip it from the history JSON —
+    # it would bloat the file 100× and isn't JSON-serializable as-is.
+    history_metrics = {k: v for k, v in metrics.items() if k != "plat_enc"}
+    _append_metrics(history_metrics)
 
 
 def load_model(
