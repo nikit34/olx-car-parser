@@ -1,0 +1,46 @@
+name: Sensitivity Monitor
+
+# Weekly evidence-check of the price-model's tunable constants. Re-sweeps the
+# watchlist on the freshest release data; the job FAILS (red + notification)
+# only if a constant flipped noise→REAL — i.e. data drifted enough that it's
+# worth a human look (then re-sweep with --const for detail, or run
+# scripts/tune_lgb_params.py). See scripts/sweep_constant.py. Decoupled from
+# the frequent scrape on purpose: constants drift over weeks, not per-scrape,
+# and a ~10-min scan has no business running 5×/day.
+on:
+  schedule:
+    - cron: "0 6 * * 0"   # Sundays 06:00 UTC
+  workflow_dispatch:
+
+# Own group so it never cancels (or is cancelled by) a scrape; the single
+# self-hosted runner serialises them anyway.
+concurrency:
+  group: olx-sensitivity
+  cancel-in-progress: true
+
+jobs:
+  sweep:
+    runs-on: [self-hosted, olx-scraper]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python venv
+        run: |
+          /opt/homebrew/bin/python3.14 -m venv .venv 2>/dev/null || true
+          .venv/bin/pip install -q -e .
+
+      - name: Sweep watchlist constants (time-aware sensitivity)
+        # Exits 1 if any constant flipped noise→REAL → job fails → GitHub pings.
+        run: |
+          set -o pipefail
+          PYTHONWARNINGS=ignore .venv/bin/python -m scripts.sweep_constant --all \
+            | tee sensitivity_report.txt
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sensitivity-report
+          path: sensitivity_report.txt
+          retention-days: 90
