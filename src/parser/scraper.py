@@ -49,6 +49,22 @@ USER_AGENTS = [
 
 BASE_URL = "https://www.olx.pt/carros-motos-e-barcos/carros/"
 
+# Internal JSON API the OLX frontend itself calls. Undocumented but
+# auth-free and far more robust than HTML scraping: the list payload
+# already carries every structured param, the full description, the
+# photo list, the seller, lifecycle timestamps and the cross-post flag,
+# so no per-listing detail fetch is needed. ``v2`` does not exist.
+OLX_API_URL = "https://www.olx.pt/api/v1/offers/"
+# Category id for "Carros" (cars). Brands are *sub-categories* of this
+# (e.g. BMW = 741); price bands use the bare ``filter_float_price:from/to``
+# query params. A single query is hard-capped at ~1000 results regardless
+# of HTML-vs-API, which is why full coverage needs query segmentation.
+CARS_CATEGORY_ID = 378
+_API_PAGE_SIZE = 40
+# OLX caps offset at ~1000 (offset 1040 → HTTP 400). Stop paging a segment
+# once we reach it; full coverage comes from price-band bisection instead.
+_API_OFFSET_CAP = 1000
+
 KNOWN_BRANDS = [
     "Alfa Romeo", "Audi", "BMW", "Chevrolet", "Chrysler", "Citroen", "Citroën",
     "Cupra", "Dacia", "DS", "Fiat", "Ford", "Honda", "Hyundai", "Jaguar", "Jeep",
@@ -192,115 +208,105 @@ class OlxScraper:
                 return None
         return None
 
+    def _fetch_json(self, url: str, retries: int = 3) -> dict | None:
+        """Fetch *url* and return parsed JSON, or *None*.
+
+        Shares the 403-cascade / backoff behaviour of :meth:`_fetch` so a
+        long API run inherits the rate-limiting we validated against OLX.
+        """
+        for attempt in range(retries):
+            if self._stop_event.is_set():
+                return None
+            try:
+                headers = {**self._random_headers(), "Accept": "application/json"}
+                resp = self.client.get(url, headers=headers)
+                resp.raise_for_status()
+                with self._lock_403:
+                    self._consecutive_403 = 0
+                return resp.json()
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 403:
+                    with self._lock_403:
+                        self._consecutive_403 += 1
+                        if self._consecutive_403 >= 5:
+                            logger.error("Too many 403s. IP blocked. Wait 15min.")
+                            self._stop_event.set()
+                            return None
+                    wait = min(30 * (2 ** attempt), 120) + random.uniform(5, 15)
+                    logger.warning("403 blocked (attempt %d/%d). Waiting %.0fs...",
+                                   attempt + 1, retries, wait)
+                    time.sleep(wait)
+                else:
+                    logger.warning("HTTP %s for %s", e.response.status_code, url)
+                    return None
+            except httpx.RequestError as e:
+                logger.warning("Request error for %s: %s", url, e)
+                return None
+            except json.JSONDecodeError as e:
+                logger.warning("Bad JSON from %s: %s", url, e)
+                return None
+        return None
+
     # ------------------------------------------------------------------
     # Search results page
     # ------------------------------------------------------------------
 
     def scrape_search_page(self, page: int = 1) -> list[RawListing] | None:
-        """Return listings for *page*, or ``None`` if redirected (no more pages)."""
-        params = [f"page={page}"]
-        if self.config.private_only:
-            params.append("search%5Bprivate_business%5D=private")
-        url = self.config.base_url + "?" + "&".join(params)
+        """Return listings for *page*, or ``None`` if there are no more pages."""
+        return self._scrape_search_page_api(page)
 
-        logger.info("Scraping search page %d: %s", page, url)
-        result = self._fetch(url)
-        if not result:
-            return []
+    def _scrape_search_page_api(
+        self,
+        page: int = 1,
+        category_id: int | None = None,
+        extra_params: list[str] | None = None,
+    ) -> list[RawListing] | None:
+        """Fetch one page of listings from the JSON API.
 
-        final_url, html = result
-
-        # OLX redirects out-of-range pages back to the last valid page.
-        if page > 1 and f"page={page}" not in final_url:
-            logger.info("Page %d redirected to %s — no more pages", page, final_url)
+        Returns ``None`` past the end of results (mirrors the HTML
+        redirect-stop semantics), ``[]`` on an empty first page or a fetch
+        failure. ``category_id`` selects a brand sub-category; ``extra_params``
+        carries price-band filters for segmented full-coverage runs.
+        """
+        offset = (page - 1) * _API_PAGE_SIZE
+        if offset > _API_OFFSET_CAP:
             return None
+        cat = category_id if category_id is not None else CARS_CATEGORY_ID
+        params = [f"offset={offset}", f"limit={_API_PAGE_SIZE}",
+                  f"category_id={cat}"]
+        if extra_params:
+            params += extra_params
+        url = OLX_API_URL + "?" + "&".join(params)
 
-        return self._parse_search_page(html)
-
-    def _parse_search_page(self, html: str) -> list[RawListing]:
-        soup = BeautifulSoup(html, "lxml")
-        listings = []
-
-        cards = soup.select("[data-testid='l-card']")
-        if not cards:
-            logger.warning("No listing cards found on page")
+        logger.info("Scraping API page %d (cat=%s): %s", page, cat, url)
+        data = self._fetch_json(url)
+        if data is None:
             return []
+        offers = data.get("data") or []
+        if not offers:
+            # Empty deep page = end of this segment; empty first page is a
+            # zero-result query (or a shape change — scrape_all loud-fails).
+            return None if page > 1 else []
 
-        for card in cards:
+        listings: list[RawListing] = []
+        for offer in offers:
             try:
-                link = card.find("a", href=True)
-                if not link:
-                    continue
-                url = link.get("href", "")
-                if not url.startswith("http"):
-                    url = "https://www.olx.pt" + url
-                # Accept OLX listings (/d/anuncio/) and StandVirtual cross-posts
-                if "/d/anuncio/" not in url and "standvirtual.com" not in url:
-                    continue
+                if self.config.private_only and offer.get("business"):
+                    continue  # dealer listing — keep only private sellers
+                raw = _offer_to_raw(offer)
+                if raw.olx_id:
+                    listings.append(raw)
+            except Exception as e:  # noqa: BLE001 - one bad offer must not kill the page
+                logger.debug("Error parsing API offer: %s", e)
 
-                olx_id_match = re.search(r"ID(\w+)\.html", url)
-                olx_id = olx_id_match.group(1) if olx_id_match else ""
-                if not olx_id:
-                    continue
-
-                # OLX rolled out a new card layout around 2026-04-28: the
-                # ``data-cy='ad-card-title'`` div is now a *wrapper* that
-                # also contains the price <p> and the "Negociável" badge
-                # <span>. Reading its .get_text() concatenates everything
-                # ("Vw scirocco 20155.500 €Negociável"). Drill into the
-                # inner <a>/<h4> which holds the title alone.
-                title_root = card.select_one("[data-cy='ad-card-title']")
-                if title_root:
-                    title_el = (
-                        title_root.find("a")
-                        or title_root.find(["h4", "h5", "h6"])
-                        or title_root
-                    )
-                else:
-                    title_el = card.find("h6") or card.find("h4") or card.find("h5")
-                title = title_el.get_text(strip=True) if title_el else ""
-
-                price_eur = None
-                negotiable = False
-                price_el = card.select_one("[data-testid='ad-price']")
-                if price_el:
-                    price_text = price_el.get_text(strip=True)
-                    negotiable = "negociável" in price_text.lower()
-                    price_eur = _parse_eur_price(price_text)
-
-                city = ""
-                loc_el = card.select_one("[data-testid='location-date']")
-                if loc_el:
-                    loc_text = loc_el.get_text(strip=True)
-                    dash_idx = loc_text.find(" - ")
-                    city = loc_text[:dash_idx].strip() if dash_idx > 0 else loc_text.strip()
-
-                year = None
-                mileage_km = None
-                year_km_el = card.select_one("span[data-nx-name='P5']")
-                if year_km_el:
-                    ykm_text = year_km_el.get_text(strip=True)
-                    ykm_match = re.match(r"(\d{4})\s*-\s*([\d.]+)\s*km", ykm_text)
-                    if ykm_match:
-                        year = int(ykm_match.group(1))
-                        mileage_km = _safe_int(ykm_match.group(2))
-
-                brand = _extract_brand_from_url(url) or _extract_brand_from_title(title)
-
-                listings.append(RawListing(
-                    olx_id=olx_id, url=url, title=title,
-                    price_eur=price_eur, negotiable=negotiable,
-                    brand=brand, model="", year=year, mileage_km=mileage_km,
-                    city=city,
-                ))
-            except Exception as e:
-                logger.debug("Error parsing card: %s", e)
-
-        logger.info("Parsed %d listings from search page", len(listings))
+        logger.info("Parsed %d listings from API page %d", len(listings), page)
         return listings
 
     # ------------------------------------------------------------------
-    # Detail page
+    # Detail page (HTML) — retained for the alert-refresh probe
+    # (src/alerts/telegram_bot.py) and the photo-count backfill, which
+    # fetch a single listing by URL. Not part of the scrape pipeline:
+    # scrape_all sources complete records from the JSON API.
     # ------------------------------------------------------------------
 
     def scrape_listing_detail(self, url: str) -> dict:
@@ -454,129 +460,20 @@ class OlxScraper:
     # ------------------------------------------------------------------
 
     def scrape_standvirtual_detail(self, url: str) -> dict:
-        """Parse a standvirtual.com listing detail page."""
+        """Parse a standvirtual.com listing detail page via its embedded JSON.
+
+        Reads ``__NEXT_DATA__.props.pageProps.advert`` instead of scraping
+        ``data-testid`` nodes — robust against markup changes and the source
+        of colour / drive_type / sub-model that OLX simply doesn't carry.
+        """
         result = self._fetch(url)
         if not result:
             return {}
-
         _final_url, html = result
-        soup = BeautifulSoup(html, "lxml")
-        details: dict = {}
-
-        # Mapping: data-testid -> (field_name, parser)
-        SV_FIELDS = {
-            "make": ("brand", None),
-            "model": ("model", None),
-            "mileage": ("mileage_km", _safe_int),
-            "fuel_type": ("fuel_type", None),
-            "gearbox": ("transmission", None),
-            "first_registration_year": ("year", _safe_int),
-            "first_registration_month": ("registration_month", None),
-            "engine_capacity": ("engine_cc", _safe_int),
-            "engine_power": ("horsepower", _safe_int),
-            "door_count": ("doors", None),
-            "nr_seats": ("seats", _safe_int),
-            "color": ("color", None),
-            "body_type": ("segment", None),
-            "new_used": ("condition", None),
-            "transmission": ("drive_type", None),
-        }
-
-        # StandVirtual labels baked into text (e.g. "MarcaNissan", "Quilómetros130 000 km")
-        SV_LABEL_PREFIXES = {
-            "make": "Marca",
-            "model": "Modelo",
-            "mileage": "Quilómetros",
-            "fuel_type": "Combustível",
-            "gearbox": "Tipo de Caixa",
-            "first_registration_year": "Ano",
-            "first_registration_month": "Mês de Registo",
-            "engine_capacity": "Cilindrada",
-            "engine_power": "Potência",
-            "door_count": "Nº de portas",
-            "nr_seats": "Lotação",
-            "color": "Cor",
-            "body_type": "Segmento",
-            "new_used": "Condição",
-            "transmission": "Tracção",
-        }
-
-        for testid, (field, parser) in SV_FIELDS.items():
-            el = soup.find(attrs={"data-testid": testid})
-            if not el:
-                continue
-            text = el.get_text(strip=True)
-            prefix = SV_LABEL_PREFIXES.get(testid, "")
-            if prefix and text.startswith(prefix):
-                text = text[len(prefix):].strip()
-            # Strip trailing units (km, cm3, cv)
-            text = re.sub(r"\s*(km|cm3|cv)$", "", text).strip()
-            if parser:
-                details[field] = parser(text)
-            else:
-                details[field] = text
-
-        # Price
-        price_el = soup.find(attrs={"data-testid": "ad-price"})
-        if price_el:
-            details["price_eur"] = _parse_eur_price(price_el.get_text(strip=True))
-
-        # Negotiable (check summary area)
-        summary = soup.find(attrs={"data-testid": "summary-info-area"})
-        if summary:
-            details["negotiable"] = "negociável" in summary.get_text(strip=True).lower()
-
-        # Seller type
-        seller = soup.find(attrs={"data-testid": "seller-header"})
-        if seller:
-            seller_text = seller.get_text(strip=True)
-            if "Particular" in seller_text:
-                details["seller_type"] = "Particular"
-            elif "Profissional" in seller_text or "Stand" in seller_text:
-                details["seller_type"] = "Profissional"
-
-        # Photo count
-        photo_gallery = soup.find(attrs={"data-testid": "photo-gallery"})
-        if photo_gallery:
-            details["photo_count"] = len(photo_gallery.find_all("img"))
-        else:
-            counter = soup.find(attrs={"data-testid": "photo-counter"})
-            if counter:
-                # Format: "1/27"
-                match = re.search(r"/(\d+)", counter.get_text(strip=True))
-                if match:
-                    details["photo_count"] = int(match.group(1))
-
-        # Description
-        desc_el = soup.find(attrs={"data-testid": "content-description-section"})
-        if desc_el:
-            details["description"] = desc_el.get_text(separator="\n", strip=True)
-
-        # Breadcrumbs for location (if available)
-        breadcrumb = soup.find(attrs={"data-testid": "breadcrumb-section"})
-        if breadcrumb:
-            items = [el.get_text(strip=True) for el in breadcrumb.find_all("a")]
-            # Breadcrumbs: Carros > Brand > Model (no location in standvirtual breadcrumbs)
-
-        # Posted/updated date (SV has it as plain text: "29 de março de 2026 às 22:17").
-        # Require the "às HH:MM" time portion — warranty/inspection lines
-        # ("Garantia até 12 de junho de 2027") share the date format but never
-        # carry a time, and were previously poisoning first_seen_at.
-        _SV_POSTED_RE = re.compile(
-            r"\d+\s+de\s+\w+\s+de\s+\d{4}\s+às\s+\d{1,2}:\d{2}"
-        )
-        for p in soup.find_all("p", string=_SV_POSTED_RE, limit=5):
-            parsed = _parse_pt_date(p.get_text(strip=True))
-            if parsed:
-                details["posted_at"] = parsed
-                break
-
-        # Extract olx_id from URL
-        id_match = re.search(r"ID(\w+)\.html", url)
-        if id_match:
-            details["olx_id"] = id_match.group(1)
-
-        return details
+        advert = _sv_advert_from_html(html)
+        if not advert:
+            return {}
+        return _sv_advert_to_details(advert)
 
     # ------------------------------------------------------------------
     # Full scrape
@@ -679,6 +576,10 @@ class OlxScraper:
                 before we trigger early-stop (single-page false positives
                 happen when OLX surfaces older listings on top).
         """
+        # The JSON-API list payload is complete (params, description, photos,
+        # seller, timestamps) — there is nothing a detail page would add, so
+        # OLX listings are never enriched. ``enrich_details`` /
+        # ``skip_enrichment_ids`` are accepted only for call-site compatibility.
         all_listings = []
         consecutive_known = 0
         consecutive_empty = 0
@@ -699,9 +600,9 @@ class OlxScraper:
                     break
                 if consecutive_empty >= 2:
                     msg = (
-                        f"OLX SERP parser returned 0 cards on pages 1-{page} "
+                        f"OLX JSON API returned 0 offers on pages 1-{page} "
                         f"and collected 0 listings — source likely changed "
-                        f"(HTML restructure / encoding flip / bot wall)"
+                        f"(API shape/endpoint change or bot wall)"
                     )
                     logger.error("::error::%s", msg)
                     raise ScraperParseError(msg)
@@ -709,12 +610,7 @@ class OlxScraper:
                 continue
             consecutive_empty = 0
 
-            if enrich_details:
-                ok, fail = self._enrich_batch(page_listings, skip_ids=skip_enrichment_ids)
-                logger.info("Page %d: %d listings, details ok=%d fail=%d",
-                            page, len(page_listings), ok, fail)
-            else:
-                logger.info("Page %d: %d listings", page, len(page_listings))
+            logger.info("Page %d: %d listings", page, len(page_listings))
 
             all_listings.extend(page_listings)
 
@@ -745,6 +641,89 @@ class OlxScraper:
             self._delay()
 
         logger.info("Scraping complete: %d total listings", len(all_listings))
+        return all_listings
+
+    # ------------------------------------------------------------------
+    # Full-coverage scrape (price-band segmentation)
+    # ------------------------------------------------------------------
+
+    def _segment_count(self, lo: int, hi: int | None, category_id: int) -> int:
+        """Return ``metadata.total_elements`` for a price band.
+
+        OLX caps this at 1000: a band reporting < 1000 is fully pageable;
+        a band reporting exactly the cap still hides listings and must be
+        split further. Uses the verified bare ``filter_float_price:from/to``
+        query params (the ``search[...]`` wrapper is silently ignored).
+        """
+        params = ["offset=0", "limit=1", f"category_id={category_id}",
+                  f"filter_float_price%3Afrom={lo}"]
+        if hi is not None:
+            params.append(f"filter_float_price%3Ato={hi}")
+        data = self._fetch_json(OLX_API_URL + "?" + "&".join(params))
+        if not data:
+            return 0
+        return int(data.get("metadata", {}).get("total_elements", 0) or 0)
+
+    def _price_bands(self, lo: int, hi: int | None, category_id: int,
+                     max_depth: int = 14) -> list[tuple[int, int | None]]:
+        """Recursively bisect ``[lo, hi]`` into bands each under the cap.
+
+        Terminates when a band reports < the cap, the recursion depth is
+        exhausted, or the band is too narrow to split — so every leaf is
+        fully pageable and their union covers the whole range.
+        """
+        count = self._segment_count(lo, hi, category_id)
+        if count == 0:
+            return []
+        if count < _API_OFFSET_CAP or max_depth <= 0:
+            return [(lo, hi)]
+        if hi is None:
+            return [(lo, hi)]  # open-ended top band can't be bisected
+        if hi - lo <= 100:
+            return [(lo, hi)]  # narrow enough; accept residual cap loss
+        mid = (lo + hi) // 2
+        return (self._price_bands(lo, mid, category_id, max_depth - 1)
+                + self._price_bands(mid, hi, category_id, max_depth - 1))
+
+    def scrape_full(self, on_batch_ready=None, known_ids: set[str] | None = None,
+                    category_id: int | None = None,
+                    max_price: int = 1_000_000) -> list[RawListing]:
+        """Full-coverage scrape that escapes the ~1000-per-query ceiling.
+
+        A single OLX query (HTML or API) is hard-capped at ~1000 results,
+        but the category holds ~50k cars. We bisect the price axis until
+        each band is under the cap, then page every band, deduping across
+        the (inclusive) band boundaries. API path only.
+        """
+        cat = category_id if category_id is not None else CARS_CATEGORY_ID
+        bands = self._price_bands(0, max_price, cat)
+        logger.info("Full coverage: %d price bands for category %s", len(bands), cat)
+
+        all_listings: list[RawListing] = []
+        seen: set[str] = set()
+        for lo, hi in bands:
+            if self._stop_event.is_set():
+                break
+            extra = [f"filter_float_price%3Afrom={lo}"]
+            if hi is not None:
+                extra.append(f"filter_float_price%3Ato={hi}")
+            for page in range(1, self.config.max_pages + 1):
+                if (page - 1) * _API_PAGE_SIZE > _API_OFFSET_CAP:
+                    break
+                page_listings = self._scrape_search_page_api(
+                    page, category_id=cat, extra_params=extra)
+                if not page_listings:  # None (end) or [] (empty)
+                    break
+                fresh = [l for l in page_listings if l.olx_id not in seen]
+                seen.update(l.olx_id for l in fresh)
+                all_listings.extend(fresh)
+                if on_batch_ready and fresh:
+                    on_batch_ready(fresh)
+                if self._stop_event.is_set():
+                    break
+                self._delay()
+        logger.info("Full scrape: %d unique listings across %d bands",
+                    len(all_listings), len(bands))
         return all_listings
 
     def close(self):
@@ -854,16 +833,6 @@ def _parse_eur_price(text: str) -> float | None:
         return None
 
 
-def _extract_brand_from_url(url: str) -> str:
-    match = re.search(r"/carros/([^/]+)/", url)
-    if match:
-        slug = match.group(1).lower()
-        for brand in KNOWN_BRANDS:
-            if brand.lower().replace(" ", "-") == slug:
-                return brand
-    return ""
-
-
 def _extract_brand_from_title(title: str) -> str:
     # Word-boundary match: "ds" used to substring-match in "DSG" (the dual-
     # clutch transmission), and since DS is a real brand sorted at the end
@@ -934,18 +903,317 @@ def _safe_float(val) -> float | None:
 
 
 # ---------------------------------------------------------------------------
+# OLX JSON-API offer -> RawListing
+# ---------------------------------------------------------------------------
+
+# API param ``key`` -> (RawListing field, which sub-field to read).
+# OLX params come as ``{"key": "<machine>", "label": "<human>"}``; numeric
+# fields carry the clean integer in ``key`` (e.g. quilometros key "133000",
+# label "133.000 km"), categorical fields carry the display text in ``label``
+# (e.g. combustivel label "Diesel"). ``cor``/``tração`` are absent from the
+# OLX cars vertical entirely (they only ever populate from StandVirtual).
+_API_PARAM_MAP = {
+    "modelo": ("model", "label"),
+    "body_type": ("segment", "label"),
+    "combustivel": ("fuel_type", "label"),
+    "gearbox": ("transmission", "label"),
+    "condicao": ("condition", "label"),
+    "portas": ("doors", "label"),
+    "first_registration_month": ("registration_month", "label"),
+    "year": ("year", "key"),
+    "quilometros": ("mileage_km", "key"),
+    "engine_capacity": ("engine_cc", "key"),
+    "engine_power": ("horsepower", "key"),
+    "nr_seats": ("seats", "key"),
+}
+_API_INT_FIELDS = frozenset({"year", "mileage_km", "engine_cc", "horsepower", "seats"})
+
+
+def _clean_html_description(desc: str) -> str:
+    """Turn the API's HTML description into plain text (unescape + drop tags)."""
+    import html as _html
+    text = _html.unescape(desc)
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", "", text)
+    # Collapse runs of blank lines / trailing whitespace.
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def _parse_iso_dt(value: str | None):
+    """Parse an ISO-8601 timestamp to a *naive* UTC datetime.
+
+    The repository compares ``posted_at`` against a naive ``utcnow()`` and
+    rejects future dates, so we must hand it a tz-naive value or the
+    comparison raises ``TypeError``.
+    """
+    if not value:
+        return None
+    from datetime import datetime, timezone
+    try:
+        # ``fromisoformat`` only learned to parse a trailing ``Z`` in 3.11;
+        # StandVirtual stamps ``...:10Z`` so normalise it for older runtimes.
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+def _offer_to_raw(offer: dict) -> RawListing:
+    """Build a :class:`RawListing` from one OLX JSON-API offer dict.
+
+    Single source of truth for OLX listings — replaces both the SERP-card
+    parser and the per-listing detail-page parser, since the list payload
+    already carries every field they extracted.
+    """
+    url = offer.get("url", "") or ""
+    # olx_id MUST come from the URL slug (the historical key the DB dedups
+    # on), NOT the numeric ``offer['id']`` — using the numeric id would make
+    # every existing listing look new and break lifecycle/relist tracking.
+    m = re.search(r"ID(\w+)\.html", url)
+    olx_id = m.group(1) if m else ""
+
+    params = {p["key"]: p.get("value") for p in offer.get("params", [])
+              if isinstance(p, dict) and "key" in p}
+
+    price_v = params.get("price")
+    price_eur = None
+    negotiable = False
+    if isinstance(price_v, dict):
+        if price_v.get("value") is not None:
+            price_eur = float(price_v["value"])
+        negotiable = bool(price_v.get("negotiable"))
+
+    title = offer.get("title", "") or ""
+    loc = offer.get("location") or {}
+    raw = RawListing(
+        olx_id=olx_id,
+        url=url,
+        title=title,
+        price_eur=price_eur,
+        negotiable=negotiable,
+        brand=_extract_brand_from_title(title),
+        seller_type="Profissional" if offer.get("business") else "Particular",
+        city=((loc.get("city") or {}).get("name")) or "",
+        district=((loc.get("region") or {}).get("name")) or "",
+        photo_count=len(offer.get("photos") or []),
+        source="olx",
+    )
+
+    for key, (field, attr) in _API_PARAM_MAP.items():
+        v = params.get(key)
+        if not isinstance(v, dict):
+            continue
+        val = v.get(attr)
+        if val is None:
+            continue
+        if field in _API_INT_FIELDS:
+            setattr(raw, field, _safe_int(val))
+        else:
+            setattr(raw, field, str(val).strip())
+
+    raw.mileage_km = _fix_mileage(raw.mileage_km, raw.year)
+
+    desc = offer.get("description") or ""
+    if desc:
+        raw.description = _clean_html_description(desc)
+
+    posted = _parse_iso_dt(offer.get("created_time"))
+    if posted:
+        raw._posted_at = posted
+
+    return raw
+
+
+# ---------------------------------------------------------------------------
+# StandVirtual JSON (__NEXT_DATA__) parsing
+# ---------------------------------------------------------------------------
+
+# StandVirtual is a Next.js app over a GraphQL (urql) backend; every field
+# the data-testid selectors used to scrape is also embedded as clean JSON in
+# the page's ``__NEXT_DATA__``. Parsing that JSON is robust against CSS/markup
+# changes and recovers richer fields (sub-model/version, origin, VIN, the
+# seller UUID). It does NOT cut the request count — SV detail specs
+# (colour/drive-type) still need the per-listing page — but it kills the
+# fragile selector layer and is where colour/drive_type actually come from
+# (98.5% / 82% of SV rows vs ~1% of OLX rows).
+_NEXT_DATA_RE = re.compile(
+    r'<script id="__NEXT_DATA__"[^>]*>(.+?)</script>', re.DOTALL
+)
+
+# advert.details[key] -> (RawListing field, parser). SV exposes BOTH
+# ``gearbox`` (Tipo de Caixa -> transmission) and ``transmission`` (Tracção
+# -> drive_type); detail ``value`` is already the human display string.
+_SV_DETAIL_MAP = {
+    "make": ("brand", None),
+    "model": ("model", None),
+    "mileage": ("mileage_km", _safe_int),
+    "fuel_type": ("fuel_type", None),
+    "gearbox": ("transmission", None),
+    "first_registration_year": ("year", _safe_int),
+    "first_registration_month": ("registration_month", None),
+    "engine_capacity": ("engine_cc", _safe_int),
+    "engine_power": ("horsepower", _safe_int),
+    "door_count": ("doors", None),
+    "nr_seats": ("seats", _safe_int),
+    "color": ("color", None),
+    "body_type": ("segment", None),
+    "new_used": ("condition", None),
+    "transmission": ("drive_type", None),
+}
+
+
+def _next_data(html: str) -> dict | None:
+    m = _NEXT_DATA_RE.search(html or "")
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(1))
+    except json.JSONDecodeError:
+        return None
+
+
+def _sv_advert_from_html(html: str) -> dict:
+    """Return ``props.pageProps.advert`` from a SV detail page, or ``{}``."""
+    data = _next_data(html)
+    if not data:
+        return {}
+    try:
+        return data["props"]["pageProps"]["advert"] or {}
+    except (KeyError, TypeError):
+        return {}
+
+
+def _sv_advert_search_from_html(html: str) -> dict | None:
+    """Return the ``advertSearch`` result object from a SV search page.
+
+    The urql client caches each GraphQL result as a JSON string under
+    ``props.pageProps.urqlState[*].data``; we scan those for the one that
+    holds ``advertSearch`` (the listing results + pageInfo + totalCount).
+    """
+    data = _next_data(html)
+    if not data:
+        return None
+    try:
+        urql = data["props"]["pageProps"]["urqlState"]
+    except (KeyError, TypeError):
+        return None
+    for entry in (urql or {}).values():
+        raw = (entry or {}).get("data")
+        if not raw:
+            continue
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(parsed, dict) and "advertSearch" in parsed:
+            return parsed["advertSearch"]
+    return None
+
+
+def _sv_advert_to_details(advert: dict) -> dict:
+    """Map a SV advert JSON object to the detail dict ``_merge_details`` wants."""
+    details: dict = {}
+    by_key = {d.get("key"): d for d in advert.get("details", [])
+              if isinstance(d, dict)}
+    for key, (field, parser) in _SV_DETAIL_MAP.items():
+        d = by_key.get(key)
+        if not d or d.get("value") is None:
+            continue
+        val = d["value"]
+        if parser:
+            # Strip trailing units before int-casting — ``cm3`` in
+            # particular leaves a stray "3" digit that _safe_int would glue
+            # onto the displacement (1 598 cm3 -> 15983).
+            val = re.sub(r"\s*(cm3|km|cv|l)\s*$", "", str(val), flags=re.IGNORECASE)
+            details[field] = parser(val)
+        else:
+            details[field] = str(val).strip()
+
+    price = advert.get("price") or {}
+    if price.get("value") is not None:
+        details["price_eur"] = _safe_float(price.get("value"))
+        labels = price.get("labels") or []
+        details["negotiable"] = any("negotiable" in str(l).lower() for l in labels)
+
+    stype = ((advert.get("seller") or {}).get("type") or "").upper()
+    if stype == "PROFESSIONAL":
+        details["seller_type"] = "Profissional"
+    elif stype == "PRIVATE":
+        details["seller_type"] = "Particular"
+
+    photos = (advert.get("images") or {}).get("photos") or []
+    if photos:
+        details["photo_count"] = len(photos)
+
+    desc = advert.get("description")
+    if isinstance(desc, str) and desc:
+        details["description"] = _clean_html_description(desc)
+
+    posted = _parse_iso_dt(advert.get("createdAt"))
+    if posted:
+        details["posted_at"] = posted
+
+    m = re.search(r"ID(\w+)\.html", advert.get("url", "") or "")
+    if m:
+        details["olx_id"] = m.group(1)
+    return details
+
+
+def _sv_node_to_raw(node: dict) -> RawListing | None:
+    """Build a card-level :class:`RawListing` from a SV ``advertSearch`` node."""
+    url = node.get("url", "") or ""
+    m = re.search(r"ID(\w+)\.html", url)
+    if not m:
+        return None
+    params = {p.get("key"): p for p in node.get("parameters", [])
+              if isinstance(p, dict)}
+
+    def disp(k):
+        p = params.get(k)
+        return p.get("displayValue") if p else None
+
+    def val(k):
+        p = params.get(k)
+        return p.get("value") if p else None
+
+    title = node.get("title", "") or ""
+    units = ((node.get("price") or {}).get("amount") or {}).get("units")
+    stype = (node.get("seller") or {}).get("__typename", "") or ""
+    loc = node.get("location") or {}
+    raw = RawListing(
+        olx_id=m.group(1),
+        url=url,
+        title=title,
+        price_eur=float(units) if units is not None else None,
+        brand=_extract_brand_from_title(title),
+        model=disp("model") or "",
+        year=_safe_int(val("first_registration_year")),
+        mileage_km=_safe_int(val("mileage")),
+        fuel_type=disp("fuel_type"),
+        transmission=disp("gearbox"),
+        engine_cc=_safe_int(val("engine_capacity")),
+        horsepower=_safe_int(val("engine_power")),
+        city=((loc.get("city") or {}).get("name")) or "",
+        district=((loc.get("region") or {}).get("name")) or "",
+        seller_type="Profissional" if "Professional" in stype else "Particular",
+        source="standvirtual",
+    )
+    raw.mileage_km = _fix_mileage(raw.mileage_km, raw.year)
+    posted = _parse_iso_dt(node.get("createdAt"))
+    if posted:
+        raw._posted_at = posted
+    return raw
+
+
+# ---------------------------------------------------------------------------
 # StandVirtual search page scraper
 # ---------------------------------------------------------------------------
 
 SV_BASE_URL = "https://www.standvirtual.com/carros"
-
-# dt text -> RawListing field
-SV_CARD_FIELDS = {
-    "mileage": "mileage_km",
-    "fuel_type": "fuel_type",
-    "gearbox": "transmission",
-    "first_registration_year": "year",
-}
 
 
 class StandVirtualScraper:
@@ -989,67 +1257,23 @@ class StandVirtualScraper:
         return self._parse_search_page(html)
 
     def _parse_search_page(self, html: str) -> list[RawListing]:
-        soup = BeautifulSoup(html, "lxml")
+        """Parse SV search results from the embedded ``advertSearch`` JSON."""
+        advert_search = _sv_advert_search_from_html(html)
+        if advert_search is None:
+            logger.warning("SV: advertSearch not found in __NEXT_DATA__")
+            return []
         listings = []
-
-        for article in soup.find_all("article"):
+        for edge in advert_search.get("edges") or []:
+            node = edge.get("node") if isinstance(edge, dict) else None
+            if not node:
+                continue
             try:
-                link = article.find("a", href=True)
-                if not link:
-                    continue
-                url = link.get("href", "")
-                if "/anuncio/" not in url:
-                    continue
-
-                id_match = re.search(r"ID(\w+)\.html", url)
-                if not id_match:
-                    continue
-                olx_id = id_match.group(1)
-
-                title_el = article.find("h2") or article.find("h3") or article.find("h1")
-                title = title_el.get_text(strip=True) if title_el else ""
-
-                # Price: h3 that contains digits (not the title h2)
-                price_eur = None
-                for h3 in article.find_all("h3"):
-                    text = h3.get_text(strip=True).replace(" ", "")
-                    if re.match(r"^[\d.]+$", text):
-                        price_eur = _safe_float(text)
-                        break
-
-                # Specs from dt/dd pairs
-                specs: dict = {}
-                dts = article.find_all("dt")
-                dds = article.find_all("dd")
-                for dt, dd in zip(dts, dds):
-                    key = dt.get_text(strip=True)
-                    val = dd.get_text(strip=True)
-                    field = SV_CARD_FIELDS.get(key)
-                    if field:
-                        specs[field] = val
-
-                year = _safe_int(specs.get("year"))
-                mileage_raw = specs.get("mileage_km", "")
-                mileage_km = _safe_int(mileage_raw.replace("km", "").strip()) if mileage_raw else None
-
-                brand = _extract_brand_from_title(title)
-
-                listings.append(RawListing(
-                    olx_id=olx_id,
-                    url=url,
-                    title=title,
-                    price_eur=price_eur,
-                    brand=brand,
-                    year=year,
-                    mileage_km=mileage_km,
-                    fuel_type=specs.get("fuel_type"),
-                    transmission=specs.get("transmission"),
-                    source="standvirtual",
-                ))
-            except Exception as e:
-                logger.debug("Error parsing SV article: %s", e)
-
-        logger.info("Parsed %d listings from StandVirtual search page", len(listings))
+                raw = _sv_node_to_raw(node)
+                if raw and raw.olx_id:
+                    listings.append(raw)
+            except Exception as e:  # noqa: BLE001
+                logger.debug("Error parsing SV node: %s", e)
+        logger.info("Parsed %d listings from SV search page", len(listings))
         return listings
 
     # ------------------------------------------------------------------

@@ -13,10 +13,9 @@ from src.parser.scraper import (
     ScraperParseError,
     StandVirtualScraper,
     _extract_brand_from_title,
-    _extract_brand_from_url,
     _fix_mileage,
     _merge_details,
-    _parse_eur_price,
+    _offer_to_raw,
     _parse_pt_date,
 )
 
@@ -25,34 +24,53 @@ from src.parser.scraper import (
 # StandVirtual detail page parsing
 # ---------------------------------------------------------------------------
 
-SV_DETAIL_HTML = """\
-<html><body>
-<div data-testid="ad-price">2 900EUR</div>
-<div data-testid="make">MarcaNissan</div>
-<div data-testid="model">ModeloQashqai</div>
-<div data-testid="mileage">Quilómetros130 000 km</div>
-<div data-testid="fuel_type">CombustívelDiesel</div>
-<div data-testid="gearbox">Tipo de CaixaManual</div>
-<div data-testid="first_registration_year">Ano2010</div>
-<div data-testid="first_registration_month">Mês de RegistoJulho</div>
-<div data-testid="engine_capacity">Cilindrada1 598 cm3</div>
-<div data-testid="engine_power">Potência130 cv</div>
-<div data-testid="door_count">Nº de portas5</div>
-<div data-testid="color">CorVermelho</div>
-<div data-testid="body_type">SegmentoCarrinha</div>
-<div data-testid="new_used">CondiçãoUsado</div>
-<div data-testid="transmission">TracçãoIntegral</div>
-<div data-testid="seller-header">ParticularNo Standvirtual desde 2023</div>
-<div data-testid="summary-info-area">Nissan Qashqai Negociável2 900EUR</div>
-<div data-testid="content-description-section">
-NISSAN QASHQAI importada de 2010, 130000 km reais, revisão feita.
-</div>
-</body></html>
-"""
+import json as _json
+
+
+def _sv_detail_html(advert: dict) -> str:
+    """Wrap a SV advert dict in a page with a ``__NEXT_DATA__`` blob."""
+    payload = {"props": {"pageProps": {"advert": advert}}}
+    return (
+        '<html><body><script id="__NEXT_DATA__" type="application/json">'
+        + _json.dumps(payload, ensure_ascii=False)
+        + "</script></body></html>"
+    )
+
+
+# Controlled advert mirroring the real StandVirtual ``advert`` JSON shape
+# (props.pageProps.advert): detail rows under ``details`` with the human
+# display string in ``value``; ``price.value`` a string + negotiable flagged
+# in ``price.labels``; ``seller.type``; ``createdAt`` ISO; ``images.photos``.
+SV_ADVERT = {
+    "url": "https://www.standvirtual.com/carros/anuncio/nissan-qashqai-ID8PZUgg.html",
+    "title": "Nissan Qashqai",
+    "createdAt": "2026-03-29T22:17:00Z",
+    "price": {"value": "2900", "currency": "EUR",
+              "labels": ["ad-page-negotiable-tag", "Aceita retoma"]},
+    "description": "<p>NISSAN QASHQAI importada de 2010, 130000 km reais.</p>",
+    "seller": {"type": "PRIVATE", "uuid": "abc-123", "name": "João"},
+    "images": {"photos": [{"id": "p1"}, {"id": "p2"}, {"id": "p3"}]},
+    "details": [
+        {"key": "make", "value": "Nissan"},
+        {"key": "model", "value": "Qashqai"},
+        {"key": "mileage", "value": "130 000 km"},
+        {"key": "fuel_type", "value": "Diesel"},
+        {"key": "gearbox", "value": "Manual"},
+        {"key": "first_registration_year", "value": "2010"},
+        {"key": "first_registration_month", "value": "Julho"},
+        {"key": "engine_capacity", "value": "1 598 cm3"},
+        {"key": "engine_power", "value": "130 cv"},
+        {"key": "door_count", "value": "5"},
+        {"key": "color", "value": "Vermelho"},
+        {"key": "body_type", "value": "Carrinha"},
+        {"key": "new_used", "value": "Usado"},
+        {"key": "transmission", "value": "Tracção integral"},
+    ],
+}
 
 
 class TestStandVirtualDetailParsing:
-    """Test scrape_standvirtual_detail with mocked HTTP."""
+    """scrape_standvirtual_detail now reads the embedded __NEXT_DATA__ JSON."""
 
     @pytest.fixture()
     def scraper(self):
@@ -64,16 +82,16 @@ class TestStandVirtualDetailParsing:
         scraper._fetch = lambda url, retries=3: (url, html)
 
     def test_parses_all_fields(self, scraper):
-        self._patch_fetch(scraper, SV_DETAIL_HTML)
-        url = "https://www.standvirtual.com/carros/anuncio/nissan-qashqai-ID8PZUgg.html"
-        d = scraper.scrape_standvirtual_detail(url)
+        self._patch_fetch(scraper, _sv_detail_html(SV_ADVERT))
+        d = scraper.scrape_standvirtual_detail(SV_ADVERT["url"])
 
         assert d["brand"] == "Nissan"
         assert d["model"] == "Qashqai"
         assert d["year"] == 2010
         assert d["mileage_km"] == 130000
         assert d["fuel_type"] == "Diesel"
-        assert d["transmission"] == "Manual"
+        assert d["transmission"] == "Manual"          # gearbox
+        assert d["drive_type"] == "Tracção integral"  # transmission
         assert d["engine_cc"] == 1598
         assert d["horsepower"] == 130
         assert d["doors"] == "5"
@@ -82,30 +100,28 @@ class TestStandVirtualDetailParsing:
         assert d["condition"] == "Usado"
         assert d["registration_month"] == "Julho"
         assert d["seller_type"] == "Particular"
+        assert d["photo_count"] == 3
 
     def test_parses_price(self, scraper):
-        self._patch_fetch(scraper, SV_DETAIL_HTML)
-        url = "https://www.standvirtual.com/carros/anuncio/nissan-qashqai-ID8PZUgg.html"
-        d = scraper.scrape_standvirtual_detail(url)
+        self._patch_fetch(scraper, _sv_detail_html(SV_ADVERT))
+        d = scraper.scrape_standvirtual_detail(SV_ADVERT["url"])
         assert d["price_eur"] == 2900.0
 
     def test_parses_negotiable(self, scraper):
-        self._patch_fetch(scraper, SV_DETAIL_HTML)
-        url = "https://www.standvirtual.com/carros/anuncio/nissan-qashqai-ID8PZUgg.html"
-        d = scraper.scrape_standvirtual_detail(url)
+        self._patch_fetch(scraper, _sv_detail_html(SV_ADVERT))
+        d = scraper.scrape_standvirtual_detail(SV_ADVERT["url"])
         assert d["negotiable"] is True
 
     def test_parses_description(self, scraper):
-        self._patch_fetch(scraper, SV_DETAIL_HTML)
-        url = "https://www.standvirtual.com/carros/anuncio/nissan-qashqai-ID8PZUgg.html"
-        d = scraper.scrape_standvirtual_detail(url)
+        self._patch_fetch(scraper, _sv_detail_html(SV_ADVERT))
+        d = scraper.scrape_standvirtual_detail(SV_ADVERT["url"])
         assert "NISSAN QASHQAI" in d["description"]
         assert "130000 km" in d["description"]
+        assert "<p>" not in d["description"]  # tags stripped
 
     def test_extracts_olx_id_from_url(self, scraper):
-        self._patch_fetch(scraper, SV_DETAIL_HTML)
-        url = "https://www.standvirtual.com/carros/anuncio/nissan-qashqai-ID8PZUgg.html"
-        d = scraper.scrape_standvirtual_detail(url)
+        self._patch_fetch(scraper, _sv_detail_html(SV_ADVERT))
+        d = scraper.scrape_standvirtual_detail(SV_ADVERT["url"])
         assert d["olx_id"] == "8PZUgg"
 
     def test_returns_empty_on_fetch_failure(self, scraper):
@@ -113,118 +129,38 @@ class TestStandVirtualDetailParsing:
         d = scraper.scrape_standvirtual_detail("https://www.standvirtual.com/carros/anuncio/x-IDfail.html")
         assert d == {}
 
+    def test_returns_empty_when_no_next_data(self, scraper):
+        self._patch_fetch(scraper, "<html><body>no json here</body></html>")
+        d = scraper.scrape_standvirtual_detail(SV_ADVERT["url"])
+        assert d == {}
+
     def test_professional_seller(self, scraper):
-        html = SV_DETAIL_HTML.replace("ParticularNo Standvirtual", "ProfissionalNo Standvirtual")
-        self._patch_fetch(scraper, html)
-        url = "https://www.standvirtual.com/carros/anuncio/test-IDabc.html"
-        d = scraper.scrape_standvirtual_detail(url)
+        adv = {**SV_ADVERT, "seller": {"type": "PROFESSIONAL"}}
+        self._patch_fetch(scraper, _sv_detail_html(adv))
+        d = scraper.scrape_standvirtual_detail(adv["url"])
         assert d["seller_type"] == "Profissional"
 
-    def test_posted_at_ignores_warranty_date(self, scraper):
-        """SV pages mix the post date with warranty/inspection dates that
-        share the Portuguese date format. Only entries with 'às HH:MM' are
-        the real posted_at — warranty lines without a time must be skipped.
-        """
-        html = SV_DETAIL_HTML.replace(
-            "</body>",
-            "<p>Garantia até 12 de junho de 2031</p>"
-            "<p>Inspeção válida até 5 de janeiro de 2030</p>"
-            "<p>29 de março de 2026 às 22:17</p>"
-            "</body>",
-        )
-        self._patch_fetch(scraper, html)
-        url = "https://www.standvirtual.com/carros/anuncio/test-IDabc.html"
-        d = scraper.scrape_standvirtual_detail(url)
+    def test_posted_at_from_created_at(self, scraper):
+        self._patch_fetch(scraper, _sv_detail_html(SV_ADVERT))
+        d = scraper.scrape_standvirtual_detail(SV_ADVERT["url"])
         assert d["posted_at"] == datetime(2026, 3, 29, 22, 17)
 
-    def test_posted_at_absent_when_only_warranty_dates(self, scraper):
-        """If the page has no time-bearing date at all, posted_at stays unset
-        rather than falling back to a warranty/inspection date."""
-        html = SV_DETAIL_HTML.replace(
-            "</body>",
-            "<p>Garantia até 12 de junho de 2031</p></body>",
-        )
-        self._patch_fetch(scraper, html)
-        url = "https://www.standvirtual.com/carros/anuncio/test-IDabc.html"
-        d = scraper.scrape_standvirtual_detail(url)
+    def test_posted_at_absent_when_no_created_at(self, scraper):
+        adv = {k: v for k, v in SV_ADVERT.items() if k != "createdAt"}
+        self._patch_fetch(scraper, _sv_detail_html(adv))
+        d = scraper.scrape_standvirtual_detail(adv["url"])
         assert "posted_at" not in d
 
-
-# ---------------------------------------------------------------------------
-# Search page: standvirtual URLs accepted
-# ---------------------------------------------------------------------------
-
-OLX_SEARCH_WITH_SV = """\
-<html><body>
-<div data-testid="l-card">
-  <a href="https://www.standvirtual.com/carros/anuncio/alfa-romeo-mito-ID8PZbca.html">
-    <h6 data-cy="ad-card-title">Alfa Romeo MiTo</h6>
-  </a>
-  <p data-testid="ad-price">6.700 €</p>
-  <p data-testid="location-date">Porto - 28 de março de 2026</p>
-  <span data-nx-name="P5">2014 - 160.000 km</span>
-</div>
-<div data-testid="l-card">
-  <a href="https://www.olx.pt/d/anuncio/volkswagen-golf-IDtest123.html">
-    <h6 data-cy="ad-card-title">Volkswagen Golf</h6>
-  </a>
-  <p data-testid="ad-price">12.500 €</p>
-  <p data-testid="location-date">Lisboa - 27 de março de 2026</p>
-  <span data-nx-name="P5">2018 - 95.000 km</span>
-</div>
-</body></html>
-"""
-
-
-class TestSearchPageWithStandVirtual:
-    def test_accepts_standvirtual_urls(self):
-        scraper = OlxScraper(ScraperConfig())
-        listings = scraper._parse_search_page(OLX_SEARCH_WITH_SV)
-        scraper.close()
-
-        urls = [l.url for l in listings]
-        assert any("standvirtual.com" in u for u in urls)
-        assert any("olx.pt" in u for u in urls)
-        assert len(listings) == 2
-
-    def test_standvirtual_card_fields(self):
-        scraper = OlxScraper(ScraperConfig())
-        listings = scraper._parse_search_page(OLX_SEARCH_WITH_SV)
-        scraper.close()
-
-        sv = [l for l in listings if "standvirtual" in l.url][0]
-        assert sv.olx_id == "8PZbca"
-        assert sv.title == "Alfa Romeo MiTo"
-        assert sv.price_eur == 6700.0
-        assert sv.year == 2014
-        assert sv.mileage_km == 160000
-
-    def test_title_wrapper_layout_does_not_leak_price(self):
-        # OLX rolled out a new card layout ~2026-04-28 where the
-        # ``data-cy='ad-card-title'`` element is a *div wrapper* that
-        # also contains the price <p> and the "Negociável" badge.
-        # Reading the wrapper's text concatenated everything together
-        # ("Vw scirocco 20155.500 €Negociável"); the parser must drill
-        # into the inner <a>/<h4>.
-        html = """\
-<html><body>
-<div data-testid="l-card">
-  <div data-cy="ad-card-title" data-testid="ad-card-title">
-    <a href="https://www.olx.pt/d/anuncio/vw-scirocco-2015-IDJnpP1.html">
-      <h4>Vw scirocco 2015</h4>
-    </a>
-    <p data-testid="ad-price">5.500 €</p>
-    <span>Negociável</span>
-  </div>
-</div>
-</body></html>
-"""
-        scraper = OlxScraper(ScraperConfig())
-        listings = scraper._parse_search_page(html)
-        scraper.close()
-        assert len(listings) == 1
-        assert listings[0].title == "Vw scirocco 2015"
-        assert listings[0].price_eur == 5500.0
+    def test_parses_real_fixture(self, scraper):
+        """Real captured advert payload maps without error (BMW i4)."""
+        import pathlib
+        adv = _json.loads((pathlib.Path(__file__).parent
+                           / "fixtures/api/sv_advert.json").read_text())
+        self._patch_fetch(scraper, _sv_detail_html(adv))
+        d = scraper.scrape_standvirtual_detail(adv["url"])
+        assert d["color"] == "Cinzento"
+        assert d["drive_type"] == "Tracção traseira"
+        assert d["brand"] == "BMW"
 
 
 # ---------------------------------------------------------------------------
@@ -269,41 +205,52 @@ class TestEnrichRouting:
 # StandVirtual search page parsing
 # ---------------------------------------------------------------------------
 
-SV_SEARCH_HTML = """\
-<html><body>
-<article>
-  <a href="https://www.standvirtual.com/carros/anuncio/bmw-x1-ver-18-d-sdrive-auto-ID8PZGI9.html">link</a>
-  <h2>BMW X1 18 d sDrive Auto</h2>
-  <h3>31 900</h3>
-  <p>EUR</p>
-  <dl>
-    <dt>mileage</dt><dd>33 163 km</dd>
-    <dt>fuel_type</dt><dd>Diesel</dd>
-    <dt>gearbox</dt><dd>Automática</dd>
-    <dt>first_registration_year</dt><dd>2020</dd>
-  </dl>
-</article>
-<article>
-  <a href="https://www.standvirtual.com/carros/anuncio/fiat-bravo-ID8PZUgy.html">link</a>
-  <h2>Fiat Bravo</h2>
-  <h3>3 200</h3>
-  <p>EUR</p>
-  <dl>
-    <dt>mileage</dt><dd>168 000 km</dd>
-    <dt>fuel_type</dt><dd>Gasolina</dd>
-    <dt>gearbox</dt><dd>Manual</dd>
-    <dt>first_registration_year</dt><dd>2010</dd>
-  </dl>
-</article>
-<article>
-  <a href="https://www.standvirtual.com/carros/novos/catalogo">Not a listing</a>
-</article>
-</body></html>
-"""
+def _sv_node(url, title, units, year, mileage, fuel, gearbox, seller="ProfessionalSeller"):
+    return {
+        "url": url, "title": title, "createdAt": "2026-06-01T10:00:00Z",
+        "price": {"amount": {"units": units}},
+        "seller": {"__typename": seller},
+        "location": {"city": {"name": "Porto"}, "region": {"name": "Porto"}},
+        "parameters": [
+            {"key": "make", "displayValue": title.split()[0], "value": title.split()[0].lower()},
+            {"key": "model", "displayValue": title.split()[1] if len(title.split()) > 1 else "", "value": "m"},
+            {"key": "mileage", "value": str(mileage), "displayValue": f"{mileage} km"},
+            {"key": "fuel_type", "displayValue": fuel, "value": fuel.lower()},
+            {"key": "gearbox", "displayValue": gearbox, "value": gearbox.lower()},
+            {"key": "first_registration_year", "value": str(year), "displayValue": str(year)},
+        ],
+    }
+
+
+def _sv_search_html(nodes, total=None) -> str:
+    """Wrap SV search nodes in a __NEXT_DATA__ urqlState advertSearch blob."""
+    advert_search = {
+        "advertSearch": {
+            "totalCount": total if total is not None else len(nodes),
+            "pageInfo": {"pageSize": 32, "currentOffset": 0},
+            "edges": [{"node": n} for n in nodes],
+        }
+    }
+    urql = {"k1": {"data": _json.dumps(advert_search, ensure_ascii=False)}}
+    payload = {"props": {"pageProps": {"urqlState": urql}}}
+    return (
+        '<html><body><script id="__NEXT_DATA__" type="application/json">'
+        + _json.dumps(payload, ensure_ascii=False)
+        + "</script></body></html>"
+    )
+
+
+SV_NODE_BMW = _sv_node(
+    "https://www.standvirtual.com/carros/anuncio/bmw-x1-ver-18-d-sdrive-auto-ID8PZGI9.html",
+    "BMW X1 18 d sDrive Auto", 31900, 2020, 33163, "Diesel", "Automática")
+SV_NODE_FIAT = _sv_node(
+    "https://www.standvirtual.com/carros/anuncio/fiat-bravo-ID8PZUgy.html",
+    "Fiat Bravo", 3200, 2010, 168000, "Gasolina", "Manual", seller="PrivateSeller")
+SV_SEARCH_HTML = _sv_search_html([SV_NODE_BMW, SV_NODE_FIAT])
 
 
 class TestStandVirtualSearchParsing:
-    def test_parses_listings_from_articles(self):
+    def test_parses_listings_from_json(self):
         sv = StandVirtualScraper(ScraperConfig())
         listings = sv._parse_search_page(SV_SEARCH_HTML)
         sv.close()
@@ -323,6 +270,7 @@ class TestStandVirtualSearchParsing:
         assert bmw.fuel_type == "Diesel"
         assert bmw.transmission == "Automática"
         assert bmw.brand == "BMW"
+        assert bmw.seller_type == "Profissional"
         assert bmw.source == "standvirtual"
 
     def test_extracts_second_listing(self):
@@ -336,19 +284,165 @@ class TestStandVirtualSearchParsing:
         assert fiat.price_eur == 3200.0
         assert fiat.year == 2010
         assert fiat.mileage_km == 168000
+        assert fiat.seller_type == "Particular"
 
-    def test_skips_non_listing_articles(self):
-        sv = StandVirtualScraper(ScraperConfig())
-        listings = sv._parse_search_page(SV_SEARCH_HTML)
-        sv.close()
-        # 3rd article has /novos/catalogo link, not /anuncio/
-        assert len(listings) == 2
+    def test_skips_nodes_without_valid_id(self):
+        bad = _sv_node("https://www.standvirtual.com/carros/novos/catalogo",
+                       "Catalogo X", 0, 2020, 0, "Diesel", "Manual")
+        listings = StandVirtualScraper(ScraperConfig())._parse_search_page(
+            _sv_search_html([SV_NODE_BMW, bad]))
+        # the catalog url has no ID<slug>.html → dropped
+        assert len(listings) == 1
+        assert listings[0].olx_id == "8PZGI9"
+
+    def test_empty_when_no_advert_search(self):
+        listings = StandVirtualScraper(ScraperConfig())._parse_search_page(
+            "<html><body>nothing</body></html>")
+        assert listings == []
 
     def test_source_is_standvirtual(self):
         sv = StandVirtualScraper(ScraperConfig())
         listings = sv._parse_search_page(SV_SEARCH_HTML)
         sv.close()
         assert all(l.source == "standvirtual" for l in listings)
+
+
+# ---------------------------------------------------------------------------
+# OLX JSON-API offer parsing
+# ---------------------------------------------------------------------------
+
+def _olx_offer(**over):
+    base = {
+        "id": 670000001,  # numeric API id — must NOT become olx_id
+        "url": "https://www.olx.pt/d/anuncio/bmw-320d-IDABCxy.html",
+        "title": "BMW 320d",
+        "created_time": "2026-05-01T10:00:00+01:00",
+        "business": False,
+        "location": {"city": {"name": "Lisboa"}, "region": {"name": "Lisboa"}},
+        "photos": [{"link": "https://x/v1/files/a-PT/image;s={width}x{height}"},
+                   {"link": "https://x/v1/files/b-PT/image;s={width}x{height}"}],
+        "description": "Carro impecável<br/>sem acidentes &amp; revisões",
+        "params": [
+            {"key": "price", "value": {"value": 15000, "label": "15.000 €", "negotiable": True}},
+            {"key": "year", "value": {"key": "2018", "label": "2018 "}},
+            {"key": "quilometros", "value": {"key": "120000", "label": "120.000 km"}},
+            {"key": "modelo", "value": {"key": "320d", "label": "320d"}},
+            {"key": "combustivel", "value": {"key": "diesel", "label": "Diesel"}},
+            {"key": "gearbox", "value": {"key": "manual", "label": "Manual"}},
+            {"key": "body_type", "value": {"key": "sedan", "label": "Sedan"}},
+            {"key": "engine_capacity", "value": {"key": "1995", "label": "1.995 "}},
+            {"key": "engine_power", "value": {"key": "190", "label": "190 "}},
+            {"key": "portas", "value": {"key": "4-5", "label": "4-5"}},
+            {"key": "nr_seats", "value": {"key": "5", "label": "5"}},
+            {"key": "condicao", "value": {"key": "usado", "label": "Usado"}},
+            {"key": "first_registration_month", "value": {"key": "03", "label": "Março"}},
+        ],
+    }
+    base.update(over)
+    return base
+
+
+class TestOlxApiOfferParsing:
+    def test_olx_id_from_url_not_numeric_id(self):
+        raw = _offer_to_raw(_olx_offer())
+        # Continuity rule: dedup key is the URL slug, never the numeric id.
+        assert raw.olx_id == "ABCxy"
+        assert raw.olx_id != "670000001"
+
+    def test_maps_all_fields(self):
+        raw = _offer_to_raw(_olx_offer())
+        assert raw.brand == "BMW"
+        assert raw.model == "320d"
+        assert raw.year == 2018
+        assert raw.mileage_km == 120000
+        assert raw.price_eur == 15000.0
+        assert raw.negotiable is True
+        assert raw.fuel_type == "Diesel"
+        assert raw.transmission == "Manual"
+        assert raw.segment == "Sedan"
+        assert raw.engine_cc == 1995
+        assert raw.horsepower == 190
+        assert raw.doors == "4-5"
+        assert raw.seats == 5
+        assert raw.condition == "Usado"
+        assert raw.registration_month == "Março"
+        assert raw.city == "Lisboa"
+        assert raw.district == "Lisboa"
+        assert raw.seller_type == "Particular"
+        assert raw.photo_count == 2
+        assert raw.source == "olx"
+
+    def test_business_maps_to_profissional(self):
+        raw = _offer_to_raw(_olx_offer(business=True))
+        assert raw.seller_type == "Profissional"
+
+    def test_description_cleaned(self):
+        raw = _offer_to_raw(_olx_offer())
+        assert "<br" not in raw.description
+        assert "&amp;" not in raw.description  # entity unescaped
+        assert "impecável" in raw.description
+
+    def test_posted_at_is_naive_datetime(self):
+        raw = _offer_to_raw(_olx_offer())
+        posted = getattr(raw, "_posted_at", None)
+        assert posted is not None
+        assert posted.tzinfo is None  # repository compares against naive utcnow
+
+    def test_sparse_offer_does_not_crash(self):
+        offer = _olx_offer(params=[{"key": "price",
+                                    "value": {"value": 5000, "label": "5.000 €"}}])
+        raw = _offer_to_raw(offer)
+        assert raw.price_eur == 5000.0
+        assert raw.year is None
+        assert raw.model == ""
+
+    def test_real_fixtures_map_without_error(self):
+        import pathlib
+        offers = _json.loads((pathlib.Path(__file__).parent
+                             / "fixtures/api/olx_offers.json").read_text())
+        assert offers
+        for o in offers:
+            raw = _offer_to_raw(o)
+            assert raw.olx_id  # never blank
+            assert not raw.olx_id.isdigit()  # slug, not numeric id
+
+
+class TestOlxApiSearchPage:
+    @pytest.fixture()
+    def scraper(self):
+        s = OlxScraper(ScraperConfig())
+        yield s
+        s.close()
+
+    def test_private_only_filters_dealers(self, scraper):
+        dealer = _olx_offer(url="https://www.olx.pt/d/anuncio/x-IDdeal1.html", business=True)
+        private = _olx_offer(url="https://www.olx.pt/d/anuncio/y-IDpriv1.html", business=False)
+        scraper._fetch_json = lambda url, retries=3: {"data": [dealer, private]}
+        listings = scraper.scrape_search_page(1)
+        ids = [l.olx_id for l in listings]
+        assert ids == ["priv1"]  # dealer dropped under private_only
+
+    def test_keeps_dealers_when_not_private_only(self):
+        s = OlxScraper(ScraperConfig(private_only=False))
+        dealer = _olx_offer(url="https://www.olx.pt/d/anuncio/x-IDdeal1.html", business=True)
+        private = _olx_offer(url="https://www.olx.pt/d/anuncio/y-IDpriv1.html", business=False)
+        s._fetch_json = lambda url, retries=3: {"data": [dealer, private]}
+        listings = s.scrape_search_page(1)
+        s.close()
+        assert {l.olx_id for l in listings} == {"deal1", "priv1"}
+
+    def test_empty_deep_page_returns_none(self, scraper):
+        scraper._fetch_json = lambda url, retries=3: {"data": []}
+        assert scraper.scrape_search_page(2) is None
+
+    def test_empty_first_page_returns_list(self, scraper):
+        scraper._fetch_json = lambda url, retries=3: {"data": []}
+        assert scraper.scrape_search_page(1) == []
+
+    def test_offset_cap_stops_paging(self, scraper):
+        # page 27 → offset 1040 > cap → None without any fetch
+        scraper._fetch_json = lambda url, retries=3: pytest.fail("should not fetch past cap")
+        assert scraper.scrape_search_page(27) is None
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +497,7 @@ class TestScrapeAllLoudFailure:
     def test_olx_two_empty_pages_from_start_raises(self):
         scraper = OlxScraper(ScraperConfig(max_pages=5, delay_min=0, delay_max=0))
         scraper.scrape_search_page = lambda page=1: []  # noqa: E731 — every page parses to []
-        with pytest.raises(ScraperParseError, match="OLX SERP parser returned 0 cards"):
+        with pytest.raises(ScraperParseError, match="OLX JSON API returned 0 offers"):
             scraper.scrape_all(enrich_details=False)
         scraper.close()
 

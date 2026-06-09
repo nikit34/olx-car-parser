@@ -1,0 +1,179 @@
+{
+ "id": "8097506377",
+ "url": "https://www.standvirtual.com/carros/anuncio/ds-ds3-ver-1-2-puretech-sport-chic-ID8Q0jjz.html",
+ "title": "DS DS3 1.2 PureTech Sport Chic",
+ "createdAt": "2026-06-09T16:05:19Z",
+ "price": {
+  "__typename": "Price",
+  "amount": {
+   "__typename": "Money",
+   "units": 11450,
+   "nanos": 0,
+   "value": "11450",
+   "currencyCode": "EUR"
+  },
+  "badges": [],
+  "grossPrice": null,
+  "netPrice": null
+ },
+ "seller": {
+  "__typename": "ProfessionalSeller",
+  "benefits": [
+   "ADS_DURATION",
+   "AUTOMATIC_AD_BUMPS",
+   "PACKAGE_VALIDITY",
+   "OLX_EXPORT",
+   "OLX_FEE_CARS",
+   "OLX_FEE",
+   "API_ACCESS",
+   "DEALER_LOGO_IN_AD_PAGE",
+   "SIMILAR_ADS",
+   "MAP",
+   "MORE_PHONES",
+   "RELIABILITY_BADGE_TOOLTIP",
+   "LINK_TO_DEALER_PAGE_IN_RESULTS",
+   "LINK_TO_DEALER_PAGE_IN_AD_PAGE",
+   "EXTERNAL_LINK",
+   "DEALER_PAGE",
+   "DEALER_LOGO_IN_RESULTS",
+   "CALLTRACKING_WEEKLY_REPORT",
+   "ADVERT_RANKING",
+   "ADVERT_RANKING_PRICE_SORT",
+   "PRICE_RECOMMENDATION",
+   "CALLTRACKING",
+   "VAS_SCHEDULE",
+   "VAS_NOTIFICATION",
+   "VAS_RECOMMENDATION",
+   "OLX_VAS",
+   "DEALER_IDENTITY_ELEMENTS",
+   "SPECIAL_DEALER_IDENTITY_ELEMENTS_1",
+   "BUYER_PROFILE",
+   "AD_INSIGHTS",
+   "STOCK_INSIGHTS",
+   "DISCOUNT_PURCHASING_NUMERIC",
+   "BUSINESS_SITE_PRO",
+   "SOURCING_TOOL",
+   "EARLY_ACCESS",
+   "VELOCITY_METRICS_SELF",
+   "VELOCITY_METRICS_MARKET",
+   "REAL_TIME_CHAT",
+   "AUCTIONS_BCA",
+   "MULTI_USER",
+   "ACCESS_CONTROL",
+   "MARKET_DATA",
+   "TOP_ADS",
+   "APPRAISAL_TOOL",
+   "FEATURED_DEALER_PT_A",
+   "PRICE_DROP_ADS",
+   "SALESPERSON_PROFILE",
+   "AUTOMATED_AD_DESCRIPTION",
+   "IMAGE_TO_AD",
+   "VIDEO_TO_AD",
+   "AD_TO_VIDEO",
+   "OLX_VAS_BUNDLE",
+   "SALESPERSON_PHONE",
+   "MAX_PICTURES",
+   "MARKETVIEW",
+   "VIDEO_TO_AD",
+   "AD_TO_VIDEO",
+   "SALESPERSON_PHONE",
+   "SALESPERSON_PROFILE",
+   "STOCK_INSIGHTS",
+   "MARKET_DATA",
+   "EARLY_ACCESS",
+   "AUTOMATED_AD_DESCRIPTION",
+   "PRICE_DROP_ADS",
+   "BUYER_PROFILE",
+   "APPRAISAL_TOOL",
+   "AD_INSIGHTS",
+   "FEATURED_DEALER",
+   "SIMILAR_ADS",
+   "IMAGE_TO_AD",
+   "BUSINESS_SITE_PRO",
+   "CREDIT_INTERMEDIARY"
+  ]
+ },
+ "location": {
+  "__typename": "Location",
+  "city": {
+   "__typename": "AdministrativeLevel",
+   "name": "Vermoim"
+  },
+  "region": {
+   "__typename": "AdministrativeLevel",
+   "name": "Braga"
+  }
+ },
+ "parameters": [
+  {
+   "__typename": "AdvertParameter",
+   "key": "origin",
+   "displayValue": "Importado",
+   "label": "origin",
+   "value": "imported"
+  },
+  {
+   "__typename": "AdvertParameter",
+   "key": "make",
+   "displayValue": "DS",
+   "label": "make",
+   "value": "ds"
+  },
+  {
+   "__typename": "AdvertParameter",
+   "key": "version",
+   "displayValue": "1.2 PureTech Sport Chic",
+   "label": "version",
+   "value": "ver-1-2-puretech-sport-chic"
+  },
+  {
+   "__typename": "AdvertParameter",
+   "key": "model",
+   "displayValue": "DS3",
+   "label": "model",
+   "value": "ds3"
+  },
+  {
+   "__typename": "AdvertParameter",
+   "key": "fuel_type",
+   "displayValue": "Gasolina",
+   "label": "fuel_type",
+   "value": "gaz"
+  },
+  {
+   "__typename": "AdvertParameter",
+   "key": "gearbox",
+   "displayValue": "Manual",
+   "label": "gearbox",
+   "value": "manual"
+  },
+  {
+   "__typename": "AdvertParameter",
+   "key": "mileage",
+   "displayValue": "35000 km",
+   "label": "mileage",
+   "value": "35000"
+  },
+  {
+   "__typename": "AdvertParameter",
+   "key": "engine_capacity",
+   "displayValue": "1199 cm3",
+   "label": "engine_capacity",
+   "value": "1199"
+  },
+  {
+   "__typename": "AdvertParameter",
+   "key": "engine_power",
+   "displayValue": "130 cv",
+   "label": "engine_power",
+   "value": "130"
+  },
+  {
+   "__typename": "AdvertParameter",
+   "key": "first_registration_year",
+   "displayValue": "2016",
+   "label": "first_registration_year",
+   "value": "2016"
+  }
+ ]
+}

@@ -131,6 +131,24 @@ def fetch_photos_olx(url: str) -> list[str]:
     ]
 
 
+def fetch_photos_olx_from_api(offer: dict) -> list[str]:
+    """Build OLX photo URLs from a JSON-API offer's ``photos`` list.
+
+    No HTTP request — the API list payload already carries each photo's URL
+    template (``...;s={width}x{height}``); we just render it at 1000x700 to
+    match :func:`fetch_photos_olx`.
+    """
+    urls: list[str] = []
+    for p in offer.get("photos") or []:
+        link = (p or {}).get("link") or ""
+        if not link:
+            continue
+        if "{width}" in link:
+            link = link.replace("{width}", "1000").replace("{height}", "700")
+        urls.append(link)
+    return urls
+
+
 def fetch_photos(url: str) -> list[str]:
     """Dispatch by URL host: OLX or StandVirtual."""
     if "olx.pt" in url:

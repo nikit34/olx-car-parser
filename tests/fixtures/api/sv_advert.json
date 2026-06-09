@@ -1,0 +1,607 @@
+{
+ "id": "8097501098",
+ "url": "https://www.standvirtual.com/carros/anuncio/bmw-i4-ver-edrive40-gran-coupe-m-sport-ID8Q0hVq.html",
+ "title": "BMW i4 eDrive40 Gran Coupe M Sport",
+ "createdAt": "2026-06-07T07:36:10Z",
+ "price": {
+  "value": "40900",
+  "currency": "EUR",
+  "labels": [
+   "ad-page-negotiable-tag",
+   "IVA Discriminado",
+   "Aceita retoma"
+  ],
+  "isUnderBudget": false
+ },
+ "description": "<p>- viatura importada com Iva dedutivel.</p><p>- Autonomia até 493km (WLTP), bateria de 83,9kWh, carregamento rápido DC até 205kW (80% em 30min), consumo médio de 16,1kWh/100km.<br><br>-Tratamos do seu financiamento até 120 meses, sem entrada inicial.<br><br>-Esforçamo-nos para oferecer as melhores viaturas do mercado ao melhor preço, e com isso construir uma relação com os nossos clientes de modo a garantir total confiança na compra das nossas viaturas.</p><p><br></p><p>-Funcionamos por marcação/agendamento, pf antes de se dirigir ao ponto de venda entre em contacto connosco.</p><p>Viatura com histórico de manutenção completo na marca.</p><p><br></p><p>Todas as informações presentes neste anúncio devem ser confirmadas com o vendedor.</p>",
+ "seller": {
+  "type": "PROFESSIONAL",
+  "name": "DG Cars",
+  "featuresBadges": [
+   {
+    "code": "dealer",
+    "label": "Profissional"
+   },
+   {
+    "code": "registration-date",
+    "label": "No Standvirtual desde 2018"
+   }
+  ],
+  "logos": [
+   {
+    "id": "eyJmbiI6Ijd3ODRzZTFtcTB0bjMtU1REVlRMUFQifQ.Hp6WjGQvIGG7h02zdwWYCnF_SzBY3vIV1t_B2jb7FK8",
+    "href": "https://dgcars.standvirtual.com",
+    "image": {
+     "alt": "DG Cars",
+     "src": "https://ireland.apollo.olxcdn.com/v1/files/eyJmbiI6Ijd3ODRzZTFtcTB0bjMtU1REVlRMUFQifQ.Hp6WjGQvIGG7h02zdwWYCnF_SzBY3vIV1t_B2jb7FK8/image"
+    },
+    "type": "logo"
+   }
+  ],
+  "sellerUrl": "https://dgcars.standvirtual.com/inventory",
+  "website": "http://www.dgcars.pt",
+  "benefits": [
+   "ADS_DURATION",
+   "AUTOMATIC_AD_BUMPS",
+   "PACKAGE_VALIDITY",
+   "OLX_EXPORT",
+   "OLX_FEE_CARS",
+   "OLX_FEE",
+   "API_ACCESS",
+   "DEALER_LOGO_IN_AD_PAGE",
+   "SIMILAR_ADS",
+   "MAP",
+   "MORE_PHONES",
+   "RELIABILITY_BADGE_TOOLTIP",
+   "LINK_TO_DEALER_PAGE_IN_RESULTS",
+   "LINK_TO_DEALER_PAGE_IN_AD_PAGE",
+   "EXTERNAL_LINK",
+   "DEALER_PAGE",
+   "DEALER_LOGO_IN_RESULTS",
+   "CALLTRACKING_WEEKLY_REPORT",
+   "ADVERT_RANKING",
+   "ADVERT_RANKING_PRICE_SORT",
+   "PRICE_RECOMMENDATION",
+   "CALLTRACKING",
+   "VAS_SCHEDULE",
+   "VAS_NOTIFICATION",
+   "VAS_RECOMMENDATION",
+   "OLX_VAS",
+   "DEALER_IDENTITY_ELEMENTS",
+   "SPECIAL_DEALER_IDENTITY_ELEMENTS_1",
+   "BUYER_PROFILE",
+   "AD_INSIGHTS",
+   "STOCK_INSIGHTS",
+   "DISCOUNT_PURCHASING_NUMERIC",
+   "BUSINESS_SITE_PRO",
+   "SOURCING_TOOL",
+   "EARLY_ACCESS",
+   "VELOCITY_METRICS_SELF",
+   "VELOCITY_METRICS_MARKET",
+   "REAL_TIME_CHAT",
+   "AUCTIONS_BCA",
+   "MULTI_USER",
+   "ACCESS_CONTROL",
+   "MARKET_DATA",
+   "TOP_ADS",
+   "APPRAISAL_TOOL",
+   "FEATURED_DEALER_PT_A",
+   "PRICE_DROP_ADS",
+   "SALESPERSON_PROFILE",
+   "AUTOMATED_AD_DESCRIPTION",
+   "IMAGE_TO_AD",
+   "VIDEO_TO_AD",
+   "AD_TO_VIDEO",
+   "OLX_VAS_BUNDLE",
+   "SALESPERSON_PHONE",
+   "MAX_PICTURES",
+   "MARKETVIEW",
+   "AD_TO_VIDEO",
+   "SALESPERSON_PHONE",
+   "VIDEO_TO_AD",
+   "AUTOMATED_AD_DESCRIPTION",
+   "IMAGE_TO_AD",
+   "MARKET_DATA",
+   "SIMILAR_ADS",
+   "FEATURED_DEALER",
+   "BUYER_PROFILE",
+   "PRICE_DROP_ADS",
+   "EARLY_ACCESS",
+   "BUSINESS_SITE_PRO",
+   "STOCK_INSIGHTS",
+   "AD_INSIGHTS",
+   "SALESPERSON_PROFILE",
+   "APPRAISAL_TOOL",
+   "CREDIT_INTERMEDIARY"
+  ],
+  "dealerPackage": {
+   "__typename": "SellerPackage",
+   "id": "87",
+   "name": "Expert",
+   "badgeUrl": null
+  },
+  "numberOfActiveAds": 21,
+  "location": {
+   "address": "Rua Saudade n 126, Penafiel, Portugal",
+   "city": "Penafiel",
+   "cityId": 13642752,
+   "region": "",
+   "regionId": 13,
+   "country": "Portugal",
+   "postalCode": "4560-531",
+   "shortAddress": "Rua Saudade n 126, Penafiel, Portugal - 4560-531 Penafiel, concelho Penafiel (Portugal)",
+   "canonicals": {
+    "city": "penafiel",
+    "region": "porto",
+    "subregion": "penafiel"
+   },
+   "map": {
+    "latitude": 41.196982,
+    "longitude": -8.2945287,
+    "zoom": 12,
+    "radius": 0
+   }
+  },
+  "workingHours": [
+   {
+    "isOpen": true,
+    "day": 1,
+    "openAt": "10:00",
+    "closeAt": "20:00"
+   },
+   {
+    "isOpen": true,
+    "day": 2,
+    "openAt": "10:00",
+    "closeAt": "20:00"
+   },
+   {
+    "isOpen": true,
+    "day": 3,
+    "openAt": "10:00",
+    "closeAt": "20:00"
+   },
+   {
+    "isOpen": true,
+    "day": 4,
+    "openAt": "10:00",
+    "closeAt": "20:00"
+   },
+   {
+    "isOpen": true,
+    "day": 5,
+    "openAt": "10:00",
+    "closeAt": "20:00"
+   },
+   {
+    "isOpen": true,
+    "day": 6,
+    "openAt": "10:00",
+    "closeAt": "18:00"
+   },
+   {
+    "isOpen": false,
+    "day": 0
+   }
+  ],
+  "services": [],
+  "id": "8795601",
+  "uuid": "278692de-d5fa-474d-96e6-e6fbfcc9664d"
+ },
+ "details": [
+  {
+   "key": "make",
+   "label": "Marca",
+   "value": "BMW",
+   "href": "https://www.standvirtual.com/carros/bmw",
+   "group": "basic_information",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "model",
+   "label": "Modelo",
+   "value": "Série i",
+   "href": "https://www.standvirtual.com/carros/bmw/i4?search%5Bfilter_enum_engine_code%5D%5B0%5D=serie-i",
+   "group": "basic_information",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "engine_code",
+   "label": "Sub-modelo",
+   "value": "i4",
+   "href": "https://www.standvirtual.com/carros/bmw/i4",
+   "group": "basic_information",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "version",
+   "label": "Versão",
+   "value": "eDrive40 Gran Coupe M Sport",
+   "group": "basic_information",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "color",
+   "label": "Cor",
+   "value": "Cinzento",
+   "href": "https://www.standvirtual.com/carros/bmw/i4?search%5Bfilter_enum_color%5D%5B0%5D=gray",
+   "group": "basic_information",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "door_count",
+   "label": "Nº de portas",
+   "value": "5",
+   "href": "https://www.standvirtual.com/carros/bmw/i4?search%5Bfilter_enum_door_count%5D%5B0%5D=5",
+   "group": "basic_information",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "vin",
+   "label": "VIN",
+   "value": "hni4fA5ov79L0oGJYWmqnY/G7a8UbdE38iC4znWNK8x2.1.SKK2A/dGdUjD0K3bKcC6ZQ==",
+   "group": "basic_information",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": "O Número de Identificação do Veículo (VIN) é um código único de 17 caracteres que identifica o veículo, incluindo detalhes sobre o fabricante, modelo e produção. Este site usa reCAPTCHA, sujeito à Política de Privacidade e aos Termos de Serviço da Google."
+  },
+  {
+   "key": "fuel_type",
+   "label": "Combustível",
+   "value": "Elétrico",
+   "href": null,
+   "group": "technical_specs",
+   "overviewOrder": 1,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "engine_power",
+   "label": "Potência",
+   "value": "340 cv",
+   "href": null,
+   "group": "technical_specs",
+   "overviewOrder": 5,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "body_type",
+   "label": "Segmento",
+   "value": "Sedan",
+   "href": null,
+   "group": "technical_specs",
+   "overviewOrder": 3,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "gearbox",
+   "label": "Tipo de Caixa",
+   "value": "Automática",
+   "href": null,
+   "group": "technical_specs",
+   "overviewOrder": 2,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "gearbox_shifts",
+   "label": "Número de Mudanças",
+   "value": "1",
+   "href": null,
+   "group": "technical_specs",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "vehicle_class",
+   "label": "Classe do veículo",
+   "value": "Classe 1",
+   "href": null,
+   "group": "technical_specs",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "transmission",
+   "label": "Tracção",
+   "value": "Tracção traseira",
+   "href": null,
+   "group": "technical_specs",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "max_fuel_range",
+   "label": "Autonomia Máxima",
+   "value": "493 km",
+   "href": null,
+   "group": "technical_specs",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "second_key",
+   "label": "2º Chave",
+   "value": "Sim",
+   "href": null,
+   "group": "technical_specs",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "first_registration_month",
+   "label": "Mês de Registo",
+   "value": "Outubro",
+   "href": null,
+   "group": "condition_history",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "first_registration_year",
+   "label": "Ano",
+   "value": "2022",
+   "href": null,
+   "group": "condition_history",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "mileage",
+   "label": "Quilómetros",
+   "value": "61 000 km",
+   "href": null,
+   "group": "condition_history",
+   "overviewOrder": 0,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "vendors_warranty_valid_until_date",
+   "label": "Garantia de Stand (incl. no preço)",
+   "value": "18 Meses",
+   "href": null,
+   "group": "condition_history",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "complete_review_book",
+   "label": "Livro de Revisões completo",
+   "value": "Sim",
+   "href": null,
+   "group": "condition_history",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "non_smoking",
+   "label": "Não fumador",
+   "value": "Sim",
+   "href": null,
+   "group": "condition_history",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "new_used",
+   "label": "Condição",
+   "value": "Usado",
+   "href": null,
+   "group": "condition_history",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "origin",
+   "label": "Origem",
+   "value": "Importado",
+   "href": null,
+   "group": "condition_history",
+   "overviewOrder": 7,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "accept_funding",
+   "label": "Possibilidade de financiamento",
+   "value": "Sim",
+   "href": null,
+   "group": "financial_information",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "autonomy",
+   "label": "Autonomia",
+   "value": "493 km",
+   "href": null,
+   "group": "ev_specs",
+   "overviewOrder": null,
+   "overviewEVOrder": 0,
+   "description": "A distância que um veículo elétrico pode percorrer com uma única carga."
+  },
+  {
+   "key": "avg_consumption",
+   "label": "Consumo",
+   "value": "16.1 kWh/100km",
+   "href": null,
+   "group": "ev_specs",
+   "overviewOrder": null,
+   "overviewEVOrder": 7,
+   "description": "A energia consumida pelo veículo para cada 100 km, geralmente expressa em kWh/100 km."
+  },
+  {
+   "key": "battery_capacity",
+   "label": "Capacidade da bateria",
+   "value": "83.9 kWh",
+   "href": null,
+   "group": "ev_specs",
+   "overviewOrder": null,
+   "overviewEVOrder": 4,
+   "description": "A quantidade total de energia que a bateria pode armazenar, medida em quilowatts-hora (kWh), que influencia a autonomia do veículo."
+  },
+  {
+   "key": "max_charging_power",
+   "label": "Potência máx. de carregamento",
+   "value": "205 kW",
+   "href": null,
+   "group": "ev_specs",
+   "overviewOrder": null,
+   "overviewEVOrder": 8,
+   "description": null
+  },
+  {
+   "key": "charging_time_home",
+   "label": "Tempo de carregamento em casa 11 kw",
+   "value": "8.25 horas",
+   "href": null,
+   "group": "ev_specs",
+   "overviewOrder": null,
+   "overviewEVOrder": 6,
+   "description": null
+  },
+  {
+   "key": "charging_time_80",
+   "label": "Tempo para carregar 80%",
+   "value": "0.5 horas",
+   "href": null,
+   "group": "ev_specs",
+   "overviewOrder": null,
+   "overviewEVOrder": 1,
+   "description": "O tempo para carregar a bateria de 0% a 80% é geralmente mais rápido que até 100%, sendo mais prático e melhor para a saúde da bateria."
+  },
+  {
+   "key": "charging_current_type",
+   "label": "Tipo de corrente",
+   "value": "DC",
+   "href": null,
+   "group": "ev_specs",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": "Especifica se o veículo é carregado utilizando corrente alternada (CA), corrente contínua (CC) ou ambas, dependendo da estação de carregamento."
+  },
+  {
+   "key": "charging_connector_type",
+   "label": "Tipo de conector de carregamento",
+   "value": "CCS Type 2",
+   "href": null,
+   "group": "ev_specs",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "electric_power_peak",
+   "label": "Potência elétrica máxima em CV",
+   "value": "340 CV",
+   "href": null,
+   "group": "ev_specs",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": "A potência máxima (CV) que o motor elétrico pode gerar, indicando o potencial de aceleração e desempenho do veículo."
+  },
+  {
+   "key": "number_engines",
+   "label": "Número de motores",
+   "value": "1",
+   "href": null,
+   "group": "ev_specs",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "brake_energy_recovery",
+   "label": "Recuperação da energia de travagem",
+   "value": "Não",
+   "href": null,
+   "group": "ev_specs",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": "Um sistema que recupera e armazena a energia desperdiçada na travagem, convertendo-a em energia útil para melhorar a eficiência."
+  },
+  {
+   "key": "battery_type",
+   "label": "Tipo de bateria",
+   "value": "Lithium-ion Li",
+   "href": null,
+   "group": "ev_specs",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "energy_recovery_system",
+   "label": "Sistema de recuperação de energia",
+   "value": "Sim",
+   "href": null,
+   "group": "ev_specs",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "quick_charging_function",
+   "label": "Função de carregamento rápido",
+   "value": "Sim",
+   "href": null,
+   "group": "ev_specs",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  },
+  {
+   "key": "vehicle_charging_cable",
+   "label": "Cabo de carregamento",
+   "value": "Sim",
+   "href": null,
+   "group": "ev_specs",
+   "overviewOrder": null,
+   "overviewEVOrder": null,
+   "description": null
+  }
+ ],
+ "images": {
+  "photos": [
+   {
+    "id": "https://ireland.apollo.olxcdn.com/v1/files/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJmbiI6IjRicGJuNTd5dzB0NTEtU1REVlRMUFQiLCJ3IjpbeyJmbiI6IjZtZ2p3bHA3a2dkYjItU1REVlRMUFQiLCJzIjoiMTYiLCJhIjoiMCIsInAiOiIxMCwtMTAifV19.mXbdh-yJL5LyEWd1DRqDk5ppUra9SnGjivk8whOgFso/image",
+    "url": "https://ireland.apollo.olxcdn.com/v1/files/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJmbiI6IjRicGJuNTd5dzB0NTEtU1REVlRMUFQiLCJ3IjpbeyJmbiI6IjZtZ2p3bHA3a2dkYjItU1REVlRMUFQiLCJzIjoiMTYiLCJhIjoiMCIsInAiOiIxMCwtMTAifV19.mXbdh-yJL5LyEWd1DRqDk5ppUra9SnGjivk8whOgFso/image"
+   },
+   {
+    "id": "https://ireland.apollo.olxcdn.com/v1/files/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJmbiI6Im45MDByem9kcHUyai1TVERWVExQVCIsInciOlt7ImZuIjoiNm1nandscDdrZ2RiMi1TVERWVExQVCIsInMiOiIxNiIsImEiOiIwIiwicCI6IjEwLC0xMCJ9XX0.qnmloIeAuCR0vRN51pwAtvY-dEKJcMkzT5T0aFy65pI/image",
+    "url": "https://ireland.apollo.olxcdn.com/v1/files/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJmbiI6Im45MDByem9kcHUyai1TVERWVExQVCIsInciOlt7ImZuIjoiNm1nandscDdrZ2RiMi1TVERWVExQVCIsInMiOiIxNiIsImEiOiIwIiwicCI6IjEwLC0xMCJ9XX0.qnmloIeAuCR0vRN51pwAtvY-dEKJcMkzT5T0aFy65pI/image"
+   },
+   {
+    "id": "https://ireland.apollo.olxcdn.com/v1/files/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJmbiI6InM5cjJ3YmFqd3M2MDEtU1REVlRMUFQiLCJ3IjpbeyJmbiI6IjZtZ2p3bHA3a2dkYjItU1REVlRMUFQiLCJzIjoiMTYiLCJhIjoiMCIsInAiOiIxMCwtMTAifV19.PrOGrrgujtBgcV9_e94UgyBRFouYF7ud73JF1io9J0Y/image",
+    "url": "https://ireland.apollo.olxcdn.com/v1/files/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJmbiI6InM5cjJ3YmFqd3M2MDEtU1REVlRMUFQiLCJ3IjpbeyJmbiI6IjZtZ2p3bHA3a2dkYjItU1REVlRMUFQiLCJzIjoiMTYiLCJhIjoiMCIsInAiOiIxMCwtMTAifV19.PrOGrrgujtBgcV9_e94UgyBRFouYF7ud73JF1io9J0Y/image"
+   }
+  ]
+ }
+}
