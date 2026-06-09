@@ -96,19 +96,34 @@ def _folds(df: pd.DataFrame, mode: str):
     return [(order[tr], order[te]) for tr, te in TimeSeriesSplit(n_splits=4).split(order)]
 
 
-def evaluate(df: pd.DataFrame, folds, full: bool) -> dict:
+def evaluate(df: pd.DataFrame, folds, full: bool, spec_dropout: float = 0.0) -> dict:
     """OOF predictions reusing prod feature prep + model construction so the
-    patched constant takes effect. Platform encoding is leakage-safe per fold."""
+    patched constant takes effect. Platform encoding is leakage-safe per fold.
+
+    ``spec_dropout`` mirrors the shipped missingness-aware regime
+    (pm._apply_spec_dropout): on that fraction of each fold's FITTING rows a
+    random subset of the discriminative specs is NaN'd, so the model learns the
+    same missing-feature behaviour it ships with. Validation rows keep real
+    features. 0.0 → legacy behaviour (no augmentation). cat_maps are fit on the
+    FULL train fold (no category loss) then the fitting matrix is built from the
+    augmented copy — exactly as train_price_model does."""
     y = np.log1p(np.maximum(df["price_eur"].values.astype(float), 0))
     n = len(df)
     quants = pm._QUANTILES if full else {"median": 0.5}
     oof = {q: np.full(n, np.nan) for q in quants}
     tested = np.zeros(n, bool)
     cat_idx = [pm._ALL_FEATURES.index(c) for c in pm.CATEGORICAL_FEATURES]
-    for tr, te in folds:
+    for fi, (tr, te) in enumerate(folds):
         tr_df, te_df = df.iloc[tr], df.iloc[te]
         plat = pm._fit_platform_encoding(tr_df, y[tr])      # uses pm._PLAT_CRED_K
-        x_tr, cmaps = pm._prepare_X(tr_df, plat_enc=plat)
+        if spec_dropout > 0:
+            _, cmaps = pm._prepare_X(tr_df, plat_enc=plat)   # maps on full fold
+            tr_fit = pm._apply_spec_dropout(
+                tr_df, spec_dropout, np.random.default_rng(1234 + fi),
+            )
+            x_tr, _ = pm._prepare_X(tr_fit, cmaps, plat_enc=plat)
+        else:
+            x_tr, cmaps = pm._prepare_X(tr_df, plat_enc=plat)
         x_te, _ = pm._prepare_X(te_df, cmaps, plat_enc=plat)
         for name, alpha in quants.items():
             model = pm._model_for_quantile(name, alpha, _N_EST)   # uses pm._LGB_PARAMS + monotone
@@ -165,13 +180,13 @@ def _current(path: str):
 # the ones with real effect size (bucket C); the rest are guards we expect to
 # stay noise — the point is to be ALERTED if any flips noise→REAL.
 _WATCHLIST = [
-    ("_PLAT_CRED_K", "5,20,80"),
     ("_LGB_PARAMS.num_leaves", "15,31,63"),
     ("_LGB_PARAMS.max_depth", "4,6,8"),
     ("_LGB_PARAMS.learning_rate", "0.03,0.05,0.1"),
     ("_LGB_PARAMS.min_child_samples", "5,10,20"),
     ("_LGB_PARAMS.reg_lambda", "0.5,1.5,5"),
-    ("_MONOTONE_BY_FEATURE.enc_plat", "0,1"),
+    # enc_plat removed in v13 (project_missing_feature_overprediction); its
+    # _PLAT_CRED_K / enc_plat-monotone knobs no longer affect the model.
 ]
 
 
@@ -179,17 +194,17 @@ def _verdict(lo: float, hi: float) -> str:
     return "REAL ✓" if hi < 0 else "REAL ✗(worse)" if lo > 0 else "noise (CI∋0)"
 
 
-def sweep_one(df, folds, segs, mask_for, const, values, full, compact) -> bool:
+def sweep_one(df, folds, segs, mask_for, const, values, full, compact, spec_dropout=0.0) -> bool:
     """Sweep one constant; print results. Returns True if any value is a real
     (CI-clears-0) IMPROVEMENT over the current value — i.e. worth a human look."""
     baseline_val = _current(const)
-    base = {m: evaluate(df, folds[m], full) for m in ("random", "time")}
+    base = {m: evaluate(df, folds[m], full, spec_dropout) for m in ("random", "time")}
     base_mape = {m: {s: _mape(base[m], mask_for(s)) for s in segs} for m in ("random", "time")}
     cache, rows = {}, []
     for raw in values:
         restore, _ = _set_const(const, raw)
         try:
-            cache[raw] = {m: evaluate(df, folds[m], full) for m in ("random", "time")}
+            cache[raw] = {m: evaluate(df, folds[m], full, spec_dropout) for m in ("random", "time")}
         finally:
             restore()
         res = cache[raw]
@@ -241,6 +256,9 @@ def main() -> None:
     ap.add_argument("--full", action="store_true", help="fit low/high too -> pinball + coverage")
     ap.add_argument("--data", default=None, help="local listings.parquet (else download release)")
     ap.add_argument("--segments", default="all,Diesel,Petrol,Hybrid,PHEV,EV")
+    ap.add_argument("--spec-dropout", type=float, default=pm._SPEC_DROPOUT_FRAC,
+                    help="mirror the shipped spec-dropout regime (default = prod "
+                         f"{pm._SPEC_DROPOUT_FRAC}); 0 = legacy non-dropout model")
     args = ap.parse_args()
     if not args.all and not (args.const and args.values):
         ap.error("give either --all, or both --const and --values")
@@ -251,7 +269,9 @@ def main() -> None:
     def mask_for(s):
         return np.ones(len(df), bool) if s == "all" else (fuel == s)
     folds = {m: _folds(df, m) for m in ("random", "time")}
-    print(f"Loaded {len(df)} sold rows from the release snapshot.\n")
+    dz = args.spec_dropout
+    print(f"Loaded {len(df)} sold rows from the release snapshot.")
+    print(f"spec-dropout regime: {dz:.2f}" + (" (mirrors shipped model)" if dz > 0 else " (legacy non-dropout)") + "\n")
 
     if args.all:
         print("WATCHLIST sensitivity scan (time-aware; 'REAL' = data drifted, worth a human look):\n")
@@ -259,7 +279,8 @@ def main() -> None:
         for const, values in _WATCHLIST:
             try:
                 r = sweep_one(df, folds, segs, mask_for, const,
-                              [v.strip() for v in values.split(",")], args.full, compact=True)
+                              [v.strip() for v in values.split(",")], args.full, compact=True,
+                              spec_dropout=dz)
                 any_real = any_real or r
             except Exception as e:  # noqa: BLE001 — one bad const shouldn't abort the scan
                 print(f"{const:<34} ERROR: {e}")
@@ -269,7 +290,8 @@ def main() -> None:
         sys.exit(1 if any_real else 0)
 
     sweep_one(df, folds, segs, mask_for, args.const,
-              [v.strip() for v in args.values.split(",")], args.full, compact=False)
+              [v.strip() for v in args.values.split(",")], args.full, compact=False,
+              spec_dropout=dz)
     print("\nRandom KFold flatters (peeks at contemporaneous sales); trust the "
           "TIME column. 'noise (CI∋0)' = not worth hand-tuning.")
 

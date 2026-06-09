@@ -69,12 +69,13 @@ _OTHER_CATEGORY = "__other__"
 # scan kept running on every train/predict for nothing.
 # v8: drop the dead pipeline + helpers entirely. Bundle no longer carries
 # `text_pipeline`; `_prepare_X` stops fitting a TF-IDF/SVD on every call.
-# v12: add `enc_plat` — credibility-smoothed platform target-encoding keyed on
-# brand+generation (no fixed year-band: `generation` already IS the coherent
-# lifecycle unit and the model's `year` feature handles within-gen aging).
-# Marginal/niche signal (see project_mileage_not_the_lever); the platform→price
-# map rides in the bundle (metrics["plat_enc"]) and is stripped from history JSON.
-_SCHEMA_VERSION = 12
+# v12: add `enc_plat` (credibility-smoothed brand+generation target-encoding).
+# v13: REMOVE enc_plat from the feature set — it washed on the time-aware
+# holdout and, after the spec-dropout retrain, an ablation showed it actively
+# harms MAPE (project_missing_feature_overprediction). _ALL_FEATURES shrinks by
+# one → load_model rejects v12 bundles, forcing a retrain. The platform plumbing
+# (_fit_platform_encoding etc.) is left defined but inert; cleanup is a follow-up.
+_SCHEMA_VERSION = 13
 # Fraction of the dataset (newest rows by first_seen_at) used as the
 # time-honest conformal calibration window. Random-KFold CQR mixes
 # time-adjacent rows across folds and over-estimates coverage on real future
@@ -109,12 +110,12 @@ NUMERIC_FEATURES = [
     # 0.003 threshold the team has applied to all soft signals since v7.
     "seller_listings_count_90d",
     "plate_obscured",
-    # v12: credibility-smoothed platform target-encoding keyed on
-    # brand+generation. Injects "what do coherent neighbours sell for" as a
-    # numeric the tree can lean on where a leaf (brand+model+gen+fuel) is
-    # data-starved but the platform isn't. Computed leakage-safe (OOF on train,
-    # persisted map for inference). Small/niche (project_mileage_not_the_lever).
-    "enc_plat",
+    # v13: enc_plat (brand+generation target-encoding) REMOVED. It was a v12 add
+    # that washed on the time-aware holdout; after the spec-dropout retrain
+    # (project_missing_feature_overprediction) an ablation showed it actively
+    # HARMS — removing it improves MAPE (ALL −0.23, CI [−0.44,−0.03]; PHEV −0.83).
+    # A redundant coarse aggregate the dropout-trained model is better without.
+    # The _platform_* helpers remain defined but inert (dead-code cleanup TODO).
     # NOTE: price-history features (num_price_drops, max_drop_pct,
     # price_drop_velocity, days_since_last_drop) are intentionally excluded.
     # They are post-hoc — known only after observing the listing for days —
@@ -1061,20 +1062,16 @@ def _cv_metrics(
     for fold_idx, (train_idx, val_idx) in enumerate(kf.split(df)):
         train_df = df.iloc[train_idx]
         val_df = df.iloc[val_idx]
-        # Encode categoricals AND the platform target-encoding on train only —
-        # no leakage into the val fold (val rows get the train-fold map).
-        plat_enc_fold = _fit_platform_encoding(train_df, y_log[train_idx])
         # Fit the categorical maps on the FULL train fold (no category loss),
-        # then build the fitting matrix from a spec-dropout-augmented copy.
-        # enc_plat is computed from brand|generation (untouched by dropout), so
-        # the augmentation only blanks per-car spec cells. val rows keep real
-        # features → OOF preds + conformal q reflect honest serving behaviour.
-        _, cat_maps_fold = _prepare_X(train_df, plat_enc=plat_enc_fold)
+        # then build the fitting matrix from a spec-dropout-augmented copy. val
+        # rows keep real features so OOF preds + conformal q reflect honest
+        # serving behaviour.
+        _, cat_maps_fold = _prepare_X(train_df)
         train_df_aug = _apply_spec_dropout(
             train_df, _SPEC_DROPOUT_FRAC, np.random.default_rng(_SPEC_DROPOUT_SEED + fold_idx),
         )
-        X_train, _ = _prepare_X(train_df_aug, cat_maps_fold, plat_enc=plat_enc_fold)
-        X_val, _ = _prepare_X(val_df, cat_maps_fold, plat_enc=plat_enc_fold)
+        X_train, _ = _prepare_X(train_df_aug, cat_maps_fold)
+        X_val, _ = _prepare_X(val_df, cat_maps_fold)
         y_train_log = y_log[train_idx]
         y_val_log = y_log[val_idx]
         sw_train = sample_weight_all[train_idx]
@@ -1429,18 +1426,6 @@ def train_price_model(
     ) = _cv_metrics(df)
     metrics["filter_stats"] = filter_stats
 
-    # v12 platform target-encoding. Persist the full-train map for inference
-    # (predict_prices), and attach OOF values as the training column so the
-    # final fit below doesn't memorize each row's own platform mean.
-    plat_map, plat_gmean = _fit_platform_encoding(df, y_log)
-    df = df.copy()
-    df["enc_plat"] = _oof_platform_encoding(df, y_log)
-    metrics["plat_enc"] = {
-        "map": plat_map,
-        "gmean": plat_gmean,
-        "cred_k": _PLAT_CRED_K,
-    }
-
     n_sold = int((sold_w != 1.0).sum())
     n_dropped_sold = int((sold_w == 0.0).sum())
     metrics["sold_inclusion"] = {
@@ -1452,8 +1437,8 @@ def train_price_model(
 
     # Final models: fit on full filtered data with CV-tuned per-quantile iters.
     # Ship cat_maps fit on the full data (no category loss), but fit the models
-    # on a spec-dropout-augmented copy — the OOF enc_plat column is preserved
-    # (dropout only blanks per-car spec cells). See _SPEC_DROPOUT_FRAC.
+    # on a spec-dropout-augmented copy (dropout only blanks per-car spec cells).
+    # See _SPEC_DROPOUT_FRAC.
     _, cat_maps = _prepare_X(df)
     df_aug = _apply_spec_dropout(
         df, _SPEC_DROPOUT_FRAC, np.random.default_rng(_SPEC_DROPOUT_SEED),
