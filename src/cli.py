@@ -299,7 +299,15 @@ def scrape(
         scrape_skip_ids = duplicate_ids | known_ids
         scrape_early_stop_ratio = 2.0  # impossible threshold ⇒ never trips
     else:
-        scrape_skip_ids = duplicate_ids
+        # Skip detail-fetch for already-known ids even on the shallow cycle.
+        # After the JSON-API cutover (2026-06-09) OLX needs no detail-fetch at
+        # all, and neither API returns results in a stable newest-first order,
+        # so early-stop can no longer be relied on to bound the walk. Without
+        # skipping known ids here, StandVirtual re-detail-fetched the whole
+        # corpus every run and timed the 90-min scrape out. New listings still
+        # get full detail-fetch + enrichment; known ones just refresh their
+        # SERP-card price snapshot + last_seen_at.
+        scrape_skip_ids = duplicate_ids | known_ids
         scrape_early_stop_ratio = 0.95
 
     # --- Streaming pipeline: Scraper -> [LLM] -> DB ---
@@ -381,8 +389,15 @@ def scrape(
                 skipped_llm += 1
                 db_queue.put((listing, None))
                 continue
-            h = _desc_hash(listing.description)
-            if enriched_hashes.get(listing.olx_id) == h:
+            # Enrich only listings we have never enriched. The JSON-API
+            # description text is formatted differently from the old HTML
+            # (tags stripped, entities unescaped), so a hash comparison would
+            # miss on every already-known row and re-enrich the entire corpus
+            # once — which is exactly what timed the 2026-06-09 cutover run
+            # out. Already-enriched rows keep their llm_extras; we trade
+            # re-enrichment on seller description edits (rare, low value) for a
+            # per-run LLM cost that scales with new listings, not corpus size.
+            if listing.olx_id in enriched_hashes:
                 skipped_llm += 1
                 db_queue.put((listing, None))
                 continue
