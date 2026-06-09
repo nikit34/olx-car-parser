@@ -9,7 +9,7 @@ import sys
 import threading
 from hashlib import md5
 from pathlib import Path
-from queue import Queue, Empty
+from queue import Queue, Empty, Full
 
 import pandas as pd
 import typer
@@ -401,17 +401,29 @@ def scrape(
                 skipped_llm += 1
                 db_queue.put((listing, None))
                 continue
-            llm_in.put((listing.olx_id, listing.title, listing.description))
-            sent_to_llm += 1
+            try:
+                # Non-blocking: under full coverage the cold run discovers tens
+                # of thousands of never-enriched listings. Blocking on a full
+                # LLM queue here is what stalled the scrape into the 90-min
+                # timeout. When the queue is saturated, save the listing raw
+                # instead; the inline workers + the `enrich` command drain the
+                # backlog across subsequent runs.
+                llm_in.put((listing.olx_id, listing.title, listing.description),
+                           block=False)
+                sent_to_llm += 1
+            except Full:
+                skipped_llm += 1
+                db_queue.put((listing, None))
         log.info("Page done: %d listings -> %d sent to LLM, %d skipped, %d dropped (no photos)",
                  len(batch), sent_to_llm, skipped_llm, skipped_no_photos)
 
     with OlxScraper(config) as scraper:
-        raw_listings = scraper.scrape_all(
+        # Full coverage: price-band bisection over the whole cars category
+        # (parallel), escaping OLX's ~1000-per-query cap. OLX listings carry
+        # complete data in the list payload, so no detail-fetch/enrichment.
+        raw_listings = scraper.scrape_full(
             on_batch_ready=_on_batch,
-            skip_enrichment_ids=scrape_skip_ids,
             known_ids=known_ids,
-            early_stop_known_ratio=scrape_early_stop_ratio,
         )
 
     # --- Scrape StandVirtual (same pipeline) ---
@@ -423,13 +435,15 @@ def scrape(
         private_only=True,
         concurrency=config.concurrency,
     )
-    log.info("Starting scrape of StandVirtual: up to %d pages...", sv_config.max_pages)
+    log.info("Starting full-coverage scrape of StandVirtual (GraphQL)...")
     with StandVirtualScraper(sv_config) as sv_scraper:
-        sv_listings = sv_scraper.scrape_all(
+        # Full coverage via the listingScreen GraphQL API (parallel pages).
+        # New listings get a detail-page fetch for colour/drive_type; known
+        # ones (in scrape_skip_ids) keep card-level fields.
+        sv_listings = sv_scraper.scrape_full(
             on_batch_ready=_on_batch,
-            skip_enrichment_ids=scrape_skip_ids,
             known_ids=known_ids,
-            early_stop_known_ratio=scrape_early_stop_ratio,
+            skip_enrichment_ids=scrape_skip_ids,
         )
     raw_listings.extend(sv_listings)
 

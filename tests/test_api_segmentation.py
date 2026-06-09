@@ -20,7 +20,7 @@ class TestPriceBandBisection:
         s = _scraper()
         s._segment_count = lambda lo, hi, cat: 500
         try:
-            assert s._price_bands(0, 100_000, 378) == [(0, 100_000)]
+            assert s._price_bands(0, 100_000, 378) == [(0, 100_000, 500)]
         finally:
             s.close()
 
@@ -46,11 +46,10 @@ class TestPriceBandBisection:
         assert bands[-1][1] == 1_000_000
         # contiguous: each band starts where the previous ends (shared
         # inclusive boundary — scrape_full dedups across it).
-        for (lo1, hi1), (lo2, hi2) in zip(bands, bands[1:]):
+        for (lo1, hi1, _c1), (lo2, hi2, _c2) in zip(bands, bands[1:]):
             assert hi1 == lo2
         # every leaf under the cap, or below the min-width floor
-        for lo, hi in bands:
-            count = (hi - lo) // 10
+        for lo, hi, count in bands:
             assert count < _API_OFFSET_CAP or (hi - lo) <= 100
 
     def test_terminates_when_never_under_cap(self):
@@ -71,6 +70,6 @@ class TestPriceBandBisection:
         s._segment_count = lambda lo, hi, cat: _API_OFFSET_CAP
         try:
             # hi=None (open-ended) can't be split → returned as-is
-            assert s._price_bands(40_000, None, 378) == [(40_000, None)]
+            assert s._price_bands(40_000, None, 378) == [(40_000, None, _API_OFFSET_CAP)]
         finally:
             s.close()

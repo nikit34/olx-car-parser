@@ -306,6 +306,20 @@ class TestStandVirtualSearchParsing:
         sv.close()
         assert all(l.source == "standvirtual" for l in listings)
 
+    def test_price_on_request_sentinel_is_none(self):
+        # SV uses units=1 for "price on request"; must not become a €1 car.
+        from src.parser.scraper import _sv_node_to_raw
+        node = _sv_node(
+            "https://www.standvirtual.com/carros/anuncio/bmw-330-IDs9.html",
+            "BMW 330", 1, 2019, 50000, "Gasolina", "Manual")
+        raw = _sv_node_to_raw(node)
+        assert raw.price_eur is None
+        # a real price still maps through
+        node2 = _sv_node(
+            "https://www.standvirtual.com/carros/anuncio/bmw-x1-IDs10.html",
+            "BMW X1", 14900, 2018, 60000, "Diesel", "Auto")
+        assert _sv_node_to_raw(node2).price_eur == 14900.0
+
 
 # ---------------------------------------------------------------------------
 # OLX JSON-API offer parsing
@@ -487,67 +501,67 @@ class TestParsePtDate:
 # Loud-failure detection in scrape_all
 # ---------------------------------------------------------------------------
 
-class TestScrapeAllLoudFailure:
-    """Two consecutive empty pages with zero collected listings = loud raise.
-    Modelled on the 2026-04-20 OLX outage: SERP HTTP 200, parser sees 0
-    cards because of an unhandled Brotli response, and the scraper would
-    silently exit successful for ten days. We want exit code != 0 instead.
-    """
+def _olx_raw(oid, price=1000):
+    return RawListing(olx_id=oid, url=f"https://www.olx.pt/d/anuncio/x-ID{oid}.html",
+                      title=oid, price_eur=price, source="olx")
 
-    def test_olx_two_empty_pages_from_start_raises(self):
-        scraper = OlxScraper(ScraperConfig(max_pages=5, delay_min=0, delay_max=0))
-        scraper.scrape_search_page = lambda page=1: []  # noqa: E731 — every page parses to []
-        with pytest.raises(ScraperParseError, match="OLX JSON API returned 0 offers"):
-            scraper.scrape_all(enrich_details=False)
-        scraper.close()
 
-    def test_olx_empty_after_collected_just_stops(self):
-        """Empty page after we already collected listings = end of pagination,
-        NOT a parse failure. Returns silently without raising."""
-        scraper = OlxScraper(ScraperConfig(max_pages=5, delay_min=0, delay_max=0))
-        page_returns = iter([
-            [RawListing(olx_id="x1", url="https://www.olx.pt/d/anuncio/a-IDx1.html",
-                        title="A", price_eur=1000, source="olx")],
-            [],   # second page empty after first had results — normal end
-        ])
-        scraper.scrape_search_page = lambda page=1: next(page_returns)
-        scraper._enrich_batch = lambda listings, skip_ids=None: (len(listings), 0)
-        result = scraper.scrape_all(enrich_details=True)
-        assert len(result) == 1
-        assert result[0].olx_id == "x1"
-        scraper.close()
+class TestScrapeFullLoudFailure:
+    """Full-coverage scrape must loud-fail (cron exits != 0) when the source
+    returns nothing across the whole sweep — modelled on the 2026-04 outage
+    where a silent 0-result scrape went unnoticed for ten days."""
 
-    def test_olx_redirect_to_last_page_just_stops(self):
-        """`scrape_search_page` returning ``None`` = OLX redirected past the
-        last valid page. Legitimate end, not a failure."""
-        scraper = OlxScraper(ScraperConfig(max_pages=5, delay_min=0, delay_max=0))
-        scraper.scrape_search_page = lambda page=1: None
-        result = scraper.scrape_all(enrich_details=False)
-        assert result == []
-        scraper.close()
+    def test_olx_scrape_full_zero_offers_raises(self):
+        s = OlxScraper(ScraperConfig(delay_min=0, delay_max=0))
+        s._price_bands = lambda lo, hi, cat, max_depth=14: [(0, None, 100)]
+        s._scrape_search_page_api = lambda page, category_id=None, extra_params=None: []
+        with pytest.raises(ScraperParseError, match="0 offers across all price bands"):
+            s.scrape_full()
+        s.close()
 
-    def test_olx_one_empty_then_data_does_not_raise(self):
-        """One empty page followed by a non-empty one is tolerated — covers
-        a transient parse glitch that resolves on retry."""
-        scraper = OlxScraper(ScraperConfig(max_pages=5, delay_min=0, delay_max=0))
-        page_returns = iter([
-            [],
-            [RawListing(olx_id="y1", url="https://www.olx.pt/d/anuncio/b-IDy1.html",
-                        title="B", price_eur=2000, source="olx")],
-            [],
-        ])
-        scraper.scrape_search_page = lambda page=1: next(page_returns)
-        scraper._enrich_batch = lambda listings, skip_ids=None: (len(listings), 0)
-        result = scraper.scrape_all(enrich_details=True)
-        assert len(result) == 1
-        scraper.close()
+    def test_olx_scrape_full_dedups_within_and_across_pages(self):
+        s = OlxScraper(ScraperConfig(delay_min=0, delay_max=0))
+        s._price_bands = lambda lo, hi, cat, max_depth=14: [(0, None, 80)]
 
-    def test_standvirtual_two_empty_pages_from_start_raises(self):
-        scraper = StandVirtualScraper(ScraperConfig(max_pages=5, delay_min=0, delay_max=0))
-        scraper.scrape_search_page = lambda page=1: []  # noqa: E731
-        with pytest.raises(ScraperParseError, match="StandVirtual SERP parser returned 0 cards"):
-            scraper.scrape_all(enrich_details=False)
-        scraper.close()
+        def fake_api(page, category_id=None, extra_params=None):
+            if page == 1:
+                return [_olx_raw("x1"), _olx_raw("x2"), _olx_raw("x1")]  # promoted dup
+            if page == 2:
+                return [_olx_raw("x2"), _olx_raw("x3")]  # cross-page dup
+            return []
+        s._scrape_search_page_api = fake_api
+        result = s.scrape_full()
+        s.close()
+        assert sorted(l.olx_id for l in result) == ["x1", "x2", "x3"]
+
+    def test_olx_scrape_full_partial_empty_does_not_raise(self):
+        s = OlxScraper(ScraperConfig(delay_min=0, delay_max=0))
+        s._price_bands = lambda lo, hi, cat, max_depth=14: [(0, None, 80)]
+        s._scrape_search_page_api = (
+            lambda page, category_id=None, extra_params=None:
+            [_olx_raw("y1")] if page == 1 else [])
+        result = s.scrape_full()
+        s.close()
+        assert [l.olx_id for l in result] == ["y1"]
+
+    def test_sv_graphql_failure_falls_back_to_ssr(self):
+        sv = StandVirtualScraper(ScraperConfig(max_pages=3, delay_min=0, delay_max=0))
+        sv._sv_listing_screen = lambda page: None  # force SSR fallback
+        sv.scrape_search_page = (
+            lambda page=1:
+            [RawListing(olx_id="s1", url="https://www.standvirtual.com/carros/anuncio/x-IDs1.html",
+                        source="standvirtual")] if page == 1 else None)
+        result = sv.scrape_full(enrich_details=False)
+        sv.close()
+        assert [l.olx_id for l in result] == ["s1"]
+
+    def test_sv_graphql_and_ssr_both_fail_raises(self):
+        sv = StandVirtualScraper(ScraperConfig(max_pages=5, delay_min=0, delay_max=0))
+        sv._sv_listing_screen = lambda page: None
+        sv.scrape_search_page = lambda page=1: []
+        with pytest.raises(ScraperParseError, match="GraphQL . SSR both failed"):
+            sv.scrape_full(enrich_details=False)
+        sv.close()
 
 
 # ---------------------------------------------------------------------------

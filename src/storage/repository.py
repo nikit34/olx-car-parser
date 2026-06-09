@@ -85,6 +85,22 @@ def upsert_listing(session: Session, data: dict) -> Listing:
 
 def add_price_snapshot(session: Session, listing_id: int, price_eur: float,
                        negotiable: bool = False):
+    # Snapshot-on-change. Under full-coverage-every-run the scraper re-sees
+    # ~all listings each cycle; recording a row every time would add hundreds
+    # of thousands of identical same-price snapshots per day. Only write when
+    # the price actually differs from the listing's most recent snapshot —
+    # price *history* (every change) is preserved, the table doesn't bloat.
+    # ``listing_id`` is indexed and ``id`` is the autoincrement PK, so this is
+    # a cheap point lookup. OLX/SV prices are integer-valued floats, so the
+    # equality check is exact.
+    last = (
+        session.query(PriceSnapshot.price_eur)
+        .filter(PriceSnapshot.listing_id == listing_id)
+        .order_by(PriceSnapshot.id.desc())
+        .first()
+    )
+    if last is not None and last[0] == price_eur:
+        return
     snap = PriceSnapshot(
         listing_id=listing_id,
         price_eur=price_eur,

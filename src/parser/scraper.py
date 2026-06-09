@@ -11,6 +11,7 @@ import random
 import re
 import threading
 import time
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
@@ -64,6 +65,25 @@ _API_PAGE_SIZE = 40
 # OLX caps offset at ~1000 (offset 1040 → HTTP 400). Stop paging a segment
 # once we reach it; full coverage comes from price-band bisection instead.
 _API_OFFSET_CAP = 1000
+# Concurrency for parallel page fetching (OLX bands + SV GraphQL pages).
+# 12 concurrent OLX API requests verified to return all 200 (no rate-limit);
+# the bounded pool is the rate limit, so no per-request delay is applied.
+_PARALLEL_FETCH_WORKERS = 8
+
+# StandVirtual GraphQL "listingScreen" — focused JSON (id, url, price,
+# sellerUUID, createdAt, params + totalCount), far lighter than the 2.4 MB
+# SSR page, and paginates with no per-query cap (verified to page 800+).
+# The persisted-query hash rotates on SV frontend deploys; on miss we fall
+# back to SSR ``__NEXT_DATA__`` parsing.
+SV_GRAPHQL_URL = "https://www.standvirtual.com/graphql"
+SV_LISTING_SCREEN_HASH = "5f9903c01d8e8b50a496ef5b10ce0ca397c85f795b158449db3492e6e8acb364"
+SV_CARS_CATEGORY_ID = "29"
+SV_PAGE_SIZE = 32
+SV_LISTING_PARAMS = [
+    "origin", "make", "version", "model", "engine_code", "fuel_type",
+    "gearbox", "mileage", "engine_capacity", "engine_power",
+    "first_registration_year", "year",
+]
 
 KNOWN_BRANDS = [
     "Alfa Romeo", "Audi", "BMW", "Chevrolet", "Chrysler", "Citroen", "Citroën",
@@ -240,6 +260,15 @@ class OlxScraper:
                     logger.warning("HTTP %s for %s", e.response.status_code, url)
                     return None
             except httpx.RequestError as e:
+                # Transient under parallel load: the shared HTTP/2 connection
+                # hits the server's per-connection stream cap (GOAWAY /
+                # ConnectionTerminated) or the local socket pool momentarily
+                # exhausts (EAGAIN / "Resource temporarily unavailable"). A
+                # retry opens a fresh connection, so back off and try again
+                # rather than dropping the page (which would lose listings).
+                if attempt < retries - 1:
+                    time.sleep(0.5 * (attempt + 1) + random.uniform(0, 0.5))
+                    continue
                 logger.warning("Request error for %s: %s", url, e)
                 return None
             except json.JSONDecodeError as e:
@@ -548,101 +577,6 @@ class OlxScraper:
                     failed += 1
         return enriched, failed
 
-    def scrape_all(self, enrich_details: bool = True,
-                   on_batch_ready=None,
-                   skip_enrichment_ids: set[str] | None = None,
-                   known_ids: set[str] | None = None,
-                   early_stop_known_ratio: float = 0.95,
-                   early_stop_consecutive: int = 3) -> list[RawListing]:
-        """Scrape all listings.
-
-        Args:
-            enrich_details: Fetch detail pages for each listing.
-            on_batch_ready: Optional callback ``fn(batch: list[RawListing])``
-                called after each page's detail pages are fetched and saved.
-                Allows the caller to persist listings to DB incrementally.
-            skip_enrichment_ids: olx_ids whose detail page we already have
-                covered via a canonical twin (cross-platform duplicates).
-            known_ids: olx_ids already in our DB. When *most* of a search
-                page is already-known listings (per ``early_stop_known_ratio``)
-                across ``early_stop_consecutive`` pages in a row, we stop —
-                OLX shows newest first, so the deep pages are 100% revisits.
-                On the production run this turns ~200 page fetches into ~30,
-                which is the difference between a 6-hour scrape and a
-                30-minute one.
-            early_stop_known_ratio: ≥ this fraction of a page being already
-                in ``known_ids`` counts as "this page is mostly known".
-            early_stop_consecutive: number of consecutive mostly-known pages
-                before we trigger early-stop (single-page false positives
-                happen when OLX surfaces older listings on top).
-        """
-        # The JSON-API list payload is complete (params, description, photos,
-        # seller, timestamps) — there is nothing a detail page would add, so
-        # OLX listings are never enriched. ``enrich_details`` /
-        # ``skip_enrichment_ids`` are accepted only for call-site compatibility.
-        all_listings = []
-        consecutive_known = 0
-        consecutive_empty = 0
-        for page in range(1, self.config.max_pages + 1):
-            page_listings = self.scrape_search_page(page)
-            if page_listings is None:
-                # Redirect past last page — legitimate end of results.
-                break
-            if not page_listings:
-                consecutive_empty += 1
-                # If we already collected listings, an empty page is the
-                # natural end of pagination and we just stop. If we
-                # haven't, two empty pages in a row mean the parser is
-                # not finding anything in HTML it definitely got back —
-                # loud-fail the cron so a human notices.
-                if all_listings:
-                    logger.info("No more listings at page %d, stopping", page)
-                    break
-                if consecutive_empty >= 2:
-                    msg = (
-                        f"OLX JSON API returned 0 offers on pages 1-{page} "
-                        f"and collected 0 listings — source likely changed "
-                        f"(API shape/endpoint change or bot wall)"
-                    )
-                    logger.error("::error::%s", msg)
-                    raise ScraperParseError(msg)
-                self._delay()
-                continue
-            consecutive_empty = 0
-
-            logger.info("Page %d: %d listings", page, len(page_listings))
-
-            all_listings.extend(page_listings)
-
-            if on_batch_ready:
-                on_batch_ready(page_listings)
-
-            if self._stop_event.is_set():
-                logger.warning("Stopping early — IP blocked. Got %d listings.", len(all_listings))
-                break
-
-            # Early-stop: when the deep pages are mostly already-known, OLX
-            # has nothing new to give us this cycle.
-            if known_ids:
-                known_count = sum(1 for l in page_listings if l.olx_id in known_ids)
-                ratio = known_count / max(len(page_listings), 1)
-                if ratio >= early_stop_known_ratio:
-                    consecutive_known += 1
-                    if consecutive_known >= early_stop_consecutive:
-                        logger.info(
-                            "Early-stop after page %d: %d pages in a row had "
-                            "≥%.0f%% already-known listings.",
-                            page, consecutive_known, early_stop_known_ratio * 100,
-                        )
-                        break
-                else:
-                    consecutive_known = 0
-
-            self._delay()
-
-        logger.info("Scraping complete: %d total listings", len(all_listings))
-        return all_listings
-
     # ------------------------------------------------------------------
     # Full-coverage scrape (price-band segmentation)
     # ------------------------------------------------------------------
@@ -665,25 +599,52 @@ class OlxScraper:
         return int(data.get("metadata", {}).get("total_elements", 0) or 0)
 
     def _price_bands(self, lo: int, hi: int | None, category_id: int,
-                     max_depth: int = 14) -> list[tuple[int, int | None]]:
-        """Recursively bisect ``[lo, hi]`` into bands each under the cap.
+                     max_depth: int = 14) -> list[tuple[int, int | None, int]]:
+        """Recursively bisect ``[lo, hi]`` into ``(lo, hi, count)`` bands.
 
         Terminates when a band reports < the cap, the recursion depth is
         exhausted, or the band is too narrow to split — so every leaf is
-        fully pageable and their union covers the whole range.
+        fully pageable and their union covers the whole range. ``count`` is
+        the band's reported size (capped at 1000), used to bound paging.
         """
         count = self._segment_count(lo, hi, category_id)
         if count == 0:
             return []
         if count < _API_OFFSET_CAP or max_depth <= 0:
-            return [(lo, hi)]
+            return [(lo, hi, count)]
         if hi is None:
-            return [(lo, hi)]  # open-ended top band can't be bisected
+            return [(lo, hi, count)]  # open-ended top band can't be bisected
         if hi - lo <= 100:
-            return [(lo, hi)]  # narrow enough; accept residual cap loss
+            return [(lo, hi, count)]  # narrow enough; accept residual cap loss
         mid = (lo + hi) // 2
         return (self._price_bands(lo, mid, category_id, max_depth - 1)
                 + self._price_bands(mid, hi, category_id, max_depth - 1))
+
+    def _fetch_pages_parallel(self, specs: list, fetch_one) -> list:
+        """Fetch many independent pages concurrently, preserving input order.
+
+        ``fetch_one(spec)`` runs in a worker thread (httpx.Client is safe for
+        concurrent requests; ``_fetch_json`` keeps the 403-cascade). The
+        bounded pool *is* the rate limit — verified safe at 12 concurrent
+        against the OLX API — so no per-request delay is applied. Returns a
+        list aligned with ``specs``; a spec that errors yields ``[]``.
+        """
+        results: list = [None] * len(specs)
+        if not specs:
+            return results
+        with ThreadPoolExecutor(max_workers=_PARALLEL_FETCH_WORKERS) as ex:
+            fut_to_idx = {ex.submit(fetch_one, s): i for i, s in enumerate(specs)}
+            for fut in as_completed(fut_to_idx):
+                idx = fut_to_idx[fut]
+                try:
+                    results[idx] = fut.result()
+                except Exception as e:  # noqa: BLE001
+                    logger.debug("Parallel page fetch error: %s", e)
+                    results[idx] = []
+                if self._stop_event.is_set():
+                    ex.shutdown(wait=False, cancel_futures=True)
+                    break
+        return results
 
     def scrape_full(self, on_batch_ready=None, known_ids: set[str] | None = None,
                     category_id: int | None = None,
@@ -697,31 +658,55 @@ class OlxScraper:
         """
         cat = category_id if category_id is not None else CARS_CATEGORY_ID
         bands = self._price_bands(0, max_price, cat)
-        logger.info("Full coverage: %d price bands for category %s", len(bands), cat)
+        est = sum(c for *_, c in bands)
+        logger.info("Full coverage: %d price bands (~%d offers) for category %s",
+                    len(bands), est, cat)
 
-        all_listings: list[RawListing] = []
-        seen: set[str] = set()
-        for lo, hi in bands:
-            if self._stop_event.is_set():
-                break
+        # Build one flat list of (page, extra_params) specs across all bands,
+        # bounding each band's page count by its reported size and the
+        # offset cap, then fetch them all concurrently.
+        max_page = _API_OFFSET_CAP // _API_PAGE_SIZE + 1
+        specs: list[tuple[int, list[str]]] = []
+        for lo, hi, count in bands:
             extra = [f"filter_float_price%3Afrom={lo}"]
             if hi is not None:
                 extra.append(f"filter_float_price%3Ato={hi}")
-            for page in range(1, self.config.max_pages + 1):
-                if (page - 1) * _API_PAGE_SIZE > _API_OFFSET_CAP:
-                    break
-                page_listings = self._scrape_search_page_api(
-                    page, category_id=cat, extra_params=extra)
-                if not page_listings:  # None (end) or [] (empty)
-                    break
-                fresh = [l for l in page_listings if l.olx_id not in seen]
-                seen.update(l.olx_id for l in fresh)
-                all_listings.extend(fresh)
-                if on_batch_ready and fresh:
-                    on_batch_ready(fresh)
-                if self._stop_event.is_set():
-                    break
-                self._delay()
+            pages = min(-(-count // _API_PAGE_SIZE), max_page)
+            specs.extend((page, extra) for page in range(1, pages + 1))
+
+        pages_results = self._fetch_pages_parallel(
+            specs,
+            lambda s: self._scrape_search_page_api(
+                s[0], category_id=cat, extra_params=s[1]),
+        )
+
+        all_listings: list[RawListing] = []
+        seen: set[str] = set()
+        got_any = False
+        for res in pages_results:
+            if res:
+                got_any = True
+            # Dedup within the page too — OLX prepends promoted ads that also
+            # appear in the regular results, so the same olx_id can show up
+            # twice on one page (and across band boundaries).
+            fresh = []
+            for l in (res or []):
+                if l.olx_id and l.olx_id not in seen:
+                    seen.add(l.olx_id)
+                    fresh.append(l)
+            all_listings.extend(fresh)
+            if on_batch_ready and fresh:
+                on_batch_ready(fresh)
+
+        # Loud-fail (cron exits non-zero) if the API returned nothing at all
+        # across every band — almost certainly a shape/endpoint change, not a
+        # genuinely empty market.
+        if not got_any and not self._stop_event.is_set():
+            msg = ("OLX JSON API returned 0 offers across all price bands — "
+                   "source likely changed (API shape/endpoint change or bot wall)")
+            logger.error("::error::%s", msg)
+            raise ScraperParseError(msg)
+
         logger.info("Full scrape: %d unique listings across %d bands",
                     len(all_listings), len(bands))
         return all_listings
@@ -1182,13 +1167,17 @@ def _sv_node_to_raw(node: dict) -> RawListing | None:
 
     title = node.get("title", "") or ""
     units = ((node.get("price") or {}).get("amount") or {}).get("units")
+    # SV uses a sentinel of 1 for "price on request" / "sob consulta"; no real
+    # car costs < 100 €, so treat such values as no-price (the old data-testid
+    # parser produced None for these too).
+    price_eur = float(units) if units is not None and units >= 100 else None
     stype = (node.get("seller") or {}).get("__typename", "") or ""
     loc = node.get("location") or {}
     raw = RawListing(
         olx_id=m.group(1),
         url=url,
         title=title,
-        price_eur=float(units) if units is not None else None,
+        price_eur=price_eur,
         brand=_extract_brand_from_title(title),
         model=disp("model") or "",
         year=_safe_int(val("first_registration_year")),
@@ -1301,20 +1290,114 @@ class StandVirtualScraper:
         return self._olx_scraper._enrich_batch(listings, skip_ids=skip_ids)
 
     # ------------------------------------------------------------------
-    # Full scrape
+    # Full scrape (GraphQL listingScreen + parallel pagination)
     # ------------------------------------------------------------------
 
-    def scrape_all(self, enrich_details: bool = True,
-                   on_batch_ready=None,
-                   skip_enrichment_ids: set[str] | None = None,
-                   known_ids: set[str] | None = None,
-                   early_stop_known_ratio: float = 0.95,
-                   early_stop_consecutive: int = 3) -> list[RawListing]:
-        """See OlxScraper.scrape_all for the early-stop semantics — this
-        method shares the same shape so the CLI can pass `known_ids` to both
-        scrapers uniformly."""
-        all_listings = []
-        consecutive_known = 0
+    _SV_ENRICH_CHUNK = 64
+
+    def _sv_listing_screen(self, page: int) -> dict | None:
+        """Fetch one page of SV results via the ``listingScreen`` persisted
+        GraphQL query. Returns the ``advertSearch`` object, or ``None`` on any
+        GraphQL/transport failure (caller falls back to SSR)."""
+        filters = [{"name": "category_id", "value": SV_CARS_CATEGORY_ID}]
+        if self.config.private_only:
+            filters.append({"name": "private_business", "value": "private"})
+        variables = {
+            "after": None, "filters": filters,
+            "includeCepik": False, "includeFiltersCounters": False,
+            "includeNewPromotedAds": False, "includePremiumTopAd": False,
+            "includePriceDrop": False, "includePriceEvaluation": False,
+            "includePromotedAds": False, "includeSortOptions": False,
+            "includeSuggestedFilters": False, "maxAge": 60, "page": page,
+            "parameters": SV_LISTING_PARAMS, "promotedInput": {},
+            "searchTerms": [], "sortBy": "relevance_web",
+        }
+        ext = {"persistedQuery": {"sha256Hash": SV_LISTING_SCREEN_HASH, "version": 1}}
+        qs = urllib.parse.urlencode({
+            "operationName": "listingScreen",
+            "variables": json.dumps(variables, separators=(",", ":")),
+            "extensions": json.dumps(ext, separators=(",", ":")),
+        })
+        data = self._olx_scraper._fetch_json(SV_GRAPHQL_URL + "?" + qs)
+        if not data or data.get("errors"):
+            return None
+        return (data.get("data") or {}).get("advertSearch")
+
+    def _sv_page_raws(self, page: int) -> list[RawListing] | None:
+        """Fetch + map one GraphQL page. ``None`` signals a fetch failure
+        (distinct from an empty page)."""
+        adv = self._sv_listing_screen(page)
+        if adv is None:
+            return None
+        out: list[RawListing] = []
+        for edge in adv.get("edges") or []:
+            node = edge.get("node") if isinstance(edge, dict) else None
+            if not node:
+                continue
+            try:
+                raw = _sv_node_to_raw(node)
+            except Exception as e:  # noqa: BLE001
+                logger.debug("Error parsing SV node: %s", e)
+                continue
+            if raw and raw.olx_id:
+                out.append(raw)
+        return out
+
+    def scrape_full(self, on_batch_ready=None,
+                    known_ids: set[str] | None = None,
+                    skip_enrichment_ids: set[str] | None = None,
+                    enrich_details: bool = True) -> list[RawListing]:
+        """Full-coverage StandVirtual scrape via the ``listingScreen`` GraphQL
+        API with parallel pagination. New listings (not in
+        ``skip_enrichment_ids``) get a detail-page fetch for colour/drive_type;
+        known ones keep card-level fields. Falls back to SSR ``__NEXT_DATA__``
+        parsing if the persisted-query hash has rotated."""
+        first = self._sv_listing_screen(1)
+        if first is None:
+            logger.warning("SV listingScreen GraphQL unavailable — "
+                           "falling back to SSR pagination")
+            return self._scrape_full_ssr(on_batch_ready, skip_enrichment_ids,
+                                         enrich_details)
+
+        total = int(first.get("totalCount") or 0)
+        pages = max(1, -(-total // SV_PAGE_SIZE))
+        logger.info("SV full coverage: %d offers, %d GraphQL pages", total, pages)
+
+        results = self._olx_scraper._fetch_pages_parallel(
+            list(range(1, pages + 1)), self._sv_page_raws)
+
+        # Flatten + dedup (promoted ads repeat within/across pages).
+        cards: list[RawListing] = []
+        seen: set[str] = set()
+        for res in results:
+            for l in (res or []):
+                if l.olx_id and l.olx_id not in seen:
+                    seen.add(l.olx_id)
+                    cards.append(l)
+
+        # Enrich NEW listings with detail (colour/drive_type) + stream to the
+        # caller in chunks, so the per-batch enrich timeout applies per chunk
+        # rather than capping the whole run, and the DB/LLM pipeline drains
+        # concurrently.
+        for i in range(0, len(cards), self._SV_ENRICH_CHUNK):
+            if self._stop_event.is_set():
+                break
+            chunk = cards[i:i + self._SV_ENRICH_CHUNK]
+            if enrich_details:
+                self._enrich_batch(chunk, skip_ids=skip_enrichment_ids)
+            if on_batch_ready:
+                on_batch_ready(chunk)
+
+        logger.info("SV full scrape: %d unique listings", len(cards))
+        return cards
+
+    def _scrape_full_ssr(self, on_batch_ready=None,
+                         skip_enrichment_ids: set[str] | None = None,
+                         enrich_details: bool = True) -> list[RawListing]:
+        """Fallback: walk SSR search pages sequentially (parses ``urqlState``).
+        Used only when the GraphQL persisted-query hash has rotated."""
+        all_listings: list[RawListing] = []
+        seen: set[str] = set()
         consecutive_empty = 0
         for page in range(1, self.config.max_pages + 1):
             page_listings = self.scrape_search_page(page)
@@ -1323,53 +1406,30 @@ class StandVirtualScraper:
             if not page_listings:
                 consecutive_empty += 1
                 if all_listings:
-                    logger.info("SV: no more listings at page %d, stopping", page)
                     break
                 if consecutive_empty >= 2:
-                    msg = (
-                        f"StandVirtual SERP parser returned 0 cards on pages "
-                        f"1-{page} and collected 0 listings — source likely "
-                        f"changed (HTML restructure / encoding flip / bot wall)"
-                    )
+                    msg = ("StandVirtual returned 0 listings on pages "
+                           f"1-{page} (GraphQL + SSR both failed) — source "
+                           "likely changed")
                     logger.error("::error::%s", msg)
                     raise ScraperParseError(msg)
                 self._delay()
                 continue
             consecutive_empty = 0
-
-            if enrich_details:
-                ok, fail = self._enrich_batch(page_listings, skip_ids=skip_enrichment_ids)
-                logger.info("SV page %d: %d listings, details ok=%d fail=%d",
-                            page, len(page_listings), ok, fail)
-            else:
-                logger.info("SV page %d: %d listings", page, len(page_listings))
-
-            all_listings.extend(page_listings)
-            if on_batch_ready:
-                on_batch_ready(page_listings)
-
+            fresh = []
+            for l in page_listings:
+                if l.olx_id and l.olx_id not in seen:
+                    seen.add(l.olx_id)
+                    fresh.append(l)
+            if enrich_details and fresh:
+                self._enrich_batch(fresh, skip_ids=skip_enrichment_ids)
+            all_listings.extend(fresh)
+            if on_batch_ready and fresh:
+                on_batch_ready(fresh)
             if self._stop_event.is_set():
-                logger.warning("SV stopping early — blocked. Got %d listings.", len(all_listings))
                 break
-
-            if known_ids:
-                known_count = sum(1 for l in page_listings if l.olx_id in known_ids)
-                ratio = known_count / max(len(page_listings), 1)
-                if ratio >= early_stop_known_ratio:
-                    consecutive_known += 1
-                    if consecutive_known >= early_stop_consecutive:
-                        logger.info(
-                            "SV early-stop after page %d: %d consecutive pages "
-                            "with ≥%.0f%% already-known listings.",
-                            page, consecutive_known, early_stop_known_ratio * 100,
-                        )
-                        break
-                else:
-                    consecutive_known = 0
-
             self._delay()
-
-        logger.info("StandVirtual scraping complete: %d total listings", len(all_listings))
+        logger.info("SV SSR fallback: %d listings", len(all_listings))
         return all_listings
 
     def close(self):

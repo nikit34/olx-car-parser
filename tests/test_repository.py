@@ -230,6 +230,26 @@ class TestPriceSnapshot:
         assert snap.price_eur == 12500.0
         assert snap.negotiable is True
 
+    def test_snapshot_on_change_skips_unchanged(self, db_session, sample_listing_data):
+        # Under full-coverage-every-run, a same-price re-observation must NOT
+        # add a redundant row; a price change must.
+        listing = upsert_listing(db_session, sample_listing_data)
+        db_session.commit()
+
+        add_price_snapshot(db_session, listing.id, 5000.0)
+        db_session.commit()
+        add_price_snapshot(db_session, listing.id, 5000.0)  # unchanged → skip
+        db_session.commit()
+        assert (db_session.query(PriceSnapshot)
+                .filter_by(listing_id=listing.id).count()) == 1
+
+        add_price_snapshot(db_session, listing.id, 4800.0)  # change → record
+        db_session.commit()
+        prices = [s.price_eur for s in db_session.query(PriceSnapshot)
+                  .filter_by(listing_id=listing.id)
+                  .order_by(PriceSnapshot.id).all()]
+        assert prices == [5000.0, 4800.0]
+
 
 class TestApplyFreshnessRefresh:
     def test_price_change_creates_new_snapshot(self, db_session, sample_listing_data):
