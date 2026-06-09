@@ -20,6 +20,11 @@ name: Retrain model
 on:
   workflow_dispatch:
 
+# Needed for `gh release upload` (the repo's default workflow token is read-only).
+# Mirrors scrape.yml.
+permissions:
+  contents: write
+
 # Own group so a scrape's cancel-in-progress can't kill this (and vice versa).
 # On the single self-hosted runner the two still serialise — a retrain just
 # queues behind an in-flight scrape and runs to completion when the runner frees.
