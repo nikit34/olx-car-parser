@@ -1,0 +1,214 @@
+name: Retrain model
+
+# Standalone, on-demand model retrain + publish — WITHOUT the 50-min scrape.
+#
+# Why it exists: `train-model` sits at the tail of the long scrape pipeline,
+# and a manual `gh workflow run scrape.yml` reliably gets concurrency-cancelled
+# by the next scheduled scrape before it ever reaches the train step (which is
+# `if: !cancelled()` → skipped on cancel). So a code/model change pushed to
+# master could only ship on a scheduled cron that happened to complete — flaky.
+# This workflow runs JUST the model + publish steps (≈5-15 min): train price
+# model → anomaly/hazard/relists → verify bundle → build witnesses + hot_deals
+# → upload to the latest-data release → fire the CF deploy hook. Trigger it
+# right after pushing a retrain-needing change. See
+# feedback_retrain_via_cron_not_dispatch.
+#
+# These steps mirror scrape.yml's model+publish tail verbatim (kept in sync by
+# hand; they change rarely). It reads the live DB via the persistent data
+# symlink — no scrape, so it never writes listings; only re-derives models +
+# witnesses from whatever the last scrape captured.
+on:
+  workflow_dispatch:
+
+# Own group so a scrape's cancel-in-progress can't kill this (and vice versa).
+# On the single self-hosted runner the two still serialise — a retrain just
+# queues behind an in-flight scrape and runs to completion when the runner frees.
+concurrency:
+  group: olx-retrain
+  cancel-in-progress: false
+
+jobs:
+  retrain:
+    runs-on: [self-hosted, olx-scraper]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Link persistent data directory
+        run: |
+          rm -rf data
+          ln -s /Users/anastasia/olx-car-parser/data data
+
+      - name: Set up Python venv
+        run: |
+          /opt/homebrew/bin/python3.14 -m venv .venv 2>/dev/null || true
+          .venv/bin/pip install -q -e .
+
+      - name: Checkpoint WAL
+        if: always()
+        timeout-minutes: 5
+        run: |
+          sqlite3 data/olx_cars.db "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null || \
+            .venv/bin/python -c "import sqlite3; sqlite3.connect('data/olx_cars.db').execute('PRAGMA wal_checkpoint(TRUNCATE)')"
+
+      - name: Train price model + time-aware backtest
+        id: train_model
+        if: ${{ !cancelled() }}
+        timeout-minutes: 35
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          set +e
+          .venv/bin/python -m src.cli train-model > /tmp/train.log 2>&1 &
+          TRAIN_PID=$!
+          .venv/bin/python -m src.cli eval-model --time-backtest --splits 5 > /tmp/backtest.log 2>&1 &
+          BT_PID=$!
+          wait $TRAIN_PID
+          TRAIN_RC=$?
+          wait $BT_PID
+          BT_RC=$?
+          echo "===== train-model (rc=$TRAIN_RC) ====="
+          cat /tmp/train.log
+          echo "===== eval-model time-backtest (rc=$BT_RC) ====="
+          cat /tmp/backtest.log
+          if [ $BT_RC -ne 0 ]; then echo "::warning::eval-model failed (rc=$BT_RC) — non-fatal"; fi
+          echo "train_rc=$TRAIN_RC" >> "$GITHUB_OUTPUT"
+          if [ $TRAIN_RC -ne 0 ]; then
+            echo "::error::train-model failed (rc=$TRAIN_RC) — see log above"
+            exit $TRAIN_RC
+          fi
+
+      - name: Train anomaly + hazard + detect re-listings
+        id: train_aux_models
+        if: ${{ !cancelled() && steps.train_model.outputs.train_rc == '0' }}
+        timeout-minutes: 20
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          set +e
+          .venv/bin/python -m src.cli train-anomaly       > /tmp/anomaly.log 2>&1 &
+          ANOM_PID=$!
+          .venv/bin/python -m src.cli train-hazard        > /tmp/hazard.log 2>&1 &
+          HAZ_PID=$!
+          .venv/bin/python -m scripts.detect_relists      > /tmp/relists.log 2>&1 &
+          REL_PID=$!
+          wait $ANOM_PID; ANOM_RC=$?
+          wait $HAZ_PID;  HAZ_RC=$?
+          wait $REL_PID;  REL_RC=$?
+          echo "===== train-anomaly (rc=$ANOM_RC) ====="; cat /tmp/anomaly.log
+          echo "===== train-hazard (rc=$HAZ_RC) ====="; cat /tmp/hazard.log
+          echo "===== detect_relists (rc=$REL_RC) ====="; cat /tmp/relists.log
+          echo "anomaly_rc=$ANOM_RC" >> "$GITHUB_OUTPUT"
+          echo "hazard_rc=$HAZ_RC"   >> "$GITHUB_OUTPUT"
+          echo "relists_rc=$REL_RC"  >> "$GITHUB_OUTPUT"
+          if [ $ANOM_RC -ne 0 ]; then echo "::warning::train-anomaly failed (rc=$ANOM_RC)"; fi
+          if [ $HAZ_RC -ne 0 ];  then echo "::warning::train-hazard failed (rc=$HAZ_RC)";   fi
+          if [ $REL_RC -ne 0 ];  then echo "::warning::detect_relists failed (rc=$REL_RC)"; fi
+
+      - name: Verify fresh bundle is loadable
+        if: ${{ !cancelled() && steps.train_model.outputs.train_rc == '0' }}
+        timeout-minutes: 2
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          .venv/bin/python -c "
+          from src.analytics.price_model import load_model, _SCHEMA_VERSION, _ALL_FEATURES
+          import joblib, sys
+          bundle = joblib.load('data/price_model.joblib')
+          print(f'on-disk schema={bundle.get(\"schema_version\")}, n_features={len(bundle.get(\"feature_names\", []))}')
+          print(f'code expects schema={_SCHEMA_VERSION}, n_features={len(_ALL_FEATURES)}')
+          loaded = load_model(max_age_hours=1)
+          if loaded is None:
+              print('::error::load_model rejected the just-saved bundle — schema/feature contract broken')
+              sys.exit(1)
+          print('load_model accepted the fresh bundle')
+          "
+
+      - name: Build dashboard witnesses
+        id: build_dashboard
+        if: ${{ !cancelled() && steps.train_model.outputs.train_rc == '0' }}
+        timeout-minutes: 10
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          .venv/bin/python scripts/build_dashboard_data.py
+          ls -lh data/dashboard/
+
+      - name: Build hot_deals feeds for flipper-club
+        id: build_hot_deals
+        if: ${{ !cancelled() && steps.train_model.outputs.train_rc == '0' }}
+        timeout-minutes: 15
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          .venv/bin/python scripts/build_hot_deals.py
+          ls -lh data/hot_deals/
+
+      - name: Upload DB + model to GitHub Releases
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+          TRAIN_RC: ${{ steps.train_model.outputs.train_rc }}
+          ANOM_RC: ${{ steps.train_aux_models.outputs.anomaly_rc }}
+          HAZ_RC: ${{ steps.train_aux_models.outputs.hazard_rc }}
+        run: |
+          gh release view latest-data 2>/dev/null || \
+            gh release create latest-data --title "Latest Data" \
+              --notes "Auto-updated database + price model from scraper" --latest=false
+          gh release upload latest-data data/olx_cars.db --clobber
+          if [ "$TRAIN_RC" = "0" ]; then
+            [ -f data/price_model.joblib ]            && gh release upload latest-data data/price_model.joblib            --clobber || true
+            [ -f data/price_metrics.json ]            && gh release upload latest-data data/price_metrics.json            --clobber || true
+            [ -f data/price_importance.json ]         && gh release upload latest-data data/price_importance.json         --clobber || true
+            [ -f data/price_grouped_importance.json ] && gh release upload latest-data data/price_grouped_importance.json --clobber || true
+            [ -f data/price_shap_importance.json ]    && gh release upload latest-data data/price_shap_importance.json    --clobber || true
+            [ -f data/price_backtest.json ]           && gh release upload latest-data data/price_backtest.json           --clobber || true
+          else
+            echo "::warning::Skipping model upload — train-model rc=${TRAIN_RC:-<unset>} (preserves last-known-good)"
+          fi
+          if [ "$ANOM_RC" = "0" ]; then
+            [ -f data/anomaly_model.joblib ] && gh release upload latest-data data/anomaly_model.joblib --clobber || true
+            [ -f data/anomaly_metrics.json ] && gh release upload latest-data data/anomaly_metrics.json --clobber || true
+          else
+            echo "::warning::Skipping anomaly upload — train-anomaly rc=${ANOM_RC:-<unset>}"
+          fi
+          if [ "$HAZ_RC" = "0" ]; then
+            [ -f data/hazard_model.joblib ] && gh release upload latest-data data/hazard_model.joblib --clobber || true
+            [ -f data/hazard_metrics.json ] && gh release upload latest-data data/hazard_metrics.json --clobber || true
+          else
+            echo "::warning::Skipping hazard upload — train-hazard rc=${HAZ_RC:-<unset>}"
+          fi
+          if [ -d data/dashboard ] && [ -f data/dashboard/manifest.json ]; then
+            for f in data/dashboard/*.parquet data/dashboard/*.json; do
+              [ -f "$f" ] && gh release upload latest-data "$f" --clobber || true
+            done
+            echo "Uploaded dashboard witnesses ($(ls data/dashboard | wc -l | tr -d ' ') files)"
+          else
+            echo "::warning::Skipping dashboard witness upload — data/dashboard/manifest.json missing"
+          fi
+          if [ -d data/hot_deals ]; then
+            uploaded=0
+            for f in data/hot_deals/hot_deals_*.json; do
+              [ -f "$f" ] && gh release upload latest-data "$f" --clobber && uploaded=$((uploaded+1))
+            done
+            echo "Uploaded $uploaded hot_deals JSONs"
+          else
+            echo "::warning::Skipping hot_deals upload — data/hot_deals/ missing"
+          fi
+
+      - name: Trigger Cloudflare rebuild (refresh /analytics witnesses)
+        if: ${{ !cancelled() && steps.build_dashboard.outcome == 'success' }}
+        env:
+          CF_DEPLOY_HOOK_URL: ${{ secrets.CF_DEPLOY_HOOK_URL }}
+          PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+        run: |
+          if [ -z "$CF_DEPLOY_HOOK_URL" ]; then
+            echo "::warning::CF_DEPLOY_HOOK_URL secret not set — skipping /analytics rebuild."
+            exit 0
+          fi
+          if curl -fsS -X POST "$CF_DEPLOY_HOOK_URL" -o /tmp/cf_deploy_resp.json; then
+            echo "Triggered CF rebuild: $(cat /tmp/cf_deploy_resp.json)"
+          else
+            echo "::warning::CF deploy hook POST failed — /analytics will refresh on the next push instead."
+          fi
