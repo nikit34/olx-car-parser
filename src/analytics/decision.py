@@ -262,6 +262,26 @@ _HOLDING_COST_EUR_PER_DAY = 1.30
 _DEFAULT_HOLD_DAYS = 45
 _BUY_SCORE = 18.0
 _WATCH_SCORE = 15.0
+# Low-feature-confidence penalty (audit 2026-06-08). When the
+# discriminative per-car features are absent the price model collapses to a
+# coarse brand+generation+year baseline (enc_plat alone is 54% of model
+# gain) and over-predicts — yet still ships a deceptively tight CQR band
+# because it was trained on ~97% full-feature rows, so its NaN branches are
+# under-trained. Measured for Renault Mégane ST Mk4: P50/ask = 0.95 with
+# mileage present (n=62) vs 1.87 with mileage absent (n=2). A 2017 with no
+# km was valued at €17.5k against an €11k segment median → phantom 52%
+# "deal" that scored BUY 46.5. We don't trust the model's band there —
+# widen it (so borderline rows cross the _BAND_WIDE gate into NO_OPINION)
+# and cut confidence as a floor for rows that shipped no band.
+#
+# Two triggers: a missing odometer (the validated, high-precision case) and
+# a low ``spec_fill`` (≤1 of the {mileage, horsepower, engine, fuel} specs
+# present — a stripped listing the model could only baseline-guess). The
+# spec-fill trigger is the conservative extension; the odometer one carries
+# the evidence.
+_LOW_FEATURE_BAND_ADD = 0.12    # absolute, added to band_frac
+_LOW_FEATURE_CONF = 0.55        # multiplier on final confidence
+_MIN_SPEC_FILL = 0.5            # need ≥2 of 4 discriminative specs present
 # Anomaly hard-gate (feature-space outlier from
 # ``src.analytics.anomaly``). 0.90 keeps v2's contamination=0.05
 # top-tail but only rejects on the very tip — plenty of legitimately
@@ -296,6 +316,10 @@ def decide(
     still carry sev-2 / repair flags that affect economics.
     """
     g = listing.get if hasattr(listing, "get") else lambda k, d=None: listing[k] if k in listing else d
+    # Membership probe so we can tell "column present but NaN" (a real
+    # missing-odometer signal) apart from "column absent entirely" (a caller
+    # that simply doesn't carry mileage — must not be penalised).
+    _has = (lambda k: k in listing.index) if hasattr(listing, "index") else (lambda k: k in listing)
     reasons: list[str] = []
     components: dict[str, float | None] = {}
 
@@ -367,8 +391,44 @@ def decide(
         reasons.append(f"only {sample} comparables (need ≥{_MIN_SAMPLE})")
         return Decision(VERDICT_NO_OPINION, 0.0, reasons, components)
 
-    # ---- Step 3: band confidence.
+    # ---- Step 2b: feature-completeness gate. Two triggers (see the
+    # _LOW_FEATURE_* note above). (1) Missing odometer: explicit
+    # ``mileage_missing`` flag from signals_df wins, else infer from a
+    # present-but-NaN ``mileage_km``. A column absent entirely (raw
+    # listings_df rows / unit fixtures that never carried mileage) is treated
+    # as present so we don't penalise callers that simply don't pass it.
+    # (2) Low ``spec_fill`` — fewer than _MIN_SPEC_FILL of the discriminative
+    # specs present (None when the prediction shipped no fill → no trigger).
+    mileage_missing = False
+    if _is_truthy(g("mileage_missing")):
+        mileage_missing = True
+    elif _has("mileage_km"):
+        mv = g("mileage_km")
+        mileage_missing = mv is None or pd.isna(mv)
+
+    spec_fill = g("spec_fill")
+    has_spec_fill = spec_fill is not None and pd.notna(spec_fill)
+    low_spec = has_spec_fill and float(spec_fill) < _MIN_SPEC_FILL
+    low_feature_conf = mileage_missing or low_spec
+    if low_feature_conf:
+        if mileage_missing:
+            components["mileage_missing"] = True
+        if has_spec_fill:
+            components["spec_fill"] = round(float(spec_fill), 2)
+        why = ("odometer missing" if mileage_missing
+               else f"only {float(spec_fill):.0%} of key specs present")
+        reasons.append(
+            f"{why} — model could only baseline-guess; band widened + confidence cut"
+        )
+
+    # ---- Step 3: band confidence. Low-feature-confidence rows get their
+    # band widened first: the model can't see the discriminative specs, so
+    # its CQR interval understates the true spread. Widening before the gate
+    # routes borderline rows into NO_OPINION instead of letting an inflated
+    # prediction ride a deceptively tight band.
     band_conf = 1.0
+    if low_feature_conf and band_frac is not None:
+        band_frac += _LOW_FEATURE_BAND_ADD
     if band_frac is not None:
         components["band_pct"] = band_frac * 100
         if band_frac > _BAND_WIDE:
@@ -546,7 +606,13 @@ def decide(
     expected_profit_pct = (expected_profit / predicted_corrected) * 100 if predicted_corrected else 0.0
 
     sample_conf = min(sample / _SAMPLE_CONF_DIVISOR, 1.0)
-    confidence = band_conf * sample_conf * calibration_conf * motivated_conf * velocity_conf
+    # Low-feature-confidence floor — bites even when no band shipped
+    # (band-widening above is a no-op then), so the penalty can't be bypassed.
+    feature_conf = _LOW_FEATURE_CONF if low_feature_conf else 1.0
+    confidence = (
+        band_conf * sample_conf * calibration_conf
+        * motivated_conf * velocity_conf * feature_conf
+    )
     score = expected_profit_pct * confidence
 
     components["expected_profit_eur"] = round(expected_profit, 0)

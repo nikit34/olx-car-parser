@@ -158,6 +158,18 @@ CATEGORICAL_FEATURES = [
 
 _ALL_FEATURES = NUMERIC_FEATURES + BOOL_FEATURES + CATEGORICAL_FEATURES
 
+# Per-car "spec" features a buyer needs to value a car and that the model
+# uses for the fine-grained adjustment away from the coarse
+# brand+generation+year baseline (enc_plat alone is ~54% of model gain).
+# These are also the features that actually go missing in scraped listings
+# — year/brand/model/generation are ~always present, enc_plat is derived.
+# When too few are present the model collapses to the coarse baseline and
+# over-predicts with a deceptively tight band (audit 2026-06-08: a Mégane
+# with no odometer predicted at €17.5k vs €11k market). Consumers read the
+# ``spec_fill`` column predict_prices emits and abstain below a threshold —
+# see ``decision._MIN_SPEC_FILL``.
+DISCRIMINATIVE_SPEC_FEATURES = ["mileage_km", "horsepower", "engine_cc", "fuel_type"]
+
 
 # --- Monotonic constraints -------------------------------------------------
 # Domain priors: more mileage / damage / RHD / taxi-rental → cheaper; newer /
@@ -489,6 +501,44 @@ def _compute_sample_weights(y_price: np.ndarray) -> np.ndarray:
 _QUANTILES = {"low": 0.1, "median": 0.5, "high": 0.9}
 _EARLY_STOPPING_ROUNDS = 40
 _MIN_N_ESTIMATORS = 50
+
+# Missingness-aware training (project_missing_feature_overprediction, shipped
+# 2026-06-09). On a fraction of the *fitting* rows (each CV fold + the final
+# fit) we NaN a random subset (k∈{1..K}) of DISCRIMINATIVE_SPEC_FEATURES, so the
+# median head learns an honest lower marginal and the low/high CQR heads learn
+# to WIDEN when the per-car specs are absent — instead of collapsing to the
+# coarse enc_plat+year baseline behind a deceptively tight band. Validated on a
+# time-aware holdout (scripts/exp_feature_dropout.py): at frac 0.25 the stripped-
+# row phantom-deal rate falls 34-41%→~16% and CQR coverage 70%→~80% is restored,
+# at ~zero full-feature cost (MAPE Δ +0.02 [-0.21,+0.28]), robust across seeds.
+# No new feature → no schema bump. Set frac to 0.0 to disable. The dropout is
+# applied to fitting data ONLY (never to val/OOF/calibration rows, which keep
+# real features so metrics + conformal q reflect honest serving behaviour).
+_SPEC_DROPOUT_FRAC = 0.25
+_SPEC_DROPOUT_SEED = 1234
+
+
+def _apply_spec_dropout(
+    df: pd.DataFrame, frac: float, rng: np.random.Generator,
+) -> pd.DataFrame:
+    """Return a copy of ``df`` with a random subset (k∈{1..K}) of the
+    discriminative spec features NaN'd on ``frac`` of rows. Training-time
+    augmentation only; the original is untouched and other columns
+    (brand/generation → enc_plat, already attached) are preserved."""
+    cols = [c for c in DISCRIMINATIVE_SPEC_FEATURES if c in df.columns]
+    if frac <= 0 or not cols:
+        return df
+    d = df.copy()
+    for c in cols:
+        if d[c].dtype.kind in "iu":      # int → float so NaN is assignable
+            d[c] = d[c].astype("float64")
+    locs = [d.columns.get_loc(c) for c in cols]
+    touched = np.flatnonzero(rng.random(len(d)) < frac)
+    for i in touched:
+        k = int(rng.integers(1, len(cols) + 1))
+        for j in rng.choice(locs, size=k, replace=False):
+            d.iat[int(i), int(j)] = np.nan
+    return d
 
 
 def _pinball_loss(y_true: np.ndarray, y_pred: np.ndarray, alpha: float) -> float:
@@ -1014,7 +1064,16 @@ def _cv_metrics(
         # Encode categoricals AND the platform target-encoding on train only —
         # no leakage into the val fold (val rows get the train-fold map).
         plat_enc_fold = _fit_platform_encoding(train_df, y_log[train_idx])
-        X_train, cat_maps_fold = _prepare_X(train_df, plat_enc=plat_enc_fold)
+        # Fit the categorical maps on the FULL train fold (no category loss),
+        # then build the fitting matrix from a spec-dropout-augmented copy.
+        # enc_plat is computed from brand|generation (untouched by dropout), so
+        # the augmentation only blanks per-car spec cells. val rows keep real
+        # features → OOF preds + conformal q reflect honest serving behaviour.
+        _, cat_maps_fold = _prepare_X(train_df, plat_enc=plat_enc_fold)
+        train_df_aug = _apply_spec_dropout(
+            train_df, _SPEC_DROPOUT_FRAC, np.random.default_rng(_SPEC_DROPOUT_SEED + fold_idx),
+        )
+        X_train, _ = _prepare_X(train_df_aug, cat_maps_fold, plat_enc=plat_enc_fold)
         X_val, _ = _prepare_X(val_df, cat_maps_fold, plat_enc=plat_enc_fold)
         y_train_log = y_log[train_idx]
         y_val_log = y_log[val_idx]
@@ -1391,8 +1450,15 @@ def train_price_model(
         "active_rows": len(df) - n_sold,
     }
 
-    # Final models: fit on full filtered data with CV-tuned per-quantile iters
-    X_arr, cat_maps = _prepare_X(df)
+    # Final models: fit on full filtered data with CV-tuned per-quantile iters.
+    # Ship cat_maps fit on the full data (no category loss), but fit the models
+    # on a spec-dropout-augmented copy — the OOF enc_plat column is preserved
+    # (dropout only blanks per-car spec cells). See _SPEC_DROPOUT_FRAC.
+    _, cat_maps = _prepare_X(df)
+    df_aug = _apply_spec_dropout(
+        df, _SPEC_DROPOUT_FRAC, np.random.default_rng(_SPEC_DROPOUT_SEED),
+    )
+    X_arr, _ = _prepare_X(df_aug, cat_maps)
     cat_indices = [_ALL_FEATURES.index(c) for c in CATEGORICAL_FEATURES]
 
     models = {}
@@ -1534,11 +1600,16 @@ def predict_prices(
         stacked = np.sort(np.stack([low, median, high]), axis=0)
         low, median, high = stacked[0], stacked[1], stacked[2]
 
-    return pd.DataFrame({
+    out = pd.DataFrame({
         "predicted_price": np.maximum(median, 0),
         "fair_price_low": np.maximum(low, 0),
         "fair_price_high": np.maximum(high, 0),
     }, index=listings_df.index).round(0)
+    # Discriminative-spec completeness rides with the prediction so every
+    # consumer (deal feed, decide(), dashboard) can abstain on rows the
+    # model could only baseline-guess. Kept unrounded (0–1).
+    out["spec_fill"] = spec_feature_fill(listings_df).reindex(out.index).values
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -1839,6 +1910,24 @@ def compute_feature_completeness(listings_df: pd.DataFrame) -> pd.Series:
         return pd.Series(0.0, index=listings_df.index, name="feature_fill_rate")
     present = listings_df[cols].notna().sum(axis=1)
     return (present / len(_ALL_FEATURES)).rename("feature_fill_rate")
+
+
+def spec_feature_fill(listings_df: pd.DataFrame) -> pd.Series:
+    """Fraction (0–1) of the discriminative per-car spec features present.
+
+    Unlike ``compute_feature_completeness`` (which dilutes the signal across
+    all ~20 model features, most of which are derived/always-present), this
+    counts only ``DISCRIMINATIVE_SPEC_FEATURES`` — the spec fields whose
+    absence makes the model fall back to its coarse baseline. ``decide()``
+    abstains when this drops below ``_MIN_SPEC_FILL``.
+    """
+    cols = [c for c in DISCRIMINATIVE_SPEC_FEATURES if c in listings_df.columns]
+    if not cols:
+        # No spec columns at all → unknown, not "empty". Return NaN so
+        # downstream treats it as "no signal" rather than "fully missing".
+        return pd.Series(np.nan, index=listings_df.index, name="spec_fill")
+    present = listings_df[cols].notna().sum(axis=1)
+    return (present / len(DISCRIMINATIVE_SPEC_FEATURES)).rename("spec_fill")
 
 
 def compute_data_completeness(
