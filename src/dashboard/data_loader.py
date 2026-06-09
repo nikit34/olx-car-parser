@@ -813,12 +813,6 @@ def compute_signals(
         _bucket_edges = (
             [tuple(e) for e in _bucket_edges_raw] if _bucket_edges_raw else None
         )
-        # v12 platform target-encoding map (brand+generation → mean log-price).
-        # predict_prices builds the enc_plat column from it.
-        _plat_enc_raw = _gb_metrics.get("plat_enc") if _gb_metrics else None
-        _plat_enc = (
-            (_plat_enc_raw["map"], _plat_enc_raw["gmean"]) if _plat_enc_raw else None
-        )
         # OOF preds (built during CV training) override model.predict for any
         # listing the model was trained on, so the deal-scoring loop compares
         # asking price against an out-of-fold "fair price" rather than an
@@ -834,7 +828,6 @@ def compute_signals(
             conformal_q_per_bucket=_per_bucket_q,
             conformal_q_bucket_edges=_bucket_edges,
             uncertainty_bundle=_gb_uncertainty,
-            plat_enc=_plat_enc,
         )
         _cs_step(f"predict_prices(active n={len(active)})")
         if "olx_id" in active.columns:
@@ -890,7 +883,6 @@ def compute_signals(
                     conformal_q_per_bucket=_per_bucket_q,
                     conformal_q_bucket_edges=_bucket_edges,
                     uncertainty_bundle=_gb_uncertainty,
-                    plat_enc=_plat_enc,
                 )
                 _cs_step(f"predict_prices(sold n={len(sold_only)})")
                 sold_olx_ids = sold_only["olx_id"].reindex(sold_pred_df.index).values

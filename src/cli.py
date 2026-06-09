@@ -1576,8 +1576,6 @@ def _load_predictions_for_model_consumers(active: "pd.DataFrame"):
     models, cat_maps, metrics, oof_preds, calibrator, uncertainty = saved
     edges_raw = metrics.get("conformal_q_bucket_edges")
     bucket_edges = [tuple(e) for e in edges_raw] if edges_raw else None
-    plat_enc_raw = metrics.get("plat_enc")
-    plat_enc = (plat_enc_raw["map"], plat_enc_raw["gmean"]) if plat_enc_raw else None
     return predict_prices(
         models, cat_maps, active,
         conformal_q=metrics.get("conformal_q", 0.0),
@@ -1586,7 +1584,6 @@ def _load_predictions_for_model_consumers(active: "pd.DataFrame"):
         conformal_q_per_bucket=metrics.get("conformal_q_per_bucket"),
         conformal_q_bucket_edges=bucket_edges,
         uncertainty_bundle=uncertainty,
-        plat_enc=plat_enc,
     )
 
 

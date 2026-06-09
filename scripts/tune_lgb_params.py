@@ -12,8 +12,8 @@ Honest protocol (no peeking at the test):
      untouched HOLDOUT (MAPE + pinball + coverage, bootstrap CI). Only the holdout
      number is trustworthy — the CV objective is what we optimized against.
 
-Reuses prod feature prep (price_model._prepare_X / _fit_platform_encoding /
-_monotone_constraints) so a tuned param set drops straight into _LGB_PARAMS.
+Reuses prod feature prep (price_model._prepare_X / _monotone_constraints) so a
+tuned param set drops straight into _LGB_PARAMS.
 Writes the recommendation to data/price_lgb_tuned.json for HUMAN REVIEW — does
 NOT modify _LGB_PARAMS or retrain. No optuna dependency (random search).
 
@@ -90,14 +90,13 @@ def _cat_idx():
 
 
 def _oof(df, y, folds, params, quants):
-    """Leakage-safe OOF preds (platform map fit per fold-train)."""
+    """Leakage-safe OOF preds (cat maps fit per fold-train)."""
     out = {q: np.full(len(df), np.nan) for q in quants}
     tested = np.zeros(len(df), bool)
     for tr, te in folds:
         tr_df, te_df = df.iloc[tr], df.iloc[te]
-        plat = pm._fit_platform_encoding(tr_df, y[tr])
-        x_tr, cm = pm._prepare_X(tr_df, plat_enc=plat)
-        x_te, _ = pm._prepare_X(te_df, cm, plat_enc=plat)
+        x_tr, cm = pm._prepare_X(tr_df)
+        x_te, _ = pm._prepare_X(te_df, cm)
         for name, alpha in quants.items():
             m = _make(name, alpha, params)
             m.fit(x_tr, y[tr], categorical_feature=_cat_idx())
@@ -108,9 +107,8 @@ def _oof(df, y, folds, params, quants):
 
 def _fit_predict(tune_df, y_tune, hold_df, params, quants):
     """Fit on ALL of TUNE, predict HOLDOUT (the untouched test)."""
-    plat = pm._fit_platform_encoding(tune_df, y_tune)
-    x_tr, cm = pm._prepare_X(tune_df, plat_enc=plat)
-    x_te, _ = pm._prepare_X(hold_df, cm, plat_enc=plat)
+    x_tr, cm = pm._prepare_X(tune_df)
+    x_te, _ = pm._prepare_X(hold_df, cm)
     out = {}
     for name, alpha in quants.items():
         m = _make(name, alpha, params)

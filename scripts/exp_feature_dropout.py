@@ -28,8 +28,8 @@ Protocol (trust the HOLDOUT, not the training objective):
       FIT    = oldest 80% of TRAIN  (model fit)
       CALIB  = newest 20% of TRAIN  (conformal q, full-feature — time-honest)
   baseline arm: FIT as-is.  dropout arm: FIT with random spec-dropout.
-  enc_plat + cat_maps fit once on FIT (dropout doesn't touch brand/generation),
-  shared by both arms so the ONLY difference is the augmentation.
+  cat_maps fit once on FIT, shared by both arms so the ONLY difference is the
+  augmentation.
 
 Usage:  python -m scripts.exp_feature_dropout --drop-frac 0.40 --n-boot 2000 --seed 42
 """
@@ -88,9 +88,9 @@ def _strip(df, cols):
     return d
 
 
-def _fit(fit_df, y, params, plat, cm):
+def _fit(fit_df, y, params, cm):
     out = {}
-    x, _ = pm._prepare_X(fit_df, cm, plat_enc=plat)
+    x, _ = pm._prepare_X(fit_df, cm)
     for name, alpha in QUANTS.items():
         m = _make(name, alpha, params)
         m.fit(x, y, categorical_feature=_cat_idx())
@@ -98,9 +98,9 @@ def _fit(fit_df, y, params, plat, cm):
     return out
 
 
-def _pred_log(models, df, plat, cm):
+def _pred_log(models, df, cm):
     """Raw quantile predictions in LOG space (CQR widening applied later)."""
-    x, _ = pm._prepare_X(df, cm, plat_enc=plat)
+    x, _ = pm._prepare_X(df, cm)
     lo, hi = models["low"].predict(x), models["high"].predict(x)
     return {"med": models["median"].predict(x),
             "lo": np.minimum(lo, hi), "hi": np.maximum(lo, hi)}
@@ -161,18 +161,17 @@ def main():
     print(f"dropout: {args.drop_frac:.0%} of FIT rows, k∈{{1..4}} random specs each; "
           f"n_estimators={args.n_estimators}, bootstrap={args.n_boot}\n")
 
-    # enc_plat + cat_maps from FIT (unaffected by dropout — keys are brand|gen).
-    plat = pm._fit_platform_encoding(fit, y_fit)
-    _, cm = pm._prepare_X(fit, plat_enc=plat)
+    # cat_maps from FIT, shared by both arms (dropout only blanks spec cells).
+    _, cm = pm._prepare_X(fit)
 
-    base = _fit(fit, y_fit, params, plat, cm)
+    base = _fit(fit, y_fit, params, cm)
     fit_drop, n_touched = _random_dropout(fit, args.drop_frac, rng)
-    drop = _fit(fit_drop, y_fit, params, plat, cm)
+    drop = _fit(fit_drop, y_fit, params, cm)
     print(f"dropout touched {n_touched}/{len(fit)} FIT rows\n")
 
     # conformal q calibrated on full-feature CALIB (as in prod).
-    qb = _conformal_q(_pred_log(base, calib, plat, cm), y_cal)
-    qd = _conformal_q(_pred_log(drop, calib, plat, cm), y_cal)
+    qb = _conformal_q(_pred_log(base, calib, cm), y_cal)
+    qd = _conformal_q(_pred_log(drop, calib, cm), y_cal)
     print(f"conformal q (log-space, 80% target): baseline={qb:.4f}  dropout={qd:.4f}\n")
 
     # Regimes on the holdout: which specs are NaN'd before predicting.
@@ -193,8 +192,8 @@ def main():
             ("cover", "cover%"), ("mpiw", "band%")]
     for label, drop_cols in regimes.items():
         hb = _strip(hold, drop_cols) if drop_cols else hold
-        pb = _pred_log(base, hb, plat, cm)
-        pd_ = _pred_log(drop, hb, plat, cm)
+        pb = _pred_log(base, hb, cm)
+        pd_ = _pred_log(drop, hb, cm)
         mb, md = _metrics(pb, actual, qb), _metrics(pd_, actual, qd)
         # bootstrap: one metric dict per arm per resample, then deltas per key.
         acc = {key: np.empty(len(boots)) for key, _ in METS}

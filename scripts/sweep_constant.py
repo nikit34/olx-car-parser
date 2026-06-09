@@ -10,20 +10,20 @@ sales); the time-aware split is the honest read. This tool always shows both.
 
 Data: pulls sold listings from the `latest-data` GitHub Release snapshot
 (see the release-db skill — no local DB on the dev Mac). It reuses the prod
-feature pipeline (price_model._prepare_X / _model_for_quantile /
-_fit_platform_encoding) so a swept constant flows through exactly as in prod.
-It is a RELATIVE-delta tool: absolute MAPE differs from prod CV (no turnover
-features, fixed n_estimators), but ΔMAPE vs the current value is what matters.
+feature pipeline (price_model._prepare_X / _model_for_quantile) so a swept
+constant flows through exactly as in prod. It is a RELATIVE-delta tool:
+absolute MAPE differs from prod CV (no turnover features, fixed n_estimators),
+but ΔMAPE vs the current value is what matters.
 
 Usage:
-  python -m scripts.sweep_constant --const _PLAT_CRED_K --values 0.3,5,20,40,80
   python -m scripts.sweep_constant --const _LGB_PARAMS.num_leaves --values 15,31,63
-  python -m scripts.sweep_constant --const _MONOTONE_BY_FEATURE.enc_plat --values 0,1
+  python -m scripts.sweep_constant --const _LGB_PARAMS.min_child_samples --values 5,8,20
   python -m scripts.sweep_constant --const _LGB_PARAMS.learning_rate --values 0.03,0.05,0.1 --full
 Flags:
-  --full     also fit low/high quantiles -> report pinball + [P10,P90] coverage
-  --data P   use a local listings.parquet instead of downloading the release
+  --full          also fit low/high quantiles -> report pinball + [P10,P90] coverage
+  --data P        use a local listings.parquet instead of downloading the release
   --segments d,p,h,e,phev  restrict reported fuel segments (default: all)
+  --spec-dropout F  mirror the shipped spec-dropout regime (default = prod fraction)
 """
 from __future__ import annotations
 
@@ -115,16 +115,15 @@ def evaluate(df: pd.DataFrame, folds, full: bool, spec_dropout: float = 0.0) -> 
     cat_idx = [pm._ALL_FEATURES.index(c) for c in pm.CATEGORICAL_FEATURES]
     for fi, (tr, te) in enumerate(folds):
         tr_df, te_df = df.iloc[tr], df.iloc[te]
-        plat = pm._fit_platform_encoding(tr_df, y[tr])      # uses pm._PLAT_CRED_K
         if spec_dropout > 0:
-            _, cmaps = pm._prepare_X(tr_df, plat_enc=plat)   # maps on full fold
+            _, cmaps = pm._prepare_X(tr_df)                  # maps on full fold
             tr_fit = pm._apply_spec_dropout(
                 tr_df, spec_dropout, np.random.default_rng(1234 + fi),
             )
-            x_tr, _ = pm._prepare_X(tr_fit, cmaps, plat_enc=plat)
+            x_tr, _ = pm._prepare_X(tr_fit, cmaps)
         else:
-            x_tr, cmaps = pm._prepare_X(tr_df, plat_enc=plat)
-        x_te, _ = pm._prepare_X(te_df, cmaps, plat_enc=plat)
+            x_tr, cmaps = pm._prepare_X(tr_df)
+        x_te, _ = pm._prepare_X(te_df, cmaps)
         for name, alpha in quants.items():
             model = pm._model_for_quantile(name, alpha, _N_EST)   # uses pm._LGB_PARAMS + monotone
             model.fit(x_tr, y[tr], categorical_feature=cat_idx)
@@ -250,7 +249,7 @@ def sweep_one(df, folds, segs, mask_for, const, values, full, compact, spec_drop
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--const", help="e.g. _PLAT_CRED_K or _LGB_PARAMS.num_leaves")
+    ap.add_argument("--const", help="e.g. _LGB_PARAMS.num_leaves or _LGB_PARAMS.reg_lambda")
     ap.add_argument("--values", help="comma-separated values to sweep")
     ap.add_argument("--all", action="store_true", help="scan the whole watchlist; exit 1 if any flips noise→REAL")
     ap.add_argument("--full", action="store_true", help="fit low/high too -> pinball + coverage")

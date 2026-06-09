@@ -70,11 +70,13 @@ _OTHER_CATEGORY = "__other__"
 # v8: drop the dead pipeline + helpers entirely. Bundle no longer carries
 # `text_pipeline`; `_prepare_X` stops fitting a TF-IDF/SVD on every call.
 # v12: add `enc_plat` (credibility-smoothed brand+generation target-encoding).
-# v13: REMOVE enc_plat from the feature set — it washed on the time-aware
-# holdout and, after the spec-dropout retrain, an ablation showed it actively
-# harms MAPE (project_missing_feature_overprediction). _ALL_FEATURES shrinks by
-# one → load_model rejects v12 bundles, forcing a retrain. The platform plumbing
-# (_fit_platform_encoding etc.) is left defined but inert; cleanup is a follow-up.
+# v13: REMOVE enc_plat from the feature set — it held ~54% of model gain yet
+# washed on the time-aware forward split (turning it off gave ΔMAPE ≈ 0, CI∋0,
+# coverage unchanged, both before and after the spec-dropout retrain), i.e.
+# target-leakage self-correlation that masked the real drivers
+# (project_missing_feature_overprediction). _ALL_FEATURES shrinks by one →
+# load_model rejects v12 bundles, forcing a retrain. The platform-encoding
+# plumbing was fully removed in the same change.
 _SCHEMA_VERSION = 13
 # Fraction of the dataset (newest rows by first_seen_at) used as the
 # time-honest conformal calibration window. Random-KFold CQR mixes
@@ -115,7 +117,7 @@ NUMERIC_FEATURES = [
     # (project_missing_feature_overprediction) an ablation showed it actively
     # HARMS — removing it improves MAPE (ALL −0.23, CI [−0.44,−0.03]; PHEV −0.83).
     # A redundant coarse aggregate the dropout-trained model is better without.
-    # The _platform_* helpers remain defined but inert (dead-code cleanup TODO).
+    # The _platform_* helpers + _PLAT_CRED_K were fully removed in the same change.
     # NOTE: price-history features (num_price_drops, max_drop_pct,
     # price_drop_velocity, days_since_last_drop) are intentionally excluded.
     # They are post-hoc — known only after observing the listing for days —
@@ -161,9 +163,9 @@ _ALL_FEATURES = NUMERIC_FEATURES + BOOL_FEATURES + CATEGORICAL_FEATURES
 
 # Per-car "spec" features a buyer needs to value a car and that the model
 # uses for the fine-grained adjustment away from the coarse
-# brand+generation+year baseline (enc_plat alone is ~54% of model gain).
-# These are also the features that actually go missing in scraped listings
-# — year/brand/model/generation are ~always present, enc_plat is derived.
+# brand+model+generation+year baseline. These are also the features that
+# actually go missing in scraped listings — brand/model/generation/year are
+# ~always present.
 # When too few are present the model collapses to the coarse baseline and
 # over-predicts with a deceptively tight band (audit 2026-06-08: a Mégane
 # with no odometer predicted at €17.5k vs €11k market). Consumers read the
@@ -182,12 +184,6 @@ DISCRIMINATIVE_SPEC_FEATURES = ["mileage_km", "horsepower", "engine_cc", "fuel_t
 _MONOTONE_BY_FEATURE: dict[str, int] = {
     "year": 1,
     "mileage_km": -1,
-    # NOTE: enc_plat is intentionally NOT constrained. A +1 prior seems
-    # natural (higher platform price → higher prediction) but backtests showed
-    # it HURTS — the platform mean already bakes in year/mileage averages, so
-    # conditional on those features the relationship isn't cleanly monotone and
-    # the "advanced" constraint method degrades the fit (ALL ΔMAPE +0.04 with
-    # the constraint vs −0.09 without). Left at 0.
 }
 
 
@@ -245,100 +241,26 @@ def _encode_categoricals(
     return out, maps
 
 
-# --- Platform target-encoding (schema v12) ---------------------------------
-# Borrow strength across a COHERENT neighbourhood: same brand + chassis
-# generation (e.g. BMW G30 pools 530e/530d/525d/520d across powertrain).
-# No fixed year-band — `generation` already IS the lifecycle-aware unit (a G30
-# is a G30 whether the gen ran 4 or 7 years) and the model's `year` feature
-# handles within-generation aging; a fixed band only fragments platforms
-# (1246 groups vs 539) for no measurable gain. Credibility-smoothed mean
-# log1p(price) blends toward the global mean for thin platforms (n→0) so a
-# 5-sale platform can't dominate. Leakage-safe: the map is fit on TRAIN targets
-# only (per CV fold, and on the full train set for the persisted inference map);
-# training rows get out-of-fold values. Marginal/niche — see
-# project_mileage_not_the_lever.
-#
-# K = credibility (shrinkage) strength: enc = (Σy + K·gmean)/(n + K), so a
-# platform with n=K sales gets 50% weight on its own mean and thinner ones
-# shrink toward the global mean. MAPE sensitivity is provably FLAT here (swept
-# K∈[0.3, 80] → ALL ΔMAPE −0.05..−0.13, all noise-floor). The Bühlmann
-# data-optimal K* = σ²_within/σ²_between ≈ 0.3 is deliberately NOT used: it
-# barely shrinks (a 2-sale platform would get 0.87 weight on its own noisy
-# mean) — a robustness cost MAPE can't detect because thin platforms are a tiny
-# fraction of rows, yet they're exactly where this feature is supposed to help.
-# 20 is a mid-range value chosen for thin-platform robustness, not MAPE-tuned.
-_PLAT_CRED_K = 20.0
-
-
-def _platform_key(df: pd.DataFrame) -> np.ndarray:
-    """brand|generation — the coherent pooling key (generation = lifecycle unit)."""
-    idx = df.index
-    brand = df["brand"].astype(str) if "brand" in df.columns else pd.Series("NA", index=idx)
-    gen = df["generation"].astype(str) if "generation" in df.columns else pd.Series("NA", index=idx)
-    return brand.values + "|" + gen.values
-
-
-def _fit_platform_encoding(
-    df: pd.DataFrame, y_log: np.ndarray,
-) -> tuple[dict[str, float], float]:
-    """Credibility-smoothed platform → mean-log-price map (+ global-mean fallback)."""
-    keys = _platform_key(df)
-    gmean = float(np.mean(y_log)) if len(y_log) else 0.0
-    grp = pd.DataFrame({"k": keys, "y": y_log}).groupby("k")["y"].agg(["sum", "size"])
-    enc = (grp["sum"] + _PLAT_CRED_K * gmean) / (grp["size"] + _PLAT_CRED_K)
-    return {k: float(v) for k, v in enc.items()}, gmean
-
-
-def _apply_platform_encoding(
-    df: pd.DataFrame, enc_map: dict[str, float], gmean: float,
-) -> np.ndarray:
-    keys = pd.Series(_platform_key(df))
-    return keys.map(enc_map).fillna(gmean).values.astype(float)
-
-
-def _oof_platform_encoding(
-    df: pd.DataFrame, y_log: np.ndarray, n_splits: int = 5,
-) -> np.ndarray:
-    """Out-of-fold platform encoding for TRAINING rows (no self-leakage in the
-    final fit). Each row is encoded from a map fit on the *other* folds."""
-    keys = _platform_key(df)
-    out = np.empty(len(df), dtype=float)
-    n_splits = min(n_splits, max(2, len(df) // 20))
-    kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
-    for tr, te in kf.split(np.arange(len(df))):
-        gmean = float(np.mean(y_log[tr])) if len(tr) else 0.0
-        grp = pd.DataFrame({"k": keys[tr], "y": y_log[tr]}).groupby("k")["y"].agg(["sum", "size"])
-        enc = ((grp["sum"] + _PLAT_CRED_K * gmean) / (grp["size"] + _PLAT_CRED_K)).to_dict()
-        out[te] = pd.Series(keys[te]).map(enc).fillna(gmean).values
-    return out
+# --- Platform target-encoding (schema v12) — REMOVED in v13 ----------------
+# enc_plat (credibility-smoothed brand|generation target-encoding) was dropped
+# in v13: it held ~54% of model gain yet added nothing on the time-aware forward
+# split (washed both before and after the spec-dropout retrain — turning it off
+# gave ΔMAPE ≈ 0, CI∋0, coverage unchanged). It was target-leakage self-
+# correlation that masked the real drivers' importance. See
+# project_mileage_not_the_lever / scripts/sweep_constant.py.
 
 
 def _prepare_X(
     df: pd.DataFrame,
     cat_maps: dict[str, dict[str, int]] | None = None,
-    plat_enc: tuple[dict[str, float], float] | None = None,
 ) -> tuple[np.ndarray, dict[str, dict[str, int]]]:
     """Prepare feature matrix from listings DataFrame.
 
     Returns (X_arr, cat_maps). cat_maps is the ordinal-encoding mapping
     fitted on this dataframe; pass it back in to reuse the encoding for
     new rows (CV folds, calibration slice, ``predict_prices``).
-
-    ``plat_enc`` is the (platform_map, global_mean) tuple for the v12
-    ``enc_plat`` feature. If the caller already attached an ``enc_plat`` column
-    (training uses OOF values), it's used as-is. Otherwise the column is
-    computed from ``plat_enc``; with no map it stays NaN and LightGBM treats it
-    as missing (feature inert) — so call sites that don't pass a map keep working.
     """
     X = df.reindex(columns=_ALL_FEATURES).copy()
-
-    if (
-        "enc_plat" in _ALL_FEATURES
-        and "enc_plat" not in df.columns
-        and plat_enc is not None
-    ):
-        enc_map, gmean = plat_enc
-        X["enc_plat"] = _apply_platform_encoding(df, enc_map, gmean)
 
     for col in BOOL_FEATURES:
         if col in X.columns:
@@ -508,7 +430,7 @@ _MIN_N_ESTIMATORS = 50
 # fit) we NaN a random subset (k∈{1..K}) of DISCRIMINATIVE_SPEC_FEATURES, so the
 # median head learns an honest lower marginal and the low/high CQR heads learn
 # to WIDEN when the per-car specs are absent — instead of collapsing to the
-# coarse enc_plat+year baseline behind a deceptively tight band. Validated on a
+# coarse brand+model+generation+year baseline behind a deceptively tight band. Validated on a
 # time-aware holdout (scripts/exp_feature_dropout.py): at frac 0.25 the stripped-
 # row phantom-deal rate falls 34-41%→~16% and CQR coverage 70%→~80% is restored,
 # at ~zero full-feature cost (MAPE Δ +0.02 [-0.21,+0.28]), robust across seeds.
@@ -524,8 +446,8 @@ def _apply_spec_dropout(
 ) -> pd.DataFrame:
     """Return a copy of ``df`` with a random subset (k∈{1..K}) of the
     discriminative spec features NaN'd on ``frac`` of rows. Training-time
-    augmentation only; the original is untouched and other columns
-    (brand/generation → enc_plat, already attached) are preserved."""
+    augmentation only; the original is untouched and all other columns
+    are preserved."""
     cols = [c for c in DISCRIMINATIVE_SPEC_FEATURES if c in df.columns]
     if frac <= 0 or not cols:
         return df
@@ -1485,7 +1407,6 @@ def predict_prices(
     conformal_q_per_bucket: dict[str, float] | None = None,
     conformal_q_bucket_edges: list[tuple[float, float, str]] | None = None,
     uncertainty_bundle: tuple[lgb.LGBMRegressor, float] | None = None,
-    plat_enc: tuple[dict[str, float], float] | None = None,
 ) -> pd.DataFrame:
     """Predict fair price range for each listing.
 
@@ -1512,11 +1433,8 @@ def predict_prices(
     applied to the median for new rows only (OOF preds are already
     calibrated). The band assembly below brackets the calibrated median by
     min/max so isotonic-induced crossings don't leak into the [low, high].
-
-    *plat_enc* — (platform_map, global_mean) for the v12 ``enc_plat`` feature,
-    read from ``metrics["plat_enc"]``. None → the feature stays NaN (inert).
     """
-    X_arr, _ = _prepare_X(listings_df, cat_maps, plat_enc=plat_enc)
+    X_arr, _ = _prepare_X(listings_df, cat_maps)
 
     # Model output is in log1p(price) space.
     log_median = models["median"].predict(X_arr)
@@ -1785,11 +1703,7 @@ def save_model(
         "saved_at": datetime.now(timezone.utc).isoformat(),
     }
     joblib.dump(bundle, _MODEL_PATH)
-    # The v12 platform map (potentially thousands of entries, numpy floats)
-    # lives in the joblib bundle's metrics. Strip it from the history JSON —
-    # it would bloat the file 100× and isn't JSON-serializable as-is.
-    history_metrics = {k: v for k, v in metrics.items() if k != "plat_enc"}
-    _append_metrics(history_metrics)
+    _append_metrics(dict(metrics))
 
 
 def load_model(
