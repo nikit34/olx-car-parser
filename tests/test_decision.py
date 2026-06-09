@@ -100,6 +100,86 @@ def test_no_opinion_on_wide_band():
     assert any("band" in r for r in d.reasons)
 
 
+# ---- Missing-odometer penalty ---------------------------------------------
+
+
+def test_mileage_missing_pushes_band_into_no_opinion():
+    """Reproduction of the 2026-06-08 Mégane case: a would-be BUY (ask far
+    under an inflated prediction, band just under the WIDE gate) loses its
+    verdict once the odometer is flagged missing — the band is widened past
+    the gate."""
+    healthy = decide(
+        _row(price_eur=8300, predicted_price=17457,
+             fair_price_low=10950, fair_price_high=17789, band_pct=39.2),
+        _ctx(calibration_resid_pct={}),
+    )
+    assert healthy.verdict == VERDICT_BUY  # without the flag it's a (phantom) BUY
+
+    missing = decide(
+        _row(price_eur=8300, predicted_price=17457,
+             fair_price_low=10950, fair_price_high=17789, band_pct=39.2,
+             mileage_missing=True),
+        _ctx(calibration_resid_pct={}),
+    )
+    assert missing.verdict == VERDICT_NO_OPINION
+    assert any("odometer" in r for r in missing.reasons)
+
+
+def test_mileage_missing_inferred_from_nan_mileage_km():
+    """A present-but-NaN mileage_km is treated the same as the explicit flag."""
+    d = decide(
+        _row(price_eur=8300, predicted_price=17457,
+             fair_price_low=10950, fair_price_high=17789, band_pct=39.2,
+             mileage_km=float("nan")),
+        _ctx(calibration_resid_pct={}),
+    )
+    assert d.verdict == VERDICT_NO_OPINION
+
+
+def test_present_mileage_is_not_penalised():
+    """A healthy BUY with mileage present stays BUY — no penalty leaks in."""
+    d = decide(_row(price_eur=8500, predicted_price=13000, mileage_km=90000), _ctx())
+    assert d.verdict == VERDICT_BUY
+    assert "mileage_missing" not in d.components
+
+
+def test_mileage_missing_confidence_cut_without_band():
+    """When no band shipped the widening is a no-op, so the confidence
+    multiplier must still bite (penalty can't be bypassed by a missing band)."""
+    base = decide(_row(price_eur=8500, predicted_price=13000, band_pct=None), _ctx())
+    missing = decide(
+        _row(price_eur=8500, predicted_price=13000, band_pct=None,
+             mileage_missing=True),
+        _ctx(),
+    )
+    assert missing.components["confidence"] < base.components["confidence"]
+    assert missing.score < base.score
+
+
+def test_low_spec_fill_triggers_penalty_even_with_mileage_present():
+    """A stripped listing (only 1 of 4 specs) is abstained on even when the
+    odometer itself is present — the spec-fill trigger, not just mileage."""
+    d = decide(
+        _row(price_eur=8300, predicted_price=17457,
+             fair_price_low=10950, fair_price_high=17789, band_pct=39.2,
+             mileage_km=120000, spec_fill=0.25),
+        _ctx(calibration_resid_pct={}),
+    )
+    assert d.verdict == VERDICT_NO_OPINION
+    assert any("specs" in r for r in d.reasons)
+    assert d.components["spec_fill"] == 0.25
+
+
+def test_adequate_spec_fill_is_not_penalised():
+    """spec_fill at/above the threshold leaves a healthy BUY intact."""
+    d = decide(
+        _row(price_eur=8500, predicted_price=13000, mileage_km=90000, spec_fill=0.75),
+        _ctx(),
+    )
+    assert d.verdict == VERDICT_BUY
+    assert "spec_fill" not in d.components  # only recorded when it triggers
+
+
 # ---- Step 5 economics -----------------------------------------------------
 
 

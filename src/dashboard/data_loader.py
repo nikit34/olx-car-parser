@@ -782,6 +782,7 @@ def compute_signals(
     gb_predictions: dict[str, float] = {}
     gb_fair_low: dict[str, float] = {}
     gb_fair_high: dict[str, float] = {}
+    gb_spec_fill: dict[str, float] = {}
     # TreeSHAP attribution of the median price prediction. Populated only
     # for active listings (the sold-side block doesn't compute contribs —
     # dashboard surfaces them on deal cards, which are active by
@@ -841,11 +842,15 @@ def compute_signals(
             preds = price_df["predicted_price"].values
             lows = price_df["fair_price_low"].values
             highs = price_df["fair_price_high"].values
-            for oid, pred, lo, hi in zip(olx_ids, preds, lows, highs):
+            fills = (price_df["spec_fill"].values if "spec_fill" in price_df.columns
+                     else [None] * len(preds))
+            for oid, pred, lo, hi, fill in zip(olx_ids, preds, lows, highs, fills):
                 if oid and pred > 0:
                     gb_predictions[oid] = float(pred)
                     gb_fair_low[oid] = float(lo)
                     gb_fair_high[oid] = float(hi)
+                    if fill is not None and pd.notna(fill):
+                        gb_spec_fill[oid] = float(fill)
 
         # Per-listing feature attribution for the deal-card "why this
         # price?" expander. TreeSHAP on the median model — fast (one tree
@@ -1247,6 +1252,15 @@ def compute_signals(
             "city": listing.get("city", ""),
             "district": listing.get("district", ""),
             "mileage_km": mileage,
+            # Explicit missing-odometer flag for decide(): in high-mileage PT
+            # segments a null odometer makes the price model over-predict
+            # (it can't apply depreciation), so decide() widens the band +
+            # cuts confidence on these rows.
+            "mileage_missing": bool(pd.isna(mileage)),
+            # Discriminative-spec completeness (0–1) from predict_prices —
+            # decide() abstains below _MIN_SPEC_FILL (the model could only
+            # baseline-guess). None when the prediction carried no fill.
+            "spec_fill": gb_spec_fill.get(olx_id),
             "fuel_type": listing.get("fuel_type", ""),
             # LLM fields for display/warnings
             "desc_mentions_accident": bool(desc_mentions_accident) if pd.notna(desc_mentions_accident) else None,
