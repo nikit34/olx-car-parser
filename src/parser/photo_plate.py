@@ -101,7 +101,21 @@ class PlateReader:
     MIN_CONFIDENCE = 0.30
 
     def __init__(self, gpu: bool = False) -> None:
+        import warnings
+
         import easyocr  # heavy: defer to instantiation
+
+        # EasyOCR's internal recognition DataLoader hardcodes
+        # ``pin_memory=True``; on the M1 scrape host torch's accelerator is
+        # MPS, which doesn't support pinned host memory, so every ``readtext``
+        # emits a cosmetic UserWarning ("pinned memory won't be used"). OCR
+        # runs on CPU regardless and we can't reach the library's DataLoader,
+        # so silence just that one message.
+        warnings.filterwarnings(
+            "ignore",
+            message=r".*pin_memory.*not supported on MPS",
+            category=UserWarning,
+        )
         self._reader = easyocr.Reader(["en"], gpu=gpu, verbose=False)
         # Mirror DamageClassifier / ExteriorFilter — easyocr's underlying
         # torch model isn't safe to call concurrently from N threads.
