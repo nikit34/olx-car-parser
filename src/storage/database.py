@@ -38,7 +38,11 @@ def get_engine(db_path: str | None = None):
             # recover from the next run anyway).
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA synchronous=NORMAL")
-            cursor.execute("PRAGMA busy_timeout=30000")
+            # 5 min: a writer waits out the lock instead of crashing. The
+            # scrape worker holds the write lock for minutes during the
+            # market_stats commit (longer under full coverage), and batch jobs
+            # like detect_relists used to die instantly on the old 30 s.
+            cursor.execute("PRAGMA busy_timeout=300000")
             # 64 MB page cache — keeps the hot working set (active listings,
             # indexes, recent snapshots) in memory instead of paging from disk.
             cursor.execute("PRAGMA cache_size=-65536")

@@ -1235,8 +1235,19 @@ def record_relist_events(session: Session, events_df: pd.DataFrame) -> int:
     """
     if events_df is None or events_df.empty:
         return 0
+    # Detection can surface the same (original, relist) pair more than once;
+    # keep the last so the no-autoflush loop below can't insert a duplicate
+    # that trips the unique constraint at commit.
+    events_df = events_df.drop_duplicates(
+        subset=["original_olx_id", "relist_olx_id"], keep="last")
 
     inserted = 0
+    # Disable autoflush for the loop: each per-row existence ``.first()`` would
+    # otherwise flush pending INSERTs and contend for the SQLite write lock on
+    # every iteration. Under full-coverage runs the scrape worker holds that
+    # lock for minutes, which crashed this loop with "database is locked".
+    # Defer all writes to the single commit (which waits up to busy_timeout).
+    session.autoflush = False
     for _, row in events_df.iterrows():
         existing = session.query(RelistEvent).filter_by(
             original_olx_id=row["original_olx_id"],
@@ -1295,7 +1306,10 @@ def record_relist_events(session: Session, events_df: pd.DataFrame) -> int:
         )
         session.add(ev)
         inserted += 1
-    session.commit()
+    try:
+        session.commit()
+    finally:
+        session.autoflush = True
     return inserted
 
 
