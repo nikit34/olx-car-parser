@@ -862,8 +862,12 @@ def verify_photos(
         from ``photo_damage_p`` so alerts/dashboard threshold logic on the
         max-score keeps working untouched (additive field).
 
-    Plus four plate-detection keys (PT license-plate OCR on the same
-    exterior photos):
+    Plus four plate-detection keys (PT license-plate OCR), written ONLY by
+    the ``--backfill-plates`` pass — the steady-state damage pass no longer
+    runs EasyOCR inline (it was the dominant per-listing cost; the plate
+    signal is weak). Rows verified for damage land with these keys absent and
+    are picked up by the dedicated plate pass later. On the same exterior
+    photos as the damage classifier:
       • ``plate_texts`` — per-photo ``[{"idx": int, "text": "AA-00-AA",
         "confidence": float}, ...]`` for photos where a PT-formatted plate
         was readable. ``idx`` matches ``photo_damages`` so a listing's
@@ -888,7 +892,8 @@ def verify_photos(
     record as the no-photos path (``photo_damage_n_photos=len(original)``,
     ``photo_damage_n_exterior=0``, no flag). The plate reader runs on the
     same exterior set; non-exterior shots are skipped (plates rarely
-    survive a wheel close-up or dashboard frame anyway).
+    survive a wheel close-up or dashboard frame anyway) — but only in
+    ``--backfill-plates`` mode, see below.
 
     ``--backfill-plates``: one-shot retro-fit for rows verified before the
     plate reader landed. Selects ``photo_damage_p IS NOT NULL AND
@@ -928,8 +933,20 @@ def verify_photos(
     log.info("Loading CLIP exterior filter (issue #3 OOD pre-filter)...")
     exterior_filter = ExteriorFilter()
     log.info("CLIP filter device: %s", exterior_filter.device)
-    log.info("Loading EasyOCR plate reader (CPU)...")
-    plate_reader = PlateReader()
+    if backfill_plates:
+        log.info("Loading EasyOCR plate reader (CPU)...")
+        plate_reader = PlateReader()
+    else:
+        # Steady-state damage pass no longer runs plate OCR inline. EasyOCR
+        # on CPU was the dominant per-listing cost (the verify step was
+        # crawling at ~0.1 listing/s on the 8 GB runner and timing out at
+        # its 90-min cap), and the plate signal is weak — ``plate_obscured``
+        # is a low-weight, noise-prone flipper feature slated for downweight.
+        # Plates are filled by the dedicated ``--backfill-plates`` pass,
+        # which selects exactly these rows once they have a damage score
+        # (``photo_damage_p IS NOT NULL AND plate_readable IS NULL``).
+        # Leaving the reader unloaded keeps the heavy model off the hot path.
+        plate_reader = None
 
     # Default selection: active OLX/StandVirtual listings missing
     # photo_damage_p in llm_extras (steady-state cron). The
@@ -1098,26 +1115,29 @@ def verify_photos(
                     {"idx": idx, "p": round(float(photo.p_damaged), 4)}
                     for (idx, _), photo in zip(exterior_indexed, pred.photos)
                 ]
-            # Plate OCR on the same exterior set. ``read_photos`` preserves
-            # ordering and emits ``None`` for photos with no readable PT
-            # plate; we pair those back with the original idx and drop
-            # blanks before persisting.
-            plate_results = plate_reader.read_photos(photo_paths)
+            # Plate OCR on the same exterior set — only in --backfill-plates
+            # mode (``plate_reader`` is None on the steady-state damage path,
+            # see the load guard above). ``read_photos`` preserves ordering
+            # and emits ``None`` for photos with no readable PT plate; we pair
+            # those back with the original idx and drop blanks before
+            # persisting.
             plate_per_photo: list[dict] = []
             plate_primary: str | None = None
-            best_conf: float = -1.0
-            for (idx, _), pr in zip(exterior_indexed, plate_results):
-                if pr is None:
-                    continue
-                plate_per_photo.append({
-                    "idx": idx,
-                    "text": pr.text,
-                    "confidence": round(float(pr.confidence), 4),
-                })
-                if pr.confidence > best_conf:
-                    best_conf = float(pr.confidence)
-                    plate_primary = pr.text
-            plate_per_photo.sort(key=lambda d: d["idx"])
+            if plate_reader is not None:
+                plate_results = plate_reader.read_photos(photo_paths)
+                best_conf: float = -1.0
+                for (idx, _), pr in zip(exterior_indexed, plate_results):
+                    if pr is None:
+                        continue
+                    plate_per_photo.append({
+                        "idx": idx,
+                        "text": pr.text,
+                        "confidence": round(float(pr.confidence), 4),
+                    })
+                    if pr.confidence > best_conf:
+                        best_conf = float(pr.confidence)
+                        plate_primary = pr.text
+                plate_per_photo.sort(key=lambda d: d["idx"])
             return (
                 olx_id, pred_max_p, n_total, n_exterior,
                 per_photo, pred_is_damaged,
@@ -1176,15 +1196,20 @@ def verify_photos(
                 # Drop the 2026-05-02 backfill marker once a row gets real
                 # multi-photo inference — the boolean above is now authoritative.
                 extras.pop("photo_damage_flag_source", None)
-            # PT plate OCR — same exterior set as the damage classifier.
-            # ``plate_per_photo`` already sorted by idx in _verify_one. Always
-            # written, including in --backfill-plates mode (that's the whole
-            # point of the mode — retro-fit these four fields onto rows that
-            # already have damage scores from a pre-plate run).
-            extras["plate_texts"] = plate_per_photo
-            extras["plate_n_readable"] = len(plate_per_photo)
-            extras["plate_readable"] = bool(plate_per_photo)
-            extras["plate_text_primary"] = plate_primary
+            # PT plate OCR fields — written ONLY by the --backfill-plates
+            # pass (the only mode that runs EasyOCR now). The steady-state
+            # damage pass deliberately leaves them absent: writing
+            # ``plate_readable=False`` here would strand the row, because the
+            # backfill selection filter is ``plate_readable IS NULL`` (NULL
+            # != False) and it would then never be picked up. Absent plate
+            # fields read as "not yet verified" (None) everywhere downstream
+            # (computed_columns / flipper / price_model are all tri-state on
+            # ``plate_readable``). ``plate_per_photo`` already sorted by idx.
+            if backfill_plates:
+                extras["plate_texts"] = plate_per_photo
+                extras["plate_n_readable"] = len(plate_per_photo)
+                extras["plate_readable"] = bool(plate_per_photo)
+                extras["plate_text_primary"] = plate_primary
             if not dry_run:
                 listing.llm_extras = json.dumps(extras, ensure_ascii=False)
             # Count real writes (vs. error/skip rows). Used by the

@@ -684,7 +684,47 @@ class TestVerifyPhotosPlateOCR:
 
     Photos sharing ``idx`` semantics with ``photo_damages`` so callers can
     join the two arrays by index.
+
+    NB: EasyOCR no longer runs on the steady-state damage path (it was the
+    dominant per-listing cost — verify-photos was timing out at its 90-min
+    cap). Plate OCR runs ONLY under ``--backfill-plates``, so every plate
+    test here seeds a prior ``photo_damage_p`` (the backfill selection
+    filter is ``photo_damage_p IS NOT NULL AND plate_readable IS NULL``)
+    and drives ``backfill_plates=True``. ``test_default_mode_skips_plate_fields``
+    pins the steady-state invariant.
     """
+
+    def test_default_mode_skips_plate_fields(
+        self, db_session, monkeypatch, tmp_path,
+    ):
+        """Steady-state damage pass writes the damage_* fields but leaves the
+        four plate_* keys absent — EasyOCR is off the hot path. Absence
+        (``plate_readable IS NULL``) is exactly what makes the row eligible
+        for the dedicated backfill pass; writing ``False`` would strand it."""
+        olx_id = "olx-plate-default"
+        _seed_listing(
+            db_session,
+            olx_id=olx_id,
+            url=f"https://standvirtual.com/test/{olx_id}",
+        )
+        _run_verify(
+            db_session, monkeypatch, tmp_path,
+            photo_urls_by_listing={
+                olx_id: [f"{olx_id}#{i}" for i in range(1, 4)],
+            },
+            # A plate is 'configured' but default mode must not read it.
+            plates_by_idx={olx_id: {1: ("AB-12-CD", 0.9)}},
+        )
+        listing = db_session.query(Listing).filter_by(olx_id=olx_id).one()
+        extras = json.loads(listing.llm_extras)
+
+        # Damage path ran...
+        assert "photo_damage_p" in extras
+        # ...but no plate keys were written (row stays plate_readable IS NULL).
+        assert "plate_readable" not in extras
+        assert "plate_texts" not in extras
+        assert "plate_n_readable" not in extras
+        assert "plate_text_primary" not in extras
 
     def test_writes_plate_fields_when_one_photo_readable(
         self, db_session, monkeypatch, tmp_path,
@@ -694,6 +734,7 @@ class TestVerifyPhotosPlateOCR:
             db_session,
             olx_id=olx_id,
             url=f"https://standvirtual.com/test/{olx_id}",
+            llm_extras={"photo_damage_p": 0.1},
         )
         _run_verify(
             db_session, monkeypatch, tmp_path,
@@ -702,6 +743,7 @@ class TestVerifyPhotosPlateOCR:
             },
             # Only photo #2 has a readable plate.
             plates_by_idx={olx_id: {2: ("AB-12-CD", 0.85)}},
+            backfill_plates=True,
         )
         listing = db_session.query(Listing).filter_by(olx_id=olx_id).one()
         extras = json.loads(listing.llm_extras)
@@ -724,6 +766,7 @@ class TestVerifyPhotosPlateOCR:
             db_session,
             olx_id=olx_id,
             url=f"https://standvirtual.com/test/{olx_id}",
+            llm_extras={"photo_damage_p": 0.1},
         )
         _run_verify(
             db_session, monkeypatch, tmp_path,
@@ -731,6 +774,7 @@ class TestVerifyPhotosPlateOCR:
                 olx_id: [f"{olx_id}#{i}" for i in range(1, 4)],
             },
             # No plates_by_idx entries → every read_photo returns None.
+            backfill_plates=True,
         )
         listing = db_session.query(Listing).filter_by(olx_id=olx_id).one()
         extras = json.loads(listing.llm_extras)
@@ -751,6 +795,7 @@ class TestVerifyPhotosPlateOCR:
             db_session,
             olx_id=olx_id,
             url=f"https://standvirtual.com/test/{olx_id}",
+            llm_extras={"photo_damage_p": 0.1},
         )
         _run_verify(
             db_session, monkeypatch, tmp_path,
@@ -762,6 +807,7 @@ class TestVerifyPhotosPlateOCR:
                 3: ("AB-12-CD", 0.92),  # highest
                 4: ("AB-12-CD", 0.60),
             }},
+            backfill_plates=True,
         )
         listing = db_session.query(Listing).filter_by(olx_id=olx_id).one()
         extras = json.loads(listing.llm_extras)
@@ -777,12 +823,22 @@ class TestVerifyPhotosPlateOCR:
     ):
         """Plate reader runs ONLY on the CLIP-exterior subset — same idx
         space as ``photo_damages`` so callers can join by ``idx`` without
-        worrying about non-exterior frames sneaking back in."""
+        worrying about non-exterior frames sneaking back in. The backfill
+        pass preserves the prior ``photo_damages`` array; we assert the
+        plate idx universe matches it."""
         olx_id = "olx-plate-004"
         _seed_listing(
             db_session,
             olx_id=olx_id,
             url=f"https://standvirtual.com/test/{olx_id}",
+            # Prior damage run already scored the exterior set {1, 3}.
+            llm_extras={
+                "photo_damage_p": 0.1,
+                "photo_damages": [
+                    {"idx": 1, "p": 0.1},
+                    {"idx": 3, "p": 0.05},
+                ],
+            },
         )
         _run_verify(
             db_session, monkeypatch, tmp_path,
@@ -797,6 +853,7 @@ class TestVerifyPhotosPlateOCR:
                 3: ("12-AB-34", 0.80),
                 4: ("XX-XX-XX", 0.99),
             }},
+            backfill_plates=True,
         )
         listing = db_session.query(Listing).filter_by(olx_id=olx_id).one()
         extras = json.loads(listing.llm_extras)
@@ -806,7 +863,7 @@ class TestVerifyPhotosPlateOCR:
             {"idx": 3, "text": "12-AB-34", "confidence": 0.8},
         ]
         assert extras["plate_text_primary"] == "12-AB-34"
-        # And the damage array's exterior set matches — same idx universe.
+        # Preserved damage array's exterior set matches — same idx universe.
         assert [d["idx"] for d in extras["photo_damages"]] == [1, 3]
 
     def test_no_photos_yields_empty_plate_record(
@@ -819,6 +876,7 @@ class TestVerifyPhotosPlateOCR:
             db_session,
             olx_id=olx_id,
             url=f"https://standvirtual.com/test/{olx_id}",
+            llm_extras={"photo_damage_p": 0.1},
         )
         _run_verify(
             db_session, monkeypatch, tmp_path,
@@ -826,6 +884,7 @@ class TestVerifyPhotosPlateOCR:
                 olx_id: [f"{olx_id}#{i}" for i in range(1, 3)],
             },
             fail_indices={olx_id: {1, 2}},
+            backfill_plates=True,
         )
         listing = db_session.query(Listing).filter_by(olx_id=olx_id).one()
         extras = json.loads(listing.llm_extras)

@@ -34,6 +34,17 @@ permissions:
 env:
   WITH_LLM: ${{ github.event_name == 'schedule' && 'true' || inputs.with_llm }}
   IS_DEEP: ${{ github.event.schedule == '37 4 * * *' || inputs.deep == 'true' }}
+  # The only HF Hub consumer in this pipeline is the CLIP exterior filter
+  # (openai/clip-vit-base-patch32) loaded by the photo-verify steps. Its
+  # weights are already cached on the persistent self-hosted runner, but
+  # huggingface_hub still fired ~20 HEAD/GET requests to resolve refs on
+  # every run before each load. Pin offline so from_pretrained reads the
+  # local cache only — no network roundtrips, faster step startup. Safe
+  # because the cache persists across runs; a (very unlikely) cache miss
+  # surfaces as a warning on the continue-on-error photo steps, not a job
+  # failure. EasyOCR uses its own cache (~/.EasyOCR), unaffected by these.
+  HF_HUB_OFFLINE: "1"
+  TRANSFORMERS_OFFLINE: "1"
 
 # Single-runner self-hosted setup — only one scrape can hold the SQLite DB
 # at a time anyway, so we cancel any in-flight run when a new cron fires
