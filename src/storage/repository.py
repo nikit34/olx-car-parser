@@ -56,6 +56,13 @@ def upsert_listing(session: Session, data: dict) -> Listing:
     from src.parser.brand_normalize import normalize_brand
     if "brand" in data:
         data["brand"] = normalize_brand(data["brand"])
+    # Same idea for fuel_type: OLX "Eléctrico" / SV "Elétrico" and the
+    # Plug-in/Plug-In case split are the same powertrain — collapse them so
+    # the model doesn't see fragmented categories. Heals existing rows on the
+    # next (full-coverage) scrape, which re-upserts everything.
+    from src.parser.fuel_normalize import normalize_fuel_type
+    if "fuel_type" in data:
+        data["fuel_type"] = normalize_fuel_type(data["fuel_type"])
 
     listing = session.query(Listing).filter_by(olx_id=data["olx_id"]).first()
     now = _utcnow()

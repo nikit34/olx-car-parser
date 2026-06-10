@@ -33,7 +33,7 @@ def _fuel_group(value) -> str:
     fl = str(value).lower()
     if "diesel" in fl:
         return "Diesel"
-    if "eléctrico" in fl or "electr" in fl:
+    if "eléctric" in fl or "elétric" in fl or "electr" in fl:
         return "Electric"
     if "plug" in fl:
         return "Plug-in Hybrid"
@@ -390,7 +390,7 @@ def _sub_segment(fuel_type, engine_cc) -> str:
         fl = str(fuel_type).lower()
         if "diesel" in fl:
             fuel = "diesel"
-        elif "eléctrico" in fl or "electr" in fl:
+        elif "eléctric" in fl or "elétric" in fl or "electr" in fl:
             fuel = "electric"
         elif "híbrido" in fl or "hybrid" in fl:
             fuel = "hybrid"
