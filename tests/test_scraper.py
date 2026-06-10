@@ -17,6 +17,7 @@ from src.parser.scraper import (
     _merge_details,
     _offer_to_raw,
     _parse_pt_date,
+    _strip_desc_chrome,
 )
 
 
@@ -396,6 +397,21 @@ class TestOlxApiOfferParsing:
         assert "&amp;" not in raw.description  # entity unescaped
         assert "impecável" in raw.description
 
+    def test_description_br_plus_newline_not_doubled(self):
+        # OLX's API HTML carries a <br> AND the author's literal newline per
+        # line break; the cleaner must collapse them to a single \n instead of
+        # the blank line that previously made ~37% of descriptions double-spaced.
+        offer = _olx_offer(description="113.500<br/>\nKms<br />\nTesla Model 3")
+        raw = _offer_to_raw(offer)
+        assert raw.description == "113.500\nKms\nTesla Model 3"
+        assert "\n\n" not in raw.description
+
+    def test_description_double_br_keeps_paragraph_gap(self):
+        # A genuine <br><br> paragraph break still survives as one blank line.
+        offer = _olx_offer(description="Parágrafo um.<br/><br/>\nParágrafo dois.")
+        raw = _offer_to_raw(offer)
+        assert raw.description == "Parágrafo um.\n\nParágrafo dois."
+
     def test_posted_at_is_naive_datetime(self):
         raw = _offer_to_raw(_olx_offer())
         posted = getattr(raw, "_posted_at", None)
@@ -419,6 +435,32 @@ class TestOlxApiOfferParsing:
             raw = _offer_to_raw(o)
             assert raw.olx_id  # never blank
             assert not raw.olx_id.isdigit()  # slug, not numeric id
+
+
+class TestDescriptionChromeStrip:
+    def test_strips_anotacoes_reportar_prefix(self):
+        # The dominant pattern: detail-page get_text() captures the icon-button
+        # labels as the first two lines before the real description.
+        out = _strip_desc_chrome("Anotações\nReportar\nRENAULT CLIO 2014\n5 portas")
+        assert out == "RENAULT CLIO 2014\n5 portas"
+
+    def test_strips_descricao_heading_too(self):
+        out = _strip_desc_chrome("Descrição\nAnotações\nReportar\nVW Golf")
+        assert out == "VW Golf"
+
+    def test_keeps_text_when_no_chrome(self):
+        body = "VW Polo 1.0\nÚnico dono\nManutenção em dia"
+        assert _strip_desc_chrome(body) == body
+
+    def test_only_strips_from_top(self):
+        # A real line that merely contains a label word is never touched, and
+        # stripping stops at the first non-chrome line.
+        out = _strip_desc_chrome("Anotações\nCarro impecável\nReportar avarias: nenhuma")
+        assert out == "Carro impecável\nReportar avarias: nenhuma"
+
+    def test_empty_and_none_safe(self):
+        assert _strip_desc_chrome("") == ""
+        assert _strip_desc_chrome(None) is None
 
 
 class TestOlxApiSearchPage:

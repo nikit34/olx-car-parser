@@ -431,10 +431,14 @@ class OlxScraper:
             if gallery:
                 details["photo_count"] = len(gallery.find_all("img"))
 
-        # Description text
+        # Description text. OLX injects "Anotações"/"Reportar" icon-button
+        # labels and a "Descrição" heading as bare leading text inside this
+        # container, so strip that chrome off the top before storing.
         desc_el = soup.select_one("[data-cy='ad_description'] div") or soup.select_one("[data-testid='ad-description']")
         if desc_el:
-            details["description"] = desc_el.get_text(separator="\n", strip=True)
+            details["description"] = _strip_desc_chrome(
+                desc_el.get_text(separator="\n", strip=True)
+            )
 
         # Posted/updated date
         posted_el = soup.select_one("[data-testid='ad-posted-at']")
@@ -915,15 +919,46 @@ _API_INT_FIELDS = frozenset({"year", "mileage_km", "engine_cc", "horsepower", "s
 
 
 def _clean_html_description(desc: str) -> str:
-    """Turn the API's HTML description into plain text (unescape + drop tags)."""
+    """Turn the API's HTML description into plain text (unescape + drop tags).
+
+    OLX's API HTML carries BOTH a ``<br>`` and the author's literal newline for
+    every line break, so a naive ``<br>``→``\\n`` doubled each break into a blank
+    line (≈37% of stored descriptions came out double-spaced). Collapse each
+    ``<br>`` together with one adjacent newline so a single visual break maps to
+    a single ``\\n``; a genuine ``<br><br>`` paragraph gap still yields ``\\n\\n``.
+    """
     import html as _html
-    text = _html.unescape(desc)
-    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+    text = _html.unescape(desc).replace("\r\n", "\n").replace("\r", "\n")
+    # <br> + one adjacent literal newline (either side) collapses to one break.
+    text = re.sub(r"\n?[ \t]*<br\s*/?>[ \t]*\n?", "\n", text, flags=re.IGNORECASE)
     text = re.sub(r"<[^>]+>", "", text)
-    # Collapse runs of blank lines / trailing whitespace.
+    # Collapse trailing whitespace and runs of blank lines.
     text = re.sub(r"[ \t]+\n", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+# OLX renders icon-only action buttons (save-to-notes, report) and the
+# "Descrição" heading as bare label text at the very top of the description
+# container, so the detail page's get_text() captures them as leading lines
+# ("Anotações", "Reportar", …). They are never part of the author's text;
+# ≈12k stored descriptions begin with this chrome. Drop any run of them from
+# the top, stopping at the first real line.
+_OLX_DESC_CHROME = frozenset({
+    "Descrição", "Anotações", "Reportar", "Observar", "Denunciar",
+    "Partilhar", "Guardar",
+})
+
+
+def _strip_desc_chrome(text: str) -> str:
+    """Drop leading OLX UI-chrome labels from a scraped description."""
+    if not text:
+        return text
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines) and lines[i].strip() in _OLX_DESC_CHROME:
+        i += 1
+    return "\n".join(lines[i:]).lstrip("\n")
 
 
 def _parse_iso_dt(value: str | None):

@@ -111,15 +111,20 @@ def _format_deal(row: dict, photo_urls: list[str]) -> dict:
             pass
 
     # Full description — the card's expanded view shows it in full. Preserve
-    # the source's line breaks: OLX descriptions are commonly a "• ..." list
-    # (scraper.py captures them via get_text(separator="\n")), and the card's
-    # <div class="desc"> uses white-space: pre-wrap to render them on their own
-    # lines instead of one run-on paragraph. Only normalise CRLF, trim trailing
-    # spaces per line, and collapse 3+ blank lines to one so a paragraph gap
-    # survives without yawning vertical gaps.
+    # per-line breaks (OLX descriptions are commonly a "• ..." list) so the
+    # card's <div class="desc"> (white-space: pre-wrap) renders each item on its
+    # own line. But OLX's API HTML doubled every break into a blank line (the
+    # <br>+literal-newline bug, fixed in scraper._clean_html_description); legacy
+    # rows scraped before that fix still carry \n\n. Collapse ALL blank lines to
+    # a single break so cards match the source's tight, single-spaced layout.
+    # Legacy rows from the detail path also lead with OLX UI chrome
+    # ("Anotações"/"Reportar"); strip it here so the ≈12k rows scraped before
+    # the scraper fix render clean without a DB migration.
+    from src.parser.scraper import _strip_desc_chrome
     desc = (row.get("description") or "").replace("\r\n", "\n").replace("\r", "\n")
+    desc = _strip_desc_chrome(desc)
     desc = re.sub(r"[ \t]+\n", "\n", desc)
-    desc = re.sub(r"\n{3,}", "\n\n", desc).strip()
+    desc = re.sub(r"\n{2,}", "\n", desc).strip()
 
     first_seen_raw = row.get("first_seen_at")
     first_seen_iso = None
