@@ -97,13 +97,21 @@ jobs:
           fi
 
       - name: Kick off background plate-OCR backfill
-        # Plate-OCR backfill works on legacy rows (photo_damage_p IS NOT NULL
-        # AND plate_readable IS NULL) — completely disjoint from listings
-        # Scrape is currently writing, so the only shared resource is the
-        # SQLite write lock. With --limit 200 at ~30/min the backfill runs
-        # ~7 min; scrape's heavy market_stats commit doesn't kick in until
-        # the very tail of scrape (~30+ min in on shallow, later on deep),
-        # so the lock contention window is small. No Ollama dependency
+        # Plate-OCR backfill works on damage-verified rows still missing
+        # plates (photo_damage_p IS NOT NULL AND plate_readable IS NULL).
+        # Since EasyOCR moved off the steady-state damage path this is the
+        # ONLY pass that fills plates, so its cohort is now the full stream
+        # of newly-damage-verified rows, not just pre-plate legacy ones.
+        # Disjoint from listings Scrape is currently writing, so the only
+        # shared resource is the SQLite write lock. --limit 500 at ~30/min
+        # runs ~17 min (up from 200/~7 min — widened deliberately to keep
+        # plate coverage growing ahead of the ~July seller/flipper re-tune
+        # that decides plate_obscured's fate; its May permutation-importance
+        # read 0.0 but was confounded by sparse plate data). ~17 min still
+        # finishes before scrape's heavy market_stats commit (~30+ min into
+        # scrape) and stays under the Wait step's 45-min backstop — but the
+        # contention window is wider than at 200, so revisit if lock-retry
+        # warnings climb. No Ollama dependency
         # either (cli.py:873 — backfill_plates skips DamageClassifier and
         # uses CLIP + EasyOCR only), so this doesn't fight inline LLM
         # workers for the model pool. The matching "Wait for background
@@ -132,7 +140,7 @@ jobs:
             exit 0
           fi
           ulimit -n 4096
-          nohup bash -c '.venv/bin/python -m src.cli verify-photos --backfill-plates --workers 2 --limit 200 > /tmp/plate_backfill.log 2>&1; echo $? > /tmp/plate_backfill.rc' &
+          nohup bash -c '.venv/bin/python -m src.cli verify-photos --backfill-plates --workers 2 --limit 500 > /tmp/plate_backfill.log 2>&1; echo $? > /tmp/plate_backfill.rc' &
           PID=$!
           echo $PID > /tmp/plate_backfill.pid
           disown
@@ -320,17 +328,23 @@ jobs:
       - name: Wait for background plate-OCR backfill
         # Backfill was kicked off right after venv setup and has been
         # running concurrently with Scrape / Enrich / Backfill sellers /
-        # Verify photos. By the time we hit this step, the ~7-min job is
-        # almost always done — this just collects the log and surfaces
-        # the exit code. Polls on the PID instead of `wait` because the
-        # process was started from a different shell session (GHA step).
-        # Fallback to synchronous run only if no background job is
-        # tracked (kickoff was skipped for missing weights, then weights
-        # appeared somehow) — preserves the old behavior as a safety net.
+        # Verify photos. By the time we hit this step, the ~17-min job
+        # (--limit 500 at ~30/min) is almost always done — this just
+        # collects the log and surfaces the exit code. Polls on the PID
+        # instead of `wait` because the process was started from a
+        # different shell session (GHA step). Fallback to synchronous run
+        # only if no background job is tracked (kickoff was skipped for
+        # missing weights, then weights appeared somehow) — preserves the
+        # old behavior as a safety net.
         if: ${{ !cancelled() }}
         env:
           PYTHONPATH: ${{ github.workspace }}
-        timeout-minutes: 30
+        # 45 (not 30): --limit 500 is ~17 min at the nominal ~30/min, but on
+        # a busy 8 GB box EasyOCR can slow to ~17/min (~30 min). 45 keeps the
+        # whole pass inside the step even on a slow day, so the backfill
+        # finishes here rather than slopping into the inter-cron gap to be
+        # reaped by the next run.
+        timeout-minutes: 45
         continue-on-error: true
         run: |
           if [ -f /tmp/plate_backfill.pid ]; then
@@ -346,7 +360,7 @@ jobs:
             fi
           elif [ -f data/damage_classifier_v2.pt ]; then
             ulimit -n 4096
-            .venv/bin/python -m src.cli verify-photos --backfill-plates --workers 2 --limit 200
+            .venv/bin/python -m src.cli verify-photos --backfill-plates --workers 2 --limit 500
           else
             echo "Skipping plate-OCR — weights missing and no background job ran"
           fi
