@@ -70,6 +70,12 @@ class DecisionContext:
     calibration_resid_pct: Mapping[tuple, float] = field(default_factory=dict)
     """Median (sold_ask − predicted) / predicted × 100 per segment."""
 
+    seg_mileage_p90: Mapping[tuple, float] = field(default_factory=dict)
+    """90th-percentile odometer of the segment's comps. A listing whose
+    mileage sits far past this is in the model's extrapolation zone — the
+    price prediction is unreliable (it's being valued against materially
+    lower-mileage cars), so :func:`decide` treats it like a low-feature row."""
+
     coverage_80: float | None = None
     """Latest CQR 80%-band empirical coverage; <0.7 → distrust the band."""
 
@@ -221,11 +227,32 @@ def build_context(
                 if early > 0:
                     trend_90d_pct[key] = round((late - early) / early * 100, 2)
 
+    # --- Segment odometer distribution (extrapolation guard). --------------
+    # p90 mileage of each segment's comps — the bar past which a listing is
+    # being valued against materially lower-mileage cars (model extrapolation).
+    # Active, non-duplicate listings with a real odometer; needs a few comps
+    # for the percentile to mean anything (segments below this are caught by
+    # the ≥_MIN_SAMPLE gate in decide anyway).
+    seg_mileage_p90: dict[tuple, float] = {}
+    if "mileage_km" in df.columns:
+        mdf = df[is_active].copy()
+        mdf["__km"] = pd.to_numeric(mdf["mileage_km"], errors="coerce")
+        mdf = mdf[mdf["__km"] > 0]
+        if not mdf.empty:
+            for (b, m, gn), grp in mdf.groupby(["brand", "model", "generation"], dropna=False):
+                if len(grp) >= _MIN_SAMPLE:
+                    seg_mileage_p90[_segkey(b, m, gn)] = float(grp["__km"].quantile(0.90))
+            for (b, m), grp in mdf.groupby(["brand", "model"], dropna=False):
+                key = (b, m, None)
+                if key not in seg_mileage_p90 and len(grp) >= _MIN_SAMPLE:
+                    seg_mileage_p90[key] = float(grp["__km"].quantile(0.90))
+
     return DecisionContext(
         dom_median=dom_median,
         dom_fast_share=dom_fast_share,
         trend_90d_pct=trend_90d_pct,
         calibration_resid_pct=calibration_resid_pct,
+        seg_mileage_p90=seg_mileage_p90,
         coverage_80=coverage_80,
     )
 
@@ -282,6 +309,16 @@ _WATCH_SCORE = 15.0
 _LOW_FEATURE_BAND_ADD = 0.12    # absolute, added to band_frac
 _LOW_FEATURE_CONF = 0.55        # multiplier on final confidence
 _MIN_SPEC_FILL = 0.5            # need ≥2 of 4 discriminative specs present
+# Odometer extrapolation guard (2026-06-10). A third low-confidence trigger,
+# orthogonal to the missing-spec ones above: all specs may be present and the
+# CQR band tight, yet the car's mileage sits far past anything in its segment
+# (e.g. a 205k-km Smart 0.8 CDI valued against ~78k-km comps — often because
+# the generation is mislabelled, but the symptom generalises to any car priced
+# off materially lower-mileage peers). The GBM then values it like a much
+# lower-mileage car → phantom "deal". When mileage > this factor × the
+# segment's p90, treat it like a low-feature row (widen band → NO_OPINION at
+# the gate, cut confidence). Systematic — no per-model curation.
+_MILEAGE_OOD_FACTOR = 1.25
 # Anomaly hard-gate (feature-space outlier from
 # ``src.analytics.anomaly``). 0.90 keeps v2's contamination=0.05
 # top-tail but only rejects on the very tip — plenty of legitimately
@@ -409,14 +446,34 @@ def decide(
     spec_fill = g("spec_fill")
     has_spec_fill = spec_fill is not None and pd.notna(spec_fill)
     low_spec = has_spec_fill and float(spec_fill) < _MIN_SPEC_FILL
-    low_feature_conf = mileage_missing or low_spec
+
+    # (3) Odometer extrapolation: specs may all be present, but the car's
+    # mileage sits far past its segment's p90 — the model is valuing it
+    # against materially lower-mileage comps (the 205k-km Smart 0.8 CDI case).
+    # Same low-confidence treatment as the missing-spec triggers.
+    mileage_ood = False
+    seg_p90 = _lookup_with_fallback(ctx.seg_mileage_p90, brand, model, gen)
+    mv_ood = g("mileage_km")
+    if (not mileage_missing and not pd.isna(seg_p90) and seg_p90 > 0
+            and mv_ood is not None and pd.notna(mv_ood)
+            and float(mv_ood) > seg_p90 * _MILEAGE_OOD_FACTOR):
+        mileage_ood = True
+        components["mileage_km"] = float(mv_ood)
+        components["seg_mileage_p90"] = round(seg_p90)
+
+    low_feature_conf = mileage_missing or low_spec or mileage_ood
     if low_feature_conf:
         if mileage_missing:
             components["mileage_missing"] = True
         if has_spec_fill:
             components["spec_fill"] = round(float(spec_fill), 2)
-        why = ("odometer missing" if mileage_missing
-               else f"only {float(spec_fill):.0%} of key specs present")
+        if mileage_ood:
+            why = (f"odometer {float(mv_ood):,.0f} km ≫ segment p90 "
+                   f"{seg_p90:,.0f} km — valued against lower-mileage comps")
+        elif mileage_missing:
+            why = "odometer missing"
+        else:
+            why = f"only {float(spec_fill):.0%} of key specs present"
         reasons.append(
             f"{why} — model could only baseline-guess; band widened + confidence cut"
         )

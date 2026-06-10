@@ -143,6 +143,28 @@ def test_present_mileage_is_not_penalised():
     assert "mileage_missing" not in d.components
 
 
+def test_mileage_far_past_segment_p90_downgrades_phantom_buy():
+    """Odometer extrapolation guard: a car whose mileage sits far past its
+    segment's p90 is being valued against lower-mileage comps (the 205k-km
+    Smart 0.8 CDI case) — it must not stay a BUY."""
+    ctx = _ctx(seg_mileage_p90={("Volkswagen", "Golf", "Mk7"): 120000.0})
+    # In-distribution mileage (≤ p90): unaffected, still BUY.
+    ok = decide(_row(price_eur=8500, predicted_price=13000, mileage_km=110000), ctx)
+    assert ok.verdict == VERDICT_BUY
+    assert "seg_mileage_p90" not in ok.components
+    # Mileage ≫ p90 × factor: extrapolation → no longer BUY, reason explains why.
+    ood = decide(_row(price_eur=8500, predicted_price=13000, mileage_km=210000), ctx)
+    assert ood.verdict != VERDICT_BUY
+    assert ood.components.get("seg_mileage_p90") == 120000
+    assert any("p90" in r or "lower-mileage" in r for r in ood.reasons)
+
+
+def test_mileage_ood_guard_inert_without_segment_p90():
+    """No segment p90 (small/unknown segment) → guard can't fire, BUY stands."""
+    d = decide(_row(price_eur=8500, predicted_price=13000, mileage_km=210000), _ctx())
+    assert d.verdict == VERDICT_BUY
+
+
 def test_mileage_missing_confidence_cut_without_band():
     """When no band shipped the widening is a no-op, so the confidence
     multiplier must still bite (penalty can't be bypassed by a missing band)."""
