@@ -7,6 +7,7 @@ import multiprocessing
 import signal
 import sys
 import threading
+import time
 from hashlib import md5
 from pathlib import Path
 from queue import Queue, Empty, Full
@@ -48,6 +49,13 @@ def _load_scraper_config() -> dict:
         with open(cfg_path) as f:
             return (yaml.safe_load(f) or {}).get("scraper", {})
     return {}
+
+
+# How long to let the inline LLM workers drain the queue at shutdown before
+# terminating them and saving the rest raw. Bounds the scrape step on a cold
+# full-coverage run (huge new-listing backlog) so it can't time out; the tail
+# enriches across subsequent runs / via the `enrich` command.
+_LLM_DRAIN_BUDGET_S = 20 * 60
 
 
 def _llm_worker(in_q: multiprocessing.Queue, out_q: multiprocessing.Queue,
@@ -327,13 +335,12 @@ def scrape(
     llm_cfg = _get_llm_config()
     llm_enabled = _llm_available()
     if llm_enabled:
-        # Bounded queue provides back-pressure: the scraper blocks on put()
-        # once Ollama can't keep up, rather than buffering tens of thousands
-        # of descriptions in RAM. 2000 ≈ four hours of LLM headroom — large
-        # enough that scrape almost always finishes before the queue fills,
-        # so the scrape and LLM phases stop competing for the same wall
-        # budget. Each queued item is (id, title, desc) ≈ 3 KB → ~6 MB peak.
-        llm_in = multiprocessing.Queue(maxsize=2000)
+        # Bounded queue caps how much we buffer in RAM. The scraper enqueues
+        # non-blocking (saves raw when full — see _on_batch), and the shutdown
+        # drain is time-boxed (_LLM_DRAIN_BUDGET_S), so this is roughly the
+        # per-run inline-enrichment ceiling; the rest is saved raw and enriched
+        # on later runs. Each item (id, title, desc) ≈ 3 KB → ~3 MB peak.
+        llm_in = multiprocessing.Queue(maxsize=1000)
         llm_out = multiprocessing.Queue()
         llm_shutdown = multiprocessing.Event()
         num_workers = llm_workers if llm_workers is not None else llm_cfg.get("max_workers", 6)
@@ -552,12 +559,24 @@ def scrape(
              len(raw_listings) - len(sv_listings), len(sv_listings), len(raw_listings))
 
     if llm_enabled:
-        # 1. Stop LLM workers
+        # 1. Stop LLM workers — TIME-BOXED. On a cold full-coverage run the
+        #    queue holds up to maxsize new listings and Ollama (~10-15 s/item,
+        #    6 workers) can't drain that within the 90-min step budget; an
+        #    unbounded join here is what timed the step out. Give the workers a
+        #    bounded window to enrich what they can, then terminate — the
+        #    leftover-drain below saves the rest raw, and they get enriched on
+        #    a later run / via the `enrich` command.
         for _ in llm_procs:
             llm_in.put(None)
         llm_shutdown.set()
+        deadline = time.monotonic() + _LLM_DRAIN_BUDGET_S
         for p in llm_procs:
-            p.join()
+            p.join(timeout=max(1.0, deadline - time.monotonic()))
+        for p in llm_procs:
+            if p.is_alive():
+                log.warning("LLM worker still draining at budget — terminating")
+                p.terminate()
+                p.join(timeout=5)
 
         # 2. Drain leftover llm_in
         drained = 0
