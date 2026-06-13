@@ -2,7 +2,7 @@
   "name": "olx-flipper-club",
   "private": true,
   "version": "0.1.0",
-  "description": "Closed B2B feed of OLX/SV flip candidates — PIN auth, geo-sharded by district.",
+  "description": "Public flip-deal feed of OLX/SV candidates — one car at a time, Stripe deposit per listing to unlock the seller contact.",
   "scripts": {
     "dev": "wrangler dev --local",
     "deploy": "wrangler deploy",

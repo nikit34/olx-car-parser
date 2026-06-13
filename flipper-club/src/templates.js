@@ -1,6 +1,6 @@
-// Server-rendered HTML templates. Mobile-first, single-page master-detail
-// layout for the dashboard. Minimal inline JS — only used to toggle detail
-// panels on the dashboard list.
+// Server-rendered HTML. Public, mobile-first, ONE car per page. The seller's
+// OLX link is paywalled behind a Stripe deposit; everything else is visible so
+// the visitor can judge the deal before reserving.
 
 const ZONE_LABEL = {
   norte: "Norte (Porto · Braga · Aveiro)",
@@ -58,100 +58,77 @@ const BASE_CSS = `
   header { background: #fff; border-bottom: 1px solid #e5e7eb; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
   header h1 { margin: 0; font-size: 18px; font-weight: 600; }
   header .zone-tag { font-size: 12px; padding: 4px 10px; background: #eef2ff; color: #4338ca; border-radius: 999px; font-weight: 500; }
-  header nav a { margin-left: 16px; font-size: 14px; color: #374151; }
-  header form { display: inline; }
-  header button.logout { background: none; border: 0; color: #6b7280; font-size: 14px; cursor: pointer; padding: 0; }
-  header button.logout:hover { color: #b91c1c; }
-  main { padding: 20px; max-width: 1200px; margin: 0 auto; }
-  .toolbar { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; flex-wrap: wrap; }
-  .toolbar a { font-size: 13px; padding: 6px 12px; background: #fff; border: 1px solid #d1d5db; border-radius: 6px; color: #374151; }
-  .toolbar a.active { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
-  .toolbar .count { margin-left: auto; font-size: 13px; color: #6b7280; }
-  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 10px; overflow: hidden; transition: box-shadow 0.15s; }
-  .card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
-  .card-summary { display: grid; grid-template-columns: 120px 1fr auto; gap: 14px; padding: 12px; cursor: pointer; align-items: center; }
-  .card-summary img { width: 120px; height: 90px; object-fit: cover; border-radius: 4px; background: #e5e7eb; }
-  .card-summary .meta h3 { margin: 0 0 4px 0; font-size: 15px; font-weight: 600; line-height: 1.3; }
-  .card-summary .meta .sub { font-size: 13px; color: #6b7280; margin-bottom: 4px; }
-  .card-summary .meta .tags { font-size: 12px; color: #6b7280; }
-  .card-summary .meta .tags span { display: inline-block; margin-right: 10px; }
-  .card-summary .price-block { text-align: right; min-width: 130px; }
-  .card-summary .price { font-size: 19px; font-weight: 700; color: #111; }
-  .card-summary .fair { font-size: 12px; color: #6b7280; margin-top: 2px; }
-  .discount-chip { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; margin-top: 4px; }
+  header .zones a { font-size: 12px; margin-left: 10px; color: #6b7280; }
+  header .zones a.active { color: #1d4ed8; font-weight: 600; }
+  main { padding: 20px; max-width: 760px; margin: 0 auto; }
+  .pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+  .pager a, .pager span.disabled { font-size: 14px; padding: 8px 14px; background: #fff; border: 1px solid #d1d5db; border-radius: 8px; color: #374151; }
+  .pager span.disabled { color: #c4c8cf; }
+  .pager .pos { border: 0; background: none; color: #6b7280; font-variant-numeric: tabular-nums; }
+  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden; }
+  .card-body { padding: 16px 20px 20px 20px; }
+  .card-body h2 { margin: 0 0 4px 0; font-size: 21px; font-weight: 700; line-height: 1.25; }
+  .card-body .sub { font-size: 14px; color: #6b7280; margin-bottom: 6px; }
+  .card-body .tags { font-size: 13px; color: #6b7280; margin-bottom: 14px; }
+  .card-body .tags span { display: inline-block; margin-right: 12px; }
+  .price-row { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  .price-row .price { font-size: 26px; font-weight: 800; color: #111; }
+  .price-row .fair { font-size: 13px; color: #6b7280; }
+  .discount-chip { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; }
   .discount-strong { background: #d1fae5; color: #065f46; }
   .discount-medium { background: #fef3c7; color: #92400e; }
   .discount-mild { background: #f3f4f6; color: #4b5563; }
   .discount-neutral { background: #f3f4f6; color: #9ca3af; }
-  .profit-chip { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; background: #ecfdf5; color: #047857; margin-left: 6px; }
-  .verdict-chip { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: 0.03em; margin-bottom: 4px; }
+  .profit-chip { display: inline-block; padding: 3px 10px; border-radius: 6px; font-size: 13px; font-weight: 600; background: #ecfdf5; color: #047857; }
+  .verdict-chip { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: 0.03em; }
   .verdict-buy { background: #d1fae5; color: #065f46; }
   .verdict-watch { background: #fef3c7; color: #92400e; }
-  .card-detail { display: none; padding: 16px 20px 20px 20px; border-top: 1px solid #e5e7eb; background: #fafbfc; }
-  .card.open .card-detail { display: block; }
-  .card-detail h4 { margin: 0 0 8px 0; font-size: 14px; color: #6b7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
-  .card-detail .desc { font-size: 14px; line-height: 1.55; color: #1f2937; margin-bottom: 16px; word-wrap: break-word; white-space: pre-wrap; }
-  .gallery { position: relative; margin: 0 0 16px 0; border-radius: 6px; overflow: hidden; background: #000; }
+  .gallery { position: relative; margin: 0 0 16px 0; border-radius: 8px; overflow: hidden; background: #000; }
   .gallery-track { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scroll-behavior: smooth; -webkit-overflow-scrolling: touch; }
   .gallery-track::-webkit-scrollbar { display: none; }
   .gallery-track { scrollbar-width: none; }
-  .gallery-track img { flex: 0 0 100%; width: 100%; max-height: 480px; object-fit: contain; scroll-snap-align: center; user-select: none; -webkit-user-drag: none; }
+  .gallery-track img { flex: 0 0 100%; width: 100%; max-height: 460px; object-fit: contain; scroll-snap-align: center; user-select: none; -webkit-user-drag: none; }
   .gallery-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 36px; height: 36px; border-radius: 50%; border: 0; background: rgba(0,0,0,0.5); color: #fff; font-size: 22px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
   .gallery-nav.prev { left: 8px; }
   .gallery-nav.next { right: 8px; }
   .gallery-nav:hover { background: rgba(0,0,0,0.75); }
   .gallery-counter { position: absolute; bottom: 8px; right: 8px; background: rgba(0,0,0,0.6); color: #fff; font-size: 12px; padding: 3px 8px; border-radius: 4px; pointer-events: none; font-variant-numeric: tabular-nums; }
   .gallery.single .gallery-nav, .gallery.single .gallery-counter { display: none; }
-  .signals { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 16px; }
-  .signal { background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px 12px; }
+  h4.section { margin: 18px 0 8px 0; font-size: 13px; color: #6b7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+  .desc { font-size: 14px; line-height: 1.55; color: #1f2937; word-wrap: break-word; white-space: pre-wrap; }
+  .signals { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .signal { background: #fafbfc; border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px 12px; }
   .signal .label { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.04em; }
   .signal .value { font-size: 15px; font-weight: 600; color: #111; margin-top: 2px; }
   .signal.warning .value { color: #b45309; }
   .signal.danger .value { color: #b91c1c; }
-  .open-link { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: #1d4ed8; color: #fff; border-radius: 6px; font-size: 14px; font-weight: 500; }
-  .open-link:hover { background: #1e40af; text-decoration: none; }
+  .paywall { margin-top: 20px; border: 1px solid #e5e7eb; border-radius: 10px; padding: 18px 20px; background: #fcfcfd; text-align: center; }
+  .paywall .lock { font-size: 15px; font-weight: 600; color: #374151; margin-bottom: 4px; }
+  .paywall .note { font-size: 13px; color: #6b7280; margin-bottom: 14px; }
+  .reserve-btn { display: inline-block; width: 100%; max-width: 420px; padding: 14px 18px; background: #1d4ed8; color: #fff; border: 0; border-radius: 10px; font-size: 16px; font-weight: 600; cursor: pointer; }
+  .reserve-btn:hover { background: #1e40af; }
+  .reserve-btn[disabled] { background: #cbd5e1; cursor: not-allowed; }
+  .reserved { margin-top: 20px; border: 1px solid #6ee7b7; border-radius: 10px; padding: 18px 20px; background: #ecfdf5; text-align: center; }
+  .reserved .ok { font-size: 16px; font-weight: 700; color: #065f46; margin-bottom: 4px; }
+  .reserved .note { font-size: 13px; color: #047857; margin-bottom: 14px; }
+  .open-link { display: inline-flex; align-items: center; gap: 6px; padding: 12px 22px; background: #047857; color: #fff; border-radius: 8px; font-size: 15px; font-weight: 600; }
+  .open-link:hover { background: #065f46; text-decoration: none; }
+  .toast { background: #ecfdf5; border: 1px solid #6ee7b7; color: #065f46; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; font-weight: 500; }
   .empty { text-align: center; padding: 80px 20px; color: #6b7280; }
-  .login-wrap { max-width: 360px; margin: 80px auto; padding: 32px; background: #fff; border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.06); }
-  .login-wrap h1 { font-size: 22px; margin: 0 0 4px 0; }
-  .login-wrap p.tag { color: #6b7280; font-size: 14px; margin: 0 0 24px 0; }
-  .login-wrap input { width: 100%; padding: 12px 14px; font-size: 18px; border: 1px solid #d1d5db; border-radius: 8px; letter-spacing: 0.2em; font-family: ui-monospace, "SF Mono", Menlo, monospace; text-transform: uppercase; }
-  .login-wrap input:focus { outline: 2px solid #1d4ed8; outline-offset: -1px; border-color: #1d4ed8; }
-  .login-wrap button { width: 100%; padding: 12px; margin-top: 12px; background: #1d4ed8; color: #fff; border: 0; border-radius: 8px; font-size: 15px; font-weight: 500; cursor: pointer; }
-  .login-wrap button:hover { background: #1e40af; }
-  .login-wrap .pin-field { position: relative; }
-  .login-wrap .pin-field input { padding-right: 46px; }
-  .login-wrap .pin-field .toggle { position: absolute; top: 0; right: 0; width: 46px; height: 100%; margin: 0; padding: 0; background: transparent; color: #6b7280; font-size: 18px; line-height: 1; display: flex; align-items: center; justify-content: center; }
-  .login-wrap .pin-field .toggle:hover { background: transparent; color: #1d4ed8; }
-  .login-wrap .error { color: #b91c1c; font-size: 13px; margin-top: 12px; min-height: 18px; }
-  table.pins { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; }
-  table.pins th, table.pins td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; font-size: 13px; }
-  table.pins th { background: #f9fafb; color: #6b7280; font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.04em; }
-  table.pins .pin-value { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 14px; background: #f3f4f6; padding: 2px 8px; border-radius: 4px; }
-  table.pins .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
-  table.pins .pill-active { background: #d1fae5; color: #065f46; }
-  table.pins .pill-revoked { background: #fee2e2; color: #991b1b; }
-  table.pins .pill-expired { background: #fef3c7; color: #92400e; }
-  table.pins .pill-admin { background: #ede9fe; color: #5b21b6; margin-left: 4px; }
-  table.pins button.revoke { background: #fee2e2; color: #991b1b; border: 0; padding: 4px 10px; border-radius: 4px; font-size: 12px; cursor: pointer; }
-  table.pins button.revoke:hover { background: #fecaca; }
-  .admin-form { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 24px; }
-  .admin-form h2 { font-size: 16px; margin: 0 0 12px 0; }
-  .admin-form .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 12px; }
-  .admin-form label { display: block; font-size: 12px; color: #6b7280; margin-bottom: 4px; }
-  .admin-form input, .admin-form select { width: 100%; padding: 8px 10px; font-size: 14px; border: 1px solid #d1d5db; border-radius: 6px; }
-  .admin-form button { background: #1d4ed8; color: #fff; border: 0; padding: 8px 18px; border-radius: 6px; cursor: pointer; font-size: 14px; }
-  .toast { background: #ecfdf5; border: 1px solid #6ee7b7; color: #065f46; padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 14px; }
-  .toast .new-pin { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 18px; font-weight: 700; letter-spacing: 0.15em; background: #fff; padding: 4px 10px; border-radius: 4px; margin-left: 6px; }
   @media (max-width: 640px) {
-    .card-summary { grid-template-columns: 80px 1fr; }
-    .card-summary img { width: 80px; height: 60px; }
-    .card-summary .price-block { grid-column: 1 / -1; text-align: left; padding-top: 6px; border-top: 1px dashed #e5e7eb; }
-    .card-summary .price-block .price { font-size: 17px; }
-    header nav { display: none; }
+    .card-body h2 { font-size: 19px; }
+    .price-row .price { font-size: 22px; }
+    header .zones { width: 100%; }
   }
 `;
 
-function layout({ title, body, zone, isAdmin, pageType }) {
+function zoneSwitcher(active) {
+  return `<span class="zones">` + Object.keys(ZONE_LABEL).map(z =>
+    `<a href="/?zone=${z}" class="${z === active ? "active" : ""}">${z}</a>`
+  ).join("") + `</span>`;
+}
+
+function layout({ title, body, zone, pageType }) {
   const zoneLabel = zone ? ZONE_LABEL[zone] || zone : "";
   return `<!doctype html>
 <html lang="pt">
@@ -159,36 +136,20 @@ function layout({ title, body, zone, isAdmin, pageType }) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<!-- 🚗 emoji favicon — matches the /analytics dashboard's page_icon so both
-     browser tabs share the same car icon. Rendered as an inline SVG data URI
-     (same trick Streamlit uses for emoji page icons). -->
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚗</text></svg>">
 <title>${escapeHtml(title)} · Flipper Club</title>
 <style>${BASE_CSS}</style>
 </head>
 <body>
-${pageType === "login" ? "" : `<header>
+<header>
   <div>
     <h1>Flipper Club</h1>
     ${zoneLabel ? `<span class="zone-tag">${escapeHtml(zoneLabel)}</span>` : ""}
   </div>
-  <nav>
-    <a href="/">Deals</a>
-    ${isAdmin ? `<a href="/admin">Admin</a>` : ""}
-    ${isAdmin ? `<a href="/analytics">Analytics</a>` : ""}
-    <form action="/logout" method="post" style="display:inline">
-      <button class="logout" type="submit">Sair</button>
-    </form>
-  </nav>
-</header>`}
+  ${zoneSwitcher(zone || "all")}
+</header>
 <main>${body}</main>
-${pageType === "dashboard" ? `<script>
-document.querySelectorAll(".card-summary").forEach(el => {
-  el.addEventListener("click", e => {
-    if (e.target.tagName === "A") return;
-    el.parentElement.classList.toggle("open");
-  });
-});
+${pageType === "car" ? `<script>
 document.querySelectorAll(".gallery").forEach(g => {
   const track = g.querySelector(".gallery-track");
   const counter = g.querySelector(".gallery-counter");
@@ -208,235 +169,116 @@ document.querySelectorAll(".gallery").forEach(g => {
   });
 });
 </script>` : ""}
-${pageType === "login" ? `<script>
-(function () {
-  var inp = document.getElementById("pin-input");
-  var btn = document.getElementById("pin-toggle");
-  if (!inp || !btn) return;
-  btn.addEventListener("click", function () {
-    var show = inp.type === "password";
-    inp.type = show ? "text" : "password";
-    btn.textContent = show ? "🙈" : "👁";
-    btn.setAttribute("aria-label", show ? "Esconder PIN" : "Mostrar PIN");
-    inp.focus();
-  });
-})();
-</script>` : ""}
 </body></html>`;
 }
 
-export function renderSetup({ error, newPin } = {}) {
-  let body;
-  if (newPin) {
-    body = `
-    <div class="login-wrap">
-      <h1>Admin criado ✓</h1>
-      <p class="tag">Guarda este PIN <strong>agora</strong>. Não voltará a ser mostrado em texto claro.</p>
-      <div style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:28px;font-weight:700;letter-spacing:0.2em;background:#f3f4f6;padding:18px;border-radius:8px;text-align:center;margin:16px 0;">${escapeHtml(newPin.value)}</div>
-      <a href="/login" style="display:block;text-align:center;background:#1d4ed8;color:#fff;padding:12px;border-radius:8px;font-size:15px;font-weight:500;">Continuar para login →</a>
+// Generic single-message page — degraded feed, empty market, payments off, etc.
+export function renderInfo({ zone, title, message }) {
+  const body = `<div class="empty">${escapeHtml(message)}</div>`;
+  return layout({ title, body, zone, pageType: "info" });
+}
+
+export function renderCarPage({
+  deal, index, total, zone, unlocked, justReserved, depositEur, stripeReady,
+}) {
+  const photos = Array.isArray(deal.photo_urls) ? deal.photo_urls : [];
+  const name = deal.title || [deal.brand, deal.model].filter(Boolean).join(" ") || "Viatura";
+  const galleryHtml = photos.length > 0 ? `<div class="gallery ${photos.length === 1 ? "single" : ""}" data-count="${photos.length}">
+      <div class="gallery-track">${photos.map((u, i) => `<img loading="lazy" src="${escapeHtml(u)}" alt="${escapeHtml(name)} — foto ${i + 1}">`).join("")}</div>
+      <button type="button" class="gallery-nav prev" aria-label="Anterior">‹</button>
+      <button type="button" class="gallery-nav next" aria-label="Próxima">›</button>
+      <div class="gallery-counter">1 / ${photos.length}</div>
+    </div>` : "";
+
+  const prev = index > 0
+    ? `<a href="/?zone=${zone}&i=${index - 1}">‹ Anterior</a>`
+    : `<span class="disabled">‹ Anterior</span>`;
+  const next = index < total - 1
+    ? `<a href="/?zone=${zone}&i=${index + 1}">Próximo ›</a>`
+    : `<span class="disabled">Próximo ›</span>`;
+  const pager = `<div class="pager">
+    ${prev}
+    <span class="pos">Carro ${index + 1} / ${total}</span>
+    ${next}
+  </div>`;
+
+  // Contact block: revealed only after a paid deposit.
+  let contact;
+  if (unlocked) {
+    contact = `<div class="reserved">
+      <div class="ok">✓ Reservado — contacto desbloqueado</div>
+      <div class="note">Depósito recebido. Abre o anúncio e fala diretamente com o vendedor.</div>
+      <a class="open-link" href="${escapeHtml(deal.url)}" target="_blank" rel="noopener">Abrir anúncio e contactar vendedor →</a>
     </div>`;
-  } else {
-    body = `
-    <div class="login-wrap">
-      <h1>Configuração inicial</h1>
-      <p class="tag">Primeira visita ao Flipper Club. Cria o teu PIN de admin — gerencias tudo a partir do dashboard depois disto.</p>
-      <form action="/setup" method="post" autocomplete="off">
-        <label style="font-size:12px;color:#6b7280;display:block;margin-bottom:6px;font-family:inherit;letter-spacing:normal;text-transform:none;">Label (opcional)</label>
-        <input type="text" name="label" placeholder="Admin" maxlength="80" style="text-transform:none;letter-spacing:normal;font-family:inherit;font-size:15px;">
-        <button type="submit" style="margin-top:16px;">Criar PIN de admin</button>
-        ${error ? `<div class="error">${escapeHtml(error)}</div>` : `<div class="error"></div>`}
+  } else if (stripeReady) {
+    contact = `<div class="paywall">
+      <div class="lock">🔒 Contacto do vendedor bloqueado</div>
+      <div class="note">Paga um depósito reembolsável de ${fmtEur(depositEur)} para reservar este carro e desbloquear o link direto ao anúncio.</div>
+      <form action="/reserve" method="post">
+        <input type="hidden" name="olx_id" value="${escapeHtml(deal.olx_id)}">
+        <input type="hidden" name="zone" value="${escapeHtml(zone)}">
+        <button type="submit" class="reserve-btn">Reservar e desbloquear — ${fmtEur(depositEur)}</button>
       </form>
     </div>`;
-  }
-  return layout({ title: "Setup", body, pageType: "login" });
-}
-
-export function renderLogin({ error } = {}) {
-  const body = `
-  <div class="login-wrap">
-    <h1>Flipper Club</h1>
-    <p class="tag">Acesso por PIN — clube fechado de revenda de viaturas em Portugal.</p>
-    <form action="/login" method="post">
-      <div class="pin-field">
-        <input type="password" name="pin" id="pin-input" placeholder="PIN" maxlength="16" autocomplete="current-password" autofocus required>
-        <button class="toggle" type="button" id="pin-toggle" aria-label="Mostrar PIN">👁</button>
-      </div>
-      <button type="submit">Entrar</button>
-      ${error ? `<div class="error">${escapeHtml(error)}</div>` : `<div class="error"></div>`}
-    </form>
-  </div>`;
-  return layout({ title: "Entrar", body, pageType: "login" });
-}
-
-function renderCard(deal) {
-  const photos = Array.isArray(deal.photo_urls) ? deal.photo_urls : [];
-  const cover = photos[0] || "";
-  const name = deal.title || [deal.brand, deal.model].filter(Boolean).join(" ") || "Viatura";
-  const galleryHtml = photos.length > 0 ? `<div class="gallery ${photos.length === 1 ? 'single' : ''}" data-count="${photos.length}">
-        <div class="gallery-track">${photos.map((u, i) => `<img loading="lazy" src="${escapeHtml(u)}" alt="${escapeHtml(name)} — foto ${i + 1}">`).join("")}</div>
-        <button type="button" class="gallery-nav prev" aria-label="Anterior">‹</button>
-        <button type="button" class="gallery-nav next" aria-label="Próxima">›</button>
-        <div class="gallery-counter">1 / ${photos.length}</div>
-      </div>` : "";
-  return `<div class="card">
-    <div class="card-summary">
-      ${cover
-        ? `<img loading="lazy" src="${escapeHtml(cover)}" alt="${escapeHtml(name)}">`
-        : `<div style="width:120px;height:90px;background:#e5e7eb;border-radius:4px"></div>`}
-      <div class="meta">
-        <h3>${escapeHtml(name)}</h3>
-        <div class="sub">${escapeHtml(deal.brand)} ${escapeHtml(deal.model)} · ${deal.year} · ${fmtKm(deal.mileage_km)} · ${escapeHtml(deal.fuel_type || "")}</div>
-        <div class="tags">
-          <span>📍 ${escapeHtml(deal.city || "")}, ${escapeHtml(deal.district || "")}</span>
-          <span>${fmtRelative(deal.first_seen_at)}</span>
-          <span>${escapeHtml(deal.seller_type || "")}</span>
-          ${deal.photo_damage_flagged ? `<span style="color:#b91c1c">⚠ photo damage</span>` : ""}
-        </div>
-      </div>
-      <div class="price-block">
-        <div class="price">${fmtEur(deal.price_eur)}</div>
-        <div class="fair">justo ${fmtEur(deal.fair_low)}–${fmtEur(deal.fair_high)}</div>
-        ${deal.verdict ? `<span class="verdict-chip verdict-${escapeHtml(String(deal.verdict).toLowerCase())}">${deal.verdict === 'BUY' ? '🟢' : '🟡'} ${escapeHtml(deal.verdict)}</span>` : ""}
-        <span class="discount-chip ${discountClass(deal.discount_pct)}">↓ ${fmtPct(deal.discount_pct)}</span>
-        ${deal.est_profit_eur ? `<span class="profit-chip">+${fmtEur(deal.est_profit_eur)}</span>` : ""}
-      </div>
-    </div>
-    <div class="card-detail">
-      ${galleryHtml}
-      <h4>Descrição</h4>
-      <div class="desc">${escapeHtml(deal.description ?? deal.description_excerpt ?? "")}</div>
-      <h4>Sinais</h4>
-      <div class="signals">
-        <div class="signal"><div class="label">Preço pedido</div><div class="value">${fmtEur(deal.price_eur)}</div></div>
-        <div class="signal"><div class="label">Justo (mediana)</div><div class="value">${fmtEur(deal.fair_median)}</div></div>
-        <div class="signal"><div class="label">Desconto</div><div class="value">${fmtPct(deal.discount_pct)}</div></div>
-        <div class="signal"><div class="label">Lucro estimado</div><div class="value">${fmtEur(deal.est_profit_eur)}</div></div>
-        <div class="signal ${deal.damage_severity >= 2 ? 'warning' : ''} ${deal.damage_severity >= 3 ? 'danger' : ''}">
-          <div class="label">Damage severity</div>
-          <div class="value">${deal.damage_severity ?? "—"} / 3</div>
-        </div>
-        <div class="signal ${deal.photo_damage_flagged ? 'danger' : ''}">
-          <div class="label">Photo damage p</div>
-          <div class="value">${fmtPct(deal.photo_damage_p)}</div>
-        </div>
-        <div class="signal"><div class="label">Vendedor</div><div class="value">${escapeHtml(deal.seller_type || "—")}</div></div>
-        <div class="signal"><div class="label">Dias no mercado</div><div class="value">${deal.days_on_market ?? "—"}</div></div>
-      </div>
-      <a class="open-link" href="${escapeHtml(deal.url)}" target="_blank" rel="noopener">Abrir no OLX →</a>
-    </div>
-  </div>`;
-}
-
-export function renderDashboard({ deals, zone, sort, isAdmin, degraded }) {
-  // Degraded = feed unavailable. Distinct from "no deals" so the user knows
-  // it's a service issue, not an empty market — and doesn't act on stale data.
-  if (degraded) {
-    const banner = `<div class="empty">⚠ Serviço temporariamente indisponível — não foi possível carregar os deals. Tenta novamente dentro de instantes.</div>`;
-    return layout({ title: "Deals", body: banner, zone, isAdmin, pageType: "dashboard" });
-  }
-  const sorted = [...deals];
-  if (sort === "newest") {
-    sorted.sort((a, b) => new Date(b.first_seen_at || 0) - new Date(a.first_seen_at || 0));
-  } else if (sort === "profit") {
-    sorted.sort((a, b) => (b.est_profit_eur || 0) - (a.est_profit_eur || 0));
   } else {
-    // "score" (default) — the decision engine's risk-adjusted ranking.
-    sorted.sort((a, b) => (b.decision_score || 0) - (a.decision_score || 0));
+    contact = `<div class="paywall">
+      <div class="lock">🔒 Contacto do vendedor bloqueado</div>
+      <div class="note">As reservas por depósito estarão disponíveis em breve.</div>
+      <button class="reserve-btn" disabled>Reservas em breve</button>
+    </div>`;
   }
-  const tabLabel = s => s === 'score' ? '🏆 Melhor aposta'
-    : s === 'newest' ? '🆕 Mais recentes'
-    : '💰 Maior lucro';
-  const tab = s => `<a href="/?sort=${s}" class="${sort === s ? 'active' : ''}">${tabLabel(s)}</a>`;
-  const cards = sorted.length === 0
-    ? `<div class="empty">Sem deals quentes na tua zona neste momento. Volta dentro de 4h — o próximo scrape vai colocar novos.</div>`
-    : sorted.map(renderCard).join("\n");
-  const body = `
-    <div class="toolbar">
-      ${tab("score")}
-      ${tab("profit")}
-      ${tab("newest")}
-      <span class="count">${sorted.length} ${sorted.length === 1 ? 'deal' : 'deals'}</span>
-    </div>
-    ${cards}`;
-  return layout({ title: "Deals", body, zone, isAdmin, pageType: "dashboard" });
-}
 
-export function renderAdmin({ pins, newPin, error, zones, isAdmin }) {
-  const zoneOpts = zones.split(",").map(z => `<option value="${z}">${z}</option>`).join("");
-  const now = new Date();
-  const statusFor = p => {
-    if (p.revoked) return `<span class="pill pill-revoked">revoked</span>`;
-    if (p.expires_at && new Date(p.expires_at) < now) return `<span class="pill pill-expired">expired</span>`;
-    return `<span class="pill pill-active">active</span>`;
-  };
-  // Logins for this PIN. Bold count = returning user (logged in more than once).
-  const accessFor = p => {
-    const n = p.login_count || 0;
-    if (!n) return `<span style="color:#9ca3af">—</span>`;
-    const when = p.last_login ? escapeHtml(p.last_login.slice(0, 16).replace("T", " ")) : "";
-    const count = n > 1 ? `<strong>${n}×</strong>` : `${n}×`;
-    return `${count} <span style="color:#9ca3af;font-size:12px">${when}</span>`;
-  };
-  const rows = pins.map(p => `<tr>
-    <td><span class="pin-value">${escapeHtml(p.value)}</span></td>
-    <td>${escapeHtml(p.label || "—")}${p.is_admin ? `<span class="pill pill-admin">admin</span>` : ""}</td>
-    <td>${escapeHtml(p.zone || "—")}</td>
-    <td>${statusFor(p)}</td>
-    <td>${accessFor(p)}</td>
-    <td>${p.expires_at ? escapeHtml(p.expires_at.slice(0, 16).replace("T", " ")) : "—"}</td>
-    <td>${escapeHtml(p.created_at?.slice(0, 16).replace("T", " ") || "—")}</td>
-    <td>
-      ${!p.revoked ? `<form action="/admin/pins/${p.id}/revoke" method="post" style="display:inline" onsubmit="return confirm('Revogar PIN ${p.value}${p.is_admin ? ' (ADMIN)' : ''}?')">
-        <button class="revoke" type="submit">Revoke</button>
-      </form>` : ""}
-    </td>
-  </tr>`).join("");
-
-  const toast = newPin ? `<div class="toast">PIN criado: <span class="new-pin">${escapeHtml(newPin.value)}</span> — guarda-o agora, depois não volta a aparecer em texto claro fora desta tabela.</div>` : "";
-  const errorToast = error === "last_admin"
-    ? `<div class="toast" style="background:#fee2e2;border-color:#fecaca;color:#991b1b;">Não podes revogar o último admin ativo. Cria outro admin antes de revogar este.</div>`
+  const toast = justReserved
+    ? `<div class="toast">✓ Pagamento confirmado. Este carro está reservado para ti.</div>`
     : "";
 
   const body = `
     ${toast}
-    ${errorToast}
-    <div class="admin-form">
-      <h2>Novo PIN</h2>
-      <form action="/admin/pins/create" method="post">
-        <div class="row">
-          <div>
-            <label>Label</label>
-            <input type="text" name="label" placeholder="João — Porto" required>
-          </div>
-          <div>
-            <label>Zona</label>
-            <select name="zone" id="f-zone">${zoneOpts}</select>
-          </div>
-          <div>
-            <label>Validade (horas)</label>
-            <input type="number" name="ttl_hours" id="f-ttl" placeholder="24" min="1" max="876000">
-          </div>
-          <div>
-            <label>Notas</label>
-            <input type="text" name="notes" placeholder="opcional">
-          </div>
+    ${pager}
+    <div class="card">
+      <div class="card-body">
+        ${galleryHtml}
+        <h2>${escapeHtml(name)}</h2>
+        <div class="sub">${escapeHtml(deal.brand)} ${escapeHtml(deal.model)} · ${deal.year ?? "—"} · ${fmtKm(deal.mileage_km)} · ${escapeHtml(deal.fuel_type || "")}</div>
+        <div class="tags">
+          <span>📍 ${escapeHtml(deal.city || "")}${deal.district ? ", " + escapeHtml(deal.district) : ""}</span>
+          <span>${fmtRelative(deal.first_seen_at)}</span>
+          <span>${escapeHtml(deal.seller_type || "")}</span>
+          ${deal.photo_damage_flagged ? `<span style="color:#b91c1c">⚠ photo damage</span>` : ""}
         </div>
-        <div style="margin-bottom:12px;font-size:13px;">
-          <label style="display:inline-flex;align-items:center;gap:6px;color:#374151;">
-            <input type="checkbox" name="is_admin" value="1" id="f-admin" style="width:auto;"
-              onchange="['f-zone','f-ttl'].forEach(id=>{var el=document.getElementById(id);el.disabled=this.checked;el.style.opacity=this.checked?0.45:1;});">
-            Admin PIN (vê admin panel, zona ignorada, não expira — apenas revoke)
-          </label>
+        <div class="price-row">
+          <span class="price">${fmtEur(deal.price_eur)}</span>
+          <span class="fair">justo ${fmtEur(deal.fair_low)}–${fmtEur(deal.fair_high)}</span>
+          ${deal.verdict ? `<span class="verdict-chip verdict-${escapeHtml(String(deal.verdict).toLowerCase())}">${deal.verdict === "BUY" ? "🟢" : "🟡"} ${escapeHtml(deal.verdict)}</span>` : ""}
+          <span class="discount-chip ${discountClass(deal.discount_pct)}">↓ ${fmtPct(deal.discount_pct)}</span>
+          ${deal.est_profit_eur ? `<span class="profit-chip">+${fmtEur(deal.est_profit_eur)}</span>` : ""}
         </div>
-        <button type="submit">Criar PIN</button>
-      </form>
-    </div>
 
-    <table class="pins">
-      <thead><tr>
-        <th>PIN</th><th>Label</th><th>Zona</th><th>Status</th><th>Acessos</th><th>Expira</th><th>Criado</th><th></th>
-      </tr></thead>
-      <tbody>${rows || `<tr><td colspan="8" style="text-align:center;color:#9ca3af;padding:40px">Sem PINs ainda — cria o primeiro acima.</td></tr>`}</tbody>
-    </table>`;
-  return layout({ title: "Admin", body, isAdmin: true, pageType: "admin" });
+        ${contact}
+
+        <h4 class="section">Sinais</h4>
+        <div class="signals">
+          <div class="signal"><div class="label">Preço pedido</div><div class="value">${fmtEur(deal.price_eur)}</div></div>
+          <div class="signal"><div class="label">Justo (mediana)</div><div class="value">${fmtEur(deal.fair_median)}</div></div>
+          <div class="signal"><div class="label">Desconto</div><div class="value">${fmtPct(deal.discount_pct)}</div></div>
+          <div class="signal"><div class="label">Lucro estimado</div><div class="value">${fmtEur(deal.est_profit_eur)}</div></div>
+          <div class="signal ${deal.damage_severity >= 2 ? "warning" : ""} ${deal.damage_severity >= 3 ? "danger" : ""}">
+            <div class="label">Damage severity</div>
+            <div class="value">${deal.damage_severity ?? "—"} / 3</div>
+          </div>
+          <div class="signal ${deal.photo_damage_flagged ? "danger" : ""}">
+            <div class="label">Photo damage p</div>
+            <div class="value">${fmtPct(deal.photo_damage_p)}</div>
+          </div>
+          <div class="signal"><div class="label">Vendedor</div><div class="value">${escapeHtml(deal.seller_type || "—")}</div></div>
+          <div class="signal"><div class="label">Dias no mercado</div><div class="value">${deal.days_on_market ?? "—"}</div></div>
+        </div>
+
+        ${(deal.description ?? deal.description_excerpt) ? `<h4 class="section">Descrição</h4>
+        <div class="desc">${escapeHtml(deal.description ?? deal.description_excerpt ?? "")}</div>` : ""}
+      </div>
+    </div>
+    ${pager}`;
+
+  return layout({ title: name, body, zone, pageType: "car" });
 }

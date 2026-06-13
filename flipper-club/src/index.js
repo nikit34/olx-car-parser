@@ -1,37 +1,46 @@
-// Cloudflare Worker entry — closed B2B flip-deal feed.
+// Cloudflare Worker entry — public, one-car-at-a-time flip-deal feed with a
+// Stripe deposit gate on each listing.
 //
-// Routes:
-//   GET  /                  → dashboard (requires session)
-//   GET  /login             → PIN form
-//   POST /login             → validate PIN, mint session cookie
-//   POST /logout            → clear session
-//   GET  /admin             → PIN list + create form (admin-only)
-//   POST /admin/pins/create → issue new PIN, redirect with value in toast
-//   POST /admin/pins/:id/revoke → flip revoked=true; takes effect on next req
-//   GET  /healthz           → unauthenticated liveness
+// Product model (no auth, no PINs):
+//   GET  /                  → one car at a time (top-ranked by decision_score).
+//                             Photos/specs/signals are public; the seller's OLX
+//                             link is paywalled until a deposit is paid.
+//   POST /reserve           → create a Stripe Checkout Session for one car's
+//                             deposit, 303 → Stripe-hosted checkout.
+//   GET  /unlocked          → Stripe success redirect; verify the session was
+//                             paid, record the unlock, reveal the contact.
+//   POST /webhook/stripe    → async checkout.session.completed → record unlock
+//                             authoritatively (survives a closed success tab).
+//   GET  /healthz           → unauthenticated liveness.
+//
+// Internal-only (NOT the product):
+//   GET  /analytics/*  and  /files/* /data/* …  → the stlite analytics bundle
+//   and its raw data assets. Gated by HTTP Basic Auth against the Worker
+//   secrets ANALYTICS_USER / ANALYTICS_PASS. Fail-closed: if those secrets are
+//   unset, access is denied — raw parquets/model internals never go public.
+//
+// What we sell: the *find* (an unlocked seller contact for one specific car),
+// never the car. The deposit unlocks one olx_id's contact link, nothing else.
 //
 // Data source: getDeals() fetches hot_deals_{zone}.json from the latest-data
-// GitHub Release and caches it in KV for 5 min. On a missing/broken feed it
-// returns a degraded marker (no fake data) — see getDeals/degrade below.
+// GitHub Release and caches it in KV for 5 min. A missing/broken feed renders a
+// degraded banner (no fake data).
 
+import { renderCarPage, renderInfo } from "./templates.js";
 import {
-  COOKIE_NAME, cookieHeader, clearCookieHeader,
-  readSession, findPinByValue, createSession, destroySession, recordLogin,
-  listPins, createPin, revokePin, getPinById,
-  hasAnyAdmin, countActiveAdmins, isExpired,
-} from "./auth.js";
-import { renderLogin, renderDashboard, renderAdmin, renderSetup } from "./templates.js";
+  stripeConfigured, createCheckoutSession,
+  retrieveCheckoutSession, verifyWebhookSignature,
+} from "./stripe.js";
 
-const ZONES_DEFAULT = "norte,centro,sul,all";
+const ZONES = ["norte", "centro", "sul", "all"];
+const COOKIE_UID = "fc_uid";
+const UNLOCK_TTL_SEC = 90 * 24 * 3600; // a paid reservation stays unlocked 90d
+const DEFAULT_DEPOSIT_CENTS = 500;     // €5 — overridable via env.DEPOSIT_AMOUNT_CENTS
+const DEFAULT_CURRENCY = "eur";
 
-// Paths owned by the flipper-club app. Anything else is treated as a static
-// asset request and gated on admin session (the internal analytics dashboard).
-const FLIPPER_PATHS = new Set(["/", "/login", "/logout", "/setup", "/healthz"]);
-function isFlipperPath(p) {
-  if (FLIPPER_PATHS.has(p)) return true;
-  if (p === "/admin" || p.startsWith("/admin/")) return true;
-  return false;
-}
+// Product routes the Worker owns directly. Everything else (that isn't
+// /analytics or /webhook) is treated as an internal asset request.
+const PRODUCT_PATHS = new Set(["/", "/reserve", "/unlocked"]);
 
 export default {
   async fetch(request, env) {
@@ -42,116 +51,22 @@ export default {
     try {
       if (pathname === "/healthz") return new Response("ok", { status: 200 });
 
-      // /analytics/* — admin-only proxy to the stlite dashboard bundle. Strip
-      // the prefix and delegate to the ASSETS binding so the bundle's
-      // relative paths (./files/*, ./data/*) resolve correctly under
-      // `<base href="/analytics/">` set in dashboard-static/index.html.
+      if (pathname === "/webhook/stripe") {
+        if (method !== "POST") return notFound();
+        return handleWebhook(request, env);
+      }
+
+      // Internal stlite dashboard + its assets — Basic-Auth gated, fail-closed.
       if (pathname === "/analytics" || pathname.startsWith("/analytics/")) {
         return handleAnalytics(request, env, url);
       }
-
-      // Catch-all for non-flipper static-asset paths (e.g. /files/foo.py,
-      // /data/dashboard/listings.parquet). These are referenced by the
-      // analytics bundle once it boots under /analytics/, so they ALSO
-      // require an admin session. Without this, a non-admin sharing a deep
-      // link could fetch parquets directly.
-      if (!isFlipperPath(pathname)) {
-        return handleAssetGated(request, env, url);
+      if (!PRODUCT_PATHS.has(pathname)) {
+        return handleAssetGated(request, env);
       }
 
-      // Setup gate. /setup is only reachable when no admin exists.
-      // Conversely, any other path on a fresh install redirects to /setup.
-      if (pathname === "/setup") {
-        const adminExists = await hasAnyAdmin(env);
-        if (adminExists) return notFound();
-        if (method === "GET") return html(renderSetup({}));
-        if (method === "POST") return handleSetup(request, env);
-        return notFound();
-      }
-      // For every other route, if there's no admin in KV, force setup first.
-      // We only check on unauthenticated paths — if a session is valid, an
-      // admin definitionally exists (the PIN behind it).
-      if (pathname === "/login" || pathname === "/") {
-        const session0 = await readSession(request, env);
-        if (!session0) {
-          const adminExists = await hasAnyAdmin(env);
-          if (!adminExists) return redirect("/setup");
-        }
-      }
-
-      if (pathname === "/login" && method === "GET") {
-        const s = await readSession(request, env);
-        if (s) return redirect("/");
-        return html(renderLogin({}));
-      }
-
-      if (pathname === "/login" && method === "POST") {
-        return handleLogin(request, env);
-      }
-
-      if (pathname === "/logout") {
-        return handleLogout(request, env);
-      }
-
-      // Everything below this requires a valid session.
-      const session = await readSession(request, env);
-
-      if (pathname === "/" && method === "GET") {
-        if (!session) return redirect("/login");
-        const sort = url.searchParams.get("sort") || "score";
-        const zone = session.pin.zone || "all";
-        const { deals, degraded } = await getDeals(env, zone);
-        return html(renderDashboard({
-          deals,
-          zone,
-          sort,
-          degraded,
-          isAdmin: !!session.pin.is_admin,
-        }));
-      }
-
-      if (pathname === "/admin" && method === "GET") {
-        if (!session || !session.pin.is_admin) return notFound();
-        const pins = await listPins(env);
-        const newPinValue = url.searchParams.get("new");
-        const newPin = newPinValue ? { value: newPinValue } : null;
-        const error = url.searchParams.get("error") || "";
-        const zones = env.ZONES || ZONES_DEFAULT;
-        return html(renderAdmin({ pins, newPin, error, zones, isAdmin: true }));
-      }
-
-      if (pathname === "/admin/pins/create" && method === "POST") {
-        if (!session || !session.pin.is_admin) return notFound();
-        if (!sameOrigin(request, url)) return forbidden();
-        const form = await request.formData();
-        const isAdminFlag = form.get("is_admin") === "1";
-        // Admins don't expire (createPin sets expires_at: null). Flippers
-        // default to 24h; user can override per-PIN.
-        const ttlHours = parseFloat(form.get("ttl_hours"));
-        const pin = await createPin(env, {
-          label: form.get("label") || "",
-          zone: isAdminFlag ? "all" : (form.get("zone") || "all"),
-          ttl_hours: Number.isFinite(ttlHours) && ttlHours > 0 ? ttlHours : 24,
-          notes: form.get("notes") || "",
-          is_admin: isAdminFlag,
-        });
-        return redirect(`/admin?new=${encodeURIComponent(pin.value)}`);
-      }
-
-      const revokeMatch = pathname.match(/^\/admin\/pins\/([a-f0-9]+)\/revoke$/);
-      if (revokeMatch && method === "POST") {
-        if (!session || !session.pin.is_admin) return notFound();
-        if (!sameOrigin(request, url)) return forbidden();
-        const target = await getPinById(env, revokeMatch[1]);
-        if (!target) return redirect("/admin");
-        // Block revoking the last active admin — would lock the user out.
-        if (target.is_admin) {
-          const activeAdmins = await countActiveAdmins(env);
-          if (activeAdmins <= 1) return redirect("/admin?error=last_admin");
-        }
-        await revokePin(env, revokeMatch[1]);
-        return redirect("/admin");
-      }
+      if (pathname === "/" && method === "GET") return handleHome(request, env, url);
+      if (pathname === "/reserve" && method === "POST") return handleReserve(request, env, url);
+      if (pathname === "/unlocked" && method === "GET") return handleUnlocked(request, env, url);
 
       return notFound();
     } catch (err) {
@@ -161,49 +76,199 @@ export default {
   },
 };
 
-async function handleLogin(request, env) {
+// ── Product handlers ────────────────────────────────────────────────────────
+
+async function handleHome(request, env, url) {
+  const zone = pickZone(url.searchParams.get("zone"));
+  const { uid, setCookie } = ensureUid(request);
+  const { deals, degraded } = await getDeals(env, zone);
+
+  if (degraded) {
+    return html(renderInfo({
+      zone,
+      title: "Serviço indisponível",
+      message: "Não foi possível carregar os deals neste momento. Tenta novamente dentro de instantes.",
+    }), 503, setCookie);
+  }
+
+  const sorted = sortDeals(deals);
+  if (sorted.length === 0) {
+    return html(renderInfo({
+      zone,
+      title: "Sem deals quentes",
+      message: "Sem deals quentes na tua zona neste momento. Volta dentro de 4h — o próximo scrape vai colocar novos.",
+    }), 200, setCookie);
+  }
+
+  const index = pickIndex(sorted, url.searchParams);
+  const deal = sorted[index];
+  const unlocked = await isUnlocked(env, uid, deal.olx_id);
+
+  return html(renderCarPage({
+    deal, index, total: sorted.length, zone, unlocked,
+    justReserved: false,
+    depositEur: depositCents(env) / 100,
+    stripeReady: stripeConfigured(env),
+  }), 200, setCookie);
+}
+
+async function handleReserve(request, env, url) {
+  if (!sameOrigin(request, url)) return forbidden();
+  const { uid, setCookie } = ensureUid(request);
   const form = await request.formData();
-  const enteredRaw = (form.get("pin") || "").toString().trim().toUpperCase();
-  if (!enteredRaw) return html(renderLogin({ error: "PIN obrigatório." }), 400);
-  // basic shape check before hitting KV — PIN alphabet is uppercase alnum
-  if (!/^[A-Z0-9]{4,16}$/.test(enteredRaw)) {
-    await sleep(400); // soft throttle on garbage submissions
-    return html(renderLogin({ error: "PIN inválido." }), 401);
+  const olxId = (form.get("olx_id") || "").toString();
+  const zone = pickZone(form.get("zone"));
+
+  if (!stripeConfigured(env)) {
+    return html(renderInfo({
+      zone,
+      title: "Pagamentos indisponíveis",
+      message: "A reserva por depósito ainda não está ativa. Tenta novamente mais tarde.",
+    }), 503, setCookie);
   }
-  const pin = await findPinByValue(env, enteredRaw);
-  if (!pin) {
-    await sleep(400);
-    return html(renderLogin({ error: "PIN inválido ou expirado." }), 401);
+
+  // Validate the olx_id is a real, current deal before charging anyone.
+  const { deals } = await getDeals(env, zone);
+  const deal = (deals || []).find(d => d.olx_id === olxId);
+  if (!deal) return redirect(`/?zone=${zone}`, 303, setCookie);
+
+  const carName = deal.title
+    || [deal.brand, deal.model, deal.year].filter(Boolean).join(" ")
+    || "Viatura";
+  // Stripe substitutes the literal {CHECKOUT_SESSION_ID} on redirect — must not
+  // be URL-encoded, so it's appended after the encoded params.
+  const successUrl =
+    `${url.origin}/unlocked?zone=${zone}&olx_id=${encodeURIComponent(olxId)}`
+    + `&session_id={CHECKOUT_SESSION_ID}`;
+  const cancelUrl = `${url.origin}/?zone=${zone}&olx_id=${encodeURIComponent(olxId)}`;
+
+  try {
+    const session = await createCheckoutSession(env, {
+      uid, olxId, carName,
+      amountCents: depositCents(env),
+      currency: env.CURRENCY || DEFAULT_CURRENCY,
+      successUrl, cancelUrl,
+    });
+    return redirect(session.url, 303, setCookie);
+  } catch (err) {
+    console.error("checkout create failed", err && err.message);
+    return html(renderInfo({
+      zone,
+      title: "Erro no pagamento",
+      message: "Não foi possível iniciar o pagamento. Tenta novamente dentro de instantes.",
+    }), 502, setCookie);
   }
-  if (pin.revoked) return html(renderLogin({ error: "PIN revogado." }), 401);
-  if (isExpired(pin)) {
-    return html(renderLogin({ error: "PIN expirado." }), 401);
+}
+
+async function handleUnlocked(request, env, url) {
+  const zone = pickZone(url.searchParams.get("zone"));
+  const olxId = (url.searchParams.get("olx_id") || "").toString();
+  const sessionId = (url.searchParams.get("session_id") || "").toString();
+  const { uid, setCookie } = ensureUid(request);
+
+  // Verify on the redirect too (belt-and-suspenders with the webhook): if the
+  // user lands here with a genuinely paid session, record the unlock now so it
+  // works even if the webhook is delayed.
+  if (sessionId && stripeConfigured(env)) {
+    try {
+      const s = await retrieveCheckoutSession(env, sessionId);
+      if (s && s.payment_status === "paid") {
+        const m = s.metadata || {};
+        await recordUnlock(env, m.uid || uid, m.olx_id || olxId, {
+          stripe_session_id: s.id, amount: s.amount_total, currency: s.currency,
+        });
+      }
+    } catch (err) {
+      console.warn("unlocked verify failed", err && err.message);
+    }
   }
-  const ip = request.headers.get("cf-connecting-ip") || "";
-  const session = await createSession(env, pin, ip);
-  // Record the login on the PIN record (login_count/last_login) so returning
-  // users are observable. Best-effort: failures here must not block sign-in.
-  await recordLogin(env, pin, ip);
-  return new Response(null, {
-    status: 302,
-    headers: {
-      "Location": pin.is_admin ? "/admin" : "/",
-      "Set-Cookie": cookieHeader(COOKIE_NAME, session.token, {
-        maxAgeSec: Math.floor((new Date(session.expires_at) - Date.now()) / 1000),
-      }),
-    },
+
+  const { deals, degraded } = await getDeals(env, zone);
+  if (degraded || !Array.isArray(deals) || deals.length === 0) {
+    return html(renderInfo({
+      zone,
+      title: "Reserva registada",
+      message: "O teu depósito foi recebido. Recarrega a página dentro de instantes para ver o contacto.",
+    }), 200, setCookie);
+  }
+  const sorted = sortDeals(deals);
+  let index = sorted.findIndex(d => d.olx_id === olxId);
+  if (index < 0) index = 0;
+  const deal = sorted[index];
+  const unlocked = await isUnlocked(env, uid, deal.olx_id);
+
+  return html(renderCarPage({
+    deal, index, total: sorted.length, zone, unlocked,
+    justReserved: unlocked,
+    depositEur: depositCents(env) / 100,
+    stripeReady: stripeConfigured(env),
+  }), 200, setCookie);
+}
+
+async function handleWebhook(request, env) {
+  const raw = await request.text();
+  const sig = request.headers.get("Stripe-Signature");
+  let event;
+  try {
+    event = await verifyWebhookSignature(env, raw, sig);
+  } catch (err) {
+    console.warn("webhook rejected", err && err.message);
+    return new Response("invalid signature", { status: 400 });
+  }
+  if (event.type === "checkout.session.completed"
+      || event.type === "checkout.session.async_payment_succeeded") {
+    const s = event.data && event.data.object;
+    if (s && s.payment_status === "paid") {
+      const m = s.metadata || {};
+      await recordUnlock(env, m.uid, m.olx_id, {
+        stripe_session_id: s.id, amount: s.amount_total, currency: s.currency,
+      });
+    }
+  }
+  return new Response("ok", { status: 200 });
+}
+
+// ── Unlock state (KV) ─────────────────────────────────────────────────────
+
+async function recordUnlock(env, uid, olxId, info) {
+  if (!uid || !olxId) return;
+  await env.KV.put(
+    `unlock:${uid}:${olxId}`,
+    JSON.stringify({ paid_at: new Date().toISOString(), ...info }),
+    { expirationTtl: UNLOCK_TTL_SEC },
+  );
+}
+
+async function isUnlocked(env, uid, olxId) {
+  if (!uid || !olxId) return false;
+  return !!(await env.KV.get(`unlock:${uid}:${olxId}`));
+}
+
+// ── Internal dashboard / assets — Basic Auth, fail-closed ───────────────────
+
+function checkBasicAuth(request, env) {
+  const user = env.ANALYTICS_USER, pass = env.ANALYTICS_PASS;
+  if (!user || !pass) return false; // not configured → deny (never expose data)
+  const h = request.headers.get("Authorization") || "";
+  if (!h.startsWith("Basic ")) return false;
+  let decoded;
+  try { decoded = atob(h.slice(6)); } catch { return false; }
+  const i = decoded.indexOf(":");
+  if (i < 0) return false;
+  const u = decoded.slice(0, i), p = decoded.slice(i + 1);
+  // Bitwise-AND both compares so a length/value mismatch can't short-circuit.
+  return Number(constantTimeEq(u, user)) & Number(constantTimeEq(p, pass)) ? true : false;
+}
+
+function unauthorized() {
+  return new Response("Unauthorized", {
+    status: 401,
+    headers: { "WWW-Authenticate": 'Basic realm="analytics", charset="UTF-8"' },
   });
 }
 
 async function handleAnalytics(request, env, url) {
-  const session = await readSession(request, env);
-  if (!session || !session.pin.is_admin) {
-    // HTML navigation → friendly redirect to login. XHR/asset → 401 to keep
-    // the network tab tidy and avoid surprise HTML in image/parquet slots.
-    const wantsHtml = (request.headers.get("Accept") || "").includes("text/html");
-    if (wantsHtml) return redirect("/login");
-    return new Response("Unauthorized", { status: 401 });
-  }
+  if (!checkBasicAuth(request, env)) return unauthorized();
   // Strip the /analytics prefix and forward to ASSETS. /analytics → /, /analytics/X → /X.
   let stripped = url.pathname.replace(/^\/analytics\/?/, "/");
   if (!stripped.startsWith("/")) stripped = "/" + stripped;
@@ -211,67 +276,22 @@ async function handleAnalytics(request, env, url) {
   return env.ASSETS.fetch(new Request(targetUrl, request));
 }
 
-async function handleAssetGated(request, env, url) {
-  const session = await readSession(request, env);
-  if (!session || !session.pin.is_admin) {
-    const wantsHtml = (request.headers.get("Accept") || "").includes("text/html");
-    if (wantsHtml) return redirect("/login");
-    return new Response("Unauthorized", { status: 401 });
-  }
+async function handleAssetGated(request, env) {
+  if (!checkBasicAuth(request, env)) return unauthorized();
   return env.ASSETS.fetch(request);
 }
 
-async function handleSetup(request, env) {
-  // Idempotency safety: re-check inside POST in case two parallel installs
-  // race past the gate. First admin wins; second submit hits notFound.
-  const adminExists = await hasAnyAdmin(env);
-  if (adminExists) return notFound();
+// ── Deals feed (GitHub Release → KV cache) ──────────────────────────────────
 
-  const form = await request.formData();
-  const label = (form.get("label") || "Admin").toString().slice(0, 80);
-  const pin = await createPin(env, {
-    // Fixed hex id (matches the randomToken(8) shape + the revoke route regex)
-    // so two racing /setup POSTs that both clear the hasAnyAdmin gate — KV is
-    // eventually consistent — collide on this one key instead of creating
-    // duplicate admin PINs. Last write wins; exactly one admin survives.
-    id: "00000000000000ad",
-    label,
-    zone: "all",
-    is_admin: true,
-    notes: "Initial admin — created via /setup",
-  });
-  // Show the PIN once on a confirmation page, then it lives only in KV (and
-  // wherever the user copies it). No way to retrieve plaintext again.
-  return html(renderSetup({ newPin: { value: pin.value, label: pin.label } }));
-}
-
-async function handleLogout(request, env) {
-  const cookie = request.headers.get("cookie") || "";
-  const m = cookie.match(new RegExp(`${COOKIE_NAME}=([a-f0-9]+)`));
-  if (m) await destroySession(env, m[1]);
-  return new Response(null, {
-    status: 302,
-    headers: {
-      "Location": "/login",
-      "Set-Cookie": clearCookieHeader(COOKIE_NAME),
-    },
-  });
-}
-
-// GitHub Release "latest-data" download base. The scrape.yml workflow uploads
-// hot_deals_{zone}.json there after every successful train-model + build_hot_deals.
 const HOT_DEALS_BASE =
   "https://github.com/nikit34/olx-car-parser/releases/download/latest-data";
 const DEALS_CACHE_TTL_SEC = 300;
-// When the release is missing/broken we negative-cache a degraded marker for
-// a short window so a prolonged outage doesn't hammer GitHub on every hit.
 const DEGRADED_CACHE_TTL_SEC = 30;
 
 // Returns { deals, degraded }. `degraded: true` means we could not load the
-// real feed (network/HTTP/parse failure) — the dashboard surfaces that
-// honestly rather than showing stale or fake listings the user might act on.
+// real feed — surfaced honestly rather than showing stale or fake listings.
 async function getDeals(env, zone) {
-  const safeZone = ["norte", "centro", "sul", "all"].includes(zone) ? zone : "all";
+  const safeZone = ZONES.includes(zone) ? zone : "all";
   const cacheKey = `cache:deals:${safeZone}`;
   const cached = await env.KV.get(cacheKey);
   if (cached) {
@@ -289,10 +309,6 @@ async function getDeals(env, zone) {
       return degrade(env, cacheKey);
     }
     const body = await r.text();
-    // Parse + validate BEFORE caching. A malformed body (e.g. NaN literals
-    // from a bad build) must never land in KV — the cache-hit branch above
-    // would silently fail to parse it and we'd re-fetch + re-cache the same
-    // garbage on every request for the whole TTL window.
     let parsed;
     try {
       parsed = JSON.parse(body);
@@ -315,30 +331,76 @@ async function degrade(env, cacheKey) {
   return { deals: [], degraded: true };
 }
 
-function html(body, status = 200) {
-  return new Response(body, {
-    status,
-    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
-  });
+// Risk-adjusted ranking — same default the old dashboard used. One car at a
+// time means there's no sort toggle; we always lead with the best bet.
+function sortDeals(deals) {
+  return [...deals].sort((a, b) =>
+    (b.decision_score || 0) - (a.decision_score || 0)
+    || (b.est_profit_eur || 0) - (a.est_profit_eur || 0));
 }
 
-function redirect(loc) {
-  return new Response(null, { status: 302, headers: { "Location": loc } });
+// Which car to show. olx_id wins (stable across feed refreshes); else the `i`
+// index, clamped into range.
+function pickIndex(sorted, params) {
+  const olxId = params.get("olx_id");
+  if (olxId) {
+    const idx = sorted.findIndex(d => d.olx_id === olxId);
+    if (idx >= 0) return idx;
+  }
+  let i = parseInt(params.get("i"), 10);
+  if (!Number.isFinite(i)) i = 0;
+  return Math.min(sorted.length - 1, Math.max(0, i));
 }
 
-function notFound() {
-  return new Response("Not found", { status: 404 });
+// ── Small helpers ───────────────────────────────────────────────────────────
+
+function pickZone(z) {
+  z = (z || "").toString();
+  return ZONES.includes(z) ? z : "all";
 }
 
-function forbidden() {
-  return new Response("Forbidden", { status: 403 });
+function depositCents(env) {
+  const n = parseInt(env.DEPOSIT_AMOUNT_CENTS, 10);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_DEPOSIT_CENTS;
 }
 
-// CSRF guard for state-changing admin POSTs. SameSite=Lax on the session
-// cookie still lets top-level navigation POSTs ride along, so we also verify
-// the request originated from our own host. Browsers send Origin on
-// cross-origin POSTs; we fall back to Referer, and reject when neither is
-// present on a mutating request.
+function randomToken(bytes = 16) {
+  const buf = new Uint8Array(bytes);
+  crypto.getRandomValues(buf);
+  return Array.from(buf, b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Read the visitor cookie, minting one if absent. The returned setCookie (if
+// any) must be attached to the response so the same visitor's unlocks persist.
+function ensureUid(request) {
+  const cookie = request.headers.get("cookie") || "";
+  const m = cookie.match(new RegExp(`${COOKIE_UID}=([a-f0-9]+)`));
+  if (m) return { uid: m[1], setCookie: null };
+  const uid = randomToken(16);
+  const setCookie = [
+    `${COOKIE_UID}=${uid}`,
+    "Path=/", "HttpOnly", "SameSite=Lax", "Secure",
+    `Max-Age=${365 * 24 * 3600}`,
+  ].join("; ");
+  return { uid, setCookie };
+}
+
+function html(body, status = 200, setCookie = null) {
+  const headers = { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" };
+  if (setCookie) headers["Set-Cookie"] = setCookie;
+  return new Response(body, { status, headers });
+}
+
+function redirect(loc, status = 302, setCookie = null) {
+  const headers = { "Location": loc };
+  if (setCookie) headers["Set-Cookie"] = setCookie;
+  return new Response(null, { status, headers });
+}
+
+function notFound() { return new Response("Not found", { status: 404 }); }
+function forbidden() { return new Response("Forbidden", { status: 403 }); }
+
+// CSRF guard for the /reserve POST: verify the request came from our own host.
 function sameOrigin(request, url) {
   const origin = request.headers.get("Origin");
   if (origin) {
@@ -351,6 +413,9 @@ function sameOrigin(request, url) {
   return false;
 }
 
-function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms));
+function constantTimeEq(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
 }
