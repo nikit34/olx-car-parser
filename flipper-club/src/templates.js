@@ -71,18 +71,18 @@ const BASE_CSS = `
 
   /* Grid of car tiles */
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
-  .tile { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; display: block; color: inherit; transition: box-shadow .15s, transform .15s; }
+  .tile { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; color: inherit; transition: box-shadow .15s, transform .15s; }
   .tile:hover { box-shadow: 0 4px 14px rgba(0,0,0,.08); transform: translateY(-2px); text-decoration: none; }
-  .tile .thumb { position: relative; width: 100%; aspect-ratio: 4 / 3; background: #e5e7eb; }
+  .tile .thumb { position: relative; width: 100%; aspect-ratio: 4 / 3; background: #e5e7eb; flex: 0 0 auto; }
   .tile .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .tile .badge { position: absolute; top: 8px; right: 8px; font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 999px; background: rgba(17,17,17,.72); color: #fff; }
+  .tile .badge { position: absolute; top: 8px; right: 8px; font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 999px; background: rgba(17,17,17,.72); color: #fff; white-space: nowrap; }
   .tile .badge.unlocked { background: #047857; }
-  .tile .tbody { padding: 10px 12px 12px; }
-  .tile h3 { margin: 0 0 2px; font-size: 14px; font-weight: 600; line-height: 1.3; }
-  .tile .sub { font-size: 12px; color: #6b7280; margin-bottom: 8px; min-height: 16px; }
-  .tile .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .tile .price { font-size: 17px; font-weight: 700; color: #111; }
-  .discount-chip { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .tile .tbody { padding: 10px 12px 12px; display: flex; flex-direction: column; flex: 1 1 auto; }
+  .tile h3 { margin: 0 0 2px; font-size: 14px; font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2.6em; }
+  .tile .sub { font-size: 12px; color: #6b7280; margin-bottom: 8px; }
+  .tile .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; }
+  .tile .price { font-size: 17px; font-weight: 700; color: #111; white-space: nowrap; }
+  .discount-chip { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
   .discount-strong { background: #d1fae5; color: #065f46; }
   .discount-medium { background: #fef3c7; color: #92400e; }
   .discount-mild { background: #f3f4f6; color: #4b5563; }
