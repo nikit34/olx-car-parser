@@ -26,7 +26,10 @@
 // GitHub Release and caches it in KV for 5 min. A missing/broken feed renders a
 // degraded banner (no fake data).
 
-import { renderGrid, renderCarPage, renderInfo } from "./templates.js";
+import {
+  renderGrid, renderCarPage, renderInfo,
+  renderLanding, renderClaim, renderClaimSuccess, renderReservations,
+} from "./templates.js";
 import {
   stripeConfigured, createCheckoutSession,
   retrieveCheckoutSession, verifyWebhookSignature,
@@ -40,7 +43,13 @@ const DEFAULT_CURRENCY = "eur";
 
 // Product routes the Worker owns directly. Everything else (that isn't
 // /analytics or /webhook) is treated as an internal asset request.
-const PRODUCT_PATHS = new Set(["/", "/car", "/reserve", "/unlocked"]);
+//   /          landing (marketing)        /claim     claim-confirm interstitial
+//   /mercado   deal feed (grid)           /reserve   POST → Stripe checkout
+//   /car       single-car detail          /unlocked  Stripe success → claimed
+//   /reservas  my claimed cars
+const PRODUCT_PATHS = new Set([
+  "/", "/mercado", "/car", "/claim", "/reserve", "/unlocked", "/reservas",
+]);
 
 export default {
   async fetch(request, env) {
@@ -64,10 +73,13 @@ export default {
         return handleAssetGated(request, env);
       }
 
-      if (pathname === "/" && method === "GET") return handleHome(request, env, url);
+      if (pathname === "/" && method === "GET") return handleLanding(request, env, url);
+      if (pathname === "/mercado" && method === "GET") return handleFeed(request, env, url);
       if (pathname === "/car" && method === "GET") return handleCar(request, env, url);
+      if (pathname === "/claim" && method === "GET") return handleClaim(request, env, url);
       if (pathname === "/reserve" && method === "POST") return handleReserve(request, env, url);
       if (pathname === "/unlocked" && method === "GET") return handleUnlocked(request, env, url);
+      if (pathname === "/reservas" && method === "GET") return handleReservas(request, env, url);
 
       return notFound();
     } catch (err) {
@@ -79,16 +91,53 @@ export default {
 
 // ── Product handlers ────────────────────────────────────────────────────────
 
-async function handleHome(request, env, url) {
+// Landing (/) — marketing hero with live market stats + a featured top deal.
+async function handleLanding(request, env, url) {
+  const { uid, setCookie } = ensureUid(request);
+  const { deals, degraded } = await getDeals(env, "all");
+  const depositCount = (await listUnlocked(env, uid)).size;
+
+  if (degraded || !Array.isArray(deals) || deals.length === 0) {
+    return html(renderInfo({
+      zone: "all", depositCount,
+      title: "Serviço indisponível",
+      message: "Não foi possível carregar os negócios neste momento. Tenta novamente dentro de instantes.",
+    }), degraded ? 503 : 200, setCookie);
+  }
+
+  const sorted = sortDeals(deals, "score");
+  const withProfit = deals.filter(d => d.est_profit_eur != null);
+  const totalProfit = withProfit.reduce((s, d) => s + d.est_profit_eur, 0);
+  const withDisc = deals.filter(d => d.discount_pct != null);
+  const avgDisc = withDisc.length
+    ? Math.round(withDisc.reduce((s, d) => s + d.discount_pct, 0) / withDisc.length * 100)
+    : 0;
+
+  return html(renderLanding({
+    stats: {
+      deals: deals.length,
+      avgDisc: avgDisc + "%",
+      totalProfit: "€" + Math.round(totalProfit).toLocaleString("pt-PT"),
+    },
+    featured: sorted[0],
+    depositEur: depositCents(env) / 100,
+    depositCount,
+  }), 200, setCookie);
+}
+
+// Mercado feed (/mercado) — the grid of car tiles, zone + sort filtered.
+async function handleFeed(request, env, url) {
   const zone = pickZone(url.searchParams.get("zone"));
   const { uid, setCookie } = ensureUid(request);
   const { deals, degraded } = await getDeals(env, zone);
+  const unlockedSet = await listUnlocked(env, uid);
+  const depositCount = unlockedSet.size;
 
   if (degraded) {
     return html(renderInfo({
-      zone,
+      zone, depositCount,
       title: "Serviço indisponível",
-      message: "Não foi possível carregar os deals neste momento. Tenta novamente dentro de instantes.",
+      message: "Não foi possível carregar os negócios neste momento. Tenta novamente dentro de instantes.",
     }), 503, setCookie);
   }
 
@@ -96,15 +145,14 @@ async function handleHome(request, env, url) {
   const sorted = sortDeals(deals, sort);
   if (sorted.length === 0) {
     return html(renderInfo({
-      zone,
-      title: "Sem deals quentes",
-      message: "Sem deals quentes na tua zona neste momento. Volta dentro de 4h — o próximo scrape vai colocar novos.",
+      zone, depositCount,
+      title: "Sem negócios quentes",
+      message: "Sem negócios com margem na tua zona neste momento. Volta dentro de 4h — o próximo scrape vai colocar novos.",
     }), 200, setCookie);
   }
 
-  const unlockedSet = await listUnlocked(env, uid);
   return html(renderGrid({
-    deals: sorted, zone, sort, unlockedSet,
+    deals: sorted, zone, sort, unlockedSet, depositCount,
     depositEur: depositCents(env) / 100,
     stripeReady: stripeConfigured(env),
   }), 200, setCookie);
@@ -116,17 +164,45 @@ async function handleCar(request, env, url) {
   const olxId = (url.searchParams.get("olx_id") || "").toString();
   const { uid, setCookie } = ensureUid(request);
   const { deals, degraded } = await getDeals(env, zone);
+  const depositCount = (await listUnlocked(env, uid)).size;
   if (degraded) {
     return html(renderInfo({
-      zone, title: "Serviço indisponível",
-      message: "Não foi possível carregar os deals neste momento. Tenta novamente dentro de instantes.",
+      zone, depositCount, title: "Serviço indisponível",
+      message: "Não foi possível carregar os negócios neste momento. Tenta novamente dentro de instantes.",
     }), 503, setCookie);
   }
   const deal = (deals || []).find(d => d.olx_id === olxId);
-  if (!deal) return redirect(`/?zone=${zone}`, 302, setCookie);
-  const unlocked = await isUnlocked(env, uid, deal.olx_id);
+  if (!deal) return redirect(`/mercado?zone=${zone}`, 302, setCookie);
+  const rec = await getUnlock(env, uid, deal.olx_id);
   return html(renderCarPage({
-    deal, zone, unlocked, justReserved: false,
+    deal, zone, unlocked: !!rec, justReserved: false,
+    claimedAtMs: claimedAtMs(rec), depositCount,
+    depositEur: depositCents(env) / 100,
+    stripeReady: stripeConfigured(env),
+  }), 200, setCookie);
+}
+
+// Claim confirm interstitial (/claim) — deposit breakdown + benefits, then a
+// form that POSTs to /reserve → Stripe. If already unlocked, jump to detail.
+async function handleClaim(request, env, url) {
+  const zone = pickZone(url.searchParams.get("zone"));
+  const olxId = (url.searchParams.get("olx_id") || "").toString();
+  const { uid, setCookie } = ensureUid(request);
+  const { deals, degraded } = await getDeals(env, zone);
+  const depositCount = (await listUnlocked(env, uid)).size;
+  if (degraded) {
+    return html(renderInfo({
+      zone, depositCount, title: "Serviço indisponível",
+      message: "Não foi possível carregar os negócios neste momento. Tenta novamente dentro de instantes.",
+    }), 503, setCookie);
+  }
+  const deal = (deals || []).find(d => d.olx_id === olxId);
+  if (!deal) return redirect(`/mercado?zone=${zone}`, 302, setCookie);
+  if (await isUnlocked(env, uid, deal.olx_id)) {
+    return redirect(`/car?zone=${zone}&olx_id=${encodeURIComponent(olxId)}`, 302, setCookie);
+  }
+  return html(renderClaim({
+    deal, zone, depositCount,
     depositEur: depositCents(env) / 100,
     stripeReady: stripeConfigured(env),
   }), 200, setCookie);
@@ -150,7 +226,7 @@ async function handleReserve(request, env, url) {
   // Validate the olx_id is a real, current deal before charging anyone.
   const { deals } = await getDeals(env, zone);
   const deal = (deals || []).find(d => d.olx_id === olxId);
-  if (!deal) return redirect(`/?zone=${zone}`, 303, setCookie);
+  if (!deal) return redirect(`/mercado?zone=${zone}`, 303, setCookie);
 
   const carName = deal.title
     || [deal.brand, deal.model, deal.year].filter(Boolean).join(" ")
@@ -204,22 +280,54 @@ async function handleUnlocked(request, env, url) {
   }
 
   const { deals, degraded } = await getDeals(env, zone);
+  const depositCount = (await listUnlocked(env, uid)).size;
   if (degraded || !Array.isArray(deals) || deals.length === 0) {
     return html(renderInfo({
-      zone,
+      zone, depositCount,
       title: "Reserva registada",
       message: "O teu depósito foi recebido. Recarrega a página dentro de instantes para ver o contacto.",
     }), 200, setCookie);
   }
   const deal = (deals || []).find(d => d.olx_id === olxId);
-  if (!deal) return redirect(`/?zone=${zone}`, 302, setCookie);
-  const unlocked = await isUnlocked(env, uid, deal.olx_id);
+  if (!deal) return redirect(`/mercado?zone=${zone}`, 302, setCookie);
+  const rec = await getUnlock(env, uid, deal.olx_id);
 
+  // Paid+unlocked → the design's celebratory success screen. Not yet recorded
+  // (webhook lag) → reuse the detail page's locked module so they can retry.
+  if (rec) {
+    return html(renderClaimSuccess({
+      deal, zone, claimedAtMs: claimedAtMs(rec), depositCount,
+      depositEur: depositCents(env) / 100,
+    }), 200, setCookie);
+  }
   return html(renderCarPage({
-    deal, zone, unlocked,
-    justReserved: unlocked,
+    deal, zone, unlocked: false, justReserved: false,
+    claimedAtMs: null, depositCount,
     depositEur: depositCents(env) / 100,
     stripeReady: stripeConfigured(env),
+  }), 200, setCookie);
+}
+
+// Reservas (/reservas) — every car this visitor has claimed (paid-unlocked),
+// each with its 24h-exclusivity countdown anchored on the deposit timestamp.
+async function handleReservas(request, env, url) {
+  const { uid, setCookie } = ensureUid(request);
+  const { deals, degraded } = await getDeals(env, "all");
+  const records = await listUnlockedRecords(env, uid);
+  const depositCount = records.length;
+
+  let claims = [];
+  if (!degraded && Array.isArray(deals)) {
+    const byId = new Map(deals.map(d => [d.olx_id, d]));
+    claims = records
+      .map(r => ({ deal: byId.get(r.olxId), claimedAtMs: r.claimedAtMs }))
+      .filter(c => c.deal)
+      .sort((a, b) => (b.claimedAtMs || 0) - (a.claimedAtMs || 0));
+  }
+
+  return html(renderReservations({
+    claims, depositCount,
+    depositEur: depositCents(env) / 100,
   }), 200, setCookie);
 }
 
@@ -260,6 +368,32 @@ async function recordUnlock(env, uid, olxId, info) {
 async function isUnlocked(env, uid, olxId) {
   if (!uid || !olxId) return false;
   return !!(await env.KV.get(`unlock:${uid}:${olxId}`));
+}
+
+// Full unlock record ({ paid_at, … }) or null — used to drive the per-car 24h
+// exclusivity countdown from when the deposit was actually taken.
+async function getUnlock(env, uid, olxId) {
+  if (!uid || !olxId) return null;
+  const raw = await env.KV.get(`unlock:${uid}:${olxId}`);
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch { return {}; }
+}
+
+// Epoch-ms of the deposit, for the countdown's data-claimed-at. Null if the
+// record predates paid_at (legacy) — the UI then shows a static 24:00:00.
+function claimedAtMs(rec) {
+  if (!rec || !rec.paid_at) return null;
+  const t = Date.parse(rec.paid_at);
+  return Number.isFinite(t) ? t : null;
+}
+
+// Every unlock for this visitor as { olxId, claimedAtMs } — one prefix scan
+// plus a get per key (Reservas only, so the fan-out stays small).
+async function listUnlockedRecords(env, uid) {
+  const ids = [...(await listUnlocked(env, uid))];
+  return Promise.all(ids.map(async olxId => ({
+    olxId, claimedAtMs: claimedAtMs(await getUnlock(env, uid, olxId)),
+  })));
 }
 
 // ── Internal dashboard / assets — Basic Auth, fail-closed ───────────────────
