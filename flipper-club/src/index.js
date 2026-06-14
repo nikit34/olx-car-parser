@@ -26,7 +26,7 @@
 // GitHub Release and caches it in KV for 5 min. A missing/broken feed renders a
 // degraded banner (no fake data).
 
-import { renderCarPage, renderInfo } from "./templates.js";
+import { renderGrid, renderCarPage, renderInfo } from "./templates.js";
 import {
   stripeConfigured, createCheckoutSession,
   retrieveCheckoutSession, verifyWebhookSignature,
@@ -40,7 +40,7 @@ const DEFAULT_CURRENCY = "eur";
 
 // Product routes the Worker owns directly. Everything else (that isn't
 // /analytics or /webhook) is treated as an internal asset request.
-const PRODUCT_PATHS = new Set(["/", "/reserve", "/unlocked"]);
+const PRODUCT_PATHS = new Set(["/", "/car", "/reserve", "/unlocked"]);
 
 export default {
   async fetch(request, env) {
@@ -65,6 +65,7 @@ export default {
       }
 
       if (pathname === "/" && method === "GET") return handleHome(request, env, url);
+      if (pathname === "/car" && method === "GET") return handleCar(request, env, url);
       if (pathname === "/reserve" && method === "POST") return handleReserve(request, env, url);
       if (pathname === "/unlocked" && method === "GET") return handleUnlocked(request, env, url);
 
@@ -91,7 +92,8 @@ async function handleHome(request, env, url) {
     }), 503, setCookie);
   }
 
-  const sorted = sortDeals(deals);
+  const sort = url.searchParams.get("sort") || "score";
+  const sorted = sortDeals(deals, sort);
   if (sorted.length === 0) {
     return html(renderInfo({
       zone,
@@ -100,13 +102,31 @@ async function handleHome(request, env, url) {
     }), 200, setCookie);
   }
 
-  const index = pickIndex(sorted, url.searchParams);
-  const deal = sorted[index];
-  const unlocked = await isUnlocked(env, uid, deal.olx_id);
+  const unlockedSet = await listUnlocked(env, uid);
+  return html(renderGrid({
+    deals: sorted, zone, sort, unlockedSet,
+    depositEur: depositCents(env) / 100,
+    stripeReady: stripeConfigured(env),
+  }), 200, setCookie);
+}
 
+// Single-car detail page (opened by clicking a grid tile).
+async function handleCar(request, env, url) {
+  const zone = pickZone(url.searchParams.get("zone"));
+  const olxId = (url.searchParams.get("olx_id") || "").toString();
+  const { uid, setCookie } = ensureUid(request);
+  const { deals, degraded } = await getDeals(env, zone);
+  if (degraded) {
+    return html(renderInfo({
+      zone, title: "Serviço indisponível",
+      message: "Não foi possível carregar os deals neste momento. Tenta novamente dentro de instantes.",
+    }), 503, setCookie);
+  }
+  const deal = (deals || []).find(d => d.olx_id === olxId);
+  if (!deal) return redirect(`/?zone=${zone}`, 302, setCookie);
+  const unlocked = await isUnlocked(env, uid, deal.olx_id);
   return html(renderCarPage({
-    deal, index, total: sorted.length, zone, unlocked,
-    justReserved: false,
+    deal, zone, unlocked, justReserved: false,
     depositEur: depositCents(env) / 100,
     stripeReady: stripeConfigured(env),
   }), 200, setCookie);
@@ -140,7 +160,7 @@ async function handleReserve(request, env, url) {
   const successUrl =
     `${url.origin}/unlocked?zone=${zone}&olx_id=${encodeURIComponent(olxId)}`
     + `&session_id={CHECKOUT_SESSION_ID}`;
-  const cancelUrl = `${url.origin}/?zone=${zone}&olx_id=${encodeURIComponent(olxId)}`;
+  const cancelUrl = `${url.origin}/car?zone=${zone}&olx_id=${encodeURIComponent(olxId)}`;
 
   try {
     const session = await createCheckoutSession(env, {
@@ -191,14 +211,12 @@ async function handleUnlocked(request, env, url) {
       message: "O teu depósito foi recebido. Recarrega a página dentro de instantes para ver o contacto.",
     }), 200, setCookie);
   }
-  const sorted = sortDeals(deals);
-  let index = sorted.findIndex(d => d.olx_id === olxId);
-  if (index < 0) index = 0;
-  const deal = sorted[index];
+  const deal = (deals || []).find(d => d.olx_id === olxId);
+  if (!deal) return redirect(`/?zone=${zone}`, 302, setCookie);
   const unlocked = await isUnlocked(env, uid, deal.olx_id);
 
   return html(renderCarPage({
-    deal, index, total: sorted.length, zone, unlocked,
+    deal, zone, unlocked,
     justReserved: unlocked,
     depositEur: depositCents(env) / 100,
     stripeReady: stripeConfigured(env),
@@ -333,23 +351,33 @@ async function degrade(env, cacheKey) {
 
 // Risk-adjusted ranking — same default the old dashboard used. One car at a
 // time means there's no sort toggle; we always lead with the best bet.
-function sortDeals(deals) {
-  return [...deals].sort((a, b) =>
-    (b.decision_score || 0) - (a.decision_score || 0)
-    || (b.est_profit_eur || 0) - (a.est_profit_eur || 0));
+function sortDeals(deals, sort = "score") {
+  const out = [...deals];
+  if (sort === "newest") {
+    out.sort((a, b) => new Date(b.first_seen_at || 0) - new Date(a.first_seen_at || 0));
+  } else if (sort === "profit") {
+    out.sort((a, b) => (b.est_profit_eur || 0) - (a.est_profit_eur || 0));
+  } else {
+    out.sort((a, b) =>
+      (b.decision_score || 0) - (a.decision_score || 0)
+      || (b.est_profit_eur || 0) - (a.est_profit_eur || 0));
+  }
+  return out;
 }
 
-// Which car to show. olx_id wins (stable across feed refreshes); else the `i`
-// index, clamped into range.
-function pickIndex(sorted, params) {
-  const olxId = params.get("olx_id");
-  if (olxId) {
-    const idx = sorted.findIndex(d => d.olx_id === olxId);
-    if (idx >= 0) return idx;
-  }
-  let i = parseInt(params.get("i"), 10);
-  if (!Number.isFinite(i)) i = 0;
-  return Math.min(sorted.length - 1, Math.max(0, i));
+// Every olx_id this visitor has paid-unlocked, via one KV prefix scan instead
+// of N per-deal gets — used to badge tiles in the grid. Returns a Set.
+async function listUnlocked(env, uid) {
+  const set = new Set();
+  if (!uid) return set;
+  const prefix = `unlock:${uid}:`;
+  let cursor;
+  do {
+    const page = await env.KV.list({ prefix, cursor });
+    for (const k of page.keys) set.add(k.name.slice(prefix.length));
+    cursor = page.list_complete ? null : page.cursor;
+  } while (cursor);
+  return set;
 }
 
 // ── Small helpers ───────────────────────────────────────────────────────────
