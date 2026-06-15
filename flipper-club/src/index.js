@@ -308,7 +308,7 @@ async function handleFeed(request, env, url) {
     return html(renderInfo({
       zone, depositCount,
       title: "Sem negócios quentes",
-      message: "Sem negócios com margem na tua zona neste momento. Volta dentro de 4h — o próximo scrape vai colocar novos.",
+      message: "Sem carros abaixo do preço nesta zona agora — a lista renova ao longo do dia. Entretanto, cola o link de qualquer anúncio em /avaliar para saber se está bem cotado.",
     }), 200, setCookie);
   }
 
