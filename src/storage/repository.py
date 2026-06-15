@@ -549,7 +549,7 @@ def backfill_deactivated_at(session: Session) -> int:
 
 _MERGE_FIELDS = [
     "model", "engine_cc", "fuel_type", "horsepower", "transmission",
-    "segment", "doors", "seats", "color", "condition", "drive_type",
+    "segment", "doors", "seats", "color", "condition", "drive_type", "origin",
     "registration_month", "city", "district",
     "seller_type", "description", "llm_extras", "llm_description_hash",
     "desc_mentions_repair", "desc_mentions_accident", "real_mileage_km", "desc_mentions_num_owners",

@@ -66,7 +66,7 @@ def _get_table_columns(conn, table_name: str) -> set[str]:
     return {row[1] for row in rows}
 
 
-_SCHEMA_VERSION = 3  # bump when _migrate_columns or _dead_json_keys changes
+_SCHEMA_VERSION = 4  # bump when _migrate_columns or _dead_json_keys changes
 
 
 def _read_schema_version(conn) -> int:
@@ -131,6 +131,9 @@ def init_db(db_path: str | None = None):
         ("seller_uuid", "TEXT"),
         ("seller_displayed_as", "TEXT"),
         ("seller_profile_url", "TEXT"),
+        # v4: structured origin (national/imported) from the OLX/SV "origin"
+        # param — distinct from the dropped dead-LLM "imported" key.
+        ("origin", "TEXT"),
     ]
     _migrate_unmatched_columns = [
         ("source", "TEXT DEFAULT 'olx'"),
@@ -156,8 +159,9 @@ def init_db(db_path: str | None = None):
         # old heuristic columns (replaced by desc_mentions_* equivalents)
         "needs_repair", "had_accident", "num_owners", "customs_cleared",
         "mileage_suspect", "estimated_repair_cost_eur",
-        # never used in src/
-        "origin", "registration_plate", "tires_condition",
+        # never used in src/ (NB: "origin" was here as a dead column but is now a
+        # live structured field — captured from the OLX/SV param, see v4 migrate)
+        "registration_plate", "tires_condition",
         # removed LLM fields (zero price-model importance)
         "accident_details", "imported", "paint_condition", "service_history",
         "repair_details", "suspicious_signs", "extras", "issues",
