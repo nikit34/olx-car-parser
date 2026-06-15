@@ -172,10 +172,18 @@ def _build(db_path: Path, out_dir: Path) -> dict:
     sell_speed = compute_sell_speed_by_model(listings)
     valuations = build_valuations(listings, predictions, sell_speed)
     val_path = out_dir / "valuations.json"
-    val_path.write_text(json.dumps(valuations, ensure_ascii=False, separators=(",", ":")))
-    sizes["valuations.json"] = val_path.stat().st_size
-    print(f"[build]   valuations: {len(valuations.get('cars', {})):>6} cars  "
-          f"({sizes['valuations.json']/1e6:.2f} MB)", flush=True)
+    # allow_nan=False: a non-finite value (pandas NaN leaking through) emits the
+    # literal `NaN`, which is valid for Python's json.load but breaks the Worker's
+    # JSON.parse. Fail LOUDLY and skip the file rather than ship an unparseable
+    # blob (or crash the other witnesses).
+    try:
+        blob = json.dumps(valuations, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+        val_path.write_text(blob)
+        sizes["valuations.json"] = val_path.stat().st_size
+        print(f"[build]   valuations: {len(valuations.get('cars', {})):>6} cars  "
+              f"({sizes['valuations.json']/1e6:.2f} MB)", flush=True)
+    except ValueError as e:
+        print(f"[build]   valuations.json SKIPPED — non-finite value leaked: {e}", flush=True)
 
     manifest = {
         "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
