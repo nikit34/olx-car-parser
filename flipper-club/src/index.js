@@ -29,6 +29,7 @@
 import {
   renderGrid, renderCarPage, renderInfo,
   renderLanding, renderClaim, renderClaimSuccess, renderReservations,
+  renderValuationTeaser,
 } from "./templates.js";
 import {
   stripeConfigured, createCheckoutSession,
@@ -48,7 +49,7 @@ const DEFAULT_CURRENCY = "eur";
 //   /car       single-car detail          /unlocked  Stripe success → claimed
 //   /reservas  my claimed cars
 const PRODUCT_PATHS = new Set([
-  "/", "/mercado", "/car", "/claim", "/reserve", "/unlocked", "/reservas",
+  "/", "/mercado", "/car", "/claim", "/reserve", "/unlocked", "/reservas", "/avaliar",
 ]);
 
 export default {
@@ -74,6 +75,7 @@ export default {
       }
 
       if (pathname === "/" && method === "GET") return handleLanding(request, env, url);
+      if (pathname === "/avaliar" && method === "GET") return handleAvaliar(request, env, url);
       if (pathname === "/mercado" && method === "GET") return handleFeed(request, env, url);
       if (pathname === "/car" && method === "GET") return handleCar(request, env, url);
       if (pathname === "/claim" && method === "GET") return handleClaim(request, env, url);
@@ -125,9 +127,17 @@ async function handleLanding(request, env, url) {
   }), 200, setCookie);
 }
 
+// Avaliar (/avaliar) — seller-lens teaser (static; CTA is a mailto).
+async function handleAvaliar(request, env, url) {
+  const { uid, setCookie } = ensureUid(request);
+  const depositCount = (await listUnlocked(env, uid)).size;
+  return html(renderValuationTeaser({ depositCount }), 200, setCookie);
+}
+
 // Mercado feed (/mercado) — the grid of car tiles, zone + sort filtered.
 async function handleFeed(request, env, url) {
   const zone = pickZone(url.searchParams.get("zone"));
+  const view = pickView(url.searchParams.get("view"));
   const { uid, setCookie } = ensureUid(request);
   const { deals, degraded } = await getDeals(env, zone);
   const unlockedSet = await listUnlocked(env, uid);
@@ -152,7 +162,7 @@ async function handleFeed(request, env, url) {
   }
 
   return html(renderGrid({
-    deals: sorted, zone, sort, unlockedSet, depositCount,
+    deals: sorted, zone, sort, view, unlockedSet, depositCount,
     depositEur: depositCents(env) / 100,
     stripeReady: stripeConfigured(env),
   }), 200, setCookie);
@@ -161,6 +171,7 @@ async function handleFeed(request, env, url) {
 // Single-car detail page (opened by clicking a grid tile).
 async function handleCar(request, env, url) {
   const zone = pickZone(url.searchParams.get("zone"));
+  const view = pickView(url.searchParams.get("view"));
   const olxId = (url.searchParams.get("olx_id") || "").toString();
   const { uid, setCookie } = ensureUid(request);
   const { deals, degraded } = await getDeals(env, zone);
@@ -175,7 +186,7 @@ async function handleCar(request, env, url) {
   if (!deal) return redirect(`/mercado?zone=${zone}`, 302, setCookie);
   const rec = await getUnlock(env, uid, deal.olx_id);
   return html(renderCarPage({
-    deal, zone, unlocked: !!rec, justReserved: false,
+    deal, zone, view, unlocked: !!rec, justReserved: false,
     claimedAtMs: claimedAtMs(rec), depositCount,
     depositEur: depositCents(env) / 100,
     stripeReady: stripeConfigured(env),
@@ -258,6 +269,7 @@ async function handleReserve(request, env, url) {
 
 async function handleUnlocked(request, env, url) {
   const zone = pickZone(url.searchParams.get("zone"));
+  const view = pickView(url.searchParams.get("view"));
   const olxId = (url.searchParams.get("olx_id") || "").toString();
   const sessionId = (url.searchParams.get("session_id") || "").toString();
   const { uid, setCookie } = ensureUid(request);
@@ -301,7 +313,7 @@ async function handleUnlocked(request, env, url) {
     }), 200, setCookie);
   }
   return html(renderCarPage({
-    deal, zone, unlocked: false, justReserved: false,
+    deal, zone, view, unlocked: false, justReserved: false,
     claimedAtMs: null, depositCount,
     depositEur: depositCents(env) / 100,
     stripeReady: stripeConfigured(env),
@@ -519,6 +531,11 @@ async function listUnlocked(env, uid) {
 function pickZone(z) {
   z = (z || "").toString();
   return ZONES.includes(z) ? z : "all";
+}
+
+// Intent lens for the feed/detail: "comprar" (buyer, default) or "revender".
+function pickView(v) {
+  return (v || "").toString() === "revender" ? "revender" : "comprar";
 }
 
 function depositCents(env) {

@@ -83,6 +83,49 @@ const RISK_META = {
   high: { label: "Risco alto",  c: GRADE_COLORS.red },
 };
 
+// ── Imported-car detector (Tier-0, text-only) ────────────────────────────────
+// fair_median is the price of a PT-REGISTERED car. A foreign-plate / not-yet-
+// legalized import is cheaper because the Portuguese import tax (ISV) +
+// legalização are still unpaid — so its "discount" and "profit" overstate the
+// real margin. We have no CO₂ in the feed, so we FLAG the car and show a hedged
+// cost RANGE; we never fabricate a precise euro haircut. Detection is text-only
+// over title+description (accent-stripped) with a negation guard so genuinely
+// Portuguese cars ("matrícula portuguesa", "nacional desde novo") stay clean.
+// Validated on the live feed: 7/29 flagged, 0 false positives, Mustang
+// "matrícula portuguesa" correctly cleared. See feedback_quality_over_coverage:
+// flag, never fake.
+function stripAccents(s) {
+  return (s == null ? "" : String(s)).toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+const IMPORT_POS = /\b(importad[ao]s?|importacao|nacionaliz\w*|legaliza(?:r|cao|do|da)|por\s+legalizar|matricul(?:ar|a(?:do|da)?\s+(?:na|nos|em)\s+(?:alemanha|franca|belgica|holanda|espanha|italia|suica))|matricula\s+(?:nl|de|be|fr|es|it|alem\w*|estrangeira|holandesa|alema|francesa|belga)|ainda\s+(?:com|por)\s+matricula\s+estrangeira|vindo\s+d[ao]\s+estrangeiro)\b/;
+// Clears cars that are NATIVELY Portuguese (never imported). Deliberately does
+// NOT include "já legalizado/nacionalizado" — those are imported-but-legalized
+// cars we still want to flag (as legalized), handled by IMPORT_LEGAL instead.
+const IMPORT_NEG = /matricula\s+(?:portuguesa|nacional)|nacional\s+desde\s+novo|sempre\s+(?:em\s+)?portugal|documentacao\s+(?:regularizada|portuguesa)|matriculado\s+em\s+portugal|nao\s+(?:e\s+)?importad|sem\s+importacao/;
+// Completion words only — bare "vou legalizar" must NOT count as already done.
+const IMPORT_LEGAL = /\bja\s+(?:legalizad[oa]|nacionalizad[oa])|legalizacao\s+(?:feita|concluida|paga)|isv\s+pag/;
+
+function importInfo(deal) {
+  const hay = stripAccents(deal.title) + " " + stripAccents(deal.description);
+  const flag = IMPORT_POS.test(hay) && !IMPORT_NEG.test(hay);
+  return { flag, legalized: flag && IMPORT_LEGAL.test(hay) };
+}
+
+// Qualitative legalization-cost band by price tier (no CO₂ ⇒ never a single
+// number; always hedged + pointed at the Finanças table).
+function isvTier(price) {
+  if (price == null) return null;
+  if (price < 12000) return "popular";
+  if (price <= 30000) return "medio";
+  return "premium";
+}
+const ISV_RANGE = {
+  popular: "Custo de legalização (estimativa grosseira): ~€1.500–€4.000 para um carro popular/pequeno. O ISV depende do CO₂ e da idade — confirma na tabela das Finanças.",
+  medio:   "Custo de legalização (estimativa grosseira): ~€4.000–€9.000 para um médio/familiar. O ISV depende do CO₂ e da idade — confirma na tabela das Finanças.",
+  premium: "Custo de legalização (estimativa grosseira): pode passar de €10.000 num premium/grande cilindrada. O ISV depende do CO₂ e da idade — confirma na tabela das Finanças.",
+};
+
 function present(deal) {
   const price = deal.price_eur;
   const fairMedian = deal.fair_median;
@@ -121,16 +164,47 @@ function present(deal) {
     || "Viatura";
   const days0 = fmtRelativeDays(deal.first_seen_at);
 
+  // Imported-car flag (text-only; never fabricates an ISV number) + km bands.
+  const imp = importInfo(deal);
+  const km = deal.mileage_km;
+  const highKm = km != null && km >= 200000;
+  const veryHighKm = km != null && km >= 280000;
+  const tier = isvTier(price);
+  // Display-only grade clamp: an unpriced import cost can't justify A+/A, so the
+  // SHOWN grade caps at B with a dagger. The numeric score/grade that drive the
+  // gauge and discount bar are left intact (no double-counting, no fabrication).
+  const clampImport = imp.flag && !imp.legalized && (grade === "A+" || grade === "A");
+  const gradeDisplay = clampImport ? "B" : grade;
+  const gradeDisplayFull = clampImport ? "B †" : `${grade} · ${score}`;
+  const gcDisplay = clampImport ? GRADE_COLORS.amber : gc;
+  // Mileage is caption-only: fair_median already prices km in (see
+  // project_mileage_not_the_lever) — we amber-tint the figure, never re-penalize.
+  const kmStr = fmtKm(km);
+  const kmSpan = veryHighKm
+    ? `<span style="color:${GRADE_COLORS.amber.fg};">${kmStr}</span>`
+    : escapeHtml(kmStr);
+  const subHtml = `${deal.year ?? "—"} · ${kmSpan} · ${escapeHtml(deal.fuel_type || "—")}`;
+  // Buyer-lens framing: euros saved vs the fair median (same magnitude as profit,
+  // different verb). Falls back to the est_profit figure if median/price missing.
+  const saving = (fairMedian != null && price != null)
+    ? Math.round(fairMedian - price) : (profit ?? null);
+
   return {
     deal, name,
     make: deal.brand || "",
     sub: `${deal.year ?? "—"} · ${fmtKm(deal.mileage_km)} · ${deal.fuel_type || "—"}`,
+    subHtml,
     price, fairMedian, disc, profit, risk,
     priceStr: fmtEur(price),
     fairStr: fmtEur(fairMedian),
     profitStr: profit != null ? "+" + fmtEur(profit) : "—",
+    saving, savingStr: saving != null ? "+" + fmtEur(saving) : "—",
     discStr: "↓ " + fmtPct(disc),
     grade, score, gradeFull: `${grade} · ${score}`,
+    gradeDisplay, gradeDisplayFull, gcDisplay,
+    importFlag: imp.flag, importLegalized: imp.legalized,
+    isvTier: tier, isvRange: tier ? ISV_RANGE[tier] : null,
+    highKm, veryHighKm,
     gc, rk,
     barW,
     fairLow, fairHigh,
@@ -486,13 +560,25 @@ const PAGE_SCRIPT = `
 `;
 
 function gradeBadge(p, cls) {
-  return `<span class="${cls}" style="background:${p.gc.bg};color:${p.gc.fg};border:1px solid ${p.gc.br};">${p.gradeFull}</span>`;
+  const c = p.gcDisplay;
+  return `<span class="${cls}" style="background:${c.bg};color:${c.fg};border:1px solid ${c.br};">${p.gradeDisplayFull}</span>`;
 }
 function gradeChip(p) {
-  return `<span class="grade" style="background:${p.gc.bg};color:${p.gc.fg};border:1px solid ${p.gc.br};">${p.grade} · ${p.score}</span>`;
+  const c = p.gcDisplay;
+  return `<span class="grade" style="background:${c.bg};color:${c.fg};border:1px solid ${c.br};">${p.gradeDisplayFull}</span>`;
 }
 function riskChip(p) {
   return `<span class="risk" style="background:${p.rk.c.bg};color:${p.rk.c.fg};">${p.rk.label}</span>`;
+}
+// Amber "imported" inline tag — shown in BOTH lenses (a buyer must see it before
+// clicking a fake-cheap import). Empty string when the car isn't flagged.
+function importTag(p) {
+  if (!p.importFlag) return "";
+  const c = GRADE_COLORS.amber;
+  const txt = p.importLegalized ? "🌍 IMPORTADO" : "🌍 IMPORTADO · ISV?";
+  return `<span style="display:inline-block;font-family:'JetBrains Mono',monospace;font-weight:700;`
+    + `font-size:10px;padding:3px 7px;border-radius:6px;margin-top:7px;`
+    + `background:${c.bg};color:${c.fg};border:1px solid ${c.br};">${txt}</span>`;
 }
 
 // Photo block for a tile/card — real cover photo, else striped brand placeholder.
@@ -543,7 +629,7 @@ ${FONT_LINKS}
 <main>${body}</main>
 <footer class="footer">
   <div class="footer-in">
-    <span class="mono">FLIPPER CLUB · dados de anúncios públicos OLX · avaliações indicativas</span>
+    <span class="mono">AVALIAÇÃO INDEPENDENTE · dados de anúncios públicos OLX · estimativas indicativas, não vinculativas · não somos stand nem intermediário</span>
     <span class="mono">Portugal 🇵🇹</span>
   </div>
 </footer>
@@ -564,11 +650,12 @@ export function renderLanding({ stats, featured, depositEur, depositCount }) {
         </div>
         <div style="padding:18px;">
           <div class="disp" style="font-weight:600;font-size:17px;letter-spacing:-0.01em;">${escapeHtml(f.name)}</div>
-          <div class="mono" style="font-size:12px;color:#8A8F98;margin-top:4px;">${escapeHtml(f.sub)}</div>
+          <div class="mono" style="font-size:12px;color:#8A8F98;margin-top:4px;">${f.subHtml}</div>
+          ${importTag(f)}
           <div class="price-row">
             <div><div style="font-size:11px;color:#8A8F98;">Pedido</div><div class="mono" style="font-weight:700;font-size:24px;letter-spacing:-0.02em;">${f.priceStr}</div></div>
             <div style="margin-bottom:3px;"><span class="fair-strike">${f.fairStr}</span></div>
-            <span class="profit-pill" style="font-size:14px;padding:5px 10px;">${f.profitStr}</span>
+            <span class="profit-pill" style="font-size:14px;padding:5px 10px;">${f.saving != null ? "poupas " + fmtEur(f.saving) : f.profitStr}</span>
           </div>
           <div class="btn-outline" style="width:100%;margin-top:16px;font-size:14px;padding:11px;background:#FAFAF8;text-align:center;">Ver análise completa</div>
         </div>
@@ -578,27 +665,35 @@ export function renderLanding({ stats, featured, depositEur, depositCount }) {
   const steps = [
     { n: "01", t: "Varremos o OLX", d: "Milhares de anúncios de carros em Portugal, recolhidos e atualizados ao longo do dia." },
     { n: "02", t: "Calculamos o preço justo", d: "Cada carro é comparado com anúncios semelhantes para estimar a mediana de mercado." },
-    { n: "03", t: "Pontuamos o risco", d: "Severidade de dano, fotos, histórico e tempo no mercado dão uma nota de A+ a C." },
-    { n: "04", t: "Reivindicas e revendes", d: `${fmtEur(depositEur)} reembolsáveis bloqueiam o negócio para ti durante 24h. Contactas, compras, revendes.` },
+    { n: "03", t: "Avisamos-te dos riscos", d: "Importação por legalizar (ISV em falta), indícios de dano nas fotos, e há quanto tempo o carro está parado. Cada carro leva uma nota de A+ a C." },
+    { n: "04", t: "Compras com confiança — ou revendes", d: `${fmtEur(depositEur)} reembolsáveis bloqueiam o contacto do vendedor para ti durante 24h. Falas, negoceias, e o depósito volta para a tua carteira.` },
   ];
 
   const body = `
     <section class="hero">
       <div class="hero-grid">
         <div class="hero-copy">
-          <div class="eyebrow"><span class="e-dot"></span><span class="mono">OLX PORTUGAL · ${stats.deals} NEGÓCIOS COM MARGEM</span></div>
-          <h1 class="hero-title">Encontra carros que valem mais do que custam.</h1>
-          <p class="lede">Analisamos milhares de anúncios em tempo real, calculamos o preço justo de mercado e mostramos-te apenas os negócios com margem real para revender.</p>
+          <div class="eyebrow"><span class="e-dot"></span><span class="mono">OLX PORTUGAL · AVALIAÇÃO INDEPENDENTE · ${stats.deals} CARROS ANALISADOS HOJE</span></div>
+          <h1 class="hero-title">Antes de comprares, sabe quanto vale mesmo.</h1>
+          <p class="lede">Comparamos cada anúncio do OLX com dezenas de carros semelhantes e dizemos-te o preço justo de mercado — e o que o vendedor não te conta: importação por legalizar, indícios de dano, tempo a encalhar. Não pagues a mais.</p>
           <div class="hero-actions">
-            <a class="btn-dark" href="/mercado">Ver os ${stats.deals} negócios de hoje&nbsp;&nbsp;→</a>
+            <a class="btn-dark" href="/mercado">Ver os ${stats.deals} carros abaixo do preço&nbsp;&nbsp;→</a>
             <span class="note">Sem registo · grátis para explorar</span>
           </div>
+          <div style="margin-top:24px;">
+            <div class="mono" style="font-size:12px;color:#8A8F98;margin-bottom:9px;">O que queres fazer?</div>
+            <div class="chips">
+              <a class="chip active" href="/mercado?view=comprar">🛒 Comprar bem</a>
+              <a class="chip" href="/mercado?view=revender">📈 Revender com margem</a>
+              <a class="chip" href="/avaliar">Vender o meu carro (em breve)</a>
+            </div>
+          </div>
           <div class="hero-stats">
-            <div><div class="stat-num">${stats.avgDisc}</div><div class="stat-cap">desconto médio vs. justo</div></div>
+            <div><div class="stat-num">${stats.avgDisc}</div><div class="stat-cap">abaixo do preço justo, em média</div></div>
             <div class="stat-div"></div>
-            <div><div class="stat-num green">${stats.totalProfit}</div><div class="stat-cap">margem total no mercado</div></div>
+            <div><div class="stat-num green">${stats.totalProfit}</div><div class="stat-cap">poupança total detetada</div></div>
             <div class="stat-div"></div>
-            <div><div class="stat-num">${fmtEur(depositEur)}</div><div class="stat-cap">para reivindicar · reembolsável</div></div>
+            <div><div class="stat-num">${fmtEur(depositEur)}</div><div class="stat-cap">para reservar · reembolsável</div></div>
           </div>
         </div>
         ${featureCard}
@@ -612,34 +707,59 @@ export function renderLanding({ stats, featured, depositEur, depositCount }) {
       </div>
     </section>
 
+    <section class="section" style="padding:8px 22px 0;">
+      <div class="cta-banner" style="background:#fff;border:1px solid #E8E6E1;">
+        <div style="flex:1 1 360px;">
+          <h2 style="color:#16181D;">Vais vender o teu carro?</h2>
+          <p style="color:#5B606B;">Diz-nos o modelo e o ano e fazemos-te uma avaliação independente — para saberes por quanto anunciar sem deixar dinheiro em cima da mesa.</p>
+        </div>
+        <a class="btn-dark" href="/avaliar" style="font-size:15px;padding:14px 26px;">Avaliar o meu carro&nbsp;&nbsp;→</a>
+      </div>
+    </section>
+
     <section class="section" style="padding:24px 22px 70px;">
       <div class="cta-banner">
         <div style="flex:1 1 360px;">
-          <h2>O depósito de ${fmtEur(depositEur)} trabalha para ti.</h2>
-          <p>Reivindicar um negócio esconde-o dos outros membros durante 24h. Inspecionas com calma, contactas o vendedor — e o depósito volta para a tua carteira. Passas? Devolução automática.</p>
+          <h2>A independência é o produto.</h2>
+          <p>O OLX nunca te vai dizer que o anúncio está caro, nem que aquele preço baixo é de um carro ainda por legalizar. Nós dizemos. Reservar um carro (${fmtEur(depositEur)} reembolsáveis) desbloqueia o contacto do vendedor e esconde-o dos outros membros durante 24h — e o depósito volta para a tua carteira assim que falas com o vendedor.</p>
         </div>
-        <a class="btn-bright" href="/mercado">Explorar o mercado&nbsp;&nbsp;→</a>
+        <a class="btn-bright" href="/mercado">Ver os carros avaliados&nbsp;&nbsp;→</a>
       </div>
     </section>`;
 
-  return layout({ title: "Carros que valem mais do que custam", body, zone: "all", nav: "landing", depositCount });
+  return layout({ title: "Não pagues a mais — avaliação independente de carros usados", body, zone: "all", nav: "landing", depositCount });
 }
 
 // ── Mercado feed (/mercado) ─────────────────────────────────────────────────────
-export function renderGrid({ deals, zone, sort, unlockedSet, depositEur, depositCount }) {
-  const tabLabel = s => s === "score" ? "🏆 Melhor aposta" : s === "profit" ? "💰 Maior lucro" : "🆕 Mais recentes";
-  const sortChip = s => `<a href="/mercado?zone=${zone}&sort=${s}" class="chip ${sort === s ? "active" : ""}">${tabLabel(s)}</a>`;
+// `view` is the intent lens: "comprar" (default, buyer-first) or "revender"
+// (importer/flipper). It only RELABELS the same decision_score-ranked feed —
+// never re-sorts or filters — so we never imply a precision the ranking lacks.
+export function renderGrid({ deals, zone, sort, view, unlockedSet, depositEur, depositCount }) {
+  const lens = view === "revender" ? "revender" : "comprar";
+  const profitLabel = lens === "comprar" ? "💰 Maior poupança" : "💰 Maior margem";
+  const tabLabel = s => s === "score" ? "🏆 Melhor aposta" : s === "profit" ? profitLabel : "🆕 Mais recentes";
+  const q = extra => `/mercado?zone=${extra.zone ?? zone}&sort=${extra.sort ?? sort}&view=${lens}`;
+  const sortChip = s => `<a href="${q({ sort: s })}" class="chip ${sort === s ? "active" : ""}">${tabLabel(s)}</a>`;
   const zoneChip = z => {
     const labels = { all: "Todas", norte: "Norte", centro: "Centro", sul: "Sul" };
-    return `<a href="/mercado?zone=${z}&sort=${sort}" class="chip ${zone === z ? "active" : ""}">${labels[z]}</a>`;
+    return `<a href="${q({ zone: z })}" class="chip ${zone === z ? "active" : ""}">${labels[z]}</a>`;
   };
+  const lensChip = (v, label) => `<a href="/mercado?zone=${zone}&sort=${sort}&view=${v}" class="chip ${lens === v ? "active" : ""}">${label}</a>`;
 
   const tiles = deals.map(deal => {
     const p = present(deal);
     const unlocked = unlockedSet && unlockedSet.has(deal.olx_id);
-    const href = `/car?zone=${zone}&olx_id=${encodeURIComponent(deal.olx_id)}`;
+    const href = `/car?zone=${zone}&view=${lens}&olx_id=${encodeURIComponent(deal.olx_id)}`;
     const photoCount = p.photos.length ? `<span class="photo-count">FOTO 1/${p.photos.length}</span>` : "";
     const unlockedBadge = unlocked ? `<span class="badge-unlocked">✓ RESERVADO</span>` : "";
+    // Buyer cares "how much under fair" (poupas); reseller cares raw margin
+    // (which a flagged import overstates → asterisk + footnote, never a fake cut).
+    const pill = lens === "comprar"
+      ? `<div class="profit-pill">${p.saving != null ? "poupas " + fmtEur(p.saving) : p.profitStr}</div>`
+      : `<div class="profit-pill">${p.profitStr}${p.importFlag ? "*" : ""}</div>`;
+    const importNote = (lens === "revender" && p.importFlag)
+      ? `<div style="font-size:10.5px;color:${GRADE_COLORS.amber.fg};margin-top:5px;">* antes do ISV + legalização</div>`
+      : "";
     return `<a class="tile" href="${href}">
       <div class="thumb">
         ${thumbBlock(p, 168, 28)}
@@ -650,15 +770,17 @@ export function renderGrid({ deals, zone, sort, unlockedSet, depositEur, deposit
       </div>
       <div class="tbody">
         <div class="tile-title">${escapeHtml(p.name)}</div>
-        <div class="tile-sub">${escapeHtml(p.sub)}</div>
+        <div class="tile-sub">${p.subHtml}</div>
+        ${importTag(p)}
         <div class="price-row">
           <div class="price">${p.priceStr}</div>
           <div class="fair-strike">${p.fairStr}</div>
-          <div class="profit-pill">${p.profitStr}</div>
+          ${pill}
         </div>
         <div style="margin-top:14px;">
           <div class="bar-head"><span class="cap">Desconto vs. justo</span><span class="val">${p.discStr}</span></div>
           <div class="bar-track"><div class="bar-fill" style="width:${p.barW}%;background:${p.gc.fg};"></div></div>
+          ${importNote}
         </div>
         <div class="tile-foot">
           <span>${escapeHtml(p.zoneLabel)}</span><span class="sep">·</span><span>${escapeHtml(p.daysLabel)}</span>
@@ -668,24 +790,33 @@ export function renderGrid({ deals, zone, sort, unlockedSet, depositEur, deposit
     </a>`;
   }).join("\n");
 
+  const n = deals.length;
+  const head = lens === "comprar"
+    ? { h1: "Carros abaixo do preço", sub: `Portugal — ${ZONE_LABEL[zone] || zone} · ${n} ${n === 1 ? "carro" : "carros"} a valer mais do que custam` }
+    : { h1: "Mercado", sub: `Portugal — ${ZONE_LABEL[zone] || zone} · ${n} ${n === 1 ? "carro" : "carros"} com margem de revenda` };
+
   const body = `
     <div class="feed">
       <div class="feed-head">
-        <h1>Mercado</h1>
-        <p>Portugal — ${ZONE_LABEL[zone] || zone} · ${deals.length} ${deals.length === 1 ? "negócio" : "negócios"} com margem</p>
+        <h1>${head.h1}</h1>
+        <p>${head.sub}</p>
       </div>
       <div class="toolbar">
-        <div class="chips">${["all", "norte", "centro", "sul"].map(zoneChip).join("")}</div>
+        <div class="chips">${lensChip("comprar", "🛒 Comprar")}${lensChip("revender", "📈 Revender")}</div>
         <div class="chips">${["score", "profit", "newest"].map(sortChip).join("")}</div>
+      </div>
+      <div class="toolbar" style="margin-top:0;">
+        <div class="chips">${["all", "norte", "centro", "sul"].map(zoneChip).join("")}</div>
       </div>
       <div class="grid">${tiles}</div>
     </div>`;
-  return layout({ title: "Mercado", body, zone, nav: "feed", depositCount });
+  return layout({ title: lens === "comprar" ? "Carros abaixo do preço" : "Mercado", body, zone, nav: "feed", depositCount });
 }
 
 // ── Car detail (/car) ───────────────────────────────────────────────────────────
-export function renderCarPage({ deal, zone, unlocked, justReserved, depositEur, stripeReady, claimedAtMs, depositCount }) {
+export function renderCarPage({ deal, zone, view, unlocked, justReserved, depositEur, stripeReady, claimedAtMs, depositCount }) {
   const p = present(deal);
+  const lens = view === "revender" ? "revender" : "comprar";
   const photos = p.photos;
   const gallery = photos.length > 0
     ? `<div class="gallery ${photos.length === 1 ? "single" : ""}" data-count="${photos.length}">
@@ -709,15 +840,42 @@ export function renderCarPage({ deal, zone, unlocked, justReserved, depositEur, 
     { k: "Lucro estimado", v: p.profitStr },
     { k: "Severidade de dano", v: `${deal.damage_severity ?? 0} / 3`, cls: sigClass(deal.damage_severity >= 1, deal.damage_severity >= 2) },
     { k: "Dano em fotos", v: fmtPct1(deal.photo_damage_p), cls: deal.photo_damage_flagged ? "v bad" : "v" },
+    { k: "Origem", v: p.importFlag ? (p.importLegalized ? "Importado (legalizado)" : "Importado · ISV em falta") : "Sem indício de importação", cls: (p.importFlag && !p.importLegalized) ? "v warn" : "v" },
+    { k: "Quilometragem", v: fmtKm(deal.mileage_km), cls: sigClass(p.highKm, p.veryHighKm) },
     { k: "Vendedor", v: p.sellerType },
     { k: "Dias no mercado", v: deal.days_on_market != null ? String(deal.days_on_market) : "—" },
   ];
+  const kmCaption = p.veryHighKm
+    ? `<div style="font-size:12px;color:#8A8F98;margin-top:10px;line-height:1.5;">Quilometragem alta para a idade — o preço justo já reflete a média do mercado, mas confirma histórico de manutenção e correia/distribuição na inspeção.</div>`
+    : "";
+
+  // Imported-car banner (amber) shown above the verdict when flagged. Two
+  // variants; the not-legalized one carries the hedged, price-bucketed ISV range.
+  const amber = GRADE_COLORS.amber;
+  const importBanner = p.importFlag ? `
+            <div class="exclusive" style="background:${amber.bg};border:1px solid ${amber.br};align-items:flex-start;margin-top:16px;">
+              <span style="font-size:15px;">${p.importLegalized ? "🌍" : "⚠️"}</span>
+              <span class="x" style="color:#6B4E12;">
+                <b style="color:${amber.fg};">${p.importLegalized ? "Carro importado — já legalizado" : "Carro importado — ainda por legalizar"}.</b>
+                ${p.importLegalized
+                  ? "Este carro foi importado mas o anúncio indica matrícula/legalização portuguesa concluída. O preço já deve incluir o ISV. Confirma a documentação na inspeção."
+                  : `O preço justo (${p.fairStr}) é de um carro já registado em Portugal. Este anúncio parece ter matrícula estrangeira ou estar por nacionalizar, por isso é mais barato: o ISV e a legalização ainda não estão pagos. Conta com vários milhares de euros adicionais.<br><span style="display:block;margin-top:6px;">${p.isvRange || ""}</span>`}
+              </span>
+            </div>` : "";
 
   // Verdict row (uses the real BUY/WATCH verdict; falls back to grade-driven).
   const verdictBuy = (deal.verdict || "").toUpperCase() === "BUY" || (!deal.verdict && (p.grade === "A+" || p.grade === "A"));
   const verdictTag = deal.verdict
     ? (verdictBuy ? "🟢 COMPRAR" : "🟡 OBSERVAR")
     : "🟢 COMPRAR";
+  // Buyer lens leads with "how much under fair" (poupas); reseller lens keeps the
+  // resale margin but asterisks it when an unpriced import cost is in play.
+  const verdictProfit = lens === "comprar"
+    ? (p.saving != null ? "poupas " + fmtEur(p.saving) : p.profitStr)
+    : `${p.profitStr}${p.importFlag ? "*" : ""}`;
+  const verdictFootnote = (lens === "revender" && p.importFlag)
+    ? `<div style="font-size:11.5px;color:${amber.fg};margin-top:8px;line-height:1.45;">* Margem antes do ISV e legalização — ainda por confirmar.</div>`
+    : "";
 
   // Claim / claimed module.
   let module;
@@ -748,8 +906,9 @@ export function renderCarPage({ deal, zone, unlocked, justReserved, depositEur, 
     const unlockItems = [
       { t: "Link direto ao anúncio OLX", d: "sem intermediários" },
       { t: "Contacto do vendedor", d: "nome e telefone" },
-      { t: "Galeria completa + verificação", d: "todas as fotos e matrícula" },
+      { t: "Galeria completa + verificação de matrícula", d: "todas as fotos e matrícula" },
       { t: "24h de exclusividade", d: "escondido dos outros membros" },
+      ...(p.importFlag ? [{ t: "Aviso de importação incluído", d: "dizemos-te se falta pagar ISV antes de contactares o vendedor" }] : []),
     ];
     module = `
       <div class="claim-mod">
@@ -779,7 +938,7 @@ export function renderCarPage({ deal, zone, unlocked, justReserved, depositEur, 
 
   const body = `
     <div class="detail">
-      <a class="back" href="/mercado?zone=${escapeHtml(zone)}">‹&nbsp;&nbsp;Voltar ao mercado</a>
+      <a class="back" href="/mercado?zone=${escapeHtml(zone)}&view=${lens}">‹&nbsp;&nbsp;Voltar ao mercado</a>
       <div class="detail-grid">
         <div class="detail-main">
           ${gallery}
@@ -789,6 +948,7 @@ export function renderCarPage({ deal, zone, unlocked, justReserved, depositEur, 
             <div class="signals">
               ${signals.map(g => `<div class="signal"><div class="k">${g.k}</div><div class="${g.cls || "v"}">${g.v}</div></div>`).join("")}
             </div>
+            ${kmCaption}
           </div>
           <div class="panel">
             <div class="panel-title">Descrição do vendedor</div>
@@ -802,7 +962,8 @@ export function renderCarPage({ deal, zone, unlocked, justReserved, depositEur, 
               <h1>${escapeHtml(p.name)}</h1>
               ${gradeBadge(p, "grade-badge")}
             </div>
-            <div class="side-sub">${escapeHtml(p.sub)}</div>
+            ${p.gradeDisplay !== p.grade ? `<div style="font-size:11.5px;color:${amber.fg};margin-top:8px;">† nota limitada: custo de importação não incluído</div>` : ""}
+            <div class="side-sub">${p.subHtml}</div>
             <div class="side-loc">📍 ${escapeHtml(locBits)}</div>
 
             <div class="side-prices">
@@ -810,11 +971,14 @@ export function renderCarPage({ deal, zone, unlocked, justReserved, depositEur, 
               <div class="side-fair"><div class="cap">Justo (mediana)</div><div class="v">${p.fairStr}</div></div>
             </div>
 
+            ${importBanner}
+
             <div class="verdict-row">
               <span class="verdict-tag">${verdictTag}</span>
               <span class="verdict-disc">${p.discStr}</span>
-              <span class="verdict-profit">${p.profitStr}</span>
+              <span class="verdict-profit">${verdictProfit}</span>
             </div>
+            ${verdictFootnote}
 
             <div style="margin-top:16px;">
               <div class="gauge-head"><span>${p.fairLowStr}</span><span>intervalo justo de mercado</span><span>${p.fairHighStr}</span></div>
@@ -823,7 +987,7 @@ export function renderCarPage({ deal, zone, unlocked, justReserved, depositEur, 
 
             ${module}
           </div>
-          <div class="side-foot">Avaliação gerada a partir de ${p.compCount} anúncios comparáveis em Portugal.</div>
+          <div class="side-foot">Avaliação gerada a partir de ${p.compCount} anúncios comparáveis em Portugal · avaliação independente, não somos o vendedor.</div>
         </div>
       </div>
     </div>`;
@@ -837,6 +1001,7 @@ export function renderClaim({ deal, zone, depositEur, stripeReady, depositCount 
   const benefits = [
     { t: "Exclusividade de 24 horas", d: "Escondemos este carro de todos os outros membros do Flipper Club enquanto decides." },
     { t: "Contacto e link desbloqueados", d: "Nome, telefone e link direto ao anúncio OLX, mais a galeria completa." },
+    ...(p.importFlag ? [{ t: "Aviso de importação", d: "Este anúncio parece ser um carro importado — dizemos-te se falta pagar ISV antes de avançares." }] : []),
     { t: "Totalmente reembolsável", d: "O depósito volta para a tua carteira ao contactar o vendedor, ou auto-devolução em 48h." },
   ];
   const cta = stripeReady
@@ -967,4 +1132,34 @@ export function renderInfo({ zone, title, message, depositCount }) {
       <a class="btn-dark" href="/mercado">Ver mercado</a>
     </div>`;
   return layout({ title, body, zone, nav: null, depositCount });
+}
+
+// ── Avaliar (/avaliar) — seller-lens teaser ──────────────────────────────────
+// Tier-0: no real "value MY car" tool yet (needs an inference endpoint). Ships a
+// waitlist teaser whose CTA is a mailto. A real form is Tier-1.
+export function renderValuationTeaser({ depositCount }) {
+  const mailto = "mailto:nikitapermikov@larixon.com?subject=Avaliar%20o%20meu%20carro"
+    + "&body=Marca%2Fmodelo%3A%0AAno%3A%0AQuilometragem%3A%0ACombust%C3%ADvel%3A%0ALink%20do%20an%C3%BAncio%20(se%20tiver)%3A";
+  const body = `
+    <section class="hero">
+      <div class="hero-copy" style="max-width:620px;margin:0 auto;text-align:center;">
+        <div class="eyebrow" style="margin:0 auto 22px;"><span class="e-dot"></span><span class="mono">PARA QUEM VENDE · EM BREVE</span></div>
+        <h1 class="hero-title" style="font-size:42px;">Quanto vale o teu carro?</h1>
+        <p class="lede" style="margin:0 auto 30px;">Fazemos uma avaliação independente do teu carro — preço justo de mercado em Portugal — para saberes por quanto anunciar sem deixar dinheiro em cima da mesa. Em breve, diretamente aqui.</p>
+        <div class="hero-actions" style="justify-content:center;">
+          <a class="btn-dark" href="${mailto}">Pedir avaliação por email&nbsp;&nbsp;→</a>
+        </div>
+        <div class="mono" style="font-size:12px;color:#8A8F98;margin-top:16px;">Avaliação indicativa · independente · não somos stand nem intermediário</div>
+      </div>
+    </section>
+    <section class="section" style="padding:8px 22px 70px;">
+      <div class="cta-banner">
+        <div style="flex:1 1 360px;">
+          <h2>Os marketplaces não te dizem que o anúncio está caro.</h2>
+          <p>Nós dizemos. A nossa avaliação é independente — não somos stand nem intermediário, e não ganhamos com a tua venda. Enquanto o avaliador automático não está pronto, respondemos por email.</p>
+        </div>
+        <a class="btn-bright" href="/mercado">Ver carros avaliados&nbsp;&nbsp;→</a>
+      </div>
+    </section>`;
+  return layout({ title: "Quanto vale o teu carro? — avaliação independente", body, zone: "all", nav: null, depositCount });
 }
