@@ -1142,7 +1142,9 @@ export function renderReservations({ claims, depositEur, depositCount }) {
         <div class="res-mid">
           <div class="t">${escapeHtml(p.name)}</div>
           <div class="s">${escapeHtml(p.sub)}</div>
-          <div class="res-prices"><span class="p">${p.priceStr}</span><span class="pr">${p.profitStr}</span></div>
+          ${importTag(p)}
+          <div class="res-prices"><span class="p">${p.priceStr}</span><span class="pr">${p.profitStr}${p.importFlag ? "*" : ""}</span></div>
+          ${p.importFlag ? `<div style="font-size:11px;color:${GRADE_COLORS.amber.fg};margin-top:5px;">* margem antes do ISV${p.isvEur ? ` (~${fmtEur(p.isvEur)})` : ""}</div>` : ""}
         </div>
         <div class="res-right">
           <div class="cd-pill"><span class="fc-dot"></span><span class="mono fc-countdown"${cdAttr}>24:00:00</span></div>
