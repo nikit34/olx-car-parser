@@ -41,6 +41,7 @@ class Listing(Base):
     condition = Column(String)             # Condição: Usado, Novo
     drive_type = Column(String)            # Tração: Dianteira, Traseira, Integral
     origin = Column(String)                # Origem: "national" | "imported" (from OLX/SV origin param)
+    co2_g_km = Column(Integer)             # Emissões CO2 g/km (SV detail; OLX has none) — ISV input
     photo_count = Column(Integer)          # Number of photos in listing
     description_length = Column(Integer)   # Length of description text
 

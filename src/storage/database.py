@@ -66,7 +66,7 @@ def _get_table_columns(conn, table_name: str) -> set[str]:
     return {row[1] for row in rows}
 
 
-_SCHEMA_VERSION = 4  # bump when _migrate_columns or _dead_json_keys changes
+_SCHEMA_VERSION = 5  # bump when _migrate_columns or _dead_json_keys changes
 
 
 def _read_schema_version(conn) -> int:
@@ -134,6 +134,8 @@ def init_db(db_path: str | None = None):
         # v4: structured origin (national/imported) from the OLX/SV "origin"
         # param — distinct from the dropped dead-LLM "imported" key.
         ("origin", "TEXT"),
+        # v5: CO₂ emissions g/km (StandVirtual detail "co2_emissions") — ISV input.
+        ("co2_g_km", "INTEGER"),
     ]
     _migrate_unmatched_columns = [
         ("source", "TEXT DEFAULT 'olx'"),
