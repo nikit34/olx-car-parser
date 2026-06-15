@@ -91,7 +91,8 @@ def _build(db_path: Path, out_dir: Path) -> dict:
         get_unmatched_df, get_portfolio_df,
     )
     from src.analytics.computed_columns import enrich_listings
-    from src.analytics.turnover import compute_turnover_stats
+    from src.analytics.turnover import compute_turnover_stats, compute_sell_speed_by_model
+    from src.analytics.valuations import build_valuations
     from src.dashboard.data_loader import compute_signals
 
     print(f"[build] loading DB {db_path}", flush=True)
@@ -164,6 +165,18 @@ def _build(db_path: Path, out_dir: Path) -> dict:
     brands_path.write_text(json.dumps(brands_models, ensure_ascii=False))
     sizes["brands_models.json"] = brands_path.stat().st_size
 
+    # valuations.json — the public "value any listing" lookup (Tier-2), fetched
+    # by the Worker's /avaliar paste-a-link tool. Active+priced listings only;
+    # ~0.9 MB gzipped for ~18k cars. Uploaded to the Release by the existing
+    # ``data/dashboard/*.json`` glob in scrape-ci (no workflow change needed).
+    sell_speed = compute_sell_speed_by_model(listings)
+    valuations = build_valuations(listings, predictions, sell_speed)
+    val_path = out_dir / "valuations.json"
+    val_path.write_text(json.dumps(valuations, ensure_ascii=False, separators=(",", ":")))
+    sizes["valuations.json"] = val_path.stat().st_size
+    print(f"[build]   valuations: {len(valuations.get('cars', {})):>6} cars  "
+          f"({sizes['valuations.json']/1e6:.2f} MB)", flush=True)
+
     manifest = {
         "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "rows": {
@@ -176,6 +189,7 @@ def _build(db_path: Path, out_dir: Path) -> dict:
             "turnover": len(turnover),
             "portfolio": len(portfolio),
             "unmatched": len(unmatched),
+            "valuations": len(valuations.get("cars", {})),
         },
         "files_bytes": sizes,
         "total_bytes": sum(sizes.values()),
