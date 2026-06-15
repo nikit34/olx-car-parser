@@ -144,6 +144,7 @@ class RawListing:
     color: str | None = None
     condition: str | None = None
     drive_type: str | None = None
+    origin: str | None = None       # "national" | "imported" (from OLX/SV "origin" param)
     photo_count: int | None = None
     registration_month: str | None = None
     city: str = ""
@@ -799,7 +800,7 @@ def _merge_details(listing: RawListing, details: dict):
 _DETAIL_AUTHORITATIVE_FIELDS = frozenset({
     "brand", "model", "year", "price_eur", "mileage_km", "engine_cc",
     "fuel_type", "horsepower", "transmission", "doors", "seats", "color",
-    "drive_type", "condition", "segment", "registration_month", "city",
+    "drive_type", "condition", "segment", "registration_month", "city", "origin",
 })
 
 
@@ -901,6 +902,20 @@ def _safe_float(val) -> float | None:
 # label "133.000 km"), categorical fields carry the display text in ``label``
 # (e.g. combustivel label "Diesel"). ``cor``/``tração`` are absent from the
 # OLX cars vertical entirely (they only ever populate from StandVirtual).
+def _norm_origin(v):
+    """Canonicalise the OLX/SV 'origin' param to 'national' | 'imported' | None.
+    OLX value.key is national/imported; SV gives imported/national or the PT
+    label Nacional/Importado — collapse all spellings."""
+    if not v:
+        return None
+    s = str(v).strip().lower()
+    if s in ("national", "nacional"):
+        return "national"
+    if s in ("imported", "importado", "import"):
+        return "imported"
+    return None
+
+
 _API_PARAM_MAP = {
     "modelo": ("model", "label"),
     "body_type": ("segment", "label"),
@@ -914,6 +929,7 @@ _API_PARAM_MAP = {
     "engine_capacity": ("engine_cc", "key"),
     "engine_power": ("horsepower", "key"),
     "nr_seats": ("seats", "key"),
+    "origin": ("origin", "key"),
 }
 _API_INT_FIELDS = frozenset({"year", "mileage_km", "engine_cc", "horsepower", "seats"})
 
@@ -1036,6 +1052,7 @@ def _offer_to_raw(offer: dict) -> RawListing:
             setattr(raw, field, str(val).strip())
 
     raw.mileage_km = _fix_mileage(raw.mileage_km, raw.year)
+    raw.origin = _norm_origin(raw.origin)  # OLX value.key national/imported → canonical
 
     desc = offer.get("description") or ""
     if desc:
@@ -1083,6 +1100,7 @@ _SV_DETAIL_MAP = {
     "body_type": ("segment", None),
     "new_used": ("condition", None),
     "transmission": ("drive_type", None),
+    "origin": ("origin", _norm_origin),
 }
 
 

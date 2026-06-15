@@ -40,6 +40,7 @@ class Listing(Base):
     color = Column(String)                 # Cor
     condition = Column(String)             # Condição: Usado, Novo
     drive_type = Column(String)            # Tração: Dianteira, Traseira, Integral
+    origin = Column(String)                # Origem: "national" | "imported" (from OLX/SV origin param)
     photo_count = Column(Integer)          # Number of photos in listing
     description_length = Column(Integer)   # Length of description text
 

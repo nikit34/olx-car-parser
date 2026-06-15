@@ -176,6 +176,7 @@ def _db_worker(db_queue: Queue, result: dict):
             "transmission": raw.transmission, "segment": raw.segment,
             "doors": raw.doors, "seats": raw.seats, "color": raw.color,
             "condition": raw.condition, "drive_type": raw.drive_type,
+            "origin": getattr(raw, "origin", None),
             "photo_count": raw.photo_count,
             "description_length": len(raw.description) if raw.description else None,
             "registration_month": raw.registration_month,
