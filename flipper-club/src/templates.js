@@ -236,7 +236,6 @@ function present(deal) {
     loc: deal.city || deal.district || "—",
     firstSeenDays: days0,
     verdict: deal.verdict || null,
-    compCount: deal.mileage_km != null ? Math.round(deal.mileage_km / 3000 + 24) : 40,
     href: olxId => `/car?olx_id=${encodeURIComponent(deal.olx_id)}`,
   };
 }
@@ -299,7 +298,7 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .lede{font-size:18px;line-height:1.55;color:#5B606B;margin:0 0 30px;max-width:480px;text-wrap:pretty;}
 .hero-actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center;}
 .hero-actions .btn-dark{font-size:15px;padding:14px 24px;box-shadow:0 6px 18px -6px rgba(20,24,29,0.4);}
-.hero-actions .note{font-family:'JetBrains Mono',monospace;font-size:13px;color:#8A8F98;}
+.note{font-family:'JetBrains Mono',monospace;font-size:13px;color:#8A8F98;}
 .hero-stats{display:flex;flex-wrap:wrap;gap:32px;margin-top:42px;}
 .stat-num{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:30px;letter-spacing:-0.02em;}
 .stat-num.green{color:#177A47;}
@@ -333,7 +332,12 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .feed{max-width:1180px;margin:0 auto;padding:30px 22px 70px;}
 .feed-head h1{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:30px;letter-spacing:-0.03em;margin:0;}
 .feed-head p{font-size:14px;color:#8A8F98;margin:5px 0 0;}
-.toolbar{display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:center;margin:22px 0 20px;}
+.toolbar{display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:center;margin:0 0 12px;}
+/* Sticky filter bar — survives the long single-column feed scroll. */
+.feed-tools{position:sticky;top:54px;z-index:20;margin:18px -22px 8px;padding:12px 22px 4px;background:rgba(247,246,243,0.92);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid #EFECE6;}
+.feed-tools .toolbar:last-child{margin-bottom:8px;}
+.to-top{position:fixed;bottom:20px;right:16px;width:44px;height:44px;border-radius:50%;background:#16181D;color:#fff;border:none;cursor:pointer;font-size:20px;line-height:1;align-items:center;justify-content:center;box-shadow:0 6px 16px rgba(20,24,29,0.28);z-index:40;display:none;}
+.to-top.show{display:flex;}
 .chips{display:flex;gap:6px;flex-wrap:wrap;}
 .chip{font-family:'Hanken Grotesk',sans-serif;font-weight:500;font-size:13px;padding:8px 14px;border-radius:10px;border:1px solid #E2DFD8;background:#fff;color:#5B606B;cursor:pointer;white-space:nowrap;}
 .chip.active{font-weight:600;border-color:#16181D;background:#16181D;color:#fff;}
@@ -362,9 +366,10 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 /* Detail */
 .detail{max-width:1180px;margin:0 auto;padding:22px 22px 70px;}
 .back{font-family:'Hanken Grotesk',sans-serif;font-size:13px;font-weight:500;color:#5B606B;background:none;border:none;cursor:pointer;padding:6px 0;margin-bottom:14px;display:inline-block;}
-.detail-grid{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start;}
-.detail-main{flex:1 1 460px;min-width:300px;}
-.detail-side{flex:1 1 340px;min-width:300px;position:sticky;top:78px;}
+.detail-grid{display:grid;gap:28px;grid-template-columns:minmax(0,1fr) 360px;grid-template-areas:"gallery side" "extra side";align-items:start;}
+.dg-gallery{grid-area:gallery;min-width:0;}
+.dg-side{grid-area:side;position:sticky;top:78px;}
+.dg-extra{grid-area:extra;min-width:0;}
 .hero-photo{position:relative;border-radius:20px;overflow:hidden;border:1px solid #E8E6E1;height:380px;}
 .thumbs{display:grid;grid-template-columns:repeat(5,1fr);gap:9px;margin-top:9px;}
 .thumb-cell{height:62px;border-radius:11px;overflow:hidden;border:1px solid #EAE7E1;background:repeating-linear-gradient(135deg,#EEEBE5 0 9px,#F2EFE9 9px 18px);}
@@ -539,8 +544,18 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
   .hero{padding:40px 18px 28px;}
   .cta-banner{padding:30px;}
   .cta-banner h2{font-size:26px;}
-  .detail-side{position:static;}
-  .fc-nav a{padding:7px 9px;}
+  /* /car: gallery → verdict/price/claim card → signals/description (CTA not buried) */
+  .detail-grid{grid-template-columns:1fr;grid-template-areas:"gallery" "side" "extra";}
+  .dg-side{position:static;}
+  /* Compact header so logo + deposit + CTA fit 390px (was overflowing → page-wide
+     horizontal scroll). Nav links drop on mobile; destinations stay reachable via
+     logo (home), the deposit pill (→ reservas) and the CTA (→ mercado). */
+  .fc-nav{display:none;}
+  .fc-word{font-size:16px;}
+  .fc-header-in{gap:10px;padding:11px 16px;}
+  .fc-deposit{padding:5px 9px;}
+  .fc-deposit span.mono{font-size:11px;}
+  .fc-cta-dark{padding:7px 12px;font-size:12px;}
 }
 @media (max-width:480px){
   .grid{grid-template-columns:1fr;}
@@ -583,6 +598,13 @@ const PAGE_SCRIPT = `
       });
     });
   });
+  // Feed back-to-top FAB — show after a screenful, scroll up on click.
+  var toTop=document.querySelector('.to-top');
+  if(toTop){
+    var onScroll=function(){ if(window.scrollY>700){toTop.classList.add('show');}else{toTop.classList.remove('show');} };
+    window.addEventListener('scroll',onScroll,{passive:true}); onScroll();
+    toTop.addEventListener('click',function(){window.scrollTo({top:0,behavior:'smooth'});});
+  }
 })();
 `;
 
@@ -737,8 +759,9 @@ export function renderLanding({ stats, featured, depositEur, depositCount }) {
           <p class="lede">Comparamos cada anúncio do OLX com dezenas de carros semelhantes e dizemos-te o preço justo de mercado — e o que o vendedor não te conta: importação por legalizar, indícios de dano, tempo a encalhar. Não pagues a mais.</p>
           <div class="hero-actions">
             <a class="btn-dark" href="/mercado">Ver os ${stats.deals} carros abaixo do preço&nbsp;&nbsp;→</a>
-            <span class="note">Sem registo · grátis para explorar</span>
+            <a class="btn-outline" href="/avaliar" style="font-size:15px;padding:14px 22px;">Quanto vale o meu carro?&nbsp;&nbsp;→</a>
           </div>
+          <div class="note" style="margin-top:10px;">Comprar ou vender · sem registo · grátis</div>
           <div style="margin-top:24px;">
             <div class="mono" style="font-size:12px;color:#8A8F98;margin-bottom:9px;">O que queres fazer?</div>
             <div class="chips">
@@ -860,15 +883,18 @@ export function renderGrid({ deals, zone, sort, view, unlockedSet, depositEur, d
         <h1>${head.h1}</h1>
         <p>${head.sub}</p>
       </div>
-      <div class="toolbar">
-        <div class="chips">${lensChip("comprar", "🛒 Comprar")}${lensChip("revender", "📈 Revender")}</div>
-        <div class="chips">${["score", "profit", "newest"].map(sortChip).join("")}</div>
-      </div>
-      <div class="toolbar" style="margin-top:0;">
-        <div class="chips">${["all", "norte", "centro", "sul"].map(zoneChip).join("")}</div>
+      <div class="feed-tools">
+        <div class="toolbar">
+          <div class="chips">${lensChip("comprar", "🛒 Comprar")}${lensChip("revender", "📈 Revender")}</div>
+          <div class="chips">${["score", "profit", "newest"].map(sortChip).join("")}</div>
+        </div>
+        <div class="toolbar">
+          <div class="chips">${["all", "norte", "centro", "sul"].map(zoneChip).join("")}</div>
+        </div>
       </div>
       <div class="grid">${tiles}</div>
-    </div>`;
+    </div>
+    <button type="button" class="to-top" aria-label="Voltar ao topo">↑</button>`;
   return layout({ title: lens === "comprar" ? "Carros abaixo do preço" : "Mercado", body, zone, nav: "feed", depositCount, index: true });
 }
 
@@ -1003,24 +1029,12 @@ export function renderCarPage({ deal, zone, view, unlocked, justReserved, deposi
     <div class="detail">
       <a class="back" href="/mercado?zone=${escapeHtml(zone)}&view=${lens}">‹&nbsp;&nbsp;Voltar ao mercado</a>
       <div class="detail-grid">
-        <div class="detail-main">
+        <div class="dg-gallery">
           ${gallery}
           ${thumbStrip}
-          <div class="panel">
-            <div class="panel-title">Sinais de avaliação</div>
-            <div class="signals">
-              ${signals.map(g => `<div class="signal"><div class="k">${g.k}</div><div class="${g.cls || "v"}">${g.v}</div></div>`).join("")}
-            </div>
-            ${kmCaption}
-            ${sellCaption}
-          </div>
-          <div class="panel">
-            <div class="panel-title">Descrição do vendedor</div>
-            <p class="desc">${escapeHtml(deal.description ?? deal.description_excerpt ?? "Sem descrição disponível.")}</p>
-          </div>
         </div>
 
-        <div class="detail-side">
+        <div class="dg-side">
           <div class="side-card">
             <div class="side-head">
               <h1>${escapeHtml(p.name)}</h1>
@@ -1032,7 +1046,7 @@ export function renderCarPage({ deal, zone, view, unlocked, justReserved, deposi
 
             <div class="side-prices">
               <div><div class="cap">Preço pedido</div><div class="big">${p.priceStr}</div></div>
-              <div class="side-fair"><div class="cap">Justo (mediana)</div><div class="v">${p.fairStr}</div></div>
+              <div class="side-fair"><div class="cap">Justo (mediana)${deal.sample_size != null ? ` · ${deal.sample_size} comp.` : ""}</div><div class="v">${p.fairStr}</div></div>
             </div>
 
             ${importBanner}
@@ -1051,8 +1065,23 @@ export function renderCarPage({ deal, zone, view, unlocked, justReserved, deposi
 
             ${module}
           </div>
-          <div class="side-foot">Avaliação gerada a partir de ${p.compCount} anúncios comparáveis em Portugal · avaliação independente, não somos o vendedor.</div>
+          <div class="side-foot">${deal.sample_size != null ? `Mediana de ${deal.sample_size} anúncios comparáveis (mesmo modelo) em Portugal` : `Avaliação a partir de anúncios comparáveis em Portugal`} · avaliação independente, não somos o vendedor.</div>
           ${modelHref ? `<div style="text-align:center;margin-top:10px;"><a href="${modelHref}" style="font-size:13px;color:#177A47;font-weight:600;">Ver preços de ${escapeHtml(p.make)} ${escapeHtml(deal.model || "")} por ano&nbsp;→</a></div>` : ""}
+        </div>
+
+        <div class="dg-extra">
+          <div class="panel">
+            <div class="panel-title">Sinais de avaliação</div>
+            <div class="signals">
+              ${signals.map(g => `<div class="signal"><div class="k">${g.k}</div><div class="${g.cls || "v"}">${g.v}</div></div>`).join("")}
+            </div>
+            ${kmCaption}
+            ${sellCaption}
+          </div>
+          <div class="panel">
+            <div class="panel-title">Descrição do vendedor</div>
+            <p class="desc">${escapeHtml(deal.description ?? deal.description_excerpt ?? "Sem descrição disponível.")}</p>
+          </div>
         </div>
       </div>
     </div>`;

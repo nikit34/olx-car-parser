@@ -195,6 +195,7 @@ def _format_deal(row: dict, photo_urls: list[str]) -> dict:
         "flip_score": _f(row.get("flip_score")),
         "verdict": _s(row.get("verdict")),
         "decision_score": _f(row.get("decision_score")),
+        "sample_size": _i(row.get("sample_size")),   # comparable count behind the fair median (provenance)
         "first_seen_at": first_seen_iso,
         "days_on_market": days_on_market,
         "district": _s(row.get("district")),
