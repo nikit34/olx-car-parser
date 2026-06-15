@@ -205,6 +205,10 @@ def _format_deal(row: dict, photo_urls: list[str]) -> dict:
         "photo_damage_flagged": bool(extras.get("photo_damage_flagged")),
         "photo_urls": photo_urls,
         "description": desc,
+        # Sell-speed (median days-to-inactive for this brand+model; only present
+        # when the segment cleared the >=8 sample gate). None ⇒ worker shows none.
+        "sell_days": _i(row.get("sell_days")),
+        "sell_n": _i(row.get("sell_n")),
     }
 
 
@@ -214,7 +218,7 @@ def _build_signals(db_path: Path) -> pd.DataFrame:
     from src.storage.database import init_db, get_session
     from src.storage.repository import get_listings_df, get_price_history_df
     from src.analytics.computed_columns import enrich_listings
-    from src.analytics.turnover import compute_turnover_stats
+    from src.analytics.turnover import compute_turnover_stats, compute_sell_speed_by_model
     from src.dashboard.data_loader import compute_signals
     from src.parser.llm_enrichment import merge_real_mileage
 
@@ -250,6 +254,17 @@ def _build_signals(db_path: Path) -> pd.DataFrame:
                   "first_seen_at", "seller_type", "transmission", "is_active"]
     extra = listings[[c for c in extra_cols if c in listings.columns]].drop_duplicates("olx_id")
     merged = signals.merge(extra, on="olx_id", how="left", suffixes=("", "_l"))
+
+    # Sell-speed (seller lens "vende em ~Nd" + liquidity context for all lenses).
+    # Median days-to-inactive per (brand, model), gated on sample size — computed
+    # from the FULL listings df (incl. inactive), joined onto the active deals.
+    sell_speed = compute_sell_speed_by_model(listings)
+    if not sell_speed.empty and {"brand", "model"}.issubset(merged.columns):
+        merged = merged.merge(sell_speed, on=["brand", "model"], how="left")
+        print(f"[hot_deals]   sell-speed: {len(sell_speed):,} model segments "
+              f"(>=8 sold); matched {merged['sell_days'].notna().sum():,}/{len(merged):,} signals",
+              flush=True)
+
     merged = _annotate_decisions(merged, listings)
     return merged
 
