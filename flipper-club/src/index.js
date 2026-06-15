@@ -29,7 +29,7 @@
 import {
   renderGrid, renderCarPage, renderInfo,
   renderLanding, renderClaim, renderClaimSuccess, renderReservations,
-  renderAvaliar,
+  renderAvaliar, renderModelPage, renderModelsHub, slugify,
 } from "./templates.js";
 import {
   stripeConfigured, createCheckoutSession,
@@ -50,6 +50,7 @@ const DEFAULT_CURRENCY = "eur";
 //   /reservas  my claimed cars
 const PRODUCT_PATHS = new Set([
   "/", "/mercado", "/car", "/claim", "/reserve", "/unlocked", "/reservas", "/avaliar",
+  "/precos", "/sitemap.xml", "/robots.txt",
 ]);
 
 export default {
@@ -70,11 +71,18 @@ export default {
       if (pathname === "/analytics" || pathname.startsWith("/analytics/")) {
         return handleAnalytics(request, env, url);
       }
+      // Per-model SEO pages (/preco/{slug}) — prefix route, BEFORE the asset gate.
+      if (pathname.startsWith("/preco/") && method === "GET") {
+        return handleModelPage(request, env, url);
+      }
       if (!PRODUCT_PATHS.has(pathname)) {
         return handleAssetGated(request, env);
       }
 
       if (pathname === "/" && method === "GET") return handleLanding(request, env, url);
+      if (pathname === "/precos" && method === "GET") return handleModelsHub(request, env, url);
+      if (pathname === "/sitemap.xml" && method === "GET") return handleSitemap(request, env, url);
+      if (pathname === "/robots.txt" && method === "GET") return handleRobots(request, env, url);
       if (pathname === "/avaliar" && method === "GET") return handleAvaliar(request, env, url);
       if (pathname === "/mercado" && method === "GET") return handleFeed(request, env, url);
       if (pathname === "/car" && method === "GET") return handleCar(request, env, url);
@@ -154,6 +162,99 @@ function parseOlxId(q) {
   if (m) return m[1];
   const t = q.trim();
   return /^[A-Za-z0-9]{4,14}$/.test(t) ? t : null;
+}
+
+// Per-model SEO page (/preco/{slug}). Exact slug lookup (never re-split the path
+// — models contain hyphens); unknown/sub-threshold slug → real 404 (never indexed).
+async function handleModelPage(request, env, url) {
+  const { uid, setCookie } = ensureUid(request);
+  // strip the /preco/ prefix + any trailing slash; never split on '-'.
+  // decodeURIComponent throws URIError on a malformed %-escape (e.g. /preco/%) —
+  // a garbage URL must 404, not 500.
+  let slug;
+  try {
+    slug = decodeURIComponent(url.pathname.slice("/preco/".length)).replace(/\/+$/, "").toLowerCase();
+  } catch (_) {
+    return notFound();
+  }
+  const models = await getModels(env);
+  const rec = models ? models[slug] : null;
+  if (!rec) return notFound();
+  const depositCount = (await listUnlocked(env, uid)).size;
+
+  // Conversion bridge: live hot_deals matching this model (already curated below-fair).
+  let liveDeals = [];
+  try {
+    const { deals } = await getDeals(env, "all");
+    liveDeals = (deals || []).filter(d => slugify(`${d.brand}-${d.model}`) === slug).slice(0, 3);
+  } catch (_) { /* bridge is best-effort */ }
+
+  // Sibling models (same brand, by listing count desc, excluding self).
+  const siblings = Object.entries(models)
+    .filter(([s, r]) => r.b === rec.b && s !== slug)
+    .sort((a, b) => (b[1].n || 0) - (a[1].n || 0))
+    .slice(0, 8)
+    .map(([s, r]) => ({ slug: s, m: r.m, fm: r.fm, n: r.n }));
+
+  return html(renderModelPage({
+    rec, slug, liveDeals, siblings, host: url.host, depositCount,
+  }), 200, setCookie);
+}
+
+// Models hub (/precos) — the crawl spine linking every model page.
+async function handleModelsHub(request, env, url) {
+  const { uid, setCookie } = ensureUid(request);
+  const depositCount = (await listUnlocked(env, uid)).size;
+  const models = await getModels(env);
+  if (!models) {
+    return html(renderInfo({
+      zone: "all", depositCount, title: "Serviço indisponível",
+      message: "Os preços por modelo estão a ser preparados. Volta dentro de instantes.",
+    }), 503, setCookie);
+  }
+  const list = Object.entries(models)
+    .map(([s, r]) => ({ slug: s, b: r.b, m: r.m, fm: r.fm, n: r.n }))
+    .sort((a, b) => (b.n || 0) - (a.n || 0));
+  return html(renderModelsHub({ models: list, depositCount }), 200, setCookie);
+}
+
+// /sitemap.xml — static indexable URLs + one per model page. Degrades to the
+// static set (never 500) if models.json isn't published yet.
+async function handleSitemap(request, env, url) {
+  const base = `https://${url.host}`;
+  const models = await getModels(env);
+  const today = new Date().toISOString().slice(0, 10);
+  const urls = [
+    `<url><loc>${base}/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>`,
+    `<url><loc>${base}/mercado</loc><changefreq>daily</changefreq><priority>0.9</priority></url>`,
+    `<url><loc>${base}/avaliar</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>`,
+    `<url><loc>${base}/precos</loc><changefreq>weekly</changefreq><priority>0.7</priority></url>`,
+  ];
+  if (models) {
+    for (const slug of Object.keys(models)) {
+      urls.push(`<url><loc>${base}/preco/${encodeURIComponent(slug)}</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>`);
+    }
+  }
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n`
+    + `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>`;
+  return new Response(xml, {
+    status: 200,
+    headers: { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=3600" },
+  });
+}
+
+// /robots.txt — allow public, block transactional/internal, point at the sitemap.
+async function handleRobots(request, env, url) {
+  const body = [
+    "User-agent: *", "Allow: /",
+    "Disallow: /analytics", "Disallow: /claim", "Disallow: /reserve",
+    "Disallow: /unlocked", "Disallow: /reservas",
+    `Sitemap: https://${url.host}/sitemap.xml`, "",
+  ].join("\n");
+  return new Response(body, {
+    status: 200,
+    headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=3600" },
+  });
 }
 
 // Mercado feed (/mercado) — the grid of car tiles, zone + sort filtered.
@@ -537,6 +638,27 @@ async function getValuations(env) {
     return data && data.cars ? data.cars : null;
   } catch (err) {
     console.warn("valuations fetch error", err && err.message);
+    return null;
+  }
+}
+
+// models.json — the per-model SEO blob (Tier-3) for /preco/*, /precos, /sitemap.
+// Same edge-cache (success-only) pattern as getValuations; ~40 KB gzipped.
+// Returns the {slug: rec} map, or null (handlers then 404/degrade).
+async function getModels(env) {
+  const url = `${HOT_DEALS_BASE}/models.json`;
+  try {
+    const r = await fetch(url, {
+      cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": 300, "300-399": 0, "400-499": 0, "500-599": 0 } },
+    });
+    if (!r.ok) {
+      console.warn(`models fetch ${url} → ${r.status}`);
+      return null;
+    }
+    const data = await r.json();
+    return data && data.models ? data.models : null;
+  } catch (err) {
+    console.warn("models fetch error", err && err.message);
     return null;
   }
 }
