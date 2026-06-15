@@ -200,6 +200,7 @@ def _format_deal(row: dict, photo_urls: list[str]) -> dict:
         "district": _s(row.get("district")),
         "city": _s(row.get("city")),
         "seller_type": _s(row.get("seller_type")),
+        "origin": _s(row.get("origin")),   # structured import signal for importInfo()
         "damage_severity": _i(row.get("damage_severity")) or 0,
         "photo_damage_p": float(extras.get("photo_damage_p") or 0),
         "photo_damage_flagged": bool(extras.get("photo_damage_flagged")),

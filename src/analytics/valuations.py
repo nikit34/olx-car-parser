@@ -46,9 +46,15 @@ _IMPORT_LEGAL = re.compile(
 )
 
 
-def _import_flags(title: str, description: str) -> tuple[int, int]:
+def _import_flags(title: str, description: str, origin: str | None = None) -> tuple[int, int]:
+    # The structured `origin` field reinforces both sides: "imported" is a
+    # positive even if the text is silent; "national" clears a text
+    # false-positive. Text still supplies the catch-all + legalized nuance.
+    # LOCK-STEP with flipper-club/src/templates.js::importInfo.
     hay = _strip_accents(title) + " " + _strip_accents(description)
-    if not (_IMPORT_POS.search(hay) and not _IMPORT_NEG.search(hay)):
+    pos = (origin == "imported") or bool(_IMPORT_POS.search(hay))
+    neg = (origin == "national") or bool(_IMPORT_NEG.search(hay))
+    if not (pos and not neg):
         return 0, 0
     return 1, (1 if _IMPORT_LEGAL.search(hay) else 0)
 
@@ -103,7 +109,8 @@ def build_valuations(listings: pd.DataFrame, predictions: pd.DataFrame,
         if fm is None or price is None:
             continue
         imp, leg = _import_flags(getattr(r, "title", "") or "",
-                                 getattr(r, "description", "") or "")
+                                 getattr(r, "description", "") or "",
+                                 getattr(r, "origin", None))
         title = _s(getattr(r, "title", None))
         rec = {
             "t": title[:90] if title else None,
