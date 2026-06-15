@@ -1175,7 +1175,7 @@ export function renderInfo({ zone, title, message, depositCount }) {
 // rec = the valuations.json record for the looked-up olx_id (or null). query =
 // the raw user input (URL or id). The verdict is derived from where the asking
 // price sits in the model's fair band [fl, fh].
-export function renderAvaliar({ rec, olxId, sourceUrl, query, depositCount }) {
+export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depositCount }) {
   const mailto = "mailto:nikitapermikov@larixon.com?subject=Avaliar%20o%20meu%20carro"
     + "&body=Marca%2Fmodelo%3A%0AAno%3A%0AQuilometragem%3A%0ACombust%C3%ADvel%3A%0ALink%20do%20an%C3%BAncio%20(se%20tiver)%3A";
 
@@ -1239,6 +1239,67 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, depositCount }) {
     </div>`;
   }
 
+  // Spec-based estimate (seller without a listing yet): pick the matching year
+  // cell from the model record, else fall back to the model-level median.
+  let specResult = "";
+  if (!rec && spec && spec.rec) {
+    const mr = spec.rec, SB = escapeHtml(mr.b), SM = escapeHtml(mr.m);
+    const cell = spec.cell;
+    const sfm = cell ? cell.fm : mr.fm, sfl = cell ? cell.fl : mr.fl, sfh = cell ? cell.fh : mr.fh;
+    const yLabel = cell ? escapeHtml(String(cell.y)) : "";
+    let pin = 50; if (sfh > sfl) pin = Math.max(6, Math.min(94, Math.round((sfm - sfl) / (sfh - sfl) * 100)));
+    const caveat = (!cell && spec.year)
+      ? `<div style="font-size:12.5px;color:#9A6B12;margin-top:10px;">Sem amostra suficiente para ${spec.year} — mostramos a mediana do modelo (todos os anos).</div>` : "";
+    const sl = mr.sd != null ? `<div style="font-size:12px;color:#8A8F98;margin-top:14px;">Vende, em mediana, em ~${mr.sd} dias no OLX.</div>` : "";
+    specResult = `
+    <div class="detail" style="max-width:640px;margin:0 auto;padding-top:0;">
+      <div class="side-card">
+        <div class="side-head"><h1 style="font-size:21px;">${SB} ${SM}${cell ? ` · ${yLabel}` : ""}</h1></div>
+        <div class="side-prices">
+          <div><div class="cap">Preço mediano (pedido)</div><div class="big">${fmtEur(sfm)}</div></div>
+          <div class="side-fair"><div class="cap">intervalo típico</div><div class="v">${fmtEur(sfl)} – ${fmtEur(sfh)}</div></div>
+        </div>
+        <div style="margin-top:16px;">
+          <div class="gauge-head"><span>${fmtEur(sfl)}</span><span>intervalo típico (P25–P75)</span><span>${fmtEur(sfh)}</span></div>
+          <div class="gauge-track"><div class="gauge-pin" style="left:${pin}%;"></div></div>
+        </div>
+        ${caveat}${sl}
+        <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap;">
+          <a class="btn-outline" style="padding:11px 16px;font-size:14px;" href="/preco/${encodeURIComponent(spec.slug)}">Ver preço por ano&nbsp;→</a>
+          <a class="btn-dark" style="padding:11px 16px;font-size:14px;" href="/avaliar">Tens o anúncio? Cola o link</a>
+        </div>
+      </div>
+      <div class="side-foot">Preços PEDIDOS em anúncios ativos do OLX — estimativa indicativa, não o valor da tua viatura concreta.</div>
+    </div>`;
+  }
+
+  // Spec form (model select grouped by brand + year), built from the models map.
+  let specForm = "";
+  if (!rec && models) {
+    const byBrand = {};
+    for (const [slug, r] of Object.entries(models)) (byBrand[r.b] = byBrand[r.b] || []).push([slug, r.m]);
+    const brands = Object.keys(byBrand).sort((a, b) => a.localeCompare(b, "pt"));
+    const opts = brands.map(b => `<optgroup label="${escapeHtml(b)}">`
+      + byBrand[b].sort((a, c) => a[1].localeCompare(c[1], "pt")).map(([slug, m]) =>
+          `<option value="${escapeHtml(slug)}"${spec && spec.slug === slug ? " selected" : ""}>${escapeHtml(m)}</option>`).join("")
+      + `</optgroup>`).join("");
+    specForm = `
+    <section class="section" style="padding:10px 22px 0;max-width:620px;">
+      <div class="side-card">
+        <div class="panel-title" style="font-size:16px;margin-bottom:12px;">Não tens anúncio? Escolhe o teu carro</div>
+        <form action="/avaliar" method="get" style="display:flex;gap:10px;flex-wrap:wrap;">
+          <select name="modelo" required style="flex:1 1 230px;min-width:180px;padding:12px;border:1px solid #E2DFD8;border-radius:11px;font-size:15px;background:#fff;color:#16181D;">
+            <option value="">Modelo…</option>${opts}
+          </select>
+          <input type="number" name="ano" min="1990" max="2026" value="${spec && spec.year ? spec.year : ""}" placeholder="Ano"
+            style="width:108px;padding:12px;border:1px solid #E2DFD8;border-radius:11px;font-size:15px;">
+          <button type="submit" class="btn-dark" style="padding:12px 20px;font-size:15px;">Estimar&nbsp;→</button>
+        </form>
+        <div class="mono" style="font-size:11px;color:#9A9FA8;margin-top:10px;">Estimativa pela mediana de mercado do modelo/ano. Para o teu carro exato, cola o link do anúncio acima.</div>
+      </div>
+    </section>`;
+  }
+
   const notice = (!rec && query) ? `
     <div class="info" style="padding:8px 22px 0;max-width:620px;">
       <p style="margin:0 auto;">Ainda não temos este anúncio na nossa base. Cobrimos a maioria dos carros ativos no OLX Portugal, mas nem todos — confirma o link, ou pede uma avaliação por email.</p>
@@ -1263,6 +1324,8 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, depositCount }) {
     </section>
     ${notice}
     ${result}
+    ${specResult}
+    ${!rec ? specForm : ""}
     ${rec ? "" : `
     <section class="section" style="padding:18px 22px 70px;">
       <div class="cta-banner">
