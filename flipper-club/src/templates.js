@@ -586,13 +586,15 @@ const PAGE_SCRIPT = `
 })();
 `;
 
+// Grade rubric — shown as a tooltip so the A+→C badge isn't unexplained authority.
+const GRADE_RUBRIC = "Nota A+ → C: desconto vs. preço justo, ajustado ao risco (dano, fotos) e a importação por legalizar. † = limitada por custo de importação não incluído.";
 function gradeBadge(p, cls) {
   const c = p.gcDisplay;
-  return `<span class="${cls}" style="background:${c.bg};color:${c.fg};border:1px solid ${c.br};">${p.gradeDisplayFull}</span>`;
+  return `<span class="${cls}" title="${GRADE_RUBRIC}" style="background:${c.bg};color:${c.fg};border:1px solid ${c.br};cursor:help;">${p.gradeDisplayFull}</span>`;
 }
 function gradeChip(p) {
   const c = p.gcDisplay;
-  return `<span class="grade" style="background:${c.bg};color:${c.fg};border:1px solid ${c.br};">${p.gradeDisplayFull}</span>`;
+  return `<span class="grade" title="${GRADE_RUBRIC}" style="background:${c.bg};color:${c.fg};border:1px solid ${c.br};cursor:help;">${p.gradeDisplayFull}</span>`;
 }
 function riskChip(p) {
   return `<span class="risk" style="background:${p.rk.c.bg};color:${p.rk.c.fg};">${p.rk.label}</span>`;
@@ -606,6 +608,25 @@ function importTag(p) {
   return `<span style="display:inline-block;font-family:'JetBrains Mono',monospace;font-weight:700;`
     + `font-size:10px;padding:3px 7px;border-radius:6px;margin-top:7px;`
     + `background:${c.bg};color:${c.fg};border:1px solid ${c.br};">${txt}</span>`;
+}
+
+// Net-of-ISV honesty line: the headline saving/margin on a not-yet-legalised
+// import overstates the real margin (it ignores the ISV the banner warns about).
+// Net it explicitly — with the computed € when we have it, qualitatively otherwise.
+// `base` = the gross figure being netted (buyer: poupas; reseller: margin).
+function netIsvNote(p, base) {
+  if (!p.importFlag || p.importLegalized) return "";
+  const a = GRADE_COLORS.amber, red = GRADE_COLORS.red;
+  if (p.isvEur != null && base != null) {
+    const real = Math.round(base - p.isvEur);
+    const neg = real <= 0;
+    const realStr = (neg ? "−" : "+") + fmtEur(Math.abs(real));
+    return `<div style="font-size:12px;color:${neg ? red.fg : a.fg};margin-top:8px;line-height:1.5;">`
+      + `Após o ISV estimado (~${fmtEur(p.isvEur)}), a margem real fica em <b>${realStr}</b>`
+      + `${neg ? " — a poupança aparente desaparece com o imposto." : "."}</div>`;
+  }
+  return `<div style="font-size:12px;color:${a.fg};margin-top:8px;line-height:1.5;">`
+    + `⚠️ É a poupança <b>antes de legalizar</b> — falta somar o ISV (vários milhares €), por isso a margem real será menor.</div>`;
 }
 
 // Photo block for a tile/card — real cover photo, else striped brand placeholder.
@@ -917,9 +938,7 @@ export function renderCarPage({ deal, zone, view, unlocked, justReserved, deposi
   const verdictProfit = lens === "comprar"
     ? (p.saving != null ? "poupas " + fmtEur(p.saving) : p.profitStr)
     : `${p.profitStr}${p.importFlag ? "*" : ""}`;
-  const verdictFootnote = (lens === "revender" && p.importFlag)
-    ? `<div style="font-size:11.5px;color:${amber.fg};margin-top:8px;line-height:1.45;">* Margem antes do ISV e legalização — ainda por confirmar.</div>`
-    : "";
+  const verdictFootnote = netIsvNote(p, lens === "comprar" ? p.saving : p.profit);
 
   // Claim / claimed module.
   let module;
@@ -963,8 +982,8 @@ export function renderCarPage({ deal, zone, view, unlocked, justReserved, deposi
         <div class="claim-mod-body">
           ${unlockItems.map(u => `<div class="unlock-item"><span class="tick">✓</span><div><span class="t">${u.t}</span><span class="d"> — ${u.d}</span></div></div>`).join("")}
           <div class="exclusive"><span style="font-size:15px;">⏳</span><span class="x"><b>24h exclusivo.</b> Escondemos este negócio dos outros membros enquanto decides.</span></div>
-          <a class="btn-green" href="/claim?zone=${zone}&olx_id=${encodeURIComponent(deal.olx_id)}">Reservar e desbloquear — ${fmtEur(depositEur)}</a>
-          <div class="claim-fine">Reembolsado assim que contactares o vendedor — ou devolução automática em 48h se passares.</div>
+          <a class="btn-green" href="/claim?zone=${zone}&olx_id=${encodeURIComponent(deal.olx_id)}">Desbloquear contacto do vendedor — ${fmtEur(depositEur)}</a>
+          <div class="claim-fine"><b style="color:#3A3F47;">Pagas ${fmtEur(depositEur)} para falar direto com o vendedor — não é sinal do carro.</b> Reembolsado assim que o contactares (ou devolução automática em 48h).</div>
         </div>
       </div>`;
   } else {
@@ -1051,7 +1070,7 @@ export function renderClaim({ deal, zone, depositEur, stripeReady, depositCount 
     { t: "Totalmente reembolsável", d: "O depósito volta para a tua carteira ao contactar o vendedor, ou auto-devolução em 48h." },
   ];
   const cta = stripeReady
-    ? `<button type="submit" class="btn-green">Confirmar e reter ${fmtEur(depositEur)}</button>`
+    ? `<button type="submit" class="btn-green">Desbloquear contacto — ${fmtEur(depositEur)}</button>`
     : `<div class="btn-disabled">Reservas em breve</div>`;
 
   const body = `
@@ -1068,7 +1087,8 @@ export function renderClaim({ deal, zone, depositEur, stripeReady, depositCount 
         <form class="claim-card-body" action="/reserve" method="post">
           <input type="hidden" name="olx_id" value="${escapeHtml(deal.olx_id)}">
           <input type="hidden" name="zone" value="${escapeHtml(zone)}">
-          <div class="dep-row"><span class="l">Depósito a reter agora</span><span class="r">${fmtEur(depositEur)}</span></div>
+          <div class="dep-row"><span class="l">${fmtEur(depositEur)} para falar com o vendedor</span><span class="r">${fmtEur(depositEur)}</span></div>
+          <div style="font-size:12px;color:#8A8F98;margin-top:4px;">Não é sinal do carro — é o que pagas para desbloquear o contacto. Reembolsável.</div>
           <div class="hr"></div>
           ${benefits.map(b => `<div class="benefit"><span class="tick">✓</span><div><div class="t">${b.t}</div><div class="d">${b.d}</div></div></div>`).join("")}
           ${cta}
@@ -1246,6 +1266,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
           <span class="verdict-tag" style="color:${vc.fg};">${tag}</span>
           <span class="verdict-profit" style="color:${vc.fg};">${line}</span>
         </div>
+        ${netIsvNote({ importFlag: !!rec.imp, importLegalized: !!rec.il, isvEur: rec.isv_eur ?? null, isvTier: isvTier(price) }, saving)}
         <div style="margin-top:16px;">
           <div class="gauge-head"><span>${fmtEur(fl)}</span><span>intervalo justo de mercado</span><span>${fmtEur(fh)}</span></div>
           <div class="gauge-track"><div class="gauge-pin" style="left:${gaugePos}%;"></div></div>
@@ -1254,6 +1275,10 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
         ${sellLine}
         ${olxHref ? `<a class="olx-btn" style="display:block;margin-top:18px;" href="${escapeHtml(olxHref)}" target="_blank" rel="noopener nofollow">Ver anúncio original&nbsp;&nbsp;↗</a>` : ""}
         ${modelHref ? `<a href="${modelHref}" style="display:block;text-align:center;margin-top:12px;font-size:13.5px;color:#177A47;font-weight:600;">Ver preços deste modelo por ano&nbsp;→</a>` : ""}
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;">
+          <a class="btn-outline" style="flex:1 1 auto;padding:11px 14px;font-size:13.5px;text-align:center;" href="/avaliar">Avaliar outro carro</a>
+          <a class="btn-dark" style="flex:1 1 auto;padding:11px 14px;font-size:13.5px;text-align:center;" href="/mercado">Ver carros abaixo do preço&nbsp;→</a>
+        </div>
       </div>
       <div class="side-foot">Estimativa a partir de anúncios comparáveis em Portugal · avaliação independente, não somos o vendedor.</div>
     </div>`;
