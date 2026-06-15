@@ -215,6 +215,8 @@ function present(deal) {
     zoneLabel: deal.district || deal.city || "",
     daysOnMarket: deal.days_on_market,
     daysLabel: deal.days_on_market != null ? `${deal.days_on_market}d no mercado` : "",
+    sellDays: deal.sell_days ?? null,   // median days-to-sell for this brand+model
+    sellN: deal.sell_n ?? null,
     sellerType: deal.seller_type || "Particular",
     sellerInitial: (deal.seller_type || "?").charAt(0).toUpperCase(),
     loc: deal.city || deal.district || "—",
@@ -844,7 +846,11 @@ export function renderCarPage({ deal, zone, view, unlocked, justReserved, deposi
     { k: "Quilometragem", v: fmtKm(deal.mileage_km), cls: sigClass(p.highKm, p.veryHighKm) },
     { k: "Vendedor", v: p.sellerType },
     { k: "Dias no mercado", v: deal.days_on_market != null ? String(deal.days_on_market) : "—" },
+    ...(p.sellDays != null ? [{ k: "Tempo de venda", v: `~${p.sellDays}d` }] : []),
   ];
+  const sellCaption = p.sellDays != null
+    ? `<div style="font-size:12px;color:#8A8F98;margin-top:10px;line-height:1.5;">Carros deste modelo vendem, em mediana, em <b style="color:#16181D;">~${p.sellDays} dias</b> no mercado (${p.sellN} vendas analisadas). Boa referência se o pensas revender — ou para saberes a que ritmo este preço atrai compradores.</div>`
+    : "";
   const kmCaption = p.veryHighKm
     ? `<div style="font-size:12px;color:#8A8F98;margin-top:10px;line-height:1.5;">Quilometragem alta para a idade — o preço justo já reflete a média do mercado, mas confirma histórico de manutenção e correia/distribuição na inspeção.</div>`
     : "";
@@ -949,6 +955,7 @@ export function renderCarPage({ deal, zone, view, unlocked, justReserved, deposi
               ${signals.map(g => `<div class="signal"><div class="k">${g.k}</div><div class="${g.cls || "v"}">${g.v}</div></div>`).join("")}
             </div>
             ${kmCaption}
+            ${sellCaption}
           </div>
           <div class="panel">
             <div class="panel-title">Descrição do vendedor</div>
