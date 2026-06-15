@@ -111,9 +111,17 @@ const IMPORT_NEG = /matricula\s+(?:portuguesa|nacional)|nacional\s+desde\s+novo|
 // Completion words only — bare "vou legalizar" must NOT count as already done.
 const IMPORT_LEGAL = /\bja\s+(?:legalizad[oa]|nacionalizad[oa])|legalizacao\s+(?:feita|concluida|paga)|isv\s+pag/;
 
+// The structured `origin` field (OLX/SV param, "national"|"imported") reinforces
+// BOTH sides when present: an "imported" origin is a positive even if the text is
+// silent; a "national" origin clears a text false-positive. The text still
+// supplies the catch-all and the legalized/not-legalized nuance. LOCK-STEP with
+// src/analytics/valuations.py::_import_flags.
 function importInfo(deal) {
   const hay = stripAccents(deal.title) + " " + stripAccents(deal.description);
-  const flag = IMPORT_POS.test(hay) && !IMPORT_NEG.test(hay);
+  const o = deal.origin; // "national" | "imported" | undefined (until shipped in the feed)
+  const pos = o === "imported" || IMPORT_POS.test(hay);
+  const neg = o === "national" || IMPORT_NEG.test(hay);
+  const flag = pos && !neg;
   return { flag, legalized: flag && IMPORT_LEGAL.test(hay) };
 }
 
