@@ -60,6 +60,17 @@ def _i(v):
         return None
 
 
+def _s(v):
+    # Coerce to a clean string or None. Critically, a pandas-missing value is a
+    # float NaN (truthy!), so `nan or None` would leak `nan` and json.dumps would
+    # emit the literal `NaN` — valid for Python's json.load but NOT valid JSON,
+    # so the Worker's JSON.parse throws and the whole blob is unusable.
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None
+    s = str(v).strip()
+    return s or None
+
+
 def build_valuations(listings: pd.DataFrame, predictions: pd.DataFrame,
                      sell_speed: pd.DataFrame | None = None) -> dict:
     """Return ``{"v":1, "cars": {olx_id: {...}}}`` for active, priced listings.
@@ -93,16 +104,17 @@ def build_valuations(listings: pd.DataFrame, predictions: pd.DataFrame,
             continue
         imp, leg = _import_flags(getattr(r, "title", "") or "",
                                  getattr(r, "description", "") or "")
+        title = _s(getattr(r, "title", None))
         rec = {
-            "t": (getattr(r, "title", "") or "")[:90],
+            "t": title[:90] if title else None,
             "y": _i(getattr(r, "year", None)),
             "km": _i(getattr(r, "mileage_km", None)),
-            "fu": getattr(r, "fuel_type", None) or None,
+            "fu": _s(getattr(r, "fuel_type", None)),
             "p": price,
             "fl": _i(prow.get("fair_price_low")),
             "fm": fm,
             "fh": _i(prow.get("fair_price_high")),
-            "ct": getattr(r, "city", None) or getattr(r, "district", None) or None,
+            "ct": _s(getattr(r, "city", None)) or _s(getattr(r, "district", None)),
         }
         if imp:
             rec["imp"] = 1

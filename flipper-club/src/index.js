@@ -524,7 +524,11 @@ async function degrade(env, cacheKey) {
 async function getValuations(env) {
   const url = `${HOT_DEALS_BASE}/valuations.json`;
   try {
-    const r = await fetch(url, { cf: { cacheTtl: 600, cacheEverything: true } });
+    // Cache only successful responses (cacheTtlByStatus) — never pin a 404 from
+    // the pre-publish window, or a transient 5xx, into the edge cache for 10 min.
+    const r = await fetch(url, {
+      cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": 300, "300-399": 0, "400-499": 0, "500-599": 0 } },
+    });
     if (!r.ok) {
       console.warn(`valuations fetch ${url} → ${r.status}`);
       return null;
