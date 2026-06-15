@@ -843,7 +843,7 @@ export function renderGrid({ deals, zone, sort, view, unlockedSet, depositEur, d
 }
 
 // ── Car detail (/car) ───────────────────────────────────────────────────────────
-export function renderCarPage({ deal, zone, view, unlocked, justReserved, depositEur, stripeReady, claimedAtMs, depositCount }) {
+export function renderCarPage({ deal, zone, view, unlocked, justReserved, depositEur, stripeReady, claimedAtMs, depositCount, modelHref }) {
   const p = present(deal);
   const lens = view === "revender" ? "revender" : "comprar";
   const photos = p.photos;
@@ -1022,6 +1022,7 @@ export function renderCarPage({ deal, zone, view, unlocked, justReserved, deposi
             ${module}
           </div>
           <div class="side-foot">Avaliação gerada a partir de ${p.compCount} anúncios comparáveis em Portugal · avaliação independente, não somos o vendedor.</div>
+          ${modelHref ? `<div style="text-align:center;margin-top:10px;"><a href="${modelHref}" style="font-size:13px;color:#177A47;font-weight:600;">Ver preços de ${escapeHtml(p.make)} ${escapeHtml(deal.model || "")} por ano&nbsp;→</a></div>` : ""}
         </div>
       </div>
     </div>`;
@@ -1211,7 +1212,12 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
           </span>
         </div>` : "";
     const sellLine = rec.sd != null ? `<div style="font-size:12px;color:#8A8F98;margin-top:14px;line-height:1.5;">Carros deste modelo vendem, em mediana, em <b style="color:#16181D;">~${rec.sd} dias</b> no mercado.</div>` : "";
-    const olxHref = sourceUrl || (olxId ? `https://www.olx.pt/d/anuncio/-ID${encodeURIComponent(olxId)}.html` : null);
+    // Use the pasted URL when present. Only reconstruct an OLX URL for OLX-style
+    // ids (SV ids start "8P" and live on standvirtual.com — a reconstructed
+    // olx.pt URL would 404), otherwise omit the button.
+    const olxHref = sourceUrl || (olxId && !olxId.startsWith("8") ? `https://www.olx.pt/d/anuncio/-ID${encodeURIComponent(olxId)}.html` : null);
+    // Contextual link into the model SEO page, when this model has one.
+    const modelHref = (rec.ms && models && models[rec.ms]) ? `/preco/${encodeURIComponent(rec.ms)}` : null;
     const sub = `${rec.y ?? "—"} · ${rec.km != null ? fmtKm(rec.km) : "—"} · ${escapeHtml(rec.fu || "—")}`;
     result = `
     <div class="detail" style="max-width:640px;margin:0 auto;padding-top:0;">
@@ -1233,7 +1239,8 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
         </div>
         ${importBanner}
         ${sellLine}
-        ${olxHref ? `<a class="olx-btn" style="display:block;margin-top:18px;" href="${escapeHtml(olxHref)}" target="_blank" rel="noopener nofollow">Ver anúncio no OLX&nbsp;&nbsp;↗</a>` : ""}
+        ${olxHref ? `<a class="olx-btn" style="display:block;margin-top:18px;" href="${escapeHtml(olxHref)}" target="_blank" rel="noopener nofollow">Ver anúncio original&nbsp;&nbsp;↗</a>` : ""}
+        ${modelHref ? `<a href="${modelHref}" style="display:block;text-align:center;margin-top:12px;font-size:13.5px;color:#177A47;font-weight:600;">Ver preços deste modelo por ano&nbsp;→</a>` : ""}
       </div>
       <div class="side-foot">Estimativa a partir de anúncios comparáveis em Portugal · avaliação independente, não somos o vendedor.</div>
     </div>`;
@@ -1307,7 +1314,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
 
   const form = `
     <form action="/avaliar" method="get" style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;max-width:620px;margin:0 auto;">
-      <input name="q" value="${escapeHtml(query || "")}" placeholder="Cola o link do anúncio OLX (ou o ID)" autocomplete="off"
+      <input name="q" value="${escapeHtml(query || "")}" placeholder="Cola o link OLX ou StandVirtual (ou o ID)" autocomplete="off"
         style="flex:1 1 340px;min-width:220px;padding:13px 15px;border:1px solid #E2DFD8;border-radius:12px;font-family:'Hanken Grotesk',sans-serif;font-size:15px;background:#fff;color:#16181D;">
       <button type="submit" class="btn-dark" style="font-size:15px;padding:13px 24px;">Avaliar&nbsp;&nbsp;→</button>
     </form>`;
@@ -1317,7 +1324,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
       <div class="hero-copy" style="max-width:660px;margin:0 auto;text-align:center;">
         <div class="eyebrow" style="margin:0 auto 22px;"><span class="e-dot"></span><span class="mono">AVALIAÇÃO INDEPENDENTE · OLX PORTUGAL</span></div>
         <h1 class="hero-title" style="font-size:40px;">Esse carro vale o que pedem?</h1>
-        <p class="lede" style="margin:0 auto 26px;">Cola o link de qualquer anúncio de carro do OLX e dizemos-te o preço justo de mercado, quanto estás a poupar (ou a pagar a mais) e se é importado com ISV por pagar. Grátis, sem registo.</p>
+        <p class="lede" style="margin:0 auto 26px;">Cola o link de qualquer anúncio de carro do OLX ou StandVirtual e dizemos-te o preço justo de mercado, quanto estás a poupar (ou a pagar a mais) e se é importado com ISV por pagar. Grátis, sem registo.</p>
         ${form}
         <div class="mono" style="font-size:12px;color:#8A8F98;margin-top:14px;">Estimativa indicativa · independente · não somos stand nem intermediário</div>
       </div>

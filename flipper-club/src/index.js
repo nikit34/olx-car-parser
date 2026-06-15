@@ -158,15 +158,13 @@ async function handleAvaliar(request, env, url) {
     }
   }
 
-  // Spec path (no listing yet) + the model-select options. Only when we're not
-  // already showing a paste verdict.
-  let models = null, spec = null;
-  if (!rec) {
-    models = await getModels(env);
-    if (modelo && models && models[modelo]) {
-      const mrec = models[modelo];
-      spec = { rec: mrec, slug: modelo, year: ano, cell: pickYearCell(mrec, ano) };
-    }
+  // Model index — for the paste-hit's contextual /preco link, the spec-form
+  // options, and the spec lookup. (cf-cached; cheap.)
+  const models = await getModels(env);
+  let spec = null;
+  if (!rec && modelo && models && models[modelo]) {
+    const mrec = models[modelo];
+    spec = { rec: mrec, slug: modelo, year: ano, cell: pickYearCell(mrec, ano) };
   }
   return html(renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depositCount }), 200, setCookie);
 }
@@ -338,9 +336,13 @@ async function handleCar(request, env, url) {
   const deal = (deals || []).find(d => d.olx_id === olxId);
   if (!deal) return redirect(`/mercado?zone=${zone}`, 302, setCookie);
   const rec = await getUnlock(env, uid, deal.olx_id);
+  // Contextual link into the model SEO page, when this model has one.
+  const models = await getModels(env);
+  const mslug = slugify(`${deal.brand}-${deal.model}`);
+  const modelHref = (models && models[mslug]) ? `/preco/${encodeURIComponent(mslug)}` : null;
   return html(renderCarPage({
     deal, zone, view, unlocked: !!rec, justReserved: false,
-    claimedAtMs: claimedAtMs(rec), depositCount,
+    claimedAtMs: claimedAtMs(rec), depositCount, modelHref,
     depositEur: depositCents(env) / 100,
     stripeReady: stripeConfigured(env),
   }), 200, setCookie);
