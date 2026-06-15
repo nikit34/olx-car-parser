@@ -145,6 +145,7 @@ class RawListing:
     condition: str | None = None
     drive_type: str | None = None
     origin: str | None = None       # "national" | "imported" (from OLX/SV "origin" param)
+    co2_g_km: int | None = None     # CO₂ emissions g/km (SV detail "co2_emissions"; OLX has none)
     photo_count: int | None = None
     registration_month: str | None = None
     city: str = ""
@@ -801,6 +802,7 @@ _DETAIL_AUTHORITATIVE_FIELDS = frozenset({
     "brand", "model", "year", "price_eur", "mileage_km", "engine_cc",
     "fuel_type", "horsepower", "transmission", "doors", "seats", "color",
     "drive_type", "condition", "segment", "registration_month", "city", "origin",
+    "co2_g_km",
 })
 
 
@@ -914,6 +916,15 @@ def _norm_origin(v):
     if s in ("imported", "importado", "import"):
         return "imported"
     return None
+
+
+def _co2_int(v):
+    """Parse SV's 'Emissões CO2' value ('120 g/km', or '120 g/' after the
+    detail loop's unit-strip) → 120. Leading integer only; None otherwise."""
+    if not v:
+        return None
+    m = re.match(r"\s*(\d+)", str(v))
+    return int(m.group(1)) if m else None
 
 
 _API_PARAM_MAP = {
@@ -1101,6 +1112,7 @@ _SV_DETAIL_MAP = {
     "new_used": ("condition", None),
     "transmission": ("drive_type", None),
     "origin": ("origin", _norm_origin),
+    "co2_emissions": ("co2_g_km", _co2_int),
 }
 
 
