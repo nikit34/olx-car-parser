@@ -93,6 +93,7 @@ def _build(db_path: Path, out_dir: Path) -> dict:
     from src.analytics.computed_columns import enrich_listings
     from src.analytics.turnover import compute_turnover_stats, compute_sell_speed_by_model
     from src.analytics.valuations import build_valuations
+    from src.analytics.model_pages import build_model_pages
     from src.dashboard.data_loader import compute_signals
 
     print(f"[build] loading DB {db_path}", flush=True)
@@ -185,6 +186,20 @@ def _build(db_path: Path, out_dir: Path) -> dict:
     except ValueError as e:
         print(f"[build]   valuations.json SKIPPED — non-finite value leaked: {e}", flush=True)
 
+    # models.json — evergreen per-model SEO pages (Tier-3): /preco/{slug}, /precos,
+    # /sitemap.xml. Asking-price quantiles per model + per year; ~40 KB gzipped for
+    # ~271 models. Same Release glob upload + allow_nan guard as valuations.json.
+    model_pages = build_model_pages(listings, sell_speed)
+    models_path = out_dir / "models.json"
+    try:
+        mblob = json.dumps(model_pages, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+        models_path.write_text(mblob)
+        sizes["models.json"] = models_path.stat().st_size
+        print(f"[build]   model pages: {len(model_pages.get('models', {})):>6} models  "
+              f"({sizes['models.json']/1e3:.0f} KB)", flush=True)
+    except ValueError as e:
+        print(f"[build]   models.json SKIPPED — non-finite value leaked: {e}", flush=True)
+
     manifest = {
         "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "rows": {
@@ -198,6 +213,7 @@ def _build(db_path: Path, out_dir: Path) -> dict:
             "portfolio": len(portfolio),
             "unmatched": len(unmatched),
             "valuations": len(valuations.get("cars", {})),
+            "model_pages": len(model_pages.get("models", {})),
         },
         "files_bytes": sizes,
         "total_bytes": sum(sizes.values()),

@@ -98,6 +98,11 @@ function stripAccents(s) {
   return (s == null ? "" : String(s)).toLowerCase()
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
+// URL slug for /preco/{slug}. LOCK-STEP with src/analytics/model_pages.py::slugify
+// \u2014 keep byte-identical (NFD-strip \u2192 lower \u2192 non-alnum runs to '-' \u2192 trim).
+export function slugify(s) {
+  return stripAccents(s).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
 const IMPORT_POS = /\b(importad[ao]s?|importacao|nacionaliz\w*|legaliza(?:r|cao|do|da)|por\s+legalizar|matricul(?:ar|a(?:do|da)?\s+(?:na|nos|em)\s+(?:alemanha|franca|belgica|holanda|espanha|italia|suica))|matricula\s+(?:nl|de|be|fr|es|it|alem\w*|estrangeira|holandesa|alema|francesa|belga)|ainda\s+(?:com|por)\s+matricula\s+estrangeira|vindo\s+d[ao]\s+estrangeiro)\b/;
 // Clears cars that are NATIVELY Portuguese (never imported). Deliberately does
 // NOT include "já legalizado/nacionalizado" — those are imported-but-legalized
@@ -485,6 +490,17 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .empty-card p{font-size:14px;color:#8A8F98;margin:0 auto 20px;max-width:340px;text-wrap:pretty;}
 .empty-card .btn-green{font-size:14px;padding:12px 22px;display:inline-block;}
 
+/* Per-model year table (SEO model pages) */
+.year-tbl{width:100%;border-collapse:collapse;font-size:14px;margin-top:4px;}
+.year-tbl th,.year-tbl td{border:1px solid #E8E6E1;padding:9px 12px;text-align:right;}
+.year-tbl th{font-family:'Hanken Grotesk',sans-serif;font-weight:600;font-size:12px;color:#5B606B;background:#FAFAF8;text-align:right;}
+.year-tbl th:first-child,.year-tbl td:first-child{text-align:left;font-weight:600;}
+.year-tbl td{font-family:'JetBrains Mono',monospace;color:#16181D;}
+.year-tbl td.mut{color:#8A8F98;}
+.mchips{display:flex;flex-wrap:wrap;gap:7px;}
+.mchip{display:inline-block;padding:8px 12px;border-radius:10px;border:1px solid #E2DFD8;background:#fff;font-size:13px;color:#16181D;}
+.mchip .mut{color:#8A8F98;font-family:'JetBrains Mono',monospace;font-size:11.5px;}
+
 /* Info / degraded */
 .info{max-width:560px;margin:0 auto;padding:72px 22px;text-align:center;}
 .info .ic{font-size:34px;margin-bottom:14px;opacity:0.55;}
@@ -592,13 +608,20 @@ function thumbBlock(p, h, labelSize) {
 }
 
 // ── Shell ─────────────────────────────────────────────────────────────────────
-function layout({ title, body, zone, nav, depositCount, index = false }) {
+function layout({ title, body, zone, nav, depositCount, index = false, description = null, canonical = null, jsonLd = null }) {
   const dep = (depositCount || 0) * 5;
   const navItem = (key, label, href) =>
     `<a href="${href}" class="${nav === key ? "active" : ""}">${label}</a>`;
   // Public valuation pages are indexable (SEO); transactional pages (claim,
   // unlocked, reservas) stay noindex.
   const robots = index ? "index,follow" : "noindex,nofollow";
+  const head = [
+    description ? `<meta name="description" content="${escapeHtml(description)}">` : "",
+    canonical ? `<link rel="canonical" href="${escapeHtml(canonical)}">` : "",
+    // jsonLd is our own data (no user input); JSON.stringify already escapes it,
+    // and we additionally close-tag-escape to be safe inside <script>.
+    jsonLd ? `<script type="application/ld+json">${JSON.stringify(jsonLd).replace(/</g, "\\u003c")}</script>` : "",
+  ].filter(Boolean).join("\n");
   return `<!doctype html>
 <html lang="pt">
 <head>
@@ -607,6 +630,7 @@ function layout({ title, body, zone, nav, depositCount, index = false }) {
 <meta name="robots" content="${robots}">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚗</text></svg>">
 <title>${escapeHtml(title)} · Flipper Club</title>
+${head}
 ${FONT_LINKS}
 <style>${CSS}</style>
 </head>
@@ -635,7 +659,7 @@ ${FONT_LINKS}
 <footer class="footer">
   <div class="footer-in">
     <span class="mono">AVALIAÇÃO INDEPENDENTE · dados de anúncios públicos OLX · estimativas indicativas, não vinculativas · não somos stand nem intermediário</span>
-    <span class="mono">Portugal 🇵🇹</span>
+    <span class="mono"><a href="/precos" style="color:#5B606B;">Preços por modelo</a> · Portugal 🇵🇹</span>
   </div>
 </footer>
 <script>${PAGE_SCRIPT}</script>
@@ -1252,5 +1276,197 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, depositCount }) {
   return layout({
     title: rec ? `${rec.t} — vale o que pedem? · avaliação` : "Avalia qualquer carro do OLX — preço justo independente",
     body, zone: "all", nav: null, depositCount, index: true,
+  });
+}
+
+// ── Per-model SEO valuation page (/preco/{slug}) ─────────────────────────────
+// rec = the models.json record. liveDeals = raw hot_deals matching this model
+// (below fair), already filtered by the worker. siblings = same-brand models.
+export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositCount }) {
+  const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
+  const FM = fmtEur(rec.fm), FL = fmtEur(rec.fl), FH = fmtEur(rec.fh);
+  const yr0 = rec.y0, yr1 = rec.y1;
+  const yrRange = (yr0 && yr1) ? `${yr0}-${yr1}` : "";
+  // median pin within the IQR band
+  let pin = 50;
+  if (rec.fh > rec.fl) pin = Math.max(6, Math.min(94, Math.round((rec.fm - rec.fl) / (rec.fh - rec.fl) * 100)));
+  const fuelChips = Array.isArray(rec.fu)
+    ? rec.fu.map(([f, frac]) => `<span class="chip">${escapeHtml(f)} ${Math.round(frac * 100)}%</span>`).join("")
+    : "";
+
+  // 1. Hero verdict card
+  const hero = `
+    <div class="side-card" style="max-width:680px;margin:0 auto;">
+      <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">AVALIAÇÃO INDEPENDENTE · OLX PORTUGAL</span></div>
+      <h1 style="font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:30px;letter-spacing:-0.02em;margin:0 0 10px;line-height:1.1;">Quanto vale um ${B} ${M} usado em Portugal?</h1>
+      <p class="lede" style="font-size:16px;margin:0 0 20px;">Com base em ${rec.n} anúncios ativos no OLX, um ${B} ${M} usado pede em mediana <b>${FM}</b> — não é o valor da tua viatura concreta, é o que o mercado está a pedir hoje. Estimativa independente e indicativa.</p>
+      <div class="side-prices">
+        <div><div class="cap">Preço mediano (pedido)</div><div class="big">${FM}</div></div>
+        <div class="side-fair"><div class="cap">${rec.n} anúncios${yrRange ? " · " + yrRange : ""}</div><div class="v">${rec.kmm != null ? fmtKm(rec.kmm) + " med." : ""}</div></div>
+      </div>
+      <div style="margin-top:16px;">
+        <div class="gauge-head"><span>${FL}</span><span>intervalo típico (50% dos anúncios)</span><span>${FH}</span></div>
+        <div class="gauge-track"><div class="gauge-pin" style="left:${pin}%;"></div></div>
+      </div>
+      ${fuelChips ? `<div class="chips" style="margin-top:16px;">${fuelChips}</div>` : ""}
+      <div class="mono" style="font-size:11.5px;color:#9A9FA8;margin-top:14px;line-height:1.5;">Preços PEDIDOS em anúncios ativos do OLX — não preço de venda fechado. Estimativa indicativa.</div>
+    </div>`;
+
+  // 2. Live matching listings (conversion bridge #1)
+  let bridge1;
+  if (liveDeals && liveDeals.length) {
+    const cards = liveDeals.slice(0, 3).map(d => {
+      const p = present(d);
+      return `<a class="tile" href="/car?olx_id=${encodeURIComponent(d.olx_id)}" style="max-width:none;">
+        <div class="thumb">${thumbBlock(p, 168, 28)}${gradeChip(p)}</div>
+        <div class="tbody">
+          <div class="tile-title">${escapeHtml(p.name)}</div>
+          <div class="tile-sub">${p.subHtml}</div>
+          <div class="price-row"><div class="price">${p.priceStr}</div><div class="fair-strike">${p.fairStr}</div>${p.saving != null ? `<div class="profit-pill">poupas ${fmtEur(p.saving)}</div>` : ""}</div>
+        </div></a>`;
+    }).join("");
+    bridge1 = `
+      <section class="section" style="padding:30px 22px 0;max-width:1180px;">
+        <div class="sec-label">${B} ${M} ABAIXO DO PREÇO JUSTO AGORA</div>
+        <div class="grid">${cards}</div>
+        <a class="btn-dark" href="/mercado" style="display:inline-block;margin-top:18px;font-size:14px;padding:12px 22px;">Ver todos os ${B} ${M} no mercado&nbsp;&nbsp;→</a>
+      </section>`;
+  } else {
+    bridge1 = `
+      <section class="section" style="padding:24px 22px 0;max-width:680px;">
+        <div class="info" style="padding:18px 0 0;"><p style="margin:0;">Sem ${B} ${M} abaixo do preço justo neste momento. Cola o link do teu para o avaliarmos, ou vê o mercado completo.</p></div>
+      </section>`;
+  }
+
+  // 3. Per-year table
+  const yrRows = (rec.yr || []).map(c => `<tr>
+      <td>${escapeHtml(String(c.y))}</td>
+      <td>${c.n}</td>
+      <td>${fmtEur(c.fm)}</td>
+      <td class="mut">${fmtEur(c.fl)} – ${fmtEur(c.fh)}</td>
+      <td class="mut">${c.km != null ? fmtKm(c.km) : "—"}</td>
+    </tr>`).join("");
+  const table = yrRows ? `
+    <section class="section" style="padding:34px 22px 0;max-width:680px;">
+      <div class="panel-title" style="font-size:18px;">Preço de um ${B} ${M} usado por ano</div>
+      <table class="year-tbl">
+        <thead><tr><th>Ano</th><th>Anúncios</th><th>Mediano (pedido)</th><th>Intervalo (P25–P75)</th><th>Km mediano</th></tr></thead>
+        <tbody>${yrRows}</tbody>
+      </table>
+      ${rec.yt ? `<div class="mono" style="font-size:11.5px;color:#9A9FA8;margin-top:10px;">Mais ${rec.yt} ano(s) com poucos anúncios para mostrar um preço fiável.</div>` : ""}
+      <div style="font-size:13px;color:#5B606B;margin-top:12px;">Tens um ${B} ${M}${yrRange ? " de " + yrRange : ""}? <a href="/avaliar" style="color:#177A47;font-weight:600;">Avalia o teu&nbsp;→</a></div>
+    </section>` : "";
+
+  // 4. Paste-a-link CTA (bridge #2)
+  const bridge2 = `
+    <section class="section" style="padding:30px 22px 0;max-width:1180px;">
+      <div class="cta-banner">
+        <div style="flex:1 1 360px;">
+          <h2>Vê o preço exato do TEU anúncio</h2>
+          <p>Esta é a média do modelo. Cola o link do teu ${B} ${M} no OLX e dizemos-te o preço justo desse carro específico — quanto poupas ou pagas a mais.</p>
+        </div>
+        <a class="btn-bright" href="/avaliar">Avaliar o meu anúncio&nbsp;&nbsp;→</a>
+      </div>
+    </section>`;
+
+  // 5/6. Sell-speed + trust box
+  const sellLine = rec.sd != null
+    ? `<p style="font-size:14px;color:#3A3F47;margin:0 0 14px;">Carros deste modelo vendem, em mediana, em <b>~${rec.sd} dias</b> no OLX (amostra de ${rec.sn} vendas).</p>` : "";
+  const trust = `
+    <section class="section" style="padding:30px 22px 0;max-width:680px;">
+      ${sellLine}
+      <div class="exclusive" style="background:#FAFAF8;border:1px solid #EFECE6;align-items:flex-start;">
+        <span style="font-size:15px;">📊</span>
+        <span class="x" style="color:#5B606B;"><b style="color:#16181D;">Como lemos estes números.</b> Mostramos a mediana e o intervalo dos preços PEDIDOS em anúncios ativos do OLX — não preços de venda fechados, e não uma avaliação da tua viatura específica. O preço real depende de quilómetros, estado, extras, histórico e se é importado (ISV por pagar). Para uma leitura do teu carro em concreto, <a href="/avaliar" style="color:#177A47;font-weight:600;">avalia o anúncio</a>.</span>
+      </div>
+    </section>`;
+
+  // 7. Seller CTA
+  const sellerCta = `
+    <section class="section" style="padding:30px 22px 0;max-width:1180px;">
+      <div class="cta-banner" style="background:#fff;border:1px solid #E8E6E1;">
+        <div style="flex:1 1 360px;">
+          <h2 style="color:#16181D;">Vais vender o teu ${B} ${M}?</h2>
+          <p style="color:#5B606B;">Sabe por quanto anunciar sem deixar dinheiro em cima da mesa — avaliação independente, grátis.</p>
+        </div>
+        <a class="btn-dark" href="/avaliar" style="font-size:15px;padding:14px 26px;">Avaliar o meu carro&nbsp;&nbsp;→</a>
+      </div>
+    </section>`;
+
+  // 8. Sibling models footer
+  const sibChips = (siblings || []).slice(0, 8).map(s =>
+    `<a class="mchip" href="/preco/${encodeURIComponent(s.slug)}">${escapeHtml(s.m)} <span class="mut">${fmtEur(s.fm)}</span></a>`).join("");
+  const sib = sibChips ? `
+    <section class="section" style="padding:34px 22px 70px;max-width:1180px;">
+      <div class="sec-label">OUTROS MODELOS ${B.toUpperCase()}</div>
+      <div class="mchips">${sibChips}</div>
+      <div style="margin-top:16px;"><a href="/precos" style="font-size:13px;color:#177A47;font-weight:600;">Ver todos os modelos&nbsp;→</a></div>
+    </section>` : `<section class="section" style="padding:34px 22px 70px;"><a href="/precos" style="font-size:13px;color:#177A47;font-weight:600;">Ver preços de todos os modelos&nbsp;→</a></section>`;
+
+  const body = `<div style="padding-top:30px;">${hero}</div>${bridge1}${table}${bridge2}${trust}${sellerCta}${sib}`;
+
+  const canonical = `https://${host}/preco/${slug}`;
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Dataset",
+        "name": `Preços de ${rec.b} ${rec.m} usado em Portugal`,
+        "description": `Resumo estatístico (mediana, P25–P75) de ${rec.n} anúncios ativos de ${rec.b} ${rec.m} no OLX Portugal, por ano.`,
+        "creator": { "@type": "Organization", "name": "Flipper Club" },
+        "isAccessibleForFree": true,
+        "temporalCoverage": yrRange ? `${yr0}/${yr1}` : undefined,
+        "variableMeasured": "Preço pedido (EUR)",
+        "url": canonical,
+      },
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          { "@type": "ListItem", "position": 1, "name": "Início", "item": `https://${host}/` },
+          { "@type": "ListItem", "position": 2, "name": "Preços", "item": `https://${host}/precos` },
+          { "@type": "ListItem", "position": 3, "name": `${rec.b} ${rec.m}` },
+        ],
+      },
+    ],
+  };
+  return layout({
+    title: `Quanto vale um ${rec.b} ${rec.m} usado? Preço médio em Portugal`,
+    description: `${rec.b} ${rec.m} usado em Portugal: preço mediano ${FM} (intervalo ${FL}–${FH}), com base em ${rec.n} anúncios ativos no OLX. Preços por ano e avaliação independente grátis.`,
+    canonical, jsonLd, body, zone: "all", nav: null, depositCount, index: true,
+  });
+}
+
+// ── Models hub (/precos) — the crawl spine: one link to every model page ─────
+export function renderModelsHub({ models, depositCount }) {
+  // models = [{slug, b, m, fm, n}], pre-sorted by the worker. Group by brand.
+  const byBrand = new Map();
+  for (const m of models) {
+    if (!byBrand.has(m.b)) byBrand.set(m.b, []);
+    byBrand.get(m.b).push(m);
+  }
+  const brands = [...byBrand.keys()].sort((a, b) => a.localeCompare(b, "pt"));
+  const groups = brands.map(b => {
+    const chips = byBrand.get(b).map(m =>
+      `<a class="mchip" href="/preco/${encodeURIComponent(m.slug)}">${escapeHtml(m.m)} <span class="mut">· mediana ${fmtEur(m.fm)} · ${m.n}</span></a>`).join("");
+    return `<div style="margin-bottom:22px;"><div class="sec-label" style="margin-bottom:10px;">${escapeHtml(b)}</div><div class="mchips">${chips}</div></div>`;
+  }).join("");
+
+  const body = `
+    <section class="hero" style="padding-bottom:18px;">
+      <div class="hero-copy" style="max-width:760px;">
+        <div class="eyebrow" style="margin-bottom:18px;"><span class="e-dot"></span><span class="mono">${models.length} MODELOS · OLX PORTUGAL</span></div>
+        <h1 class="hero-title" style="font-size:38px;">Preço de carros usados em Portugal por modelo</h1>
+        <p class="lede">Avaliação independente a partir de anúncios ativos do OLX. Escolhe o modelo para ver o preço mediano e o intervalo por ano.</p>
+        <div class="hero-actions">
+          <a class="btn-dark" href="/avaliar">Avaliar o TEU carro&nbsp;&nbsp;→</a>
+          <a class="chip" href="/mercado">Ver mercado</a>
+        </div>
+      </div>
+    </section>
+    <section class="section" style="padding:18px 22px 70px;max-width:1180px;">${groups}</section>`;
+  return layout({
+    title: "Preço de carros usados em Portugal por modelo — avaliação independente",
+    description: "Preço mediano e intervalo por ano de carros usados em Portugal, a partir de anúncios ativos do OLX. Avaliação independente e grátis por modelo.",
+    canonical: null, body, zone: "all", nav: null, depositCount, index: true,
   });
 }
