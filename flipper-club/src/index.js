@@ -143,7 +143,11 @@ async function handleAvaliar(request, env, url) {
   const { uid, setCookie } = ensureUid(request);
   const depositCount = (await listUnlocked(env, uid)).size;
   const query = (url.searchParams.get("q") || "").toString().trim();
+  const modelo = (url.searchParams.get("modelo") || "").toString().trim().toLowerCase();
+  const anoRaw = parseInt(url.searchParams.get("ano") || "", 10);
+  const ano = Number.isFinite(anoRaw) ? anoRaw : null;
 
+  // Paste-a-link path (an existing OLX listing).
   let rec = null, olxId = null, sourceUrl = null;
   if (query) {
     olxId = parseOlxId(query);
@@ -153,7 +157,33 @@ async function handleAvaliar(request, env, url) {
       rec = cars ? (cars[olxId] || null) : null;
     }
   }
-  return html(renderAvaliar({ rec, olxId, sourceUrl, query, depositCount }), 200, setCookie);
+
+  // Spec path (no listing yet) + the model-select options. Only when we're not
+  // already showing a paste verdict.
+  let models = null, spec = null;
+  if (!rec) {
+    models = await getModels(env);
+    if (modelo && models && models[modelo]) {
+      const mrec = models[modelo];
+      spec = { rec: mrec, slug: modelo, year: ano, cell: pickYearCell(mrec, ano) };
+    }
+  }
+  return html(renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depositCount }), 200, setCookie);
+}
+
+// Find the per-year cell for `ano` in a model record: exact year, or a band
+// ("y0-y1") containing it. Returns null when no year given or no match.
+function pickYearCell(mrec, ano) {
+  if (ano == null || !Array.isArray(mrec.yr)) return null;
+  for (const c of mrec.yr) {
+    if (typeof c.y === "number") {
+      if (c.y === ano) return c;
+    } else if (typeof c.y === "string") {
+      const m = c.y.match(/^(\d{4})-(\d{4})$/);
+      if (m && ano >= +m[1] && ano <= +m[2]) return c;
+    }
+  }
+  return null;
 }
 
 // Extract our olx_id from a pasted OLX URL (".../-ID<id>.html") or a bare id.
