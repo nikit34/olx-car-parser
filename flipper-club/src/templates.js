@@ -217,6 +217,7 @@ function present(deal) {
     gradeDisplay, gradeDisplayFull, gcDisplay,
     importFlag: imp.flag, importLegalized: imp.legalized,
     isvTier: tier, isvRange: tier ? ISV_RANGE[tier] : null,
+    isvEur: deal.isv_eur ?? null,   // computed ISV (imports w/ CO2); else null → qualitative range
     highKm, veryHighKm,
     gc, rk,
     barW,
@@ -900,7 +901,9 @@ export function renderCarPage({ deal, zone, view, unlocked, justReserved, deposi
                 <b style="color:${amber.fg};">${p.importLegalized ? "Carro importado — já legalizado" : "Carro importado — ainda por legalizar"}.</b>
                 ${p.importLegalized
                   ? "Este carro foi importado mas o anúncio indica matrícula/legalização portuguesa concluída. O preço já deve incluir o ISV. Confirma a documentação na inspeção."
-                  : `O preço justo (${p.fairStr}) é de um carro já registado em Portugal. Este anúncio parece ter matrícula estrangeira ou estar por nacionalizar, por isso é mais barato: o ISV e a legalização ainda não estão pagos. Conta com vários milhares de euros adicionais.<br><span style="display:block;margin-top:6px;">${p.isvRange || ""}</span>`}
+                  : (p.isvEur
+                      ? `O preço justo (${p.fairStr}) é de um carro já registado em Portugal. Como este parece ter matrícula estrangeira / por nacionalizar, falta somar o ISV — <b>estimado em ~${fmtEur(p.isvEur)}</b>${deal.co2_g_km ? ` (com base em ${deal.co2_g_km} g/km CO₂ + idade)` : ""}. Estimativa indicativa — confirma na tabela das Finanças.`
+                      : `O preço justo (${p.fairStr}) é de um carro já registado em Portugal. Este anúncio parece ter matrícula estrangeira ou estar por nacionalizar, por isso é mais barato: o ISV e a legalização ainda não estão pagos. Conta com vários milhares de euros adicionais.<br><span style="display:block;margin-top:6px;">${p.isvRange || ""}</span>`)}
               </span>
             </div>` : "";
 
