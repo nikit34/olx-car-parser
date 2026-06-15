@@ -120,9 +120,15 @@ def build_valuations(listings: pd.DataFrame, predictions: pd.DataFrame,
             rec["imp"] = 1
             if leg:
                 rec["il"] = 1
-        sd = sell_lookup.get((getattr(r, "brand", None), getattr(r, "model", None)))
+        brand, model = getattr(r, "brand", None), getattr(r, "model", None)
+        sd = sell_lookup.get((brand, model))
         if sd is not None:
             rec["sd"] = sd
+        # Model slug (→ contextual /preco/{slug} link on the /avaliar verdict).
+        # Lazy import avoids a module-load circular (model_pages imports _i here).
+        if brand and model:
+            from src.analytics.model_pages import slugify
+            rec["ms"] = slugify(f"{brand}-{model}")
         # Drop None values to keep the blob small.
         cars[str(oid)] = {k: v for k, v in rec.items() if v is not None}
 
