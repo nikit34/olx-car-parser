@@ -29,7 +29,7 @@
 import {
   renderGrid, renderCarPage, renderInfo,
   renderLanding, renderClaim, renderClaimSuccess, renderReservations,
-  renderValuationTeaser,
+  renderAvaliar,
 } from "./templates.js";
 import {
   stripeConfigured, createCheckoutSession,
@@ -127,11 +127,33 @@ async function handleLanding(request, env, url) {
   }), 200, setCookie);
 }
 
-// Avaliar (/avaliar) — seller-lens teaser (static; CTA is a mailto).
+// Avaliar (/avaliar) — paste-a-link valuation of ANY OLX listing (Tier-2).
+// ?q = an OLX URL or a bare olx_id; we extract the id, look it up in the
+// precomputed valuations blob, and render a fair-price verdict (or a graceful
+// "not found / ask by email" fallback). No q ⇒ just the lookup form + teaser.
 async function handleAvaliar(request, env, url) {
   const { uid, setCookie } = ensureUid(request);
   const depositCount = (await listUnlocked(env, uid)).size;
-  return html(renderValuationTeaser({ depositCount }), 200, setCookie);
+  const query = (url.searchParams.get("q") || "").toString().trim();
+
+  let rec = null, olxId = null, sourceUrl = null;
+  if (query) {
+    olxId = parseOlxId(query);
+    if (/^https?:\/\//i.test(query)) sourceUrl = query;
+    if (olxId) {
+      const cars = await getValuations(env);
+      rec = cars ? (cars[olxId] || null) : null;
+    }
+  }
+  return html(renderAvaliar({ rec, olxId, sourceUrl, query, depositCount }), 200, setCookie);
+}
+
+// Extract our olx_id from a pasted OLX URL (".../-ID<id>.html") or a bare id.
+function parseOlxId(q) {
+  const m = q.match(/-ID([A-Za-z0-9]+)\.html/i);
+  if (m) return m[1];
+  const t = q.trim();
+  return /^[A-Za-z0-9]{4,14}$/.test(t) ? t : null;
 }
 
 // Mercado feed (/mercado) — the grid of car tiles, zone + sort filtered.
@@ -493,6 +515,26 @@ async function degrade(env, cacheKey) {
   await env.KV.put(cacheKey, JSON.stringify({ __degraded: true }),
     { expirationTtl: DEGRADED_CACHE_TTL_SEC });
   return { deals: [], degraded: true };
+}
+
+// valuations.json — the public "value any listing" lookup (Tier-2). ~0.9 MB
+// gzipped; fetched from the Release and edge-cached. Parsed per request (the
+// /avaliar tool is low-traffic). Returns the {olx_id: rec} map, or null if the
+// blob isn't published yet / fetch fails (handler then shows the fallback).
+async function getValuations(env) {
+  const url = `${HOT_DEALS_BASE}/valuations.json`;
+  try {
+    const r = await fetch(url, { cf: { cacheTtl: 600, cacheEverything: true } });
+    if (!r.ok) {
+      console.warn(`valuations fetch ${url} → ${r.status}`);
+      return null;
+    }
+    const data = await r.json();
+    return data && data.cars ? data.cars : null;
+  } catch (err) {
+    console.warn("valuations fetch error", err && err.message);
+    return null;
+  }
 }
 
 // Risk-adjusted ranking — same default the old dashboard used. One car at a

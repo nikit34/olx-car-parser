@@ -592,16 +592,19 @@ function thumbBlock(p, h, labelSize) {
 }
 
 // ── Shell ─────────────────────────────────────────────────────────────────────
-function layout({ title, body, zone, nav, depositCount }) {
+function layout({ title, body, zone, nav, depositCount, index = false }) {
   const dep = (depositCount || 0) * 5;
   const navItem = (key, label, href) =>
     `<a href="${href}" class="${nav === key ? "active" : ""}">${label}</a>`;
+  // Public valuation pages are indexable (SEO); transactional pages (claim,
+  // unlocked, reservas) stay noindex.
+  const robots = index ? "index,follow" : "noindex,nofollow";
   return `<!doctype html>
 <html lang="pt">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex,nofollow">
+<meta name="robots" content="${robots}">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚗</text></svg>">
 <title>${escapeHtml(title)} · Flipper Club</title>
 ${FONT_LINKS}
@@ -729,7 +732,7 @@ export function renderLanding({ stats, featured, depositEur, depositCount }) {
       </div>
     </section>`;
 
-  return layout({ title: "Não pagues a mais — avaliação independente de carros usados", body, zone: "all", nav: "landing", depositCount });
+  return layout({ title: "Não pagues a mais — avaliação independente de carros usados", body, zone: "all", nav: "landing", depositCount, index: true });
 }
 
 // ── Mercado feed (/mercado) ─────────────────────────────────────────────────────
@@ -812,7 +815,7 @@ export function renderGrid({ deals, zone, sort, view, unlockedSet, depositEur, d
       </div>
       <div class="grid">${tiles}</div>
     </div>`;
-  return layout({ title: lens === "comprar" ? "Carros abaixo do preço" : "Mercado", body, zone, nav: "feed", depositCount });
+  return layout({ title: lens === "comprar" ? "Carros abaixo do preço" : "Mercado", body, zone, nav: "feed", depositCount, index: true });
 }
 
 // ── Car detail (/car) ───────────────────────────────────────────────────────────
@@ -999,7 +1002,7 @@ export function renderCarPage({ deal, zone, view, unlocked, justReserved, deposi
       </div>
     </div>`;
 
-  return layout({ title: p.name, body, zone, nav: "feed", depositCount });
+  return layout({ title: p.name, body, zone, nav: "feed", depositCount, index: true });
 }
 
 // ── Claim confirm (/claim) ────────────────────────────────────────────────────
@@ -1144,29 +1147,110 @@ export function renderInfo({ zone, title, message, depositCount }) {
 // ── Avaliar (/avaliar) — seller-lens teaser ──────────────────────────────────
 // Tier-0: no real "value MY car" tool yet (needs an inference endpoint). Ships a
 // waitlist teaser whose CTA is a mailto. A real form is Tier-1.
-export function renderValuationTeaser({ depositCount }) {
+// ── Avaliar (/avaliar) — paste-a-link valuation of ANY OLX listing (Tier-2) ──
+// rec = the valuations.json record for the looked-up olx_id (or null). query =
+// the raw user input (URL or id). The verdict is derived from where the asking
+// price sits in the model's fair band [fl, fh].
+export function renderAvaliar({ rec, olxId, sourceUrl, query, depositCount }) {
   const mailto = "mailto:nikitapermikov@larixon.com?subject=Avaliar%20o%20meu%20carro"
     + "&body=Marca%2Fmodelo%3A%0AAno%3A%0AQuilometragem%3A%0ACombust%C3%ADvel%3A%0ALink%20do%20an%C3%BAncio%20(se%20tiver)%3A";
-  const body = `
-    <section class="hero">
-      <div class="hero-copy" style="max-width:620px;margin:0 auto;text-align:center;">
-        <div class="eyebrow" style="margin:0 auto 22px;"><span class="e-dot"></span><span class="mono">PARA QUEM VENDE · EM BREVE</span></div>
-        <h1 class="hero-title" style="font-size:42px;">Quanto vale o teu carro?</h1>
-        <p class="lede" style="margin:0 auto 30px;">Fazemos uma avaliação independente do teu carro — preço justo de mercado em Portugal — para saberes por quanto anunciar sem deixar dinheiro em cima da mesa. Em breve, diretamente aqui.</p>
-        <div class="hero-actions" style="justify-content:center;">
-          <a class="btn-dark" href="${mailto}">Pedir avaliação por email&nbsp;&nbsp;→</a>
+
+  const g = GRADE_COLORS.green, amber = GRADE_COLORS.amber, rd = GRADE_COLORS.red;
+
+  let result = "";
+  if (rec) {
+    const price = rec.p, fl = rec.fl, fm = rec.fm, fh = rec.fh;
+    const saving = (fm != null && price != null) ? fm - price : null;
+    let gaugePos = 50;
+    if (price != null && fl != null && fh != null && fh > fl)
+      gaugePos = Math.max(3, Math.min(96, Math.round((price - fl) / (fh - fl) * 100)));
+    let tag, vc, line;
+    if (price != null && fh != null && price > fh) {
+      tag = "🔴 ACIMA DO MERCADO"; vc = rd;
+      line = saving != null ? `pagas ${fmtEur(-saving)} acima do justo` : "";
+    } else if (price != null && fl != null && price < fl) {
+      tag = "🟢 ABAIXO DO MERCADO"; vc = g;
+      line = saving != null ? `poupas ${fmtEur(saving)} vs o justo` : "";
+    } else {
+      tag = "🟢 PREÇO JUSTO"; vc = g;
+      line = (saving != null && saving > 0) ? `poupas ${fmtEur(saving)} vs a mediana` : "dentro do intervalo de mercado";
+    }
+    const isvR = ISV_RANGE[isvTier(price)] || "";
+    const importBanner = rec.imp ? `
+        <div class="exclusive" style="background:${amber.bg};border:1px solid ${amber.br};align-items:flex-start;margin-top:16px;">
+          <span style="font-size:15px;">${rec.il ? "🌍" : "⚠️"}</span>
+          <span class="x" style="color:#6B4E12;">
+            <b style="color:${amber.fg};">${rec.il ? "Carro importado — já legalizado" : "Indícios de importação — possivelmente por legalizar"}.</b>
+            ${rec.il
+              ? " O preço já deve incluir o ISV; confirma a documentação na inspeção."
+              : ` O preço justo acima é de um carro já registado em Portugal. Se a matrícula ainda for estrangeira, falta somar o ISV.<br><span style="display:block;margin-top:6px;">${isvR}</span>`}
+          </span>
+        </div>` : "";
+    const sellLine = rec.sd != null ? `<div style="font-size:12px;color:#8A8F98;margin-top:14px;line-height:1.5;">Carros deste modelo vendem, em mediana, em <b style="color:#16181D;">~${rec.sd} dias</b> no mercado.</div>` : "";
+    const olxHref = sourceUrl || (olxId ? `https://www.olx.pt/d/anuncio/-ID${encodeURIComponent(olxId)}.html` : null);
+    const sub = `${rec.y ?? "—"} · ${rec.km != null ? fmtKm(rec.km) : "—"} · ${escapeHtml(rec.fu || "—")}`;
+    result = `
+    <div class="detail" style="max-width:640px;margin:0 auto;padding-top:0;">
+      <div class="side-card">
+        <div class="side-head"><h1 style="font-size:21px;">${escapeHtml(rec.t || "Viatura")}</h1></div>
+        <div class="side-sub">${sub}</div>
+        ${rec.ct ? `<div class="side-loc">📍 ${escapeHtml(rec.ct)}</div>` : ""}
+        <div class="side-prices">
+          <div><div class="cap">Preço pedido</div><div class="big">${fmtEur(price)}</div></div>
+          <div class="side-fair"><div class="cap">Justo (mediana)</div><div class="v">${fmtEur(fm)}</div></div>
         </div>
-        <div class="mono" style="font-size:12px;color:#8A8F98;margin-top:16px;">Avaliação indicativa · independente · não somos stand nem intermediário</div>
+        <div class="verdict-row" style="background:${vc.bg};border-color:${vc.br};">
+          <span class="verdict-tag" style="color:${vc.fg};">${tag}</span>
+          <span class="verdict-profit" style="color:${vc.fg};">${line}</span>
+        </div>
+        <div style="margin-top:16px;">
+          <div class="gauge-head"><span>${fmtEur(fl)}</span><span>intervalo justo de mercado</span><span>${fmtEur(fh)}</span></div>
+          <div class="gauge-track"><div class="gauge-pin" style="left:${gaugePos}%;"></div></div>
+        </div>
+        ${importBanner}
+        ${sellLine}
+        ${olxHref ? `<a class="olx-btn" style="display:block;margin-top:18px;" href="${escapeHtml(olxHref)}" target="_blank" rel="noopener nofollow">Ver anúncio no OLX&nbsp;&nbsp;↗</a>` : ""}
+      </div>
+      <div class="side-foot">Estimativa a partir de anúncios comparáveis em Portugal · avaliação independente, não somos o vendedor.</div>
+    </div>`;
+  }
+
+  const notice = (!rec && query) ? `
+    <div class="info" style="padding:8px 22px 0;max-width:620px;">
+      <p style="margin:0 auto;">Ainda não temos este anúncio na nossa base. Cobrimos a maioria dos carros ativos no OLX Portugal, mas nem todos — confirma o link, ou pede uma avaliação por email.</p>
+    </div>` : "";
+
+  const form = `
+    <form action="/avaliar" method="get" style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;max-width:620px;margin:0 auto;">
+      <input name="q" value="${escapeHtml(query || "")}" placeholder="Cola o link do anúncio OLX (ou o ID)" autocomplete="off"
+        style="flex:1 1 340px;min-width:220px;padding:13px 15px;border:1px solid #E2DFD8;border-radius:12px;font-family:'Hanken Grotesk',sans-serif;font-size:15px;background:#fff;color:#16181D;">
+      <button type="submit" class="btn-dark" style="font-size:15px;padding:13px 24px;">Avaliar&nbsp;&nbsp;→</button>
+    </form>`;
+
+  const body = `
+    <section class="hero" style="padding-bottom:18px;">
+      <div class="hero-copy" style="max-width:660px;margin:0 auto;text-align:center;">
+        <div class="eyebrow" style="margin:0 auto 22px;"><span class="e-dot"></span><span class="mono">AVALIAÇÃO INDEPENDENTE · OLX PORTUGAL</span></div>
+        <h1 class="hero-title" style="font-size:40px;">Esse carro vale o que pedem?</h1>
+        <p class="lede" style="margin:0 auto 26px;">Cola o link de qualquer anúncio de carro do OLX e dizemos-te o preço justo de mercado, quanto estás a poupar (ou a pagar a mais) e se é importado com ISV por pagar. Grátis, sem registo.</p>
+        ${form}
+        <div class="mono" style="font-size:12px;color:#8A8F98;margin-top:14px;">Estimativa indicativa · independente · não somos stand nem intermediário</div>
       </div>
     </section>
-    <section class="section" style="padding:8px 22px 70px;">
+    ${notice}
+    ${result}
+    ${rec ? "" : `
+    <section class="section" style="padding:18px 22px 70px;">
       <div class="cta-banner">
         <div style="flex:1 1 360px;">
-          <h2>Os marketplaces não te dizem que o anúncio está caro.</h2>
-          <p>Nós dizemos. A nossa avaliação é independente — não somos stand nem intermediário, e não ganhamos com a tua venda. Enquanto o avaliador automático não está pronto, respondemos por email.</p>
+          <h2>Vais vender o teu carro?</h2>
+          <p>Cola o teu anúncio acima para veres por quanto está face ao mercado — ou, se ainda não anunciaste, pede uma avaliação por email com o modelo e o ano.</p>
         </div>
-        <a class="btn-bright" href="/mercado">Ver carros avaliados&nbsp;&nbsp;→</a>
+        <a class="btn-bright" href="${mailto}">Pedir avaliação por email&nbsp;&nbsp;→</a>
       </div>
-    </section>`;
-  return layout({ title: "Quanto vale o teu carro? — avaliação independente", body, zone: "all", nav: null, depositCount });
+    </section>`}`;
+  return layout({
+    title: rec ? `${rec.t} — vale o que pedem? · avaliação` : "Avalia qualquer carro do OLX — preço justo independente",
+    body, zone: "all", nav: null, depositCount, index: true,
+  });
 }
