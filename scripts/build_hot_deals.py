@@ -201,6 +201,8 @@ def _format_deal(row: dict, photo_urls: list[str]) -> dict:
         "city": _s(row.get("city")),
         "seller_type": _s(row.get("seller_type")),
         "origin": _s(row.get("origin")),   # structured import signal for importInfo()
+        "co2_g_km": _i(row.get("co2_g_km")),
+        "isv_eur": _i(row.get("isv_eur")),  # computed nationalisation tax (imports w/ CO2)
         "damage_severity": _i(row.get("damage_severity")) or 0,
         "photo_damage_p": float(extras.get("photo_damage_p") or 0),
         "photo_damage_flagged": bool(extras.get("photo_damage_flagged")),
@@ -252,7 +254,9 @@ def _build_signals(db_path: Path) -> pd.DataFrame:
     # cards need: title, description, llm_extras (photo_damage signals),
     # first_seen_at, seller_type, transmission, is_active.
     extra_cols = ["olx_id", "title", "description", "llm_extras",
-                  "first_seen_at", "seller_type", "transmission", "is_active"]
+                  "first_seen_at", "seller_type", "transmission", "is_active",
+                  # ISV inputs for the decision engine (import nationalisation tax)
+                  "engine_cc", "origin", "co2_g_km"]
     extra = listings[[c for c in extra_cols if c in listings.columns]].drop_duplicates("olx_id")
     merged = signals.merge(extra, on="olx_id", how="left", suffixes=("", "_l"))
 
@@ -320,7 +324,11 @@ def _annotate_decisions(signals: pd.DataFrame, listings: pd.DataFrame) -> pd.Dat
     signals = signals.copy()
     signals["verdict"] = [d.verdict for d in decisions]
     signals["decision_score"] = [d.score for d in decisions]
+    signals["isv_eur"] = [(d.components or {}).get("isv_eur") or None for d in decisions]
     counts = signals["verdict"].value_counts().to_dict()
+    n_isv = int(signals["isv_eur"].notna().sum())
+    if n_isv:
+        print(f"[hot_deals]   ISV applied to {n_isv} imported deals", flush=True)
     print(f"[hot_deals]   decisions over {len(signals):,} signals: {counts}", flush=True)
     return signals
 

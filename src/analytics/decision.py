@@ -527,12 +527,35 @@ def decide(
     expected_hold_days = min(expected_hold_days, float(_DOM_LIMIT_DAYS))
     fees = _FEES_FLAT_EUR + _HOLDING_COST_EUR_PER_DAY * expected_hold_days
     raw_margin = predicted_corrected - price
-    net_margin = raw_margin - repair_cost - fees
+
+    # ISV — nationalisation tax: a real cost a PT reseller must pay on a
+    # NOT-YET-LEGALISED import. Only subtracted when we can compute it honestly
+    # (import-flagged & not legalised, with CO2 + engine_cc + fuel + reg-year);
+    # otherwise 0 (no adjustment). The fair_median is a PT-registered price, so
+    # an import's real margin is raw_margin − ISV.
+    isv_eur = 0.0
+    try:
+        from src.analytics.valuations import _import_flags
+        from src.analytics.isv import compute_isv
+        imp, leg = _import_flags(g("title") or "", g("description") or "", g("origin"))
+        if imp and not leg:
+            ry = g("year")
+            res = compute_isv(g("co2_g_km"), g("engine_cc"), g("fuel_type"),
+                              int(ry) if ry is not None and pd.notna(ry) else None)
+            if res and res.get("isv_eur"):
+                isv_eur = float(res["isv_eur"])
+    except Exception:  # noqa: BLE001 — ISV is best-effort; never break a verdict
+        isv_eur = 0.0
+
+    net_margin = raw_margin - repair_cost - fees - isv_eur
     net_margin_pct = (net_margin / predicted_corrected) * 100 if predicted_corrected else 0.0
     components["net_margin_eur"] = round(net_margin, 0)
     components["net_margin_pct"] = round(net_margin_pct, 1)
     components["repair_cost_eur"] = round(repair_cost, 0)
     components["fees_eur"] = round(fees, 0)
+    components["isv_eur"] = round(isv_eur, 0)
+    if isv_eur:
+        reasons.append(f"−€{isv_eur:.0f} ISV (importado por legalizar)")
 
     if net_margin_pct < _MIN_NET_MARGIN_PCT:
         reasons.append(
