@@ -290,7 +290,22 @@ async function handleFeed(request, env, url) {
   const zone = pickZone(url.searchParams.get("zone"));
   const view = pickView(url.searchParams.get("view"));
   const { uid, setCookie } = ensureUid(request);
-  const { deals, degraded } = await getDeals(env, zone);
+  // Fetch every zone in parallel so the filter chips can show live per-zone
+  // counts ("Norte (12)"). Each getDeals call is edge/KV-cached, so the extra
+  // three fetches are cheap. The current zone's result drives the feed itself.
+  // Per-zone .catch: a sibling zone failing (e.g. a KV.get reject — getDeals
+  // only guards the fetch, not the cache read) must NOT take down the whole
+  // feed via Promise.all. A failed sibling → null count; a failed current zone
+  // → degraded:true → the graceful 503 below, never an uncaught 500.
+  const zoneResults = Object.fromEntries(
+    await Promise.all(ZONES.map(z =>
+      getDeals(env, z).then(r => [z, r]).catch(() => [z, { deals: [], degraded: true }]))));
+  const zoneCounts = {};
+  for (const z of ZONES) {
+    const r = zoneResults[z];
+    zoneCounts[z] = (r && !r.degraded && Array.isArray(r.deals)) ? r.deals.length : null;
+  }
+  const { deals, degraded } = zoneResults[zone] || { deals: [], degraded: true };
   const unlockedSet = await listUnlocked(env, uid);
   const depositCount = unlockedSet.size;
 
@@ -313,7 +328,7 @@ async function handleFeed(request, env, url) {
   }
 
   return html(renderGrid({
-    deals: sorted, zone, sort, view, unlockedSet, depositCount,
+    deals: sorted, zone, sort, view, unlockedSet, depositCount, zoneCounts,
     depositEur: depositCents(env) / 100,
     stripeReady: stripeConfigured(env),
   }), 200, setCookie);

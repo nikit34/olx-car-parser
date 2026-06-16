@@ -289,8 +289,8 @@ a{color:inherit;text-decoration:none;}
 
 /* Landing */
 .hero{max-width:1180px;margin:0 auto;padding:64px 22px 36px;}
-.hero-grid{display:flex;flex-wrap:wrap;gap:48px;align-items:center;}
-.hero-copy{flex:1 1 440px;min-width:300px;}
+.hero-grid{display:flex;flex-wrap:wrap;gap:48px;align-items:flex-start;}
+.hero-copy{flex:1 1 460px;min-width:300px;}
 .eyebrow{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:#E4F2E9;border:1px solid #BFE3CE;margin-bottom:22px;}
 .eyebrow .mono{font-size:11px;font-weight:500;color:#177A47;letter-spacing:0.02em;}
 .eyebrow .e-dot{width:6px;height:6px;border-radius:50%;background:#177A47;}
@@ -302,10 +302,11 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .hero-stats{display:flex;flex-wrap:wrap;gap:32px;margin-top:42px;}
 .stat-num{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:30px;letter-spacing:-0.02em;}
 .stat-num.green{color:#177A47;}
-.stat-cap{font-size:13px;color:#8A8F98;margin-top:2px;}
+.stat-cap{font-size:13px;color:#8A8F98;margin-top:2px;max-width:128px;line-height:1.3;}
 .stat-div{width:1px;background:#E2DFD8;}
-.feature-wrap{flex:1 1 360px;min-width:300px;display:flex;justify-content:center;}
-.feature-card{width:100%;max-width:380px;background:#fff;border:1px solid #E8E6E1;border-radius:20px;box-shadow:0 30px 60px -30px rgba(20,24,29,0.28);overflow:hidden;cursor:pointer;}
+.feature-wrap{flex:1 1 420px;min-width:300px;display:flex;flex-direction:column;align-items:stretch;}
+.feature-lead{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:#177A47;margin:0 0 10px 2px;display:flex;align-items:center;gap:7px;}
+.feature-card{width:100%;max-width:none;background:#fff;border:1px solid #E8E6E1;border-radius:20px;box-shadow:0 30px 60px -30px rgba(20,24,29,0.28);overflow:hidden;cursor:pointer;}
 
 .section{max-width:1180px;margin:0 auto;}
 .sec-label{font-family:'JetBrains Mono',monospace;font-size:12px;color:#8A8F98;letter-spacing:0.06em;margin-bottom:22px;}
@@ -318,6 +319,13 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .cta-banner h2{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:32px;letter-spacing:-0.025em;color:#fff;margin:0 0 10px;text-wrap:balance;}
 .cta-banner p{font-size:16px;line-height:1.55;color:#A8ADB6;margin:0;max-width:460px;text-wrap:pretty;}
 .cta-banner .btn-bright{font-size:15px;padding:14px 26px;}
+.indep-note{margin-top:16px;max-width:460px;}
+.indep-note>summary{cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.02em;color:#7FE3AB;list-style:none;display:inline-flex;align-items:center;gap:7px;}
+.indep-note>summary::-webkit-details-marker{display:none;}
+.indep-note>summary::before{content:"+";font-size:15px;line-height:1;width:16px;text-align:center;}
+.indep-note[open]>summary::before{content:"–";}
+.indep-note>summary:hover{color:#A6F0C6;}
+.indep-note p{margin-top:12px;font-size:14px;color:#9CA1AA;}
 
 /* Striped photo placeholder (fallback when a listing has no photos) */
 .striped{background:repeating-linear-gradient(135deg,#EEEBE5 0 13px,#F2EFE9 13px 26px);display:flex;align-items:center;justify-content:center;}
@@ -341,6 +349,8 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .chips{display:flex;gap:6px;flex-wrap:wrap;}
 .chip{font-family:'Hanken Grotesk',sans-serif;font-weight:500;font-size:13px;padding:8px 14px;border-radius:10px;border:1px solid #E2DFD8;background:#fff;color:#5B606B;cursor:pointer;white-space:nowrap;}
 .chip.active{font-weight:600;border-color:#16181D;background:#16181D;color:#fff;}
+.chip-count{font-family:'JetBrains Mono',monospace;font-size:11px;color:#8A8F98;margin-left:2px;}
+.chip.active .chip-count{color:#B8BDC6;}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:18px;}
 .tile{cursor:pointer;background:#fff;border:1px solid #E8E6E1;border-radius:18px;overflow:hidden;display:flex;flex-direction:column;transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease;}
 .tile:hover{transform:translateY(-4px);box-shadow:0 16px 34px -16px rgba(20,24,29,0.22);border-color:#D8D5CE;}
@@ -538,6 +548,20 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .gallery-nav:hover{background:rgba(20,24,29,0.78);}
 .gallery-counter{position:absolute;bottom:12px;left:14px;background:rgba(255,255,255,0.88);color:#7A7F88;font-family:'JetBrains Mono',monospace;font-size:11px;padding:4px 10px;border-radius:7px;pointer-events:none;}
 .gallery.single .gallery-nav{display:none;}
+.gallery-track img,.thumb-cell img{cursor:zoom-in;}
+.zoom-hint{position:absolute;top:10px;right:12px;background:rgba(20,24,29,0.55);color:#fff;font-family:'Hanken Grotesk',sans-serif;font-size:11px;padding:4px 9px;border-radius:7px;pointer-events:none;}
+/* Full-screen photo lightbox (click any photo to enlarge) */
+.lightbox{position:fixed;inset:0;background:rgba(10,12,15,0.94);z-index:100;display:none;align-items:center;justify-content:center;}
+.lightbox.open{display:flex;}
+.lb-img{max-width:94vw;max-height:88vh;object-fit:contain;border-radius:6px;box-shadow:0 24px 70px rgba(0,0,0,0.55);}
+.lb-close{position:absolute;top:16px;right:18px;width:42px;height:42px;border-radius:50%;border:0;background:rgba(255,255,255,0.14);color:#fff;font-size:24px;line-height:1;cursor:pointer;}
+.lb-nav{position:absolute;top:50%;transform:translateY(-50%);width:48px;height:48px;border-radius:50%;border:0;background:rgba(255,255,255,0.14);color:#fff;font-size:28px;line-height:1;cursor:pointer;}
+.lb-prev{left:14px;}
+.lb-next{right:14px;}
+.lb-nav:hover,.lb-close:hover{background:rgba(255,255,255,0.28);}
+.gallery.single + .lightbox .lb-nav,.gallery.single + .lightbox .lb-counter{display:none;}
+.lb-counter{position:absolute;bottom:18px;left:50%;transform:translateX(-50%);color:#cfd3da;font-family:'JetBrains Mono',monospace;font-size:12px;}
+@media (max-width:760px){.zoom-hint{display:none;}.lb-nav{width:42px;height:42px;}}
 
 @media (max-width:760px){
   h1.hero-title{font-size:38px;}
@@ -604,6 +628,24 @@ const PAGE_SCRIPT = `
     var onScroll=function(){ if(window.scrollY>700){toTop.classList.add('show');}else{toTop.classList.remove('show');} };
     window.addEventListener('scroll',onScroll,{passive:true}); onScroll();
     toTop.addEventListener('click',function(){window.scrollTo({top:0,behavior:'smooth'});});
+  }
+  // Photo lightbox — click any gallery/thumb photo to view it full-screen.
+  var lb=document.querySelector('.lightbox');
+  if(lb){
+    var lbImg=lb.querySelector('.lb-img'), lbCount=lb.querySelector('.lb-counter');
+    var srcs=[].slice.call(document.querySelectorAll('.gallery-track img')).map(function(im){return im.getAttribute('src');});
+    var idx=0;
+    function lbShow(i){ if(!srcs.length){return;} idx=(i+srcs.length)%srcs.length; lbImg.setAttribute('src',srcs[idx]); if(lbCount){lbCount.textContent=(idx+1)+' / '+srcs.length;} }
+    function lbOpen(i){ lbShow(i); lb.classList.add('open'); lb.setAttribute('aria-hidden','false'); document.body.style.overflow='hidden'; }
+    function lbClose(){ lb.classList.remove('open'); lb.setAttribute('aria-hidden','true'); document.body.style.overflow=''; }
+    document.querySelectorAll('.gallery-track img,.thumb-cell img').forEach(function(im){
+      im.addEventListener('click',function(){ var i=srcs.indexOf(im.getAttribute('src')); lbOpen(i<0?0:i); });
+    });
+    lb.querySelector('.lb-close').addEventListener('click',lbClose);
+    lb.querySelector('.lb-prev').addEventListener('click',function(e){e.stopPropagation();lbShow(idx-1);});
+    lb.querySelector('.lb-next').addEventListener('click',function(e){e.stopPropagation();lbShow(idx+1);});
+    lb.addEventListener('click',function(e){ if(e.target===lb){lbClose();} });
+    document.addEventListener('keydown',function(e){ if(!lb.classList.contains('open')){return;} if(e.key==='Escape'){lbClose();}else if(e.key==='ArrowLeft'){lbShow(idx-1);}else if(e.key==='ArrowRight'){lbShow(idx+1);} });
   }
 })();
 `;
@@ -723,6 +765,7 @@ export function renderLanding({ stats, featured, depositEur, depositCount }) {
   const f = featured ? present(featured) : null;
   const featureCard = f ? `
     <div class="feature-wrap">
+      <div class="feature-lead"><span class="e-dot" style="background:#177A47;"></span>Destaque de hoje</div>
       <a class="feature-card" href="/car?olx_id=${encodeURIComponent(featured.olx_id)}">
         <div class="thumb" style="position:relative;height:200px;">
           ${thumbBlock(f, 200, 34)}
@@ -804,6 +847,10 @@ export function renderLanding({ stats, featured, depositEur, depositCount }) {
         <div style="flex:1 1 360px;">
           <h2>A independência é o produto.</h2>
           <p>O OLX nunca te vai dizer que o anúncio está caro, nem que aquele preço baixo é de um carro ainda por legalizar. Nós dizemos. Reservar um carro (${fmtEur(depositEur)} reembolsáveis) desbloqueia o contacto do vendedor e esconde-o dos outros membros durante 24h — e o depósito volta para a tua carteira assim que falas com o vendedor.</p>
+          <details class="indep-note">
+            <summary>Como ganhamos dinheiro — e porque é que a avaliação é independente</summary>
+            <p>Não cobramos comissão ao vendedor nem somos pagos pelos stands. A nossa única receita é o depósito reembolsável de ${fmtEur(depositEur)} que reservas um carro para ti. Por isso não temos incentivo em dizer-te que um carro vale mais do que vale — a avaliação trabalha para o comprador, não para quem está a vender.</p>
+          </details>
         </div>
         <a class="btn-bright" href="/mercado">Ver os carros avaliados&nbsp;&nbsp;→</a>
       </div>
@@ -816,7 +863,7 @@ export function renderLanding({ stats, featured, depositEur, depositCount }) {
 // `view` is the intent lens: "comprar" (default, buyer-first) or "revender"
 // (importer/flipper). It only RELABELS the same decision_score-ranked feed —
 // never re-sorts or filters — so we never imply a precision the ranking lacks.
-export function renderGrid({ deals, zone, sort, view, unlockedSet, depositEur, depositCount }) {
+export function renderGrid({ deals, zone, sort, view, unlockedSet, depositEur, depositCount, zoneCounts }) {
   const lens = view === "revender" ? "revender" : "comprar";
   const profitLabel = lens === "comprar" ? "💰 Maior poupança" : "💰 Maior margem";
   const tabLabel = s => s === "score" ? "🏆 Melhor aposta" : s === "profit" ? profitLabel : "🆕 Mais recentes";
@@ -824,7 +871,9 @@ export function renderGrid({ deals, zone, sort, view, unlockedSet, depositEur, d
   const sortChip = s => `<a href="${q({ sort: s })}" class="chip ${sort === s ? "active" : ""}">${tabLabel(s)}</a>`;
   const zoneChip = z => {
     const labels = { all: "Todas", norte: "Norte", centro: "Centro", sul: "Sul" };
-    return `<a href="${q({ zone: z })}" class="chip ${zone === z ? "active" : ""}">${labels[z]}</a>`;
+    const c = zoneCounts && typeof zoneCounts[z] === "number" ? zoneCounts[z] : null;
+    const count = c != null ? ` <span class="chip-count">${c}</span>` : "";
+    return `<a href="${q({ zone: z })}" class="chip ${zone === z ? "active" : ""}">${labels[z]}${count}</a>`;
   };
   const lensChip = (v, label) => `<a href="/mercado?zone=${zone}&sort=${sort}&view=${v}" class="chip ${lens === v ? "active" : ""}">${label}</a>`;
 
@@ -909,6 +958,14 @@ export function renderCarPage({ deal, zone, view, unlocked, justReserved, deposi
         <button type="button" class="gallery-nav prev" aria-label="Anterior">‹</button>
         <button type="button" class="gallery-nav next" aria-label="Próxima">›</button>
         <div class="gallery-counter">1 / ${photos.length} · FOTO DO ANÚNCIO</div>
+        <div class="zoom-hint">⤢ Clica para ampliar</div>
+      </div>
+      <div class="lightbox" role="dialog" aria-modal="true" aria-label="Fotos do anúncio" aria-hidden="true">
+        <button type="button" class="lb-close" aria-label="Fechar">×</button>
+        <button type="button" class="lb-nav lb-prev" aria-label="Anterior">‹</button>
+        <img class="lb-img" alt="${escapeHtml(p.name)}">
+        <button type="button" class="lb-nav lb-next" aria-label="Próxima">›</button>
+        <div class="lb-counter"></div>
       </div>`
     : `<div class="hero-photo striped"><span class="striped-label" style="font-size:54px;">${escapeHtml(p.make)}</span></div>`;
 
