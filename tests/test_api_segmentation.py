@@ -8,7 +8,11 @@ under the cap (or below the min-width floor) — without touching the network
 (``_segment_count`` is stubbed).
 """
 
-from src.parser.scraper import OlxScraper, ScraperConfig, _API_OFFSET_CAP
+import logging
+
+from src.parser.scraper import (
+    OlxScraper, ScraperConfig, _API_OFFSET_CAP, _MIN_BAND_WIDTH_EUR,
+)
 
 
 def _scraper():
@@ -50,7 +54,7 @@ class TestPriceBandBisection:
             assert hi1 == lo2
         # every leaf under the cap, or below the min-width floor
         for lo, hi, count in bands:
-            assert count < _API_OFFSET_CAP or (hi - lo) <= 100
+            assert count < _API_OFFSET_CAP or (hi - lo) <= _MIN_BAND_WIDTH_EUR
 
     def test_terminates_when_never_under_cap(self):
         # Pathological: every band reports exactly the cap. Must still
@@ -73,3 +77,33 @@ class TestPriceBandBisection:
             assert s._price_bands(40_000, None, 378) == [(40_000, None, _API_OFFSET_CAP)]
         finally:
             s.close()
+
+    def test_splits_a_saturated_band_below_the_old_100_floor(self):
+        # A saturated sliver only 64 euros wide. The old hard €100 floor
+        # accepted it as a single leaf and silently dropped its tail; now we
+        # keep bisecting past €100 (down to where it falls under the cap).
+        s = _scraper()
+        # at-cap while wider than 4 euros, sub-cap once narrower
+        s._segment_count = (
+            lambda lo, hi, cat: _API_OFFSET_CAP if (hi - lo) > 4 else 5)
+        try:
+            bands = s._price_bands(1000, 1064, 378)
+        finally:
+            s.close()
+        assert len(bands) > 1                       # actually split, not one capped leaf
+        assert all(c < _API_OFFSET_CAP for _lo, _hi, c in bands)  # all leaves recovered under cap
+        assert all((hi - lo) <= 4 for lo, hi, _c in bands)        # split finer than the old 100 floor
+
+    def test_warns_when_capped_band_cannot_be_split(self, caplog):
+        # Pathological: every band reports the cap, so depth runs out before
+        # any leaf drops under it. Each unsplittable-yet-saturated leaf must
+        # emit a loud ::warning:: so the coverage loss is never silent.
+        s = _scraper()
+        s._segment_count = lambda lo, hi, cat: _API_OFFSET_CAP
+        try:
+            with caplog.at_level(logging.WARNING):
+                bands = s._price_bands(0, 8, 378, max_depth=2)
+        finally:
+            s.close()
+        assert bands
+        assert any("saturated" in r.getMessage() for r in caplog.records)

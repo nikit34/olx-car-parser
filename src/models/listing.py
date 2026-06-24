@@ -53,7 +53,11 @@ class Listing(Base):
     llm_extras = Column(Text)               # JSON: LLM-extracted structured data from description
     llm_description_hash = Column(String)    # Hash of description used for LLM enrichment
     first_seen_at = Column(DateTime, default=_utcnow)
+    # NB: ``last_seen_at`` is the OLX-parsed posted/refresh date (``posted_at``),
+    # NOT our scrape clock — a row we re-enumerate every run keeps the seller's
+    # post date here. To measure scrape freshness/coverage use ``last_scraped_at``.
     last_seen_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+    last_scraped_at = Column(DateTime, default=_utcnow, index=True)  # wall-clock of the last scrape upsert that touched this row
     is_active = Column(Boolean, default=True)
     deactivated_at = Column(DateTime)          # When listing went inactive (sold/removed)
     deactivation_reason = Column(String)       # "sold", "expired", "removed", "unknown"

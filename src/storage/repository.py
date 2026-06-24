@@ -78,12 +78,14 @@ def upsert_listing(session: Session, data: dict) -> Listing:
         for key, value in data.items():
             if key != "olx_id" and value is not None:
                 setattr(listing, key, value)
-        listing.last_seen_at = seen_at
+        listing.last_seen_at = seen_at      # OLX posted/refresh date
+        listing.last_scraped_at = now       # actual scrape wall-clock — every upsert means we just enumerated it
         listing.is_active = True
         listing.deactivated_at = None
         listing.deactivation_reason = None
     else:
-        listing = Listing(**data, first_seen_at=seen_at, last_seen_at=seen_at, is_active=True)
+        listing = Listing(**data, first_seen_at=seen_at, last_seen_at=seen_at,
+                          last_scraped_at=now, is_active=True)
         session.add(listing)
 
     session.flush()

@@ -65,6 +65,13 @@ _API_PAGE_SIZE = 40
 # OLX caps offset at ~1000 (offset 1040 → HTTP 400). Stop paging a segment
 # once we reach it; full coverage comes from price-band bisection instead.
 _API_OFFSET_CAP = 1000
+# Narrowest price band we'll bisect to before giving up (euros). OLX also
+# *caps ``total_elements`` at 1000*, so the bisection can't tell a 1001-offer
+# band from a 50k one — both report exactly the cap. We therefore keep
+# splitting any at-cap band until it drops below the cap or hits this floor,
+# rather than trusting the counter. €1 is effectively "split until the price
+# axis can't be cut further"; real car-price clusters resolve long before it.
+_MIN_BAND_WIDTH_EUR = 1
 # Concurrency for parallel page fetching (OLX bands + SV GraphQL pages).
 # 12 concurrent OLX API requests verified to return all 200 (no rate-limit);
 # the bounded pool is the rate limit, so no per-request delay is applied.
@@ -605,23 +612,41 @@ class OlxScraper:
         return int(data.get("metadata", {}).get("total_elements", 0) or 0)
 
     def _price_bands(self, lo: int, hi: int | None, category_id: int,
-                     max_depth: int = 14) -> list[tuple[int, int | None, int]]:
+                     max_depth: int = 20) -> list[tuple[int, int | None, int]]:
         """Recursively bisect ``[lo, hi]`` into ``(lo, hi, count)`` bands.
 
-        Terminates when a band reports < the cap, the recursion depth is
-        exhausted, or the band is too narrow to split — so every leaf is
-        fully pageable and their union covers the whole range. ``count`` is
-        the band's reported size (capped at 1000), used to bound paging.
+        A band reporting *below* the cap is exact (OLX only clamps at ≥1000),
+        so it's a fully-pageable leaf. A band *at* the cap hides an unknown
+        tail and must be split — we keep halving until it drops under the cap,
+        the band is too narrow to cut (``_MIN_BAND_WIDTH_EUR``), the top band
+        is open-ended, or depth runs out. ``count`` is the band's reported
+        size (capped at 1000), used downstream to bound paging.
+
+        If a band is *still* at the cap when it can no longer be split, its
+        tail beyond offset 1000 is genuinely unreachable via this endpoint —
+        we emit a ``::warning::`` so that loss is loud, never silent. In
+        practice no real car-price band hits this (every leaf resolves under
+        the cap well before the floor); the guard is future-proofing against
+        a density spike.
         """
         count = self._segment_count(lo, hi, category_id)
         if count == 0:
             return []
-        if count < _API_OFFSET_CAP or max_depth <= 0:
+        if count < _API_OFFSET_CAP:
+            return [(lo, hi, count)]  # exact (sub-cap) → fully pageable leaf
+        # At cap: must split. Bail out only when we genuinely cannot.
+        can_split = (hi is not None
+                     and (hi - lo) > _MIN_BAND_WIDTH_EUR
+                     and max_depth > 0)
+        if not can_split:
+            width = "open" if hi is None else hi - lo
+            logger.warning(
+                "::warning::price band [%s, %s] still saturated at the %d cap "
+                "and cannot be split further (width=%s, depth_left=%d) — "
+                "listings beyond offset %d are unreachable this run",
+                lo, hi, _API_OFFSET_CAP, width, max_depth, _API_OFFSET_CAP,
+            )
             return [(lo, hi, count)]
-        if hi is None:
-            return [(lo, hi, count)]  # open-ended top band can't be bisected
-        if hi - lo <= 100:
-            return [(lo, hi, count)]  # narrow enough; accept residual cap loss
         mid = (lo + hi) // 2
         return (self._price_bands(lo, mid, category_id, max_depth - 1)
                 + self._price_bands(mid, hi, category_id, max_depth - 1))

@@ -197,6 +197,22 @@ class TestUpsertListing:
         assert listing.first_seen_at < future
         assert listing.last_seen_at < future
 
+    def test_last_scraped_at_tracks_scrape_time_not_posted_date(
+        self, db_session, sample_listing_data
+    ):
+        """``last_seen_at`` mirrors the (old) OLX posted date; ``last_scraped_at``
+        must be the actual scrape clock. They diverge for an old-but-still-live
+        ad — which is exactly why posted-date can't be read as scrape staleness.
+        """
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        old_post = now - timedelta(days=40)
+        listing = upsert_listing(
+            db_session, {**sample_listing_data, "posted_at": old_post})
+        db_session.commit()
+        assert listing.last_seen_at == old_post          # posted date preserved
+        assert listing.last_scraped_at >= now - timedelta(minutes=1)  # set to now
+        assert listing.last_scraped_at > listing.last_seen_at
+
 
 class TestUpsertUnmatched:
     def test_insert_unmatched(self, db_session):

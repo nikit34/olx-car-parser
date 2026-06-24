@@ -66,7 +66,7 @@ def _get_table_columns(conn, table_name: str) -> set[str]:
     return {row[1] for row in rows}
 
 
-_SCHEMA_VERSION = 5  # bump when _migrate_columns or _dead_json_keys changes
+_SCHEMA_VERSION = 6  # bump when _migrate_columns or _dead_json_keys changes
 
 
 def _read_schema_version(conn) -> int:
@@ -136,6 +136,11 @@ def init_db(db_path: str | None = None):
         ("origin", "TEXT"),
         # v5: CO₂ emissions g/km (StandVirtual detail "co2_emissions") — ISV input.
         ("co2_g_km", "INTEGER"),
+        # v6: actual scrape wall-clock, distinct from last_seen_at (= OLX
+        # posted date). NULL on existing rows until the next scrape re-sees
+        # them (~all within one deep run); lets us measure real scrape
+        # freshness/coverage instead of misreading posted-date as staleness.
+        ("last_scraped_at", "DATETIME"),
     ]
     _migrate_unmatched_columns = [
         ("source", "TEXT DEFAULT 'olx'"),
@@ -181,6 +186,7 @@ def init_db(db_path: str | None = None):
     # need an explicit ``CREATE INDEX IF NOT EXISTS`` to match the ORM.
     _migrate_indexes = [
         ("ix_listings_seller_uuid", "listings", "seller_uuid"),
+        ("ix_listings_last_scraped_at", "listings", "last_scraped_at"),
     ]
     with engine.connect() as conn:
         for col_name, col_type in _migrate_columns:
