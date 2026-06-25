@@ -391,3 +391,72 @@ def test_build_context_extracts_dom_from_sold():
     assert 25 <= ctx.dom_median[key] <= 28
     # 1 of 2 sold within 21d → 0.5
     assert ctx.dom_fast_share[key] == pytest.approx(0.5)
+
+
+# ---- Cheap-tail value-trust guard + condition NLP (2026-06-25 audit) -------
+
+import src.analytics.decision as _decision_mod  # noqa: E402
+
+
+def _cheap_ctx() -> DecisionContext:
+    """Neutral ctx — empty segment maps so the cheap guard is isolated."""
+    return DecisionContext(coverage_80=0.81)
+
+
+def _cheap_row(**kw) -> pd.Series:
+    base = {
+        "brand": "Citroen", "model": "C3", "generation": None,
+        "price_eur": 2800.0, "predicted_price": 3517.0,
+        "fair_price_low": 2000.0, "fair_price_high": 4000.0,
+        "sample_size": 12, "band_pct": 20.0, "damage_severity": 0,
+        "desc_mentions_accident": False, "right_hand_drive": False,
+        "days_listed": 10, "price_change_eur": 0,
+        "title": "Citroen C3", "description": "carro de familia, bom estado",
+    }
+    base.update(kw)
+    return _row(**base)
+
+
+def test_cheap_blend_suppresses_marginal_phantom(monkeypatch):
+    # ask 2800 / model 3517 (1.26x) clears the margin floor WITHOUT the guard.
+    monkeypatch.setattr(_decision_mod, "_CHEAP_PRED_W", 1.0)
+    monkeypatch.setattr(_decision_mod, "_CHEAP_DIVERGENCE_CAP", 1e9)
+    off = decide(_cheap_row(), _cheap_ctx())
+    assert off.verdict in (VERDICT_BUY, VERDICT_WATCH)
+    # With the guard at the shipped weight (0.30 model / 0.70 ask) the blended
+    # value collapses the margin below the 12% floor -> SKIP.
+    monkeypatch.setattr(_decision_mod, "_CHEAP_PRED_W", 0.30)
+    monkeypatch.setattr(_decision_mod, "_CHEAP_DIVERGENCE_CAP", 2.0)
+    on = decide(_cheap_row(), _cheap_ctx())
+    assert on.verdict == VERDICT_SKIP
+    assert any("cheap tier" in r and "blended" in r for r in on.reasons)
+
+
+def test_cheap_divergence_cap_abstains():
+    # C180-class: ask 875 / model 11131 = 12.7x ask -> untrustworthy -> abstain.
+    d = decide(_cheap_row(price_eur=875.0, predicted_price=11131.0,
+                          fair_price_low=6000.0, fair_price_high=14000.0,
+                          band_pct=30.0), _cheap_ctx())
+    assert d.verdict == VERDICT_NO_OPINION
+    assert any("ask" in r and "implausible" in r for r in d.reasons)
+
+
+def test_cheap_guard_not_applied_above_tier():
+    # >= 4000 ask: the healthy mid-market baseline must be untouched.
+    d = decide(_row(), _ctx())
+    assert d.verdict in (VERDICT_BUY, VERDICT_WATCH)
+    assert not any("cheap tier" in r for r in d.reasons)
+
+
+def test_condition_fault_cost_reduces_margin(monkeypatch):
+    # Disable the blend so we isolate the fault-cost effect; a disclosed
+    # check-engine fault subtracts a repair provision -> reason recorded.
+    monkeypatch.setattr(_decision_mod, "_CHEAP_PRED_W", 1.0)
+    monkeypatch.setattr(_decision_mod, "_CHEAP_DIVERGENCE_CAP", 1e9)
+    clean = decide(_cheap_row(description="bom estado, sempre na marca"), _cheap_ctx())
+    faulty = decide(_cheap_row(description="luz da injeção acesa, catalisador a precisar"),
+                    _cheap_ctx())
+    assert faulty.components.get("condition_fault_cost_eur", 0) > 0
+    assert any("disclosed fault" in r for r in faulty.reasons)
+    # the fault provision lowers the score vs the clean twin
+    assert faulty.score <= clean.score

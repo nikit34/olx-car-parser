@@ -29,6 +29,11 @@ from typing import Mapping
 import numpy as np
 import pandas as pd
 
+# Module-level (not lazy) so the stlite bundler's import tracer
+# (scripts/build_stlite_bundle.py walks only top-level imports) pulls
+# condition_signal.py into the browser bundle. It has no heavy deps (re only).
+from src.analytics.condition_signal import minor_fault_cost
+
 
 # Public types --------------------------------------------------------------
 
@@ -289,6 +294,21 @@ _HOLDING_COST_EUR_PER_DAY = 1.30
 _DEFAULT_HOLD_DAYS = 45
 _BUY_SCORE = 18.0
 _WATCH_SCORE = 15.0
+# Cheap-tail value-trust guard (2026-06-25 audit: 50 blind live-OLX appraisals
+# + 12.8k-car population pass). Below _CHEAP_TIER_EUR (asking) the spec-only
+# model predicts ≈ comp-median and is blind to condition; the asking price
+# (set by someone who saw the car) is a far better value anchor — model MAPE
+# 54% vs asking 17% on <€4k, and raw pred>ask "BUY" precision is ~9% there.
+# Two deal-conservative guards in step 4b:
+#   (a) divergence cap — a model value > _CHEAP_DIVERGENCE_CAP× ask in this
+#       tier is almost always a condition/bait artefact (C180 €875→pred €11.1k),
+#       not a deal → NO_OPINION.
+#   (b) asking blend — value := _CHEAP_PRED_W·model + (1−_CHEAP_PRED_W)·ask,
+#       the audit's "blend70" winner. Only ever shrinks a positive margin.
+# Set _CHEAP_PRED_W=1.0 and _CHEAP_DIVERGENCE_CAP=inf to disable.
+_CHEAP_TIER_EUR = 4000.0
+_CHEAP_PRED_W = 0.30
+_CHEAP_DIVERGENCE_CAP = 2.0
 # Low-feature-confidence penalty (audit 2026-06-08). When the
 # discriminative per-car features are absent the price model collapses to a
 # coarse brand+generation+year baseline (enc_plat alone is 54% of model
@@ -518,6 +538,32 @@ def decide(
 
     components["predicted_corrected"] = round(predicted_corrected, 0)
 
+    # ---- Step 4b: cheap-tail value-trust guard (2026-06-25 cheap-tail audit).
+    # See the _CHEAP_* tunables. The spec-only model can't see condition in the
+    # <€4k tail, where it predicts ≈ comp-median and the asking price is the
+    # better anchor. (a) implausible model/ask divergence → abstain; (b) blend
+    # the value estimate toward asking. Both purely reduce BUY propensity here.
+    if 0 < price < _CHEAP_TIER_EUR:
+        if predicted_corrected > price * _CHEAP_DIVERGENCE_CAP:
+            ratio = predicted_corrected / price
+            components["cheap_divergence_ratio"] = round(ratio, 2)
+            reasons.append(
+                f"cheap tier (<€{_CHEAP_TIER_EUR:,.0f}): model value {ratio:.1f}× "
+                "ask — implausible, spec model is blind to condition here"
+            )
+            return Decision(VERDICT_NO_OPINION, 0.0, reasons, components)
+        if predicted_corrected > price:
+            predicted_corrected = (
+                _CHEAP_PRED_W * predicted_corrected + (1.0 - _CHEAP_PRED_W) * price
+            )
+            components["cheap_blend_applied"] = True
+            components["predicted_corrected"] = round(predicted_corrected, 0)
+            reasons.append(
+                f"cheap tier (<€{_CHEAP_TIER_EUR:,.0f}): value blended "
+                f"{int(_CHEAP_PRED_W * 100)}% model / "
+                f"{int((1 - _CHEAP_PRED_W) * 100)}% ask — condition-blind here"
+            )
+
     # ---- Step 5: net margin after repair + fees.
     # Look up DoM here (the gate at step 8 reuses it) so the holding-cost
     # component of fees is segment-aware rather than a flat stub.
@@ -546,6 +592,20 @@ def decide(
                 isv_eur = float(res["isv_eur"])
     except Exception:  # noqa: BLE001 — ISV is best-effort; never break a verdict
         isv_eur = 0.0
+
+    # ---- Step 5b: condition NLP — disclosed minor faults (2026-06-25 audit).
+    # The spec-only model can't see "check-engine on / catalisador a precisar /
+    # precisa de reparação" — these land at damage_severity 1 (normal wear) yet
+    # are real €-costs that erase a thin flip margin. Reads title+desc (carried
+    # via Recommendations _extra_cols); never blocks a verdict. Adds to
+    # repair_cost so it flows through net margin.
+    fault_cost, fault_flag = minor_fault_cost(
+        g("title") or "", g("description") or "", price)
+    if fault_cost > 0:
+        repair_cost += fault_cost
+        components["condition_fault_cost_eur"] = round(fault_cost, 0)
+        components["condition_fault"] = fault_flag
+        reasons.append(f"−€{fault_cost:.0f} disclosed fault ({fault_flag})")
 
     net_margin = raw_margin - repair_cost - fees - isv_eur
     net_margin_pct = (net_margin / predicted_corrected) * 100 if predicted_corrected else 0.0

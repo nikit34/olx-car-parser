@@ -326,6 +326,10 @@ deals["est_roi_pct"] = ((deals["predicted_price"] - deals["price_eur"]) / _price
 _extra_cols = [
     "urgency", "warranty", "first_owner_selling", "taxi_fleet_rental",
     "days_listed", "price_change_eur", "mechanical_condition",
+    # title + description carry the raw text decide() scans for ISV import
+    # flags and the condition-NLP minor-fault detector (2026-06-25 audit).
+    # Without them both scans are inert on the feed.
+    "title", "description",
 ]
 _present = [c for c in _extra_cols if c in listings_df.columns]
 if _present:
