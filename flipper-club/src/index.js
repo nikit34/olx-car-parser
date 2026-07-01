@@ -29,7 +29,7 @@
 import {
   renderGrid, renderCarPage, renderInfo,
   renderLanding, renderClaim, renderClaimSuccess, renderReservations,
-  renderAvaliar, renderModelPage, renderModelsHub, slugify,
+  renderAvaliar, renderModelPage, renderModelsHub, renderModelWidget, slugify,
 } from "./templates.js";
 import {
   stripeConfigured, createCheckoutSession,
@@ -74,6 +74,11 @@ export default {
       // Per-model SEO pages (/preco/{slug}) — prefix route, BEFORE the asset gate.
       if (pathname.startsWith("/preco/") && method === "GET") {
         return handleModelPage(request, env, url);
+      }
+      // Embeddable valuation widget (/widget/preco/{slug}) — public, iframe-able,
+      // cached, cookie-less. Also a prefix route before the asset gate.
+      if (pathname.startsWith("/widget/preco/") && method === "GET") {
+        return handleModelWidget(request, env, url);
       }
       if (!PRODUCT_PATHS.has(pathname)) {
         return handleAssetGated(request, env);
@@ -160,7 +165,8 @@ async function handleAvaliar(request, env, url) {
 
   // Model index — for the paste-hit's contextual /preco link, the spec-form
   // options, and the spec lookup. (cf-cached; cheap.)
-  const models = await getModels(env);
+  const mdoc = await getModels(env);
+  const models = mdoc && mdoc.models;
   let spec = null;
   if (!rec && modelo && models && models[modelo]) {
     const mrec = models[modelo];
@@ -205,7 +211,8 @@ async function handleModelPage(request, env, url) {
   } catch (_) {
     return notFound();
   }
-  const models = await getModels(env);
+  const mdoc = await getModels(env);
+  const models = mdoc && mdoc.models;
   const rec = models ? models[slug] : null;
   if (!rec) return notFound();
   const depositCount = (await listUnlocked(env, uid)).size;
@@ -226,14 +233,40 @@ async function handleModelPage(request, env, url) {
 
   return html(renderModelPage({
     rec, slug, liveDeals, siblings, host: url.host, depositCount,
+    builtAt: mdoc && mdoc.built_at,
   }), 200, setCookie);
+}
+
+// Embeddable widget (/widget/preco/{slug}) — a standalone valuation card other
+// sites iframe. Public + cacheable + cookie-less; permissive frame-ancestors so
+// any host can embed. Unknown/sub-threshold slug → 404 (never an empty frame).
+async function handleModelWidget(request, env, url) {
+  let slug;
+  try {
+    slug = decodeURIComponent(url.pathname.slice("/widget/preco/".length)).replace(/\/+$/, "").toLowerCase();
+  } catch (_) {
+    return notFound();
+  }
+  const mdoc = await getModels(env);
+  const rec = mdoc && mdoc.models ? mdoc.models[slug] : null;
+  if (!rec) return notFound();
+  return new Response(renderModelWidget({ rec, slug, host: url.host }), {
+    status: 200,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "public, max-age=3600",
+      // Allow embedding on any site (this is the backlink lever); no X-Frame-Options.
+      "Content-Security-Policy": "frame-ancestors *",
+    },
+  });
 }
 
 // Models hub (/precos) — the crawl spine linking every model page.
 async function handleModelsHub(request, env, url) {
   const { uid, setCookie } = ensureUid(request);
   const depositCount = (await listUnlocked(env, uid)).size;
-  const models = await getModels(env);
+  const mdoc = await getModels(env);
+  const models = mdoc && mdoc.models;
   if (!models) {
     return html(renderInfo({
       zone: "all", depositCount, title: "Serviço indisponível",
@@ -243,14 +276,15 @@ async function handleModelsHub(request, env, url) {
   const list = Object.entries(models)
     .map(([s, r]) => ({ slug: s, b: r.b, m: r.m, fm: r.fm, n: r.n }))
     .sort((a, b) => (b.n || 0) - (a.n || 0));
-  return html(renderModelsHub({ models: list, depositCount }), 200, setCookie);
+  return html(renderModelsHub({ models: list, depositCount, builtAt: mdoc.built_at }), 200, setCookie);
 }
 
 // /sitemap.xml — static indexable URLs + one per model page. Degrades to the
 // static set (never 500) if models.json isn't published yet.
 async function handleSitemap(request, env, url) {
   const base = `https://${url.host}`;
-  const models = await getModels(env);
+  const mdoc = await getModels(env);
+  const models = mdoc && mdoc.models;
   const today = new Date().toISOString().slice(0, 10);
   const urls = [
     `<url><loc>${base}/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>`,
@@ -276,7 +310,7 @@ async function handleRobots(request, env, url) {
   const body = [
     "User-agent: *", "Allow: /",
     "Disallow: /analytics", "Disallow: /claim", "Disallow: /reserve",
-    "Disallow: /unlocked", "Disallow: /reservas",
+    "Disallow: /unlocked", "Disallow: /reservas", "Disallow: /widget",
     `Sitemap: https://${url.host}/sitemap.xml`, "",
   ].join("\n");
   return new Response(body, {
@@ -352,7 +386,8 @@ async function handleCar(request, env, url) {
   if (!deal) return redirect(`/mercado?zone=${zone}`, 302, setCookie);
   const rec = await getUnlock(env, uid, deal.olx_id);
   // Contextual link into the model SEO page, when this model has one.
-  const models = await getModels(env);
+  const mdoc = await getModels(env);
+  const models = mdoc && mdoc.models;
   const mslug = slugify(`${deal.brand}-${deal.model}`);
   const modelHref = (models && models[mslug]) ? `/preco/${encodeURIComponent(mslug)}` : null;
   return html(renderCarPage({
@@ -690,8 +725,10 @@ async function getValuations(env) {
 }
 
 // models.json — the per-model SEO blob (Tier-3) for /preco/*, /precos, /sitemap.
-// Same edge-cache (success-only) pattern as getValuations; ~40 KB gzipped.
-// Returns the {slug: rec} map, or null (handlers then 404/degrade).
+// Same edge-cache (success-only) pattern as getValuations; ~50 KB gzipped.
+// Returns the full doc { models: {slug: rec}, built_at }, or null (handlers
+// then 404/degrade). Callers read `.models`; `.built_at` drives the public
+// "preços atualizados em …" freshness line.
 async function getModels(env) {
   const url = `${HOT_DEALS_BASE}/models.json`;
   try {
@@ -703,7 +740,7 @@ async function getModels(env) {
       return null;
     }
     const data = await r.json();
-    return data && data.models ? data.models : null;
+    return data && data.models ? data : null;
   } catch (err) {
     console.warn("models fetch error", err && err.message);
     return null;

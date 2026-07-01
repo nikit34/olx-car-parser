@@ -1473,12 +1473,23 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
   });
 }
 
+// Freshness: ISO build stamp → PT short date ("1 jul 2026"). "" when absent.
+const PT_MON = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+function fmtBuilt(iso) {
+  const m = (typeof iso === "string") ? iso.match(/^(\d{4})-(\d{2})-(\d{2})/) : null;
+  return m ? `${+m[3]} ${PT_MON[+m[2] - 1]} ${m[1]}` : "";
+}
+
 // ── Per-model SEO valuation page (/preco/{slug}) ─────────────────────────────
 // rec = the models.json record. liveDeals = raw hot_deals matching this model
 // (below fair), already filtered by the worker. siblings = same-brand models.
-export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositCount }) {
+// builtAt = models.json build stamp (freshness signal). rec.gl/gm/gh = the
+// MODEL fair-value band, present only when it cleared the build-time guards.
+export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositCount, builtAt }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
   const FM = fmtEur(rec.fm), FL = fmtEur(rec.fl), FH = fmtEur(rec.fh);
+  const FRESH = fmtBuilt(builtAt);
+  const hasG = rec.gm != null && rec.gl != null && rec.gh != null;
   const yr0 = rec.y0, yr1 = rec.y1;
   const yrRange = (yr0 && yr1) ? `${yr0}-${yr1}` : "";
   // median pin within the IQR band
@@ -1503,8 +1514,25 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
         <div class="gauge-track"><div class="gauge-pin" style="left:${pin}%;"></div></div>
       </div>
       ${fuelChips ? `<div class="chips" style="margin-top:16px;">${fuelChips}</div>` : ""}
-      <div class="mono" style="font-size:11.5px;color:#9A9FA8;margin-top:14px;line-height:1.5;">Preços PEDIDOS em anúncios ativos do OLX — não preço de venda fechado. Estimativa indicativa.</div>
+      <div class="mono" style="font-size:11.5px;color:#9A9FA8;margin-top:14px;line-height:1.5;">Preços PEDIDOS em anúncios ativos do OLX — não preço de venda fechado. Estimativa indicativa.${FRESH ? ` · Atualizado a ${FRESH}` : ""}</div>
     </div>`;
+
+  // 1b. Model fair-value band — only when it cleared the build-time guards
+  // (asking €5k–45k, agrees with the asking IQR). Absent → asking-only, as before.
+  const gbmCard = hasG ? `
+    <section class="section" style="padding:22px 22px 0;max-width:680px;">
+      <div class="side-card" style="border-color:#DDEBE1;background:#F6FBF8;">
+        <div class="eyebrow" style="margin-bottom:12px;"><span class="e-dot" style="background:#177A47;"></span><span class="mono">VALOR JUSTO ESTIMADO · MODELO</span></div>
+        <div class="side-prices">
+          <div><div class="cap">Valor justo (modelo)</div><div class="big">${fmtEur(rec.gm)}</div></div>
+          <div class="side-fair"><div class="cap">intervalo estimado</div><div class="v">${fmtEur(rec.gl)} – ${fmtEur(rec.gh)}</div></div>
+        </div>
+        ${rec.gm < rec.fm
+          ? `<p style="font-size:14px;color:#177A47;font-weight:600;margin:14px 0 0;">O mercado pede em mediana ${FM} — cerca de <b>${fmtEur(rec.fm - rec.gm)} acima</b> do valor justo estimado para um exemplar típico. Não pagues a mais.</p>`
+          : `<p style="font-size:14px;color:#3A3F47;margin:14px 0 0;">O preço pedido em mercado (${FM}) está em linha com o valor justo estimado.</p>`}
+        <div class="mono" style="font-size:11.5px;color:#9A9FA8;margin-top:12px;line-height:1.5;">Estimativa do nosso modelo para um ${B} ${M} com quilometragem e specs típicas deste modelo — não considera o estado específico da tua viatura. Para o teu carro concreto, <a href="/avaliar" style="color:#177A47;font-weight:600;">avalia o anúncio</a>.</div>
+      </div>
+    </section>` : "";
 
   // 2. Live matching listings (conversion bridge #1)
   let bridge1;
@@ -1537,6 +1565,7 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
       <td>${escapeHtml(String(c.y))}</td>
       <td>${c.n}</td>
       <td>${fmtEur(c.fm)}</td>
+      <td class="mut">${c.gm != null ? fmtEur(c.gm) : "—"}</td>
       <td class="mut">${fmtEur(c.fl)} – ${fmtEur(c.fh)}</td>
       <td class="mut">${c.km != null ? fmtKm(c.km) : "—"}</td>
     </tr>`).join("");
@@ -1544,7 +1573,7 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
     <section class="section" style="padding:34px 22px 0;max-width:680px;">
       <div class="panel-title" style="font-size:18px;">Preço de um ${B} ${M} usado por ano</div>
       <table class="year-tbl">
-        <thead><tr><th>Ano</th><th>Anúncios</th><th>Mediano (pedido)</th><th>Intervalo (P25–P75)</th><th>Km mediano</th></tr></thead>
+        <thead><tr><th>Ano</th><th>Anúncios</th><th>Mediano (pedido)</th><th>Valor justo</th><th>Intervalo (P25–P75)</th><th>Km mediano</th></tr></thead>
         <tbody>${yrRows}</tbody>
       </table>
       ${rec.yt ? `<div class="mono" style="font-size:11.5px;color:#9A9FA8;margin-top:10px;">Mais ${rec.yt} ano(s) com poucos anúncios para mostrar um preço fiável.</div>` : ""}
@@ -1597,7 +1626,7 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
       <div style="margin-top:16px;"><a href="/precos" style="font-size:13px;color:#177A47;font-weight:600;">Ver todos os modelos&nbsp;→</a></div>
     </section>` : `<section class="section" style="padding:34px 22px 70px;"><a href="/precos" style="font-size:13px;color:#177A47;font-weight:600;">Ver preços de todos os modelos&nbsp;→</a></section>`;
 
-  const body = `<div style="padding-top:30px;">${hero}</div>${bridge1}${table}${bridge2}${trust}${sellerCta}${sib}`;
+  const body = `<div style="padding-top:30px;">${hero}</div>${gbmCard}${bridge1}${table}${bridge2}${trust}${sellerCta}${sib}`;
 
   const canonical = `https://${host}/preco/${slug}`;
   const jsonLd = {
@@ -1610,7 +1639,8 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
         "creator": { "@type": "Organization", "name": "Flipper Club" },
         "isAccessibleForFree": true,
         "temporalCoverage": yrRange ? `${yr0}/${yr1}` : undefined,
-        "variableMeasured": "Preço pedido (EUR)",
+        "variableMeasured": hasG ? ["Preço pedido (EUR)", "Valor justo estimado (EUR)"] : "Preço pedido (EUR)",
+        "dateModified": builtAt || undefined,
         "url": canonical,
       },
       {
@@ -1631,7 +1661,8 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
 }
 
 // ── Models hub (/precos) — the crawl spine: one link to every model page ─────
-export function renderModelsHub({ models, depositCount }) {
+export function renderModelsHub({ models, depositCount, builtAt }) {
+  const FRESH = fmtBuilt(builtAt);
   // models = [{slug, b, m, fm, n}], pre-sorted by the worker. Group by brand.
   const byBrand = new Map();
   for (const m of models) {
@@ -1648,7 +1679,7 @@ export function renderModelsHub({ models, depositCount }) {
   const body = `
     <section class="hero" style="padding-bottom:18px;">
       <div class="hero-copy" style="max-width:760px;">
-        <div class="eyebrow" style="margin-bottom:18px;"><span class="e-dot"></span><span class="mono">${models.length} MODELOS · OLX PORTUGAL</span></div>
+        <div class="eyebrow" style="margin-bottom:18px;"><span class="e-dot"></span><span class="mono">${models.length} MODELOS · OLX PORTUGAL${FRESH ? ` · ATUALIZADO A ${FRESH}` : ""}</span></div>
         <h1 class="hero-title" style="font-size:38px;">Preço de carros usados em Portugal por modelo</h1>
         <p class="lede">Avaliação independente a partir de anúncios ativos do OLX. Escolhe o modelo para ver o preço mediano e o intervalo por ano.</p>
         <div class="hero-actions">
@@ -1663,4 +1694,60 @@ export function renderModelsHub({ models, depositCount }) {
     description: "Preço mediano e intervalo por ano de carros usados em Portugal, a partir de anúncios ativos do OLX. Avaliação independente e grátis por modelo.",
     canonical: null, body, zone: "all", nav: null, depositCount, index: true,
   });
+}
+
+// ── Embeddable widget (/widget/preco/{slug}) — the backlink lever ────────────
+// A self-contained, iframe-friendly valuation card any site can embed:
+//   <iframe src="https://HOST/widget/preco/opel-corsa" width="340" height="300"
+//           style="border:0" loading="lazy"></iframe>
+// Own minimal HTML (no shared header/footer/cookie), noindex (the /preco page is
+// canonical), and a prominent link back to the full page for attribution.
+export function renderModelWidget({ rec, slug, host }) {
+  const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
+  const hasG = rec.gm != null && rec.gl != null && rec.gh != null;
+  const full = `https://${escapeHtml(host)}/preco/${encodeURIComponent(slug)}`;
+  const fairRow = hasG ? `
+    <div class="w-fair">
+      <div class="w-cap">Valor justo estimado</div>
+      <div class="w-fair-v">${fmtEur(rec.gm)}</div>
+      <div class="w-band">${fmtEur(rec.gl)} – ${fmtEur(rec.gh)}</div>
+    </div>` : "";
+  const sellRow = rec.sd != null
+    ? `<div class="w-sell">Vende, em mediana, em ~${rec.sd} dias no OLX</div>` : "";
+  return `<!doctype html><html lang="pt"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>${B} ${M} — quanto vale · Flipper Club</title>
+<style>
+*{box-sizing:border-box;margin:0}
+body{font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#16181D;background:#fff;padding:14px}
+.w-card{border:1px solid #E8E6E1;border-radius:14px;padding:16px 18px;max-width:360px}
+.w-eyebrow{font:600 10.5px/1 ui-monospace,monospace;letter-spacing:.08em;color:#177A47;text-transform:uppercase;margin-bottom:10px}
+.w-h{font-weight:700;font-size:17px;letter-spacing:-.01em;margin-bottom:12px}
+.w-cap{font-size:11px;color:#8A8F98}
+.w-ask{font-weight:700;font-size:26px;letter-spacing:-.02em}
+.w-band{font-size:12px;color:#5B606B}
+.w-fair{margin-top:12px;padding-top:12px;border-top:1px solid #EFECE6}
+.w-fair-v{font-weight:700;font-size:20px;color:#177A47;letter-spacing:-.01em}
+.w-sell{margin-top:12px;font-size:12.5px;color:#3A3F47}
+.w-cta{display:block;margin-top:14px;text-align:center;background:#16181D;color:#fff;text-decoration:none;font-weight:600;font-size:13px;padding:11px;border-radius:9px}
+.w-credit{margin-top:9px;text-align:center;font-size:11px;color:#9A9FA8}
+.w-credit a{color:#177A47;text-decoration:none;font-weight:600}
+.w-note{margin-top:10px;font:400 10.5px/1.5 ui-monospace,monospace;color:#9A9FA8}
+</style></head>
+<body>
+<div class="w-card">
+  <div class="w-eyebrow">● Avaliação independente</div>
+  <div class="w-h">Quanto vale um ${B} ${M} usado?</div>
+  <div class="w-cap">Preço mediano (pedido) · ${rec.n} anúncios OLX</div>
+  <div class="w-ask">${fmtEur(rec.fm)}</div>
+  <div class="w-band">intervalo ${fmtEur(rec.fl)} – ${fmtEur(rec.fh)}</div>
+  ${fairRow}
+  ${sellRow}
+  <a class="w-cta" href="${full}" target="_blank" rel="noopener">Ver avaliação completa&nbsp;&nbsp;→</a>
+  <div class="w-credit">via <a href="${full}" target="_blank" rel="noopener">Flipper Club</a></div>
+  <div class="w-note">Preços pedidos em anúncios ativos do OLX — estimativa indicativa, não vinculativa.</div>
+</div>
+</body></html>`;
 }

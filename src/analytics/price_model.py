@@ -1515,6 +1515,80 @@ def predict_prices(
     return out
 
 
+def _configs_vocab_ok(
+    configs_df: pd.DataFrame,
+    cat_maps: dict[str, dict[str, int]],
+) -> pd.Series:
+    """True where BOTH brand and model are in the trained categorical vocab.
+
+    A config whose brand/model isn't in ``cat_maps`` collapses to
+    ``__other__`` (or NaN) inside ``_encode_categoricals`` → the model falls
+    back to a coarse baseline and over-predicts, especially on the cheap/rare
+    tail (project_price_model_cheap_tail_audit). Callers publishing a public
+    number MUST gate on this: an out-of-vocab config gets asking-only.
+    """
+    ok = pd.Series(True, index=configs_df.index)
+    for col in ("brand", "model"):
+        known = {k for k in cat_maps.get(col, {}) if k != _OTHER_CATEGORY}
+        ok &= (configs_df[col].astype(str).isin(known)
+               if col in configs_df.columns else False)
+    return ok
+
+
+def value_configs(
+    configs_df: pd.DataFrame,
+    bundle: dict | None = None,
+) -> pd.DataFrame:
+    """Value ARBITRARY (unlisted) car configs with the trained GBM.
+
+    This is the "value any car" primitive behind the per-model SEO fair-value
+    band and the embeddable widget. ``configs_df`` needs only car-attribute
+    columns (any subset of ``_ALL_FEATURES``: brand, model, year, mileage_km,
+    fuel_type, transmission, engine_cc, horsepower, seats, generation, segment,
+    district, sub_model, trim_level). Missing columns are NaN-filled by
+    ``_prepare_X`` and LightGBM handles them natively; spec-dropout training
+    makes the band widen honestly when the config is under-specified.
+
+    Returns the ``predict_prices`` frame (predicted_price, fair_price_low,
+    fair_price_high, spec_fill) PLUS ``vocab_ok`` (see ``_configs_vocab_ok``).
+    ``oof_preds`` is deliberately NOT applied — synthetic configs carry no
+    ``olx_id``, so every row takes the fresh isotonic-calibrated inference path
+    rather than a memorised in-sample price.
+
+    Deployment: CPython + LightGBM only — this CANNOT run in the Cloudflare
+    Worker or the stlite/Pyodide browser (see valuations.py / the joblib guard
+    at the top of this module). Call it host-side at CI build time and ship the
+    results as a precomputed blob, exactly like predictions.parquet /
+    models.json.
+    """
+    if bundle is None:
+        loaded = load_model()
+        if loaded is None:
+            raise RuntimeError(
+                "value_configs: no fresh price model available (load_model() → None)")
+        models, cat_maps, metrics, _oof, calibrator, uncertainty = loaded
+    else:
+        models = bundle["models"]
+        cat_maps = bundle["cat_maps"]
+        metrics = bundle.get("metrics", {}) or {}
+        calibrator = bundle.get("median_calibrator")
+        uncertainty = bundle.get("uncertainty_bundle")
+
+    edges_raw = metrics.get("conformal_q_bucket_edges")
+    edges = [tuple(e) for e in edges_raw] if edges_raw else None
+    out = predict_prices(
+        models, cat_maps, configs_df,
+        conformal_q=metrics.get("conformal_q", 0.0),
+        oof_preds=None,
+        median_calibrator=calibrator,
+        conformal_q_per_bucket=metrics.get("conformal_q_per_bucket", {}),
+        conformal_q_bucket_edges=edges,
+        uncertainty_bundle=uncertainty,
+    )
+    out["vocab_ok"] = _configs_vocab_ok(configs_df, cat_maps).reindex(out.index).values
+    return out
+
+
 # ---------------------------------------------------------------------------
 # SHAP-style feature attribution for the dashboard
 # ---------------------------------------------------------------------------

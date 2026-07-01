@@ -81,6 +81,9 @@ def _contributions_to_long(
 
 def _build(db_path: Path, out_dir: Path) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
+    # One build timestamp reused by the manifest AND models.json (the public
+    # "preços atualizados em …" freshness signal the Worker renders).
+    built_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     # Import here so the ``--help`` path doesn't pay the cost of loading
     # the whole analytics stack (LightGBM, sklearn, etc.).
@@ -94,6 +97,7 @@ def _build(db_path: Path, out_dir: Path) -> dict:
     from src.analytics.turnover import compute_turnover_stats, compute_sell_speed_by_model
     from src.analytics.valuations import build_valuations
     from src.analytics.model_pages import build_model_pages
+    from src.analytics.price_model import load_model, value_configs
     from src.dashboard.data_loader import compute_signals
 
     print(f"[build] loading DB {db_path}", flush=True)
@@ -187,21 +191,48 @@ def _build(db_path: Path, out_dir: Path) -> dict:
         print(f"[build]   valuations.json SKIPPED — non-finite value leaked: {e}", flush=True)
 
     # models.json — evergreen per-model SEO pages (Tier-3): /preco/{slug}, /precos,
-    # /sitemap.xml. Asking-price quantiles per model + per year; ~40 KB gzipped for
-    # ~271 models. Same Release glob upload + allow_nan guard as valuations.json.
-    model_pages = build_model_pages(listings, sell_speed)
+    # /sitemap.xml. Asking-price quantiles per model + per year, PLUS the model's
+    # fair-value band (gl/gm/gh) wherever it clears the cheap-tail/ceiling guards.
+    # ~50 KB gzipped for ~264 models. Same Release glob upload + allow_nan guard.
+    #
+    # The GBM valuator runs host-side here (LightGBM can't run in the Worker /
+    # Pyodide). One shared bundle load feeds one batched value_configs call over
+    # ~2k synthetic model/year configs. If no fresh model, pages ship asking-only.
+    _loaded = load_model(max_age_hours=14 * 24)
+    _valuator = None
+    if _loaded is not None:
+        _m, _cm, _mt, _of, _cal, _unc = _loaded
+        _bundle = {"models": _m, "cat_maps": _cm, "metrics": _mt,
+                   "median_calibrator": _cal, "uncertainty_bundle": _unc}
+        _valuator = lambda cfg: value_configs(cfg, bundle=_bundle)  # noqa: E731
+    else:
+        print("[build]   model pages: no fresh price model — shipping asking-only", flush=True)
+    model_pages = build_model_pages(listings, sell_speed, valuator=_valuator)
+    model_pages["built_at"] = built_at   # freshness signal the Worker renders ("atualizado em")
+    _n_models = len(model_pages.get("models", {}))
+    _n_gbm = sum(1 for r in model_pages.get("models", {}).values() if "gm" in r)
     models_path = out_dir / "models.json"
-    try:
-        mblob = json.dumps(model_pages, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
-        models_path.write_text(mblob)
-        sizes["models.json"] = models_path.stat().st_size
-        print(f"[build]   model pages: {len(model_pages.get('models', {})):>6} models  "
-              f"({sizes['models.json']/1e3:.0f} KB)", flush=True)
-    except ValueError as e:
-        print(f"[build]   models.json SKIPPED — non-finite value leaked: {e}", flush=True)
+    # Collapse guard: refuse to overwrite a healthy blob with a gutted one (a
+    # data/query regression that halves the corpus would silently 404 hundreds of
+    # SEO pages). <50 = catastrophic → skip the write, keep the live Release asset.
+    if _n_models < 50:
+        print(f"[build]   models.json SKIPPED — collapsed to {_n_models} models (<50); "
+              f"keeping the previously published blob", flush=True)
+    else:
+        if _n_models < 200:
+            print(f"[build]   ⚠ models.json has {_n_models} models (<200, usual ~264) — "
+                  f"check the corpus/query", flush=True)
+        try:
+            mblob = json.dumps(model_pages, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+            models_path.write_text(mblob)
+            sizes["models.json"] = models_path.stat().st_size
+            print(f"[build]   model pages: {_n_models:>6} models  ({_n_gbm} with GBM band)  "
+                  f"({sizes['models.json']/1e3:.0f} KB)", flush=True)
+        except ValueError as e:
+            print(f"[build]   models.json SKIPPED — non-finite value leaked: {e}", flush=True)
 
     manifest = {
-        "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "built_at": built_at,
         "rows": {
             "listings": len(listings),
             "history": len(history),

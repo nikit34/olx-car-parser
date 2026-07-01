@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from typing import Callable
 
 import numpy as np
 import pandas as pd
@@ -32,6 +33,92 @@ from src.analytics.valuations import _i
 MIN_MODEL_N = 20
 MIN_YEAR_N = 5
 MAX_YEAR_ROWS = 25          # cap emitted year rows (most recent) to bound size
+
+# ── GBM fair-value display guards ────────────────────────────────────────────
+# The asking quantiles above always ship. The MODEL's fair-value band (gl/gm/gh)
+# only ships for a cell when ALL guards below pass — else we fall back to
+# asking-only. Rationale (validated 2026-07-01 against the shipped v13 model,
+# see project_pseo_feasibility / project_price_model_cheap_tail_audit):
+#   • cheap tail (<€5k): the model over-predicts (coarse-baseline collapse).
+#   • high end (>€45k): the model SATURATES — distinct exotics collapse to one
+#     value (e.g. Porsche 911, BMW M4 both floored at GBM €59900), unreliable.
+#   • heterogeneous groups (fair estimate outside the asking IQR context) — the
+#     model can't be trusted where it disagrees wildly with 20+ real asks.
+# Publishing a wrong number on a public SEO page is a trust liability, so we
+# drop rather than mask (feedback_quality_over_coverage). ~68% of model pages
+# clear these guards; the rest show asking-only exactly as before.
+GBM_ASK_MIN = 5000          # €: below this the model over-predicts the cheap tail
+GBM_ASK_MAX = 45000         # €: above this the model saturates (ceiling artifact)
+GBM_RATIO_LO = 0.70         # suppress if GBM median < 0.70× the asking median
+GBM_RATIO_HI = 1.40         # or > 1.40× the asking median (implausible disagreement)
+GBM_CTX_LO = 0.85           # GBM median must sit >= asking P25 × 0.85 …
+GBM_CTX_HI = 1.10           # … and <= asking P75 × 1.10 (consistent with real asks)
+GBM_MIN_SPEC_FILL = 0.5     # need >=2 of 4 discriminative specs (== decision._MIN_SPEC_FILL)
+
+
+def _mode(s: pd.Series | None):
+    """Most-common non-null value, or None (also None when the column is absent)."""
+    if s is None:
+        return None
+    v = s.dropna()
+    return v.mode().iloc[0] if len(v) else None
+
+
+def _med(s: pd.Series | None):
+    """Median of numeric-coerced non-null values, or None (None when absent)."""
+    if s is None:
+        return None
+    v = pd.to_numeric(s, errors="coerce").dropna()
+    return float(v.median()) if len(v) else None
+
+
+def _group_profile(grp: pd.DataFrame) -> dict:
+    """Representative (modal/median) spec profile for a (brand, model) group.
+
+    A synthetic "typical car of this model" the GBM can value — dominant fuel/
+    gearbox/generation/segment + median engine/power/seats/mileage/year. Filling
+    the discriminative specs (mileage, engine_cc, horsepower, fuel) pushes
+    spec_fill to ~1.0 so the model prices off real attributes, not a baseline.
+    """
+    return {
+        "year": (int(round(_med(grp.get("year")))) if _med(grp.get("year")) is not None else None),
+        "mileage_km": _med(grp.get("mileage_km")),
+        "engine_cc": _med(grp.get("engine_cc")),
+        "horsepower": _med(grp.get("horsepower")),
+        "seats": _med(grp.get("seats")),
+        "fuel_type": _mode(grp.get("fuel_type")),
+        "transmission": _mode(grp.get("transmission")),
+        "generation": _mode(grp.get("generation")),
+        "segment": _mode(grp.get("segment")),
+        "sub_model": _mode(grp.get("sub_model")),
+        "trim_level": _mode(grp.get("trim_level")),
+        "district": _mode(grp.get("district")),
+    }
+
+
+def _gbm_passes(pred: float, spec_fill: float, vocab_ok: bool,
+                ask: float, ap25: float, ap75: float) -> bool:
+    """Whether a GBM fair-value estimate is trustworthy enough to publish."""
+    if not vocab_ok or ask is None or ask <= 0 or pred is None or pred <= 0:
+        return False
+    if not (spec_fill is not None and spec_fill >= GBM_MIN_SPEC_FILL):
+        return False
+    if not (GBM_ASK_MIN <= ask <= GBM_ASK_MAX):
+        return False
+    ratio = pred / ask
+    if not (GBM_RATIO_LO <= ratio <= GBM_RATIO_HI):
+        return False
+    if ap25 and ap75 and not (pred >= ap25 * GBM_CTX_LO and pred <= ap75 * GBM_CTX_HI):
+        return False
+    return True
+
+
+def _cell_year(y) -> int | None:
+    """Representative year for a cell: the year itself, or a band's latest year."""
+    if isinstance(y, (int, np.integer)):
+        return int(y)
+    m = re.match(r"^(\d{4})-(\d{4})$", str(y))
+    return int(m.group(2)) if m else None
 
 
 def slugify(s: str) -> str:
@@ -108,10 +195,23 @@ def _year_cells(grp: pd.DataFrame) -> tuple[list[dict], int]:
     return cells[:MAX_YEAR_ROWS], yrs_thin
 
 
-def build_model_pages(listings: pd.DataFrame, sell_speed: pd.DataFrame | None = None) -> dict:
+def build_model_pages(
+    listings: pd.DataFrame,
+    sell_speed: pd.DataFrame | None = None,
+    valuator: Callable[[pd.DataFrame], pd.DataFrame] | None = None,
+) -> dict:
     """Return ``{"v":1, "models": {slug: {...}}}`` for models with >=MIN_MODEL_N
-    active, asking-priced listings."""
+    active, asking-priced listings.
+
+    When ``valuator`` is given (a callable taking a configs DataFrame → the
+    ``price_model.value_configs`` output), each page and per-year cell also gets
+    the MODEL's fair-value band (``gl``/``gm``/``gh``) — but only where it passes
+    the cheap-tail/ceiling/agreement guards (``_gbm_passes``); otherwise the cell
+    stays asking-only. ``valuator`` stays a callable so this module needs no
+    LightGBM import (it's built host-side; the Worker only reads the blob).
+    """
     models: dict[str, dict] = {}
+    profiles: dict[str, dict] = {}     # slug → representative spec profile (for GBM)
     if listings.empty:
         return {"v": 1, "models": models}
 
@@ -162,5 +262,87 @@ def build_model_pages(listings: pd.DataFrame, sell_speed: pd.DataFrame | None = 
         if yrs_thin:
             rec["yt"] = int(yrs_thin)
         models[slug] = {k: v for k, v in rec.items() if v is not None}
+        if valuator is not None:
+            profiles[slug] = _group_profile(grp)
+
+    if valuator is not None and models:
+        _apply_gbm_bands(models, profiles, valuator)
 
     return {"v": 1, "models": models}
+
+
+def _apply_gbm_bands(
+    models: dict[str, dict],
+    profiles: dict[str, dict],
+    valuator: Callable[[pd.DataFrame], pd.DataFrame],
+) -> None:
+    """Batch-value one synthetic config per page (overall) + per year cell, then
+    attach the MODEL fair band (gl/gm/gh) wherever ``_gbm_passes`` — in place.
+
+    One valuator call for the whole corpus (~2k rows) keeps the CI build cheap.
+    Keys encode where each result lands: ``"{slug}"`` for the page, ``"{slug}|{y}"``
+    for a year cell (y is the cell's original label, int or "y0-y1" band)."""
+    rows: list[dict] = []
+    keys: list[str] = []
+
+    def _cfg(prof: dict, brand: str, model: str, year, mileage) -> dict:
+        c = dict(prof)
+        c["brand"], c["model"] = brand, model
+        if year is not None:
+            c["year"] = year
+        if mileage is not None:
+            c["mileage_km"] = mileage
+        return c
+
+    for slug, rec in models.items():
+        prof = profiles.get(slug)
+        if not prof:
+            continue
+        brand, model = rec["b"], rec["m"]
+        # Page-level config: representative specs + median year/mileage.
+        rows.append(_cfg(prof, brand, model, prof.get("year"), rec.get("kmm", prof.get("mileage_km"))))
+        keys.append(slug)
+        # Per-year-cell configs: cell's year + cell's median mileage.
+        for cell in rec.get("yr", []):
+            cy = _cell_year(cell.get("y"))
+            if cy is None:
+                continue
+            rows.append(_cfg(prof, brand, model, cy, cell.get("km", prof.get("mileage_km"))))
+            keys.append(f"{slug}|{cell.get('y')}")
+
+    if not rows:
+        return
+    configs = pd.DataFrame(rows, index=pd.Index(keys, name="k"))
+    valued = valuator(configs)   # predicted_price/fair_price_low/fair_price_high/spec_fill/vocab_ok
+
+    def _band(key: str):
+        try:
+            r = valued.loc[key]
+        except KeyError:
+            return None
+        # A duplicate key (shouldn't happen — slugs unique, cell labels unique
+        # per slug) would yield a frame; take the first row defensively.
+        if isinstance(r, pd.DataFrame):
+            r = r.iloc[0]
+        return r
+
+    for slug, rec in models.items():
+        if slug not in profiles:
+            continue
+        r = _band(slug)
+        if r is not None and _gbm_passes(
+            float(r["predicted_price"]), float(r["spec_fill"]), bool(r["vocab_ok"]),
+            rec.get("fm"), rec.get("fl"), rec.get("fh"),
+        ):
+            rec["gl"] = _i(r["fair_price_low"])
+            rec["gm"] = _i(r["predicted_price"])
+            rec["gh"] = _i(r["fair_price_high"])
+        for cell in rec.get("yr", []):
+            cr = _band(f"{slug}|{cell.get('y')}")
+            if cr is not None and _gbm_passes(
+                float(cr["predicted_price"]), float(cr["spec_fill"]), bool(cr["vocab_ok"]),
+                cell.get("fm"), cell.get("fl"), cell.get("fh"),
+            ):
+                cell["gl"] = _i(cr["fair_price_low"])
+                cell["gm"] = _i(cr["predicted_price"])
+                cell["gh"] = _i(cr["fair_price_high"])
