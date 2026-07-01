@@ -283,6 +283,29 @@ def main() -> None:
     for k, v in sorted(files_manifest.items()):
         print(f"  {k:<45} ← {v}")
 
+    # Guard against walker/index.html drift. The AST walker decides which
+    # src/ modules ship, but index.html's hand-maintained ``files: {}`` map
+    # decides which get MOUNTED into pyodide MEMFS. If a new top-level import
+    # is bundled here but never added to that map, the module imports fine in
+    # CI/tests yet 404s in the browser (ModuleNotFoundError at runtime). Fail
+    # the build loudly instead. Dashboard sources are keyed by emoji MEMFS
+    # path, so only check the ASCII src/ modules the walker owns.
+    index_html = DEPLOY_DIR / "index.html"
+    if index_html.exists():
+        mount_map = index_html.read_text(encoding="utf-8")
+        unmounted = [
+            k for k in files_manifest
+            if k.startswith("src/") and f'"{k}"' not in mount_map
+        ]
+        if unmounted:
+            print(
+                "!! bundled but NOT mounted in index.html files map:\n  "
+                + "\n  ".join(sorted(unmounted))
+                + "\n   add each as \"<path>\": { url: `${PY_BASE}/<path>` },",
+                file=sys.stderr,
+            )
+            sys.exit(3)
+
     if args.include_data:
         n = _materialise_witnesses_from_local()
         size = sum(f.stat().st_size for f in DATA_DIR.rglob("*") if f.is_file())
