@@ -55,45 +55,14 @@ GBM_CTX_LO = 0.85           # GBM median must sit >= asking P25 × 0.85 …
 GBM_CTX_HI = 1.10           # … and <= asking P75 × 1.10 (consistent with real asks)
 GBM_MIN_SPEC_FILL = 0.5     # need >=2 of 4 discriminative specs (== decision._MIN_SPEC_FILL)
 
-
-def _mode(s: pd.Series | None):
-    """Most-common non-null value, or None (also None when the column is absent)."""
-    if s is None:
-        return None
-    v = s.dropna()
-    return v.mode().iloc[0] if len(v) else None
-
-
-def _med(s: pd.Series | None):
-    """Median of numeric-coerced non-null values, or None (None when absent)."""
-    if s is None:
-        return None
-    v = pd.to_numeric(s, errors="coerce").dropna()
-    return float(v.median()) if len(v) else None
-
-
-def _group_profile(grp: pd.DataFrame) -> dict:
-    """Representative (modal/median) spec profile for a (brand, model) group.
-
-    A synthetic "typical car of this model" the GBM can value — dominant fuel/
-    gearbox/generation/segment + median engine/power/seats/mileage/year. Filling
-    the discriminative specs (mileage, engine_cc, horsepower, fuel) pushes
-    spec_fill to ~1.0 so the model prices off real attributes, not a baseline.
-    """
-    return {
-        "year": (int(round(_med(grp.get("year")))) if _med(grp.get("year")) is not None else None),
-        "mileage_km": _med(grp.get("mileage_km")),
-        "engine_cc": _med(grp.get("engine_cc")),
-        "horsepower": _med(grp.get("horsepower")),
-        "seats": _med(grp.get("seats")),
-        "fuel_type": _mode(grp.get("fuel_type")),
-        "transmission": _mode(grp.get("transmission")),
-        "generation": _mode(grp.get("generation")),
-        "segment": _mode(grp.get("segment")),
-        "sub_model": _mode(grp.get("sub_model")),
-        "trim_level": _mode(grp.get("trim_level")),
-        "district": _mode(grp.get("district")),
-    }
+# Columns fed to the valuator when pricing a page's REAL listings. Everything
+# else is NaN-filled by price_model._prepare_X; brand/model also drive the vocab
+# gate. Pricing the actual configs (not one modal archetype) is what stops
+# distinct models collapsing onto the same coarse GBM bucket — the page number
+# is the MEDIAN of per-listing fair values, riding each model's real spec spread.
+_GBM_COLS = ("brand", "model", "year", "mileage_km", "engine_cc", "horsepower",
+             "seats", "fuel_type", "transmission", "generation", "segment",
+             "sub_model", "trim_level", "district")
 
 
 def _gbm_passes(pred: float, spec_fill: float, vocab_ok: bool,
@@ -119,6 +88,15 @@ def _cell_year(y) -> int | None:
         return int(y)
     m = re.match(r"^(\d{4})-(\d{4})$", str(y))
     return int(m.group(2)) if m else None
+
+
+def _cell_year_range(y) -> tuple[int, int] | None:
+    """Inclusive (lo, hi) year span a cell covers — a single year or a band —
+    used to reselect that cell's real listings for per-cell GBM aggregation."""
+    if isinstance(y, (int, np.integer)):
+        return int(y), int(y)
+    m = re.match(r"^(\d{4})-(\d{4})$", str(y))
+    return (int(m.group(1)), int(m.group(2))) if m else None
 
 
 def slugify(s: str) -> str:
@@ -211,7 +189,7 @@ def build_model_pages(
     LightGBM import (it's built host-side; the Worker only reads the blob).
     """
     models: dict[str, dict] = {}
-    profiles: dict[str, dict] = {}     # slug → representative spec profile (for GBM)
+    page_groups: dict[str, pd.DataFrame] = {}   # slug → its real listings (for GBM)
     if listings.empty:
         return {"v": 1, "models": models}
 
@@ -263,86 +241,72 @@ def build_model_pages(
             rec["yt"] = int(yrs_thin)
         models[slug] = {k: v for k, v in rec.items() if v is not None}
         if valuator is not None:
-            profiles[slug] = _group_profile(grp)
+            keep = [c for c in _GBM_COLS if c in grp.columns]
+            page_groups[slug] = grp[keep].copy()
 
     if valuator is not None and models:
-        _apply_gbm_bands(models, profiles, valuator)
+        _apply_gbm_bands(models, page_groups, valuator)
 
     return {"v": 1, "models": models}
 
 
 def _apply_gbm_bands(
     models: dict[str, dict],
-    profiles: dict[str, dict],
+    page_groups: dict[str, pd.DataFrame],
     valuator: Callable[[pd.DataFrame], pd.DataFrame],
 ) -> None:
-    """Batch-value one synthetic config per page (overall) + per year cell, then
-    attach the MODEL fair band (gl/gm/gh) wherever ``_gbm_passes`` — in place.
+    """Value each page's REAL listings through the GBM and attach the model fair
+    band (gl/gm/gh) as the MEDIAN of the per-listing fair values — overall and
+    per year cell — wherever ``_gbm_passes``. In place.
 
-    One valuator call for the whole corpus (~2k rows) keeps the CI build cheap.
-    Keys encode where each result lands: ``"{slug}"`` for the page, ``"{slug}|{y}"``
-    for a year cell (y is the cell's original label, int or "y0-y1" band)."""
-    rows: list[dict] = []
-    keys: list[str] = []
-
-    def _cfg(prof: dict, brand: str, model: str, year, mileage) -> dict:
-        c = dict(prof)
-        c["brand"], c["model"] = brand, model
-        if year is not None:
-            c["year"] = year
-        if mileage is not None:
-            c["mileage_km"] = mileage
-        return c
-
-    for slug, rec in models.items():
-        prof = profiles.get(slug)
-        if not prof:
-            continue
-        brand, model = rec["b"], rec["m"]
-        # Page-level config: representative specs + median year/mileage.
-        rows.append(_cfg(prof, brand, model, prof.get("year"), rec.get("kmm", prof.get("mileage_km"))))
-        keys.append(slug)
-        # Per-year-cell configs: cell's year + cell's median mileage.
-        for cell in rec.get("yr", []):
-            cy = _cell_year(cell.get("y"))
-            if cy is None:
-                continue
-            rows.append(_cfg(prof, brand, model, cy, cell.get("km", prof.get("mileage_km"))))
-            keys.append(f"{slug}|{cell.get('y')}")
-
-    if not rows:
+    Pricing the actual configs (not one modal archetype) is what stops distinct
+    models collapsing onto the same coarse bucket: the median rides each model's
+    real mileage/year/trim spread. One valuator call over the whole qualifying
+    corpus keeps the CI build to a single LightGBM pass."""
+    if not page_groups:
         return
-    configs = pd.DataFrame(rows, index=pd.Index(keys, name="k"))
-    valued = valuator(configs)   # predicted_price/fair_price_low/fair_price_high/spec_fill/vocab_ok
-
-    def _band(key: str):
-        try:
-            r = valued.loc[key]
-        except KeyError:
-            return None
-        # A duplicate key (shouldn't happen — slugs unique, cell labels unique
-        # per slug) would yield a frame; take the first row defensively.
-        if isinstance(r, pd.DataFrame):
-            r = r.iloc[0]
-        return r
-
-    for slug, rec in models.items():
-        if slug not in profiles:
+    # One batched valuation of every qualifying listing. Clean RangeIndex so the
+    # per-row result aligns back by index (predict_prices preserves the index).
+    frames: list[pd.DataFrame] = []
+    for slug, grp in page_groups.items():
+        if slug not in models or grp is None or grp.empty:
             continue
-        r = _band(slug)
-        if r is not None and _gbm_passes(
-            float(r["predicted_price"]), float(r["spec_fill"]), bool(r["vocab_ok"]),
-            rec.get("fm"), rec.get("fl"), rec.get("fh"),
-        ):
-            rec["gl"] = _i(r["fair_price_low"])
-            rec["gm"] = _i(r["predicted_price"])
-            rec["gh"] = _i(r["fair_price_high"])
+        f = grp.reset_index(drop=True)
+        f["__slug__"] = slug
+        frames.append(f)
+    if not frames:
+        return
+    big = pd.concat(frames, ignore_index=True)
+    valued = valuator(big.drop(columns="__slug__"))
+    big = big.join(valued[["predicted_price", "fair_price_low",
+                           "fair_price_high", "spec_fill", "vocab_ok"]])
+    big["_yr"] = (pd.to_numeric(big["year"], errors="coerce")
+                  if "year" in big.columns else np.nan)
+
+    def _agg(rows: pd.DataFrame):
+        """(pred, low, high, spec_fill, vocab_ok) = medians over real listings."""
+        p = pd.to_numeric(rows.get("predicted_price"), errors="coerce").dropna()
+        if p.empty:
+            return None
+        return (
+            float(p.median()),
+            float(pd.to_numeric(rows["fair_price_low"], errors="coerce").median()),
+            float(pd.to_numeric(rows["fair_price_high"], errors="coerce").median()),
+            float(pd.to_numeric(rows["spec_fill"], errors="coerce").median()),
+            bool(rows["vocab_ok"].all()),
+        )
+
+    for slug, grp_big in big.groupby("__slug__"):
+        rec = models[slug]
+        a = _agg(grp_big)
+        if a and _gbm_passes(a[0], a[3], a[4], rec.get("fm"), rec.get("fl"), rec.get("fh")):
+            rec["gl"], rec["gm"], rec["gh"] = _i(a[1]), _i(a[0]), _i(a[2])
         for cell in rec.get("yr", []):
-            cr = _band(f"{slug}|{cell.get('y')}")
-            if cr is not None and _gbm_passes(
-                float(cr["predicted_price"]), float(cr["spec_fill"]), bool(cr["vocab_ok"]),
-                cell.get("fm"), cell.get("fl"), cell.get("fh"),
-            ):
-                cell["gl"] = _i(cr["fair_price_low"])
-                cell["gm"] = _i(cr["predicted_price"])
-                cell["gh"] = _i(cr["fair_price_high"])
+            span = _cell_year_range(cell.get("y"))
+            if span is None:
+                continue
+            crows = grp_big[(grp_big["_yr"] >= span[0]) & (grp_big["_yr"] <= span[1])]
+            ca = _agg(crows)
+            if ca and _gbm_passes(ca[0], ca[3], ca[4],
+                                  cell.get("fm"), cell.get("fl"), cell.get("fh")):
+                cell["gl"], cell["gm"], cell["gh"] = _i(ca[1]), _i(ca[0]), _i(ca[2])

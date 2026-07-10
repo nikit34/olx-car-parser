@@ -99,6 +99,26 @@ def test_build_model_pages_attaches_gbm_only_when_guards_pass():
     assert "gm" not in cheap                                        # cheap-tail suppressed
 
 
+def test_gbm_is_per_listing_median_not_shared_archetype():
+    # Two models valued by a MILEAGE-sensitive model must get DIFFERENT gm —
+    # proves we value each page's real listings and take the median, rather than
+    # collapsing onto one modal archetype (the de-quantization fix).
+    v40 = _listings("Volvo", "V40", 16000, mileage_km=60000)
+    v60 = _listings("Volvo", "V60", 11500, mileage_km=180000)
+    listings = pd.concat([v40, v60], ignore_index=True)
+
+    def _v(cfg):                       # fair value falls €0.05 per km, per row
+        km = pd.to_numeric(cfg["mileage_km"], errors="coerce").fillna(1e5)
+        pred = (20000 - km * 0.05).clip(lower=1)      # 60k→17000, 180k→11000
+        return pd.DataFrame({"predicted_price": pred, "fair_price_low": pred * 0.9,
+                             "fair_price_high": pred * 1.1, "spec_fill": 1.0,
+                             "vocab_ok": True}, index=cfg.index)
+
+    out = mp.build_model_pages(listings, valuator=_v)
+    assert out["models"][mp.slugify("Volvo-V40")]["gm"] == 17000
+    assert out["models"][mp.slugify("Volvo-V60")]["gm"] == 11000  # distinct, per-listing
+
+
 def test_build_model_pages_without_valuator_is_asking_only():
     listings = _listings("Mid", "Alpha", 10000)
     out = mp.build_model_pages(listings, sell_speed=None)  # no valuator
