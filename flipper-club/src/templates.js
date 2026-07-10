@@ -1519,17 +1519,33 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
 
   // 1b. Model fair-value band — only when it cleared the build-time guards
   // (asking €5k–45k, agrees with the asking IQR). Absent → asking-only, as before.
+  //
+  // Framing: the asking MEDIAN of a whole model virtually always sits INSIDE
+  // this (wide, CQR) fair band — comparing two central tendencies can't yield a
+  // hard "overpaying €X vs fair value" claim (that signal is per-LISTING, on
+  // /mercado). So we state WHERE in the fair range the market sits, never a
+  // fabricated €-overpay against the point estimate.
+  let bandMsg = "";
+  if (hasG) {
+    const span = rec.gh - rec.gl;
+    const pos = span > 0 ? (rec.fm - rec.gl) / span : 0.5;   // asking's place in [gl,gh]
+    const BAND = `${fmtEur(rec.gl)} – ${fmtEur(rec.gh)}`;
+    if (pos > 0.667)
+      bandMsg = `<p style="font-size:14px;color:#177A47;font-weight:600;margin:14px 0 0;">O mercado pede em mediana ${FM} — no <b>terço superior</b> do intervalo justo (${BAND}). Há margem para negociar; não pagues a mais.</p>`;
+    else if (pos < 0.333)
+      bandMsg = `<p style="font-size:14px;color:#3A3F47;margin:14px 0 0;">O mercado pede em mediana ${FM} — no <b>terço inferior</b> do intervalo justo (${BAND}). Se muito abaixo, confirma o estado e o histórico.</p>`;
+    else
+      bandMsg = `<p style="font-size:14px;color:#3A3F47;margin:14px 0 0;">O preço pedido em mercado (${FM}) está <b>em linha</b> com o valor justo estimado (${BAND}).</p>`;
+  }
   const gbmCard = hasG ? `
     <section class="section" style="padding:22px 22px 0;max-width:680px;">
       <div class="side-card" style="border-color:#DDEBE1;background:#F6FBF8;">
         <div class="eyebrow" style="margin-bottom:12px;"><span class="e-dot" style="background:#177A47;"></span><span class="mono">VALOR JUSTO ESTIMADO · MODELO</span></div>
         <div class="side-prices">
-          <div><div class="cap">Valor justo (modelo)</div><div class="big">${fmtEur(rec.gm)}</div></div>
+          <div><div class="cap">Valor justo (mediana)</div><div class="big">${fmtEur(rec.gm)}</div></div>
           <div class="side-fair"><div class="cap">intervalo estimado</div><div class="v">${fmtEur(rec.gl)} – ${fmtEur(rec.gh)}</div></div>
         </div>
-        ${rec.gm < rec.fm
-          ? `<p style="font-size:14px;color:#177A47;font-weight:600;margin:14px 0 0;">O mercado pede em mediana ${FM} — cerca de <b>${fmtEur(rec.fm - rec.gm)} acima</b> do valor justo estimado para um exemplar típico. Não pagues a mais.</p>`
-          : `<p style="font-size:14px;color:#3A3F47;margin:14px 0 0;">O preço pedido em mercado (${FM}) está em linha com o valor justo estimado.</p>`}
+        ${bandMsg}
         <div class="mono" style="font-size:11.5px;color:#9A9FA8;margin-top:12px;line-height:1.5;">Estimativa do nosso modelo para um ${B} ${M} com quilometragem e specs típicas deste modelo — não considera o estado específico da tua viatura. Para o teu carro concreto, <a href="/avaliar" style="color:#177A47;font-weight:600;">avalia o anúncio</a>.</div>
       </div>
     </section>` : "";
