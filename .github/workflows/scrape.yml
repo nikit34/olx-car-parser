@@ -297,23 +297,27 @@ jobs:
       - name: Backfill seller profiles
         # Resolves seller_uuid for newly-scraped listings (which only have
         # seller_profile_url at this point) and refreshes any seller row
-        # whose profile_fetched_at is older than 14 days. Steady state
-        # after the initial 1278-profile bootstrap: ~10-50 new profiles
-        # per cron + a slow trickle of refreshes. Cheap (~1s/profile via
-        # OlxScraper's throttle-aware client) so 15-min timeout has wide
-        # headroom.
+        # whose profile_fetched_at is older than --ttl-days (30). The ~15k
+        # seller population was bootstrapped in bursts, so a 14-day TTL made
+        # whole cohorts re-mature on the same day (e.g. one 5.7k-profile
+        # day), flooding a single cron with far more than the ~1100 fetches
+        # a 15-min step can do at ~0.8s each — so it timed out every peak
+        # day. Fix: --limit 900 bounds each run (~12 min, never times out),
+        # the selector orders by staleness (oldest/unlinked first), and the
+        # resumable query drains the rest across the day's crons (~5k/day
+        # capacity >> ~500/day arrival at TTL 30). continue-on-error keeps a
+        # flaky OLX day from failing the run either way.
         #
         # Must run before train-model so seller_listings_count_90d /
         # seller_pseudoprivate / seller_cars_count are populated when the
-        # price model rebuilds. continue-on-error: a flaky OLX day
-        # shouldn't block the rest of the cron.
+        # price model rebuilds.
         if: ${{ !cancelled() }}
         env:
           PYTHONPATH: ${{ github.workspace }}
         timeout-minutes: 15
         continue-on-error: true
         run: |
-          .venv/bin/python -m scripts.backfill_sellers --ttl-days 14 --progress-every 100
+          .venv/bin/python -m scripts.backfill_sellers --ttl-days 30 --limit 900 --progress-every 100
 
       - name: Verify photos with damage classifier
         # Runs the v2 ResNet50 classifier on listings' photos and stores
