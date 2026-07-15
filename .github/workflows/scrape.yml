@@ -225,11 +225,14 @@ jobs:
         # overlap during fan-out. Runs only here on the self-hosted Mac
         # (where Ollama lives); the GitHub-hosted Ubuntu Tests job filters
         # smoke out via -m "not smoke".
-        # Fails fast: if the local Ollama or routing layer is broken there's
-        # no point burning 2 h on Scrape + Enrich. The earlier diagnostic
-        # step (above) is already in the log to root-cause from.
+        # Health signal for the two-backend pool — it NO LONGER gates Scrape
+        # (that step now runs on !cancelled()), so a slow-backend flake here
+        # surfaces as a red check without starving data collection. The
+        # earlier diagnostic step (above) is already in the log to root-cause
+        # from. 12 min ceiling leaves room for a cold model-load on the .69
+        # box during warm-up without SIGKILLing an otherwise-healthy run.
         if: env.WITH_LLM == 'true'
-        timeout-minutes: 5
+        timeout-minutes: 12
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
@@ -237,6 +240,15 @@ jobs:
           .venv/bin/pytest tests/test_ollama_integration.py -m smoke -v --tb=short
 
       - name: Scrape
+        # Decoupled from the LLM smoke step. A flake in the Ollama pool
+        # (e.g. a slow cold model-load on the .69 box tripping the
+        # concurrent-inference smoke test) previously left this step on the
+        # default if:success(), which silently SKIPPED scraping for days
+        # while enrich/train/upload kept re-shipping stale data. Scrape
+        # auto-falls back to raw-only when Ollama is unreachable, so running
+        # unconditionally is safe; a genuinely-broken local Ollama is still
+        # caught by the hard-exit in "Ensure Ollama is running".
+        if: ${{ !cancelled() }}
         env:
           PYTHONPATH: ${{ github.workspace }}
         # Per-step timeout caps how long scrape can monopolise the budget.

@@ -235,9 +235,13 @@ def test_concurrent_inference_actually_uses_both_backends():
         "options": {"num_predict": 5, "temperature": 0.0},
     }
 
-    # Warm up both so cold model load doesn't pollute timings.
+    # Warm up both so cold model load doesn't pollute timings. The warm-up
+    # itself must tolerate a cold load — the .69 MX230 can take >120s to page
+    # qwen3:4b in under VRAM pressure, and a warm-up timeout there is a false
+    # failure, not a pool defect. The *timed* calls below stay at 120s
+    # (backends are warm by then; a warm call over 120s IS a real problem).
     for url in healthy:
-        httpx.post(f"{url.rstrip('/')}/api/generate", json=payload, timeout=120)
+        httpx.post(f"{url.rstrip('/')}/api/generate", json=payload, timeout=300)
 
     def _timed_call(url: str) -> tuple[str, float, float]:
         """Return (url, start_ts, finish_ts) for overlap analysis."""
