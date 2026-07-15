@@ -97,13 +97,20 @@ def _select_targets(
 
     De-dup at the SQL layer so a 256-ad dealer turns into one fetch,
     not 256.
+
+    Ordered by urgency, not alphabetically: first-pass URLs (no seller
+    row yet, so ``profile_fetched_at`` is NULL, coalesced to '') sort
+    first, then the stalest refreshes oldest-first. Paired with
+    ``--limit`` this makes a capped run spend its budget on the URLs that
+    need it most, and the resumable selector drains the remainder on
+    later crons instead of starving the same tail every time.
     """
     cutoff = (
         datetime.now(timezone.utc).replace(tzinfo=None)
         - timedelta(days=ttl_days)
     ).isoformat(sep=" ")
     sql = """
-        SELECT DISTINCT l.seller_profile_url
+        SELECT l.seller_profile_url
         FROM listings l
         LEFT JOIN sellers s ON s.uuid = l.seller_uuid
         WHERE l.seller_profile_url IS NOT NULL
@@ -112,7 +119,8 @@ def _select_targets(
             OR s.profile_fetched_at IS NULL
             OR s.profile_fetched_at < ?
           )
-        ORDER BY l.seller_profile_url
+        GROUP BY l.seller_profile_url
+        ORDER BY MIN(COALESCE(s.profile_fetched_at, '')) ASC
     """
     if limit is not None:
         sql += f" LIMIT {int(limit)}"
