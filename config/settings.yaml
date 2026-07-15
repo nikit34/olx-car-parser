@@ -76,7 +76,12 @@ llm:
   num_ctx: 2048
 
 alerts:
-  telegram_bot_token: "8651422044:AAEf93eodK6d4F7fn1FVH-vh0H5JX-gb92s"
+  # Bot token is NOT stored here — it lives in the GitHub Actions secret
+  # TELEGRAM_BOT_TOKEN, injected as env into the "Send Telegram alerts" step.
+  # telegram_bot.py reads env first, this key second (_load_config). Kept
+  # empty so a revoked token can't linger in git history. For local runs,
+  # `export TELEGRAM_BOT_TOKEN=...` in your shell.
+  telegram_bot_token: ""
   telegram_chat_id: "604665081"
   min_discount_pct: 15
   state_file: "data/alerts_state.json"
