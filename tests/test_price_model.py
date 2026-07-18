@@ -180,7 +180,12 @@ def test_uncertainty_bundle_trains_and_predicts_positive_q():
     completeness, LLM-flag count, description × photo interaction); the
     inference helper builds them from the raw DataFrame, so callers
     pass ``df`` and the prepared ``X_main`` array."""
-    df = _sample_listings(400, with_first_seen_at=True)
+    # 800 (not 400): the per-row uncertainty regressor is trained on half of
+    # the time-aware cal-set (~20% of rows), so 400 leaves it ~40 rows — too
+    # few to reliably find a split, making ``per_row_q.std() > 0`` knife-edge
+    # (it flips on tiny changes to the filtered row count). 800 gives the
+    # regressor enough cal data that the per-row property holds robustly.
+    df = _sample_listings(800, with_first_seen_at=True)
     result = train_price_model(df)
     assert result is not None
     _models, cat_maps, _metrics, _oof, _calib, uncertainty, *_imp = result
@@ -732,9 +737,9 @@ class TestSoldTargetAdjustment:
         assert "sold_inclusion" in metrics
         si = metrics["sold_inclusion"]
         assert si["sold_rows_used"] > 0
-        # ``_filter_training_data`` clips the 1st/99th percentiles, so a
-        # handful of the 100 actives may be filtered out — check the
-        # majority survived rather than the exact count.
+        # ``_filter_training_data`` drops rows outside [€300, €250k] + the
+        # mileage-sanity band, so a handful of the 100 actives may be filtered
+        # out — check the majority survived rather than the exact count.
         assert si["active_rows"] >= 90
 
 

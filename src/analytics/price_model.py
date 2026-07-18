@@ -470,12 +470,43 @@ def _pinball_loss(y_true: np.ndarray, y_pred: np.ndarray, alpha: float) -> float
     return float(np.mean(np.maximum(alpha * diff, (alpha - 1) * diff)))
 
 
+# Fixed price sanity bounds for training-row inclusion. These REPLACE the
+# earlier [1st, 99th] percentile clip (schema ≤v13). The percentile clip
+# discarded the cheapest and priciest ~1% of cars, so the tree never trained
+# on the tails and developed a hard prediction FLOOR (~€1.5–2k) and CEILING
+# (~€50k) — a GBM cannot predict outside its training-target range, and log vs
+# raw target is a monotone relabel that cannot move either bound.
+#
+# Time-aware backtest on the 2026-07-17 corpus (61k rows, train ≤06-21 →
+# newest 20% test, scripts sweep in exp_relax_clip) — swapping the percentile
+# clip for these fixed bounds, everything else identical:
+#   • LUXURY ceiling fixed: >€50k median bias −21.9% → −6.2%, MAPE 26.2 → 19.1%,
+#     80% coverage 0.28 → 0.73  (the top ~1% >€76k the clip was cutting)
+#   • cheap tail improved: <€2k median bias +22.6% → +14.4%, MAPE −3.6pp
+#     (residual over-prediction is condition-blindness, not the clip — the
+#     cheap-tail abstain/blend fix still stacks on top)
+#   • €2–50k core unchanged (within-noise); overall R² 0.855 → 0.905
+# Only ~1.7% more rows admitted (the real tails); the €300 floor + 10× swing +
+# mileage-sanity steps still drop parts/scrap and data-entry noise (spot-check:
+# the re-admitted €300–650 band is 1990s runners, not junk).
+#
+# No bundle-shape change (features/target/CQR semantics identical), so
+# _SCHEMA_VERSION stays 13 — the currently-shipped bundle keeps loading; the
+# next scheduled retrain picks this up. The €250k ceiling still caps genuine
+# data-entry errors (corpus max was €284k).
+_PRICE_FLOOR_EUR = 300.0
+_PRICE_CEIL_EUR = 250_000.0
+
+
 def _filter_training_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     """Drop outliers that would poison the quantile targets.
 
     Returns (filtered_df, drop_stats) for logging.  Filters:
       1. Price that moved 10× in either direction (data-entry noise, wrong currency)
-      2. Prices outside [1st, 99th] percentile (heavy-tail clip)
+      2. Prices outside [€300, €250k] fixed bounds — parts/scrap floor + data-entry
+         ceiling. REPLACED the old 1st/99th percentile clip, which truncated the
+         cheap/luxury tails and gave the model a hard floor+ceiling; see
+         _PRICE_FLOOR_EUR / _PRICE_CEIL_EUR.
       3. km / max(age, 1) outside [500, 100 000] (implausible mileage)
     """
     start = len(df)
@@ -493,13 +524,13 @@ def _filter_training_data(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
             out = out[~extreme.fillna(False)]
         stats["dropped_10x_swing"] = dropped
 
-    # 2. Price percentile clip
+    # 2. Fixed price sanity bounds (see _PRICE_FLOOR_EUR / _PRICE_CEIL_EUR).
+    # Fixed — not percentile — so the model trains on the real cheap/luxury
+    # tails instead of a truncated middle. Empty-safe (no quantile call).
     prices = pd.to_numeric(out["price_eur"], errors="coerce")
-    if len(prices) > 0:
-        low_p, high_p = prices.quantile([0.01, 0.99])
-        price_mask = (prices >= low_p) & (prices <= high_p)
-        stats["dropped_price_percentile"] = int((~price_mask.fillna(False)).sum())
-        out = out[price_mask.fillna(False)]
+    price_mask = (prices >= _PRICE_FLOOR_EUR) & (prices <= _PRICE_CEIL_EUR)
+    stats["dropped_price_bounds"] = int((~price_mask.fillna(False)).sum())
+    out = out[price_mask.fillna(False)]
 
     # 3. Mileage sanity (km per year of age)
     current_year = datetime.now(timezone.utc).year
