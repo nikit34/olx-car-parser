@@ -80,6 +80,15 @@ export default {
       if (pathname.startsWith("/widget/preco/") && method === "GET") {
         return handleModelWidget(request, env, url);
       }
+      // Public social-share card (og:image / twitter:image). Served from the
+      // ASSETS bucket WITHOUT the analytics Basic-Auth gate — social scrapers
+      // (Facebook, Telegram, LinkedIn, Reddit) fetch it unauthenticated.
+      if (pathname === "/og-default.png" && method === "GET") {
+        const res = await env.ASSETS.fetch(request);
+        const out = new Response(res.body, res);
+        out.headers.set("Cache-Control", "public, max-age=86400");
+        return out;
+      }
       if (!PRODUCT_PATHS.has(pathname)) {
         return handleAssetGated(request, env);
       }
@@ -136,7 +145,7 @@ async function handleLanding(request, env, url) {
     },
     featured: sorted[0],
     depositEur: depositCents(env) / 100,
-    depositCount,
+    depositCount, host: url.host,
   }), 200, setCookie);
 }
 
@@ -172,7 +181,10 @@ async function handleAvaliar(request, env, url) {
     const mrec = models[modelo];
     spec = { rec: mrec, slug: modelo, year: ano, cell: pickYearCell(mrec, ano) };
   }
-  return html(renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depositCount }), 200, setCookie);
+  return html(renderAvaliar({
+    rec, olxId, sourceUrl, query, models, spec, depositCount,
+    host: url.host, builtAt: mdoc && mdoc.built_at,
+  }), 200, setCookie);
 }
 
 // Find the per-year cell for `ano` in a model record: exact year, or a band
@@ -276,7 +288,7 @@ async function handleModelsHub(request, env, url) {
   const list = Object.entries(models)
     .map(([s, r]) => ({ slug: s, b: r.b, m: r.m, fm: r.fm, n: r.n }))
     .sort((a, b) => (b.n || 0) - (a.n || 0));
-  return html(renderModelsHub({ models: list, depositCount, builtAt: mdoc.built_at }), 200, setCookie);
+  return html(renderModelsHub({ models: list, depositCount, builtAt: mdoc.built_at, host: url.host }), 200, setCookie);
 }
 
 // /sitemap.xml — static indexable URLs + one per model page. Degrades to the
@@ -285,16 +297,20 @@ async function handleSitemap(request, env, url) {
   const base = `https://${url.host}`;
   const mdoc = await getModels(env);
   const models = mdoc && mdoc.models;
-  const today = new Date().toISOString().slice(0, 10);
+  // Real content-change stamp: the models.json build date, NOT the request date.
+  // A request-time "today" on every URL makes lastmod a lie Google learns to
+  // ignore. Emit <lastmod> only when we actually have a build stamp.
+  const lastmod = ((mdoc && mdoc.built_at) || "").slice(0, 10);
+  const lm = lastmod ? `<lastmod>${lastmod}</lastmod>` : "";
   const urls = [
-    `<url><loc>${base}/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>`,
-    `<url><loc>${base}/mercado</loc><changefreq>daily</changefreq><priority>0.9</priority></url>`,
-    `<url><loc>${base}/avaliar</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>`,
-    `<url><loc>${base}/precos</loc><changefreq>weekly</changefreq><priority>0.7</priority></url>`,
+    `<url><loc>${base}/</loc>${lm}<changefreq>daily</changefreq><priority>1.0</priority></url>`,
+    `<url><loc>${base}/mercado</loc>${lm}<changefreq>daily</changefreq><priority>0.9</priority></url>`,
+    `<url><loc>${base}/avaliar</loc>${lm}<changefreq>weekly</changefreq><priority>0.8</priority></url>`,
+    `<url><loc>${base}/precos</loc>${lm}<changefreq>weekly</changefreq><priority>0.7</priority></url>`,
   ];
   if (models) {
     for (const slug of Object.keys(models)) {
-      urls.push(`<url><loc>${base}/preco/${encodeURIComponent(slug)}</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url>`);
+      urls.push(`<url><loc>${base}/preco/${encodeURIComponent(slug)}</loc>${lm}<changefreq>weekly</changefreq><priority>0.6</priority></url>`);
     }
   }
   const xml = `<?xml version="1.0" encoding="UTF-8"?>\n`
@@ -310,7 +326,9 @@ async function handleRobots(request, env, url) {
   const body = [
     "User-agent: *", "Allow: /",
     "Disallow: /analytics", "Disallow: /claim", "Disallow: /reserve",
-    "Disallow: /unlocked", "Disallow: /reservas", "Disallow: /widget",
+    "Disallow: /unlocked", "Disallow: /reservas",
+    // /widget stays crawlable on purpose: it is noindex,follow and links back to
+    // the canonical /preco page, so it works as a backlink lever when embedded.
     `Sitemap: https://${url.host}/sitemap.xml`, "",
   ].join("\n");
   return new Response(body, {
@@ -364,7 +382,7 @@ async function handleFeed(request, env, url) {
   return html(renderGrid({
     deals: sorted, zone, sort, view, unlockedSet, depositCount, zoneCounts,
     depositEur: depositCents(env) / 100,
-    stripeReady: stripeConfigured(env),
+    stripeReady: stripeConfigured(env), host: url.host,
   }), 200, setCookie);
 }
 
@@ -394,7 +412,7 @@ async function handleCar(request, env, url) {
     deal, zone, view, unlocked: !!rec, justReserved: false,
     claimedAtMs: claimedAtMs(rec), depositCount, modelHref,
     depositEur: depositCents(env) / 100,
-    stripeReady: stripeConfigured(env),
+    stripeReady: stripeConfigured(env), host: url.host,
   }), 200, setCookie);
 }
 
@@ -817,7 +835,10 @@ function ensureUid(request) {
 }
 
 function html(body, status = 200, setCookie = null) {
-  const headers = { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" };
+  // `private, no-cache` (not `no-store`) keeps per-visitor pages out of shared
+  // caches while staying eligible for the browser back/forward cache — no-store
+  // disables bfcache in Chrome, making the mercado→car→Back loop re-fetch/render.
+  const headers = { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "private, no-cache" };
   if (setCookie) headers["Set-Cookie"] = setCookie;
   return new Response(body, { status, headers });
 }
