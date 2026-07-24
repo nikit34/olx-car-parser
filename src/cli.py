@@ -907,42 +907,59 @@ def enrich_openrouter(
     enriched = 0
     failed = 0
     consecutive_failures = 0
-    for oid in ranked_ids:
-        if requests_spent >= run_request_budget:
-            break
-        listing = rows.get(oid)
-        if listing is None:
-            continue
-        remaining = run_request_budget - requests_spent
-        result, n_req = or_enrich(
-            listing.description or "", listing.title or "", cfg, request_cap=remaining,
-        )
-        requests_spent += n_req
-        if result:
-            listing._llm_extras = result
-            corrections = openrouter_corrections(listing)
-            if "damage_severity" in corrections:
-                result["damage_severity"] = corrections["damage_severity"]
-            result["_or_enriched"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            listing.llm_extras = json.dumps(result, ensure_ascii=False)
-            for field, value in corrections.items():
-                if hasattr(listing, field):
-                    setattr(listing, field, value)
-            enriched += 1
-            consecutive_failures = 0
-            session.commit()
-            log.info("OpenRouter enriched %s (%d/%d req)", oid, requests_spent, run_request_budget)
-        elif n_req > 0:
-            # A real API attempt that failed (429 chain exhausted / bad output).
-            failed += 1
-            consecutive_failures += 1
-            if consecutive_failures >= 5:
-                log.warning("5 consecutive OpenRouter failures (rate-limited?) — stopping run.")
+    try:
+        for oid in ranked_ids:
+            if requests_spent >= run_request_budget:
                 break
-        # n_req == 0 → description too short to enrich; skip silently.
-
-    session.commit()
-    save_budget(cfg["budget_state_file"], budget["requests"] + requests_spent)
+            listing = rows.get(oid)
+            if listing is None:
+                continue
+            remaining = run_request_budget - requests_spent
+            try:
+                result, n_req = or_enrich(
+                    listing.description or "", listing.title or "", cfg, request_cap=remaining,
+                )
+            except Exception as e:  # noqa: BLE001 — one bad listing must not abort the run
+                log.warning("OpenRouter call raised for %s: %s", oid, e)
+                result, n_req = None, 0
+            requests_spent += n_req
+            # Persist the running spend after EVERY call: the workflow step has a
+            # 20-min SIGKILL and the concurrency rule can cancel this late step, so
+            # a single end-of-loop save would silently drop the spend and let the
+            # next of the day's runs re-spend past the free-tier ceiling.
+            save_budget(cfg["budget_state_file"], budget["requests"] + requests_spent)
+            if result:
+                try:
+                    listing._llm_extras = result
+                    corrections = openrouter_corrections(listing)
+                    if "damage_severity" in corrections:
+                        result["damage_severity"] = corrections["damage_severity"]
+                    result["_or_enriched"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                    listing.llm_extras = json.dumps(result, ensure_ascii=False)
+                    for field, value in corrections.items():
+                        if hasattr(listing, field):
+                            setattr(listing, field, value)
+                    session.commit()
+                except Exception as e:  # noqa: BLE001 — DB lock contention etc. must not abort
+                    log.warning("OpenRouter DB write failed for %s: %s — rolling back", oid, e)
+                    session.rollback()
+                    continue
+                enriched += 1
+                consecutive_failures = 0
+                log.info("OpenRouter enriched %s (%d/%d req)", oid, requests_spent, run_request_budget)
+            elif n_req > 0:
+                # A real API attempt that failed (429 chain exhausted / bad output).
+                failed += 1
+                consecutive_failures += 1
+                if consecutive_failures >= 3:
+                    log.warning("3 consecutive OpenRouter failures (free tier rate-limited?) "
+                                "— stopping run to preserve daily budget.")
+                    break
+            # n_req == 0 → description too short (or the call raised); skip silently.
+    finally:
+        # Belt-and-suspenders for the exception path (SIGKILL bypasses finally,
+        # which is why the per-call save above is the real guard).
+        save_budget(cfg["budget_state_file"], budget["requests"] + requests_spent)
     log.info("OpenRouter enrichment done: %d enriched, %d failed, %d requests "
              "(daily total %d/%d).", enriched, failed, requests_spent,
              budget["requests"] + requests_spent, cfg["daily_request_budget"])

@@ -97,7 +97,10 @@ openrouter:
   max_tokens: 500     # richer schema (base 3 fields + condition NLP + red_flags)
   max_chars: 2500
   timeout_seconds: 90
-  max_retries: 1      # per model, on 429 / 5xx before advancing the chain
+  max_retries: 0      # 0 = no same-model retry; a free-model 429 is upstream
+                      # congestion, so advance the fallback chain instead of
+                      # burning budget retrying the same (stuck) model.
+  retry_backoff_seconds: 1.0  # brief pause before trying the next model on 429/5xx
   referer: "https://olx-car-parser.permikov134.workers.dev"
   title: "olx-car-parser"
   # Free-tier daily ceiling is ~50 requests/day; stay under it. Budget is in

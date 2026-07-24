@@ -130,7 +130,12 @@ def get_openrouter_config() -> dict:
         "max_tokens": cfg.get("max_tokens", 500),
         "max_chars": cfg.get("max_chars", 2500),
         "timeout_seconds": cfg.get("timeout_seconds", 90),
-        "max_retries": cfg.get("max_retries", 1),
+        # 0 = no same-model retry: a free-model 429 is upstream congestion that
+        # an immediate retry rarely clears (a stuck model 429s repeatedly — see
+        # the 2026-07-24 shootout), so we advance the fallback chain instead of
+        # burning budget on same-model retries.
+        "max_retries": cfg.get("max_retries", 0),
+        "retry_backoff_seconds": cfg.get("retry_backoff_seconds", 1.0),
         "referer": cfg.get("referer", "https://olx-car-parser.permikov134.workers.dev"),
         "title": cfg.get("title", "olx-car-parser"),
         "daily_request_budget": cfg.get("daily_request_budget", 45),
@@ -196,9 +201,14 @@ def remaining_daily(cfg: dict) -> int:
 # Core API call
 # ---------------------------------------------------------------------------
 
-def _parse_json_object(content: str) -> dict | None:
-    """Parse a chat-completion string into a JSON object, tolerating ```fences```."""
-    if not content:
+def _parse_json_object(content) -> dict | None:
+    """Parse a chat-completion string into a JSON object, tolerating ```fences```.
+
+    Defensive against a provider returning a non-string ``content`` (null, or a
+    structured content array) — anything that isn't a non-empty str yields None
+    rather than an AttributeError that would abort the whole enrichment run.
+    """
+    if not isinstance(content, str) or not content.strip():
         return None
     t = content.strip()
     if t.startswith("```"):
@@ -285,7 +295,10 @@ def call_openrouter(text: str, cfg: dict, *, request_cap: int | None = None) -> 
                     break  # bad output → next model, not a retry
                 if resp.status_code == 429 or resp.status_code >= 500:
                     logger.info("OpenRouter %s HTTP %s (attempt %d)", model, resp.status_code, attempt + 1)
-                    continue  # retry same model, then fall through to next
+                    backoff = float(cfg.get("retry_backoff_seconds", 0) or 0)
+                    if backoff and (attempt < int(cfg.get("max_retries", 0)) or model != cfg["models"][-1]):
+                        time.sleep(backoff)  # brief pause before same-model retry or next model
+                    continue  # retry same model (if retries left), then fall through to next
                 if resp.status_code in (401, 402, 403):
                     # Account-level failure (bad key / no credits / forbidden) —
                     # no other model in the chain will help, so abort the call.

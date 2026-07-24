@@ -144,7 +144,7 @@ def _cfg():
         "base_url": "https://openrouter.ai/api/v1",
         "models": ["google/gemma-4-26b-a4b-it:free", "google/gemma-4-31b-it:free"],
         "temperature": 0.1, "max_tokens": 500, "max_chars": 2500,
-        "timeout_seconds": 90, "max_retries": 1,
+        "timeout_seconds": 90, "max_retries": 1, "retry_backoff_seconds": 0,
         "referer": "r", "title": "t",
     }
 
@@ -229,6 +229,153 @@ def test_call_openrouter_respects_request_cap(monkeypatch, _cfg):
 def test_enrich_from_description_short_desc_zero_requests(_cfg):
     out, n = ore.enrich_from_description("short", "", _cfg)
     assert out is None and n == 0
+
+
+def test_call_openrouter_malformed_200_falls_through(monkeypatch, _cfg):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    # model1: 200 but body has no 'choices'; model2: valid
+    fake = _FakeClient([_Resp(200, {"unexpected": 1}), _Resp(200, _content({"warranty": True}))])
+    monkeypatch.setattr(ore.httpx, "Client", lambda **kw: fake)
+    out, n = ore.call_openrouter("some long enough description text here", _cfg)
+    assert out == {"warranty": True}
+    assert n == 2
+
+
+def test_call_openrouter_non_json_content_falls_through(monkeypatch, _cfg):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    fake = _FakeClient([
+        _Resp(200, {"choices": [{"message": {"content": "sorry, I cannot help"}}]}),
+        _Resp(200, _content({"urgency": "low"})),
+    ])
+    monkeypatch.setattr(ore.httpx, "Client", lambda **kw: fake)
+    out, n = ore.call_openrouter("some long enough description text here", _cfg)
+    assert out == {"urgency": "low"}
+    assert n == 2
+
+
+def test_call_openrouter_response_format_dropped_only_for_gemma(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    cfg = {
+        "base_url": "https://openrouter.ai/api/v1",
+        "models": ["google/gemma-4-26b-a4b-it:free", "openai/gpt-oss-20b:free"],
+        "temperature": 0.1, "max_tokens": 500, "max_chars": 2500,
+        "timeout_seconds": 90, "max_retries": 0, "retry_backoff_seconds": 0,
+        "referer": "r", "title": "t",
+    }
+    # gemma (model1) 404 → advance; gpt-oss (model2) succeeds
+    fake = _FakeClient([_Resp(404, text="x"), _Resp(200, _content({"sub_model": "A 200"}))])
+    monkeypatch.setattr(ore.httpx, "Client", lambda **kw: fake)
+    out, n = ore.call_openrouter("some long enough description text here", cfg)
+    assert out == {"sub_model": "A 200"}
+    assert "response_format" not in fake.calls[0]      # gemma body: dropped
+    assert fake.calls[1]["response_format"] == {"type": "json_object"}  # non-gemma: kept
+
+
+# ---------------------------------------------------------------------------
+# Value gate — failure-mode robustness
+# ---------------------------------------------------------------------------
+
+def _patch_gate_loaders(monkeypatch, compute_signals_impl):
+    monkeypatch.setattr("src.storage.repository.get_listings_df", lambda s: pd.DataFrame({"x": [1]}))
+    monkeypatch.setattr("src.storage.repository.get_price_history_df", lambda s: pd.DataFrame())
+    monkeypatch.setattr("src.analytics.computed_columns.enrich_listings", lambda df: df)
+    monkeypatch.setattr("src.analytics.turnover.compute_turnover_stats", lambda df: pd.DataFrame())
+    monkeypatch.setattr("src.parser.llm_enrichment.merge_real_mileage", lambda df: df)
+    monkeypatch.setattr("src.dashboard.data_loader.compute_signals", compute_signals_impl)
+
+
+_GATE = {"min_price_eur": 4000, "min_spec_fill": 0.5, "max_band_pct": 0.40,
+         "min_discount_pct": 0.0, "max_discount_pct": 60.0}
+
+
+def test_rank_deal_olx_ids_compute_signals_raises(monkeypatch):
+    from src.analytics import value_gate
+
+    def boom(l, h, turnover=None):
+        raise RuntimeError("no fresh model")
+    _patch_gate_loaders(monkeypatch, boom)
+    assert value_gate.rank_deal_olx_ids(None, gate=_GATE, limit=5) == []
+
+
+def test_rank_deal_olx_ids_missing_column(monkeypatch):
+    from src.analytics import value_gate
+    # signals lacking 'spec_fill' → gate cannot rank → []
+    sig = pd.DataFrame([{"olx_id": "A", "price_eur": 9000, "undervaluation_pct": 30.0}])
+    _patch_gate_loaders(monkeypatch, lambda l, h, turnover=None: (sig, None, None, None, None, None))
+    assert value_gate.rank_deal_olx_ids(None, gate=_GATE, limit=5) == []
+
+
+# ---------------------------------------------------------------------------
+# CLI end-to-end — budget accrual + exclude-marker across two runs
+# ---------------------------------------------------------------------------
+
+def test_enrich_openrouter_cli_e2e(tmp_path, monkeypatch):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from typer.testing import CliRunner
+    from src.cli import app
+    from src.models.listing import Listing
+
+    db = tmp_path / "t.db"
+    engine = create_engine(f"sqlite:///{db}")
+    Listing.metadata.create_all(engine)
+    TS = sessionmaker(bind=engine)
+    seed = TS()
+    seed.add_all([
+        Listing(olx_id="A", url="http://a", brand="BMW", model="Serie 3",
+                title="BMW 320d", description="BMW 320d 2015 nacional impecavel, 2 donos, negociavel"),
+        Listing(olx_id="B", url="http://b", brand="Audi", model="A4",
+                title="Audi A4", description="Audi A4 2.0 TDI 2016 nacional, garantia, sem acidentes"),
+    ])
+    seed.commit()
+    seed.close()
+
+    budget_file = tmp_path / "budget.json"
+    cfg = {
+        "base_url": "https://openrouter.ai/api/v1",
+        "models": ["google/gemma-4-26b-a4b-it:free"],
+        "temperature": 0.1, "max_tokens": 500, "max_chars": 2500,
+        "timeout_seconds": 90, "max_retries": 0, "retry_backoff_seconds": 0,
+        "referer": "r", "title": "t",
+        "daily_request_budget": 10, "per_run_request_cap": 5,
+        "budget_state_file": str(budget_file), "gate": {},
+    }
+
+    all_ids = ["A", "B"]
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    monkeypatch.setattr("src.cli.init_db", lambda *a, **k: None)
+    monkeypatch.setattr("src.cli.get_session", lambda: TS())
+    monkeypatch.setattr("src.parser.openrouter_enrichment.get_openrouter_config", lambda: dict(cfg))
+    monkeypatch.setattr(
+        "src.analytics.value_gate.rank_deal_olx_ids",
+        lambda session, *, gate, limit, exclude_ids=frozenset():
+            [i for i in all_ids if i not in exclude_ids][:limit],
+    )
+    monkeypatch.setattr(
+        "src.parser.openrouter_enrichment.call_openrouter",
+        lambda text, cfg, request_cap=None: (
+            {"mechanical_condition": "good", "desc_mentions_accident": False,
+             "warranty": True, "urgency": "low"}, 1),
+    )
+
+    runner = CliRunner()
+    r1 = runner.invoke(app, ["enrich-openrouter"])
+    assert r1.exit_code == 0, r1.output
+
+    # both listings enriched; budget = 2 requests
+    assert json.loads(budget_file.read_text())["requests"] == 2
+    chk = TS()
+    rows = {l.olx_id: l for l in chk.query(Listing).all()}
+    assert rows["A"].mechanical_condition == "good"
+    assert rows["A"].warranty is True
+    assert "_or_enriched" in json.loads(rows["A"].llm_extras)
+    chk.close()
+
+    # second run: both already marked → excluded → no new spend
+    r2 = runner.invoke(app, ["enrich-openrouter"])
+    assert r2.exit_code == 0, r2.output
+    assert json.loads(budget_file.read_text())["requests"] == 2
 
 
 # ---------------------------------------------------------------------------
