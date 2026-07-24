@@ -9,10 +9,13 @@ The project runs on two LAN machines, not on this dev Mac. This skill is the map
 
 > **Status 2026-07-24**: the Ollama inference pool went unhealthy (scrape-host
 > `localhost` `/api/generate` hung to timeout; the `.69` backend returned HTTP
-> 500) and was **stopped on both hosts**. Scheduled scrape runs are now
-> raw-only (`WITH_LLM=false` in `scrape.yml`) — LLM enrichment is OFF until the
-> pool is revived and `WITH_LLM` flipped back. See each host's "Ollama
-> lifecycle" note below before assuming Ollama is up.
+> 500) and was **fully retired** — stopped on both hosts, agents unloaded, and
+> its workflow steps (Ensure/Probe/Smoke Ollama + the Ollama "Enrich with LLM"
+> pass) plus the `WITH_LLM` env/input **removed from `scrape.yml`** (commit
+> 8512f5a). LLM enrichment now runs ONLY via the value-gated **OpenRouter**
+> step (a free cloud model over the top deals; `openrouter:` section in
+> `config/settings.yaml`, key in the `OPENROUTER_API_KEY` repo secret).
+> **Nothing in the workflow revives Ollama anymore.**
 
 ## Hosts
 
@@ -29,7 +32,7 @@ The project runs on two LAN machines, not on this dev Mac. This skill is the map
   launchctl unload -w ~/Library/LaunchAgents/com.olx-car-parser.ollama.plist
   launchctl bootout gui/$(id -u)/com.ollama.ollama 2>/dev/null; pkill -9 -f ollama
   ```
-  ⚠️ The workflow step **"Ensure Ollama is running"** relaunches it via `open -a Ollama.app` on any `WITH_LLM=true` run — so a manual stop is undone on the next such run. Since 2026-07-24 scheduled runs are `WITH_LLM=false`, so they no longer touch it; only a manual `workflow_dispatch with_llm=true` (or reload of the agent) brings it back.
+  As of 2026-07-24 **the workflow no longer touches Ollama at all** — the "Ensure Ollama is running" step and the `WITH_LLM` gate were removed (commit 8512f5a), so a manual stop stays down until someone reloads the launchd agent by hand (`launchctl load -w …`). (History: that step used to `open -a Ollama.app` and revive it on every `WITH_LLM=true` run.)
 - **Owns**: `olx_cars.db` (the only authoritative copy — see the `release-db` skill).
 - **SSH**:
   ```bash
