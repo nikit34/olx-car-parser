@@ -17,10 +17,6 @@ on:
     - cron: "37 4 * * *"
   workflow_dispatch:
     inputs:
-      with_llm:
-        description: "Enable LLM enrichment (start Ollama, enrich inline + final pass)"
-        type: boolean
-        default: true
       deep:
         description: "Deep sweep (no early-stop, walk all pages — refreshes prices on the stale tail)"
         type: boolean
@@ -33,22 +29,17 @@ on:
 permissions:
   contents: write
 
-# Ollama pool retired 2026-07-24 — the two-backend inference pool (scrape-host
-# localhost + the .69 Windows box) went unhealthy (localhost /api/generate
-# hung, .69 returned HTTP 500) and every scheduled run burned its budget on
-# dead-backend retries before the smoke step painted the run red. Scheduled
-# runs now go raw-only (WITH_LLM=false) so scrape stays green and fast; a
-# manual workflow_dispatch with with_llm=true re-enables enrichment once the
-# Ollama pool is healthy again (that path also brings Ollama back up on the
-# scrape host via the "Ensure Ollama is running" step).
+# The local Ollama inference pool was fully retired 2026-07-24 (both backends
+# unhealthy; the pool + its launchd/service agents were stopped on both LAN
+# machines) and its workflow steps — Ensure/Probe/Smoke Ollama and the Ollama
+# "Enrich with LLM" pass — were removed. LLM enrichment now runs ONLY via the
+# value-gated OpenRouter step (a free cloud model over the top deals). Scrape
+# is raw-only and always runs — it never needed Ollama.
 # Deep sweep fires on the dedicated 04:00 cron OR when manually requested.
 env:
-  WITH_LLM: ${{ github.event_name == 'schedule' && 'false' || inputs.with_llm }}
-  # OpenRouter cloud enrichment is INDEPENDENT of the retired Ollama pool — it
-  # is a value-gated call to a free cloud model, so it runs on scheduled runs
-  # (default true on schedule, unlike WITH_LLM). Manual dispatch respects the
-  # with_openrouter input. The step itself no-ops when OPENROUTER_API_KEY is
-  # unset, so this being 'true' is harmless if the secret was never added.
+  # OpenRouter cloud enrichment (value-gated, free model) runs on scheduled
+  # runs by default; manual dispatch respects the with_openrouter input. The
+  # step no-ops when OPENROUTER_API_KEY is unset, so 'true' is harmless then.
   WITH_OPENROUTER: ${{ github.event_name == 'schedule' && 'true' || inputs.with_openrouter }}
   IS_DEEP: ${{ github.event.schedule == '37 4 * * *' || inputs.deep == 'true' }}
   # The only HF Hub consumer in this pipeline is the CLIP exterior filter
@@ -163,130 +154,25 @@ jobs:
           disown
           echo "Background plate-OCR backfill started (PID=$PID, log=/tmp/plate_backfill.log)"
 
-      - name: Ensure Ollama is running
-        if: env.WITH_LLM == 'true'
-        timeout-minutes: 5
-        run: |
-          # Settings.yaml points the runner at http://localhost:11434, so
-          # any binding that includes 127.0.0.1 (default) works. We no
-          # longer wrestle with OLLAMA_HOST=0.0.0.0 — see commit log: the
-          # menu-bar app's launchd auto-relaunch lost env vars and the
-          # DHCP-assigned IP drifted, both producing EHOSTUNREACH on the
-          # old hardcoded 192.168.1.77 URL.
-          DESIRED_PARALLEL=2
-          launchctl setenv OLLAMA_NUM_PARALLEL "$DESIRED_PARALLEL"
-          launchctl setenv OLLAMA_FLASH_ATTENTION 1
-
-          NEEDS_RESTART=0
-          if ! curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
-            NEEDS_RESTART=1
-          else
-            CURRENT=$(grep -o 'OLLAMA_NUM_PARALLEL:[0-9]*' /tmp/ollama.err.log 2>/dev/null | tail -1 | cut -d: -f2)
-            if [ "$CURRENT" != "$DESIRED_PARALLEL" ]; then
-              echo "Ollama NUM_PARALLEL=$CURRENT, want $DESIRED_PARALLEL — recycling"
-              NEEDS_RESTART=1
-            fi
-          fi
-          if [ "$NEEDS_RESTART" = "1" ]; then
-            pkill -9 -f "Ollama.app" 2>/dev/null || true
-            pkill -9 -f "ollama serve" 2>/dev/null || true
-            sleep 3
-            open -a /Applications/Ollama.app 2>/dev/null || true
-            for i in $(seq 1 30); do
-              curl -sf http://localhost:11434/api/tags >/dev/null 2>&1 && break
-              sleep 1
-            done
-          fi
-          if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
-            PARALLEL=$(grep -o 'OLLAMA_NUM_PARALLEL:[0-9]*' /tmp/ollama.err.log | tail -1 || echo "unknown")
-            echo "Ollama is running ($PARALLEL)"
-            curl -s http://localhost:11434/api/tags | python3 -c "import sys,json; tags=json.load(sys.stdin); print('Models:', [m['name'] for m in tags.get('models',[])])"
-          else
-            echo "::error::Ollama failed to start after 30s"
-            exit 1
-          fi
-
-      - name: Probe LAN partner Ollama (192.168.1.69)
-        # Diagnostic-only — sticky routing falls back to localhost if .69
-        # is unreachable, so the build keeps moving. Logs the actual
-        # network state so the next regression isn't a guessing game:
-        # ifconfig (which IP we have on Wi-Fi), netstat -rn (do we have
-        # a route to .69's subnet), arp (has .69 ever responded), and
-        # finally a curl with verbose output. Runs BEFORE smoke so that
-        # if smoke trips, the diagnostic data is already in the log.
-        if: env.WITH_LLM == 'true'
-        timeout-minutes: 2
-        continue-on-error: true
-        run: |
-          echo "=== runner own IP ==="
-          ipconfig getifaddr en0 2>/dev/null || true
-          ipconfig getifaddr en1 2>/dev/null || true
-          echo "=== route to 192.168.1.69 ==="
-          route -n get 192.168.1.69 2>&1 | head -10 || true
-          echo "=== ARP cache for 192.168.1.69 ==="
-          arp -n 192.168.1.69 2>&1 || true
-          echo "=== ping .69 ==="
-          ping -c 2 -W 2000 192.168.1.69 2>&1 | head -8 || true
-          echo "=== curl Ollama on .69 ==="
-          if curl -sf --max-time 5 http://192.168.1.69:11434/api/tags >/dev/null 2>&1; then
-            echo "✓ Ollama on 192.168.1.69:11434 reachable"
-          else
-            echo "::warning::192.168.1.69:11434 unreachable — enrich falls back to localhost"
-          fi
-
-      - name: Run Ollama smoke tests
-        # Live integration suite (tests/test_ollama_integration.py) — verifies
-        # localhost reachable, model present on every healthy backend, sticky
-        # pool weighted 2:1 with both online (collapses to localhost-only when
-        # .69 is offline — that's a skip, not a fail), and cross-backend
-        # overlap during fan-out. Runs only here on the self-hosted Mac
-        # (where Ollama lives); the GitHub-hosted Ubuntu Tests job filters
-        # smoke out via -m "not smoke".
-        # Health signal for the two-backend pool — it NO LONGER gates Scrape
-        # (that step now runs on !cancelled()), so a slow-backend flake here
-        # surfaces as a red check without starving data collection. The
-        # earlier diagnostic step (above) is already in the log to root-cause
-        # from. 12 min ceiling leaves room for a cold model-load on the .69
-        # box during warm-up without SIGKILLing an otherwise-healthy run.
-        if: env.WITH_LLM == 'true'
-        timeout-minutes: 12
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-        run: |
-          .venv/bin/pip install -q pytest
-          .venv/bin/pytest tests/test_ollama_integration.py -m smoke -v --tb=short
-
       - name: Scrape
-        # Decoupled from the LLM smoke step. A flake in the Ollama pool
-        # (e.g. a slow cold model-load on the .69 box tripping the
-        # concurrent-inference smoke test) previously left this step on the
-        # default if:success(), which silently SKIPPED scraping for days
-        # while enrich/train/upload kept re-shipping stale data. Scrape
-        # auto-falls back to raw-only when Ollama is unreachable, so running
-        # unconditionally is safe; a genuinely-broken local Ollama is still
-        # caught by the hard-exit in "Ensure Ollama is running".
+        # Runs on !cancelled() (not the default success()) so data collection
+        # is never silently skipped by an upstream flake. Scrape is raw-only —
+        # the Ollama inline-enrichment path was retired 2026-07-24; LLM
+        # enrichment now happens later in the value-gated OpenRouter step.
         if: ${{ !cancelled() }}
         env:
           PYTHONPATH: ${{ github.workspace }}
-        # Per-step timeout caps how long scrape can monopolise the budget.
-        # If LLM is the bottleneck and the inline pipeline backs up, the
-        # step gets SIGTERM'd at 90 min — cli._sigterm_handler drains the
-        # queue and saves what's enriched. Anything still pending is
-        # finished by the next step (`Enrich with LLM`), which now has its
-        # own 90-min slice instead of competing for the same 4h pool.
-        # Deep sweep walks all 200 pages instead of ~30, so we extend the
-        # cap to 150 min on its dedicated cron.
+        # Per-step timeout caps how long scrape can monopolise the 4h budget.
+        # On SIGTERM at the cap, cli._sigterm_handler drains the queue and
+        # saves what's collected. Deep sweep walks all 200 pages instead of
+        # ~30, so we extend the cap to 150 min on its dedicated cron.
         timeout-minutes: ${{ env.IS_DEEP == 'true' && 150 || 90 }}
-        # scrape auto-detects Ollama: if reachable → inline LLM enrichment,
-        # otherwise saves raw. When with_llm=false the previous step doesn't
-        # start Ollama, so this naturally falls back to raw-only.
         # Bump fd limit: the macOS self-hosted runner is launched with the
         # default 256 soft cap, which httpx connection pools (concurrency=5
-        # × OLX + SV + Ollama keep-alive) + SQLite saturate around the
-        # 90-min mark — every new socket then EAGAINs and the step burns
-        # the rest of its budget on `Resource temporarily unavailable`
-        # warnings without making progress. 4096 is well under the host's
-        # `kern.maxfilesperproc=32768` ceiling.
+        # × OLX + SV keep-alive) + SQLite saturate around the 90-min mark —
+        # every new socket then EAGAINs and the step burns the rest of its
+        # budget on `Resource temporarily unavailable` warnings without making
+        # progress. 4096 is well under the host's `kern.maxfilesperproc=32768`.
         run: |
           ulimit -n 4096
           if [ "$IS_DEEP" = "true" ]; then
@@ -295,21 +181,6 @@ jobs:
           else
             .venv/bin/python -m src.cli scrape
           fi
-
-      - name: Enrich with LLM
-        # Runs on success or scrape-side failure (timeout, exception) —
-        # NOT on cancellation. Cancellation means the concurrency rule
-        # killed us so a fresher run could start; spinning up enrich
-        # against a half-written DB just creates lock contention with
-        # the next run. With success() || failure() it still recovers
-        # from real scrape crashes that left llm_extras=NULL behind.
-        if: ${{ env.WITH_LLM == 'true' && (success() || failure()) }}
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-        timeout-minutes: 90
-        run: |
-          ulimit -n 4096
-          .venv/bin/python -m src.cli enrich --workers 6 --active-only
 
       - name: Backfill seller profiles
         # Resolves seller_uuid for newly-scraped listings (which only have
@@ -520,9 +391,9 @@ jobs:
 
       - name: Value-gated OpenRouter enrichment (top deals)
         # Cloud condition-NLP on the handful of genuinely-undervalued deals the
-        # fresh GBM model flags — INDEPENDENT of the retired Ollama pool (it's a
-        # free cloud call, so it runs on scheduled runs; gated on WITH_OPENROUTER
-        # which defaults true on schedule, NOT on WITH_LLM). Ranks all fresh
+        # fresh GBM model flags — the only LLM enrichment left after the local
+        # Ollama pool was retired. A free cloud call, so it runs on scheduled
+        # runs; gated on WITH_OPENROUTER (defaults true on schedule). Ranks all fresh
         # listings by GBM undervaluation via the production deal funnel, sends
         # only the top-K (bounded by a free-tier daily/per-run request budget in
         # data/openrouter_budget.json) to a free OpenRouter model, and writes
