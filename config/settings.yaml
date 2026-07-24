@@ -75,6 +75,52 @@ llm:
   # longer needed.
   num_ctx: 2048
 
+openrouter:
+  # Cloud LLM enrichment for the TOP DEALS only (value-gated). The local
+  # Ollama pool was retired 2026-07-24; this recovers condition NLP on the
+  # handful of genuinely-undervalued listings the GBM flags each day, via a
+  # FREE OpenRouter model. The API key is NOT stored here — it lives in the
+  # GitHub Actions secret OPENROUTER_API_KEY, injected as env into the
+  # "Value-gated OpenRouter enrichment" step. src/parser/openrouter_enrichment
+  # reads os.environ["OPENROUTER_API_KEY"]; a missing key makes the step a
+  # warn-and-skip no-op (same convention as TELEGRAM_BOT_TOKEN / CF hook).
+  base_url: "https://openrouter.ai/api/v1"
+  # Free models only, tried in order as a fallback chain. Free models are
+  # frequently upstream-rate-limited (HTTP 429) → on 429 we advance to the
+  # next model. Shortlist validated 2026-07-24: gemma-4-26b-a4b returns clean
+  # JSON in ~8 s; gemma-4-31b 429s often; gpt-oss-20b is the last resort.
+  models:
+    - "google/gemma-4-26b-a4b-it:free"
+    - "google/gemma-4-31b-it:free"
+    - "openai/gpt-oss-20b:free"
+  temperature: 0.1
+  max_tokens: 500     # richer schema (base 3 fields + condition NLP + red_flags)
+  max_chars: 2500
+  timeout_seconds: 90
+  max_retries: 0      # 0 = no same-model retry; a free-model 429 is upstream
+                      # congestion, so advance the fallback chain instead of
+                      # burning budget retrying the same (stuck) model.
+  retry_backoff_seconds: 1.0  # brief pause before trying the next model on 429/5xx
+  referer: "https://olx-car-parser.permikov134.workers.dev"
+  title: "olx-car-parser"
+  # Free-tier daily ceiling is ~50 requests/day; stay under it. Budget is in
+  # REQUESTS (each POST counts, incl. 429-triggered fallback attempts), tracked
+  # per-UTC-day in the state file (auto-resets at midnight). Each listing is
+  # normally 1 request. per_run_request_cap spreads spend across the day's
+  # scheduled runs (5 shallow + 1 deep).
+  daily_request_budget: 40
+  per_run_request_cap: 12
+  budget_state_file: "data/openrouter_budget.json"
+  # Pre-LLM value gate — reproduces the non-LLM half of the deal funnel so we
+  # only pay for genuinely-undervalued listings. Applied on top of
+  # compute_signals (which already enforces band ≤ 0.40, net ≥ €500, 0<disc≤60%).
+  gate:
+    min_price_eur: 4000     # skip the condition-blind cheap tail (< €4k)
+    min_spec_fill: 0.5      # need ≥2 of 4 discriminative specs
+    max_band_pct: 0.40      # (informational; compute_signals already gates this)
+    min_discount_pct: 0.0   # undervaluation_pct is a percent (GBM discount)
+    max_discount_pct: 60.0
+
 alerts:
   # Bot token is NOT stored here — it lives in the GitHub Actions secret
   # TELEGRAM_BOT_TOKEN, injected as env into the "Send Telegram alerts" step.
