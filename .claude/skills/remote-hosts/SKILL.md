@@ -7,6 +7,13 @@ description: Map of the LAN machines this project depends on. Two hosts — the 
 
 The project runs on two LAN machines, not on this dev Mac. This skill is the map.
 
+> **Status 2026-07-24**: the Ollama inference pool went unhealthy (scrape-host
+> `localhost` `/api/generate` hung to timeout; the `.69` backend returned HTTP
+> 500) and was **stopped on both hosts**. Scheduled scrape runs are now
+> raw-only (`WITH_LLM=false` in `scrape.yml`) — LLM enrichment is OFF until the
+> pool is revived and `WITH_LLM` flipped back. See each host's "Ollama
+> lifecycle" note below before assuming Ollama is up.
+
 ## Hosts
 
 ### Scrape host — `anastasia@192.168.1.77`
@@ -17,6 +24,12 @@ The project runs on two LAN machines, not on this dev Mac. This skill is the map
   - GitHub Actions self-hosted runner — executes `.github/workflows/scrape.yml`.
   - Streamlit dashboard.
   - Local Ollama on `http://localhost:11434` (`NUM_PARALLEL=2`, ctx 1536 — capped by Metal at 8 GB; higher OOMs).
+- **Ollama lifecycle (macOS)**: kept alive by a **custom launchd agent** `com.olx-car-parser.ollama` (`~/Library/LaunchAgents/com.olx-car-parser.ollama.plist`, since 2026-04-26, `KeepAlive`) — plus the stock `com.ollama.ollama`. A plain `kill`/quit respawns within seconds. To stop it **and keep it down**:
+  ```bash
+  launchctl unload -w ~/Library/LaunchAgents/com.olx-car-parser.ollama.plist
+  launchctl bootout gui/$(id -u)/com.ollama.ollama 2>/dev/null; pkill -9 -f ollama
+  ```
+  ⚠️ The workflow step **"Ensure Ollama is running"** relaunches it via `open -a Ollama.app` on any `WITH_LLM=true` run — so a manual stop is undone on the next such run. Since 2026-07-24 scheduled runs are `WITH_LLM=false`, so they no longer touch it; only a manual `workflow_dispatch with_llm=true` (or reload of the agent) brings it back.
 - **Owns**: `olx_cars.db` (the only authoritative copy — see the `release-db` skill).
 - **SSH**:
   ```bash
@@ -29,7 +42,10 @@ The project runs on two LAN machines, not on this dev Mac. This skill is the map
 
 - **OS / hw**: Windows 11, 16 GB RAM, MX230 GPU (4 GB VRAM).
 - **Role**: second Ollama backend in the inference pool. Model `qwen3:4b-instruct`. Used by `_pick_ollama_url()` in `src/parser/llm_enrichment.py` via sticky-per-thread round-robin against `config/settings.yaml → llm.ollama_urls`.
-- **Endpoint**: `http://192.168.1.69:11434` (HTTP, not SSH — no shell access wired up).
+- **Endpoint**: `http://192.168.1.69:11434`.
+- **SSH**: `ssh permi@192.168.1.69` — **key-auth works** (default shell is `cmd.exe`; use `powershell -NoProfile -EncodedCommand <base64 UTF-16LE>` to dodge nested-quote mangling). The older "HTTP only, no shell access wired up" note is **stale** — SSH is wired up (reachable over LAN and Tailscale).
+- **Ollama lifecycle (Windows)**: runs as a **Windows service** `Ollama` (DisplayName "Ollama LLM Server", StartType Automatic) — *not* a tray app, *not* NSSM. Stop it with `ssh permi@192.168.1.69 'net stop Ollama'`; it restarts on reboot (Automatic) unless set Manual/Disabled.
+- **⚠️ Not ours — don't touch**: this box also hosts an **unrelated** project (`first-message-builder` / `vacancy_service`) under **NSSM services** `FirstMessageBuilder` / `VacancyService` / `VacancyInbox`, served by `waitress` on `127.0.0.1:8000`, exposed via a `cloudflared` tunnel (`firstmessage`) and reachable over `tailscaled`. Each service shows as a **pair** — a `venv\Scripts\python.exe` launcher stub (MEM ~0) → `C:\Python311\python.exe` worker (holds the port). Those are one deployment, **not** duplicate instances; killing the stub breaks the live worker.
 - **Required server config**:
   - `OLLAMA_HOST=0.0.0.0` (otherwise binds loopback only, LAN can't reach it).
   - Windows Firewall inbound rule on TCP 11434.
@@ -69,8 +85,9 @@ SSH to the resolved IP and update this skill's "Hosts" section if the address ha
 
 ```bash
 # Scrape host: SSH liveness + DB freshness
+# NB: there is NO scraped_at column — freshness = MAX(last_seen_at) or the .db mtime.
 sshpass -p 1234 ssh anastasia@192.168.1.77 \
-  "sqlite3 ~/olx-car-parser/data/olx_cars.db 'SELECT MAX(scraped_at) FROM listings;'"
+  "sqlite3 ~/olx-car-parser/data/olx_cars.db 'SELECT MAX(last_seen_at) FROM listings;'"
 
 # LLM partner: HTTP liveness + model loaded
 curl -sf --max-time 5 http://192.168.1.69:11434/api/tags | jq -r '.models[].name'
