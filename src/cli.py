@@ -818,6 +818,136 @@ def enrich(
     log.info("Enriched %d listings (%d failed).", enriched, failed)
 
 
+@app.command("enrich-openrouter")
+def enrich_openrouter(
+    daily_budget: int = typer.Option(
+        None, help="Override daily OpenRouter request budget (free tier ~50/day). "
+                   "Default from config/settings.yaml openrouter.daily_request_budget."),
+    per_run_cap: int = typer.Option(
+        None, help="Override per-run request cap. Default from config."),
+    dry_run: bool = typer.Option(
+        False, help="Rank + select candidates and print them, but make NO API calls "
+                    "and touch neither the DB nor the budget state file."),
+):
+    """Value-gated enrichment of the top deals via a free OpenRouter model.
+
+    The GBM value model needs no LLM to price a listing, so we rank ALL fresh
+    listings by undervaluation FIRST (via the production deal funnel) and send
+    only the top-K most-undervalued, non-cheap-tail deals to a free OpenRouter
+    model for condition NLP. Spend is bounded by a daily + per-run request
+    budget (free tier ≈ 50/day) tracked in a state file. Safe to run on every
+    scheduled scrape: no-ops (exit 0) when OPENROUTER_API_KEY is unset, when
+    the budget is exhausted, or when no fresh model / no candidate deals exist.
+    """
+    from sqlalchemy import func as sa_func
+    from src.models.listing import Listing
+    from src.parser.openrouter_enrichment import (
+        get_openrouter_config, openrouter_available, openrouter_corrections,
+        enrich_from_description as or_enrich, load_budget, save_budget,
+    )
+    from src.analytics.value_gate import rank_deal_olx_ids
+
+    cfg = get_openrouter_config()
+    if daily_budget is not None:
+        cfg["daily_request_budget"] = daily_budget
+    if per_run_cap is not None:
+        cfg["per_run_request_cap"] = per_run_cap
+
+    # --dry-run only ranks + prints candidates: it makes no API calls, so it
+    # needs neither the key nor budget headroom (useful for validating the
+    # gate anywhere, e.g. on the scrape host without the secret exported).
+    if not dry_run and not openrouter_available():
+        log.warning("OPENROUTER_API_KEY not set — skipping OpenRouter enrichment.")
+        return
+
+    budget = load_budget(cfg["budget_state_file"])
+    daily_remaining = max(0, int(cfg["daily_request_budget"]) - budget["requests"])
+    run_request_budget = min(int(cfg["per_run_request_cap"]), daily_remaining)
+    if not dry_run and run_request_budget <= 0:
+        log.info("OpenRouter daily budget exhausted (%d/%d used today) — skipping.",
+                 budget["requests"], cfg["daily_request_budget"])
+        return
+
+    init_db()
+    session = get_session()
+
+    # Exclude listings already OpenRouter-enriched (marker stored in llm_extras).
+    already = {
+        oid for (oid,) in session.query(Listing.olx_id).filter(
+            sa_func.json_extract(Listing.llm_extras, "$._or_enriched").isnot(None)
+        ).all()
+    }
+
+    # Fetch a few more candidates than the request budget — some are skipped
+    # (too-short descriptions cost 0 requests) so we can still fill the budget.
+    # For a dry run the budget may be 0, so fall back to the per-run cap to show
+    # a meaningful candidate list.
+    candidate_limit = (run_request_budget or int(cfg["per_run_request_cap"])) + 5
+    ranked_ids = rank_deal_olx_ids(
+        session, gate=cfg["gate"], limit=candidate_limit, exclude_ids=already,
+    )
+    if not ranked_ids:
+        log.info("OpenRouter gate: no candidate deals to enrich.")
+        return
+
+    if dry_run:
+        log.info("DRY RUN — %d candidate deals (run budget %d req, daily remaining %d):",
+                 len(ranked_ids), run_request_budget, daily_remaining)
+        for oid in ranked_ids:
+            log.info("  candidate olx_id=%s", oid)
+        return
+
+    rows = {
+        l.olx_id: l for l in session.query(Listing).filter(Listing.olx_id.in_(ranked_ids)).all()
+    }
+    log.info("OpenRouter enrichment: up to %d requests this run (daily remaining %d), "
+             "models=%s", run_request_budget, daily_remaining, cfg["models"])
+
+    requests_spent = 0
+    enriched = 0
+    failed = 0
+    consecutive_failures = 0
+    for oid in ranked_ids:
+        if requests_spent >= run_request_budget:
+            break
+        listing = rows.get(oid)
+        if listing is None:
+            continue
+        remaining = run_request_budget - requests_spent
+        result, n_req = or_enrich(
+            listing.description or "", listing.title or "", cfg, request_cap=remaining,
+        )
+        requests_spent += n_req
+        if result:
+            listing._llm_extras = result
+            corrections = openrouter_corrections(listing)
+            if "damage_severity" in corrections:
+                result["damage_severity"] = corrections["damage_severity"]
+            result["_or_enriched"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            listing.llm_extras = json.dumps(result, ensure_ascii=False)
+            for field, value in corrections.items():
+                if hasattr(listing, field):
+                    setattr(listing, field, value)
+            enriched += 1
+            consecutive_failures = 0
+            session.commit()
+            log.info("OpenRouter enriched %s (%d/%d req)", oid, requests_spent, run_request_budget)
+        elif n_req > 0:
+            # A real API attempt that failed (429 chain exhausted / bad output).
+            failed += 1
+            consecutive_failures += 1
+            if consecutive_failures >= 5:
+                log.warning("5 consecutive OpenRouter failures (rate-limited?) — stopping run.")
+                break
+        # n_req == 0 → description too short to enrich; skip silently.
+
+    session.commit()
+    save_budget(cfg["budget_state_file"], budget["requests"] + requests_spent)
+    log.info("OpenRouter enrichment done: %d enriched, %d failed, %d requests "
+             "(daily total %d/%d).", enriched, failed, requests_spent,
+             budget["requests"] + requests_spent, cfg["daily_request_budget"])
+
+
 @app.command("verify-photos")
 def verify_photos(
     threshold: float = typer.Option(0.20, help="P(damaged) threshold (0.20 = production default, F1=0.818 R=100%% on gold)."),

@@ -25,6 +25,10 @@ on:
         description: "Deep sweep (no early-stop, walk all pages — refreshes prices on the stale tail)"
         type: boolean
         default: false
+      with_openrouter:
+        description: "Value-gated cloud LLM enrichment of top deals via a free OpenRouter model"
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -40,6 +44,12 @@ permissions:
 # Deep sweep fires on the dedicated 04:00 cron OR when manually requested.
 env:
   WITH_LLM: ${{ github.event_name == 'schedule' && 'false' || inputs.with_llm }}
+  # OpenRouter cloud enrichment is INDEPENDENT of the retired Ollama pool — it
+  # is a value-gated call to a free cloud model, so it runs on scheduled runs
+  # (default true on schedule, unlike WITH_LLM). Manual dispatch respects the
+  # with_openrouter input. The step itself no-ops when OPENROUTER_API_KEY is
+  # unset, so this being 'true' is harmless if the secret was never added.
+  WITH_OPENROUTER: ${{ github.event_name == 'schedule' && 'true' || inputs.with_openrouter }}
   IS_DEEP: ${{ github.event.schedule == '37 4 * * *' || inputs.deep == 'true' }}
   # The only HF Hub consumer in this pipeline is the CLIP exterior filter
   # (openai/clip-vit-base-patch32) loaded by the photo-verify steps. Its
@@ -507,6 +517,34 @@ jobs:
               sys.exit(1)
           print('load_model accepted the fresh bundle')
           "
+
+      - name: Value-gated OpenRouter enrichment (top deals)
+        # Cloud condition-NLP on the handful of genuinely-undervalued deals the
+        # fresh GBM model flags — INDEPENDENT of the retired Ollama pool (it's a
+        # free cloud call, so it runs on scheduled runs; gated on WITH_OPENROUTER
+        # which defaults true on schedule, NOT on WITH_LLM). Ranks all fresh
+        # listings by GBM undervaluation via the production deal funnel, sends
+        # only the top-K (bounded by a free-tier daily/per-run request budget in
+        # data/openrouter_budget.json) to a free OpenRouter model, and writes
+        # condition columns (desc_mentions_*, mechanical_condition, urgency,
+        # warranty, damage_severity) back to the DB. Placed AFTER train/verify
+        # (so a fair value exists to rank on) and BEFORE build-dashboard/hot_deals
+        # (so the new fields propagate into signals + decisions with no retrain).
+        # No-ops (exit 0) when the OPENROUTER_API_KEY secret is unset or the daily
+        # budget is spent, and `|| warn` keeps a genuine error non-fatal — the
+        # deal feed still builds from the raw pipeline either way.
+        if: ${{ !cancelled() && env.WITH_OPENROUTER == 'true' && steps.train_model.outputs.train_rc == '0' }}
+        timeout-minutes: 20
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          if [ -z "$OPENROUTER_API_KEY" ]; then
+            echo "::warning::OPENROUTER_API_KEY secret not set — skipping OpenRouter enrichment. Add it in repo Settings → Secrets and variables → Actions."
+            exit 0
+          fi
+          .venv/bin/python -m src.cli enrich-openrouter \
+            || echo "::warning::OpenRouter enrichment failed — non-fatal; deals still build from the raw pipeline"
 
       - name: Build dashboard witnesses
         # Bakes predict_prices / TreeSHAP / anomaly / hazard / signals into
