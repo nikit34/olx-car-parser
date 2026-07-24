@@ -190,6 +190,27 @@ def test_call_openrouter_401_aborts_immediately(monkeypatch, _cfg):
     assert n == 1  # no fallback attempts on a hard 4xx
 
 
+def test_call_openrouter_404_advances_to_next_model(monkeypatch, _cfg):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    # model1 delisted (404) → should try model2, which succeeds
+    fake = _FakeClient([
+        _Resp(404, text="No endpoints found"),
+        _Resp(200, _content({"sub_model": "1.6 TDI"})),
+    ])
+    monkeypatch.setattr(ore.httpx, "Client", lambda **kw: fake)
+    out, n = ore.call_openrouter("some long enough description text here", _cfg)
+    assert out == {"sub_model": "1.6 TDI"}
+    assert n == 2
+
+
+def test_call_openrouter_402_no_credits_aborts(monkeypatch, _cfg):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    fake = _FakeClient([_Resp(402, text="insufficient credits")])
+    monkeypatch.setattr(ore.httpx, "Client", lambda **kw: fake)
+    out, n = ore.call_openrouter("some long enough description text here", _cfg)
+    assert out is None and n == 1  # account-level → no fallback
+
+
 def test_call_openrouter_no_key(monkeypatch, _cfg):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     out, n = ore.call_openrouter("text", _cfg)

@@ -286,10 +286,17 @@ def call_openrouter(text: str, cfg: dict, *, request_cap: int | None = None) -> 
                 if resp.status_code == 429 or resp.status_code >= 500:
                     logger.info("OpenRouter %s HTTP %s (attempt %d)", model, resp.status_code, attempt + 1)
                     continue  # retry same model, then fall through to next
-                # 4xx other than 429 (401/402/400) → hard stop, no point retrying
-                logger.warning("OpenRouter %s HTTP %s — aborting: %s",
+                if resp.status_code in (401, 402, 403):
+                    # Account-level failure (bad key / no credits / forbidden) —
+                    # no other model in the chain will help, so abort the call.
+                    logger.warning("OpenRouter account error HTTP %s — aborting: %s",
+                                   resp.status_code, resp.text[:200])
+                    return None, n_requests
+                # Any other 4xx (400 bad request, 404 model delisted, …) is
+                # model-specific — advance to the next model rather than abort.
+                logger.warning("OpenRouter %s HTTP %s — trying next model: %s",
                                model, resp.status_code, resp.text[:200])
-                return None, n_requests
+                break
     return None, n_requests
 
 
