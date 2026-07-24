@@ -29,10 +29,17 @@ on:
 permissions:
   contents: write
 
-# Schedule always runs with LLM; manual trigger respects the input.
+# Ollama pool retired 2026-07-24 — the two-backend inference pool (scrape-host
+# localhost + the .69 Windows box) went unhealthy (localhost /api/generate
+# hung, .69 returned HTTP 500) and every scheduled run burned its budget on
+# dead-backend retries before the smoke step painted the run red. Scheduled
+# runs now go raw-only (WITH_LLM=false) so scrape stays green and fast; a
+# manual workflow_dispatch with with_llm=true re-enables enrichment once the
+# Ollama pool is healthy again (that path also brings Ollama back up on the
+# scrape host via the "Ensure Ollama is running" step).
 # Deep sweep fires on the dedicated 04:00 cron OR when manually requested.
 env:
-  WITH_LLM: ${{ github.event_name == 'schedule' && 'true' || inputs.with_llm }}
+  WITH_LLM: ${{ github.event_name == 'schedule' && 'false' || inputs.with_llm }}
   IS_DEEP: ${{ github.event.schedule == '37 4 * * *' || inputs.deep == 'true' }}
   # The only HF Hub consumer in this pipeline is the CLIP exterior filter
   # (openai/clip-vit-base-patch32) loaded by the photo-verify steps. Its
