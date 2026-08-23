@@ -1,0 +1,38 @@
+{
+ "672949459_1": [],
+ "671554909_2": [
+  {
+   "type": "dent_crease",
+   "note": "front wing dented above the arch",
+   "box": [
+    316,
+    331,
+    922,
+    640
+   ]
+  },
+  {
+   "type": "dent_crease",
+   "note": "crease running into the door",
+   "box": [
+    733,
+    533,
+    1056,
+    748
+   ]
+  }
+ ],
+ "672948263_1": [],
+ "672958976_3": [
+  {
+   "type": "dent_crease",
+   "note": "front bumper corner damaged",
+   "box": [
+    46,
+    402,
+    228,
+    553
+   ]
+  }
+ ]
+}
