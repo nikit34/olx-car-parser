@@ -1,0 +1,39 @@
+{
+ "672211144_1": [
+  {
+   "type": "dent_crease",
+   "note": "front bumper corner gouged under the headlight",
+   "box": [
+    198,
+    348,
+    359,
+    449
+   ]
+  }
+ ],
+ "672884229_0": [
+  {
+   "type": "scratch",
+   "note": "long mark across the bonnet",
+   "box": [
+    181,
+    351,
+    897,
+    602
+   ]
+  }
+ ],
+ "672916469_3": [
+  {
+   "type": "dent_crease",
+   "note": "front bumper corner damaged and misaligned",
+   "box": [
+    0,
+    277,
+    218,
+    439
+   ]
+  }
+ ],
+ "672884229_1": []
+}
