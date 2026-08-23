@@ -344,6 +344,11 @@ def _parse_json_object(content) -> dict | None:
 _GEMINI_CALLS: deque[float] = deque()
 _GEMINI_LOCK = threading.Lock()
 
+# Models that answered 400 to thinkingConfig, remembered for the life of the
+# process. Without the memo the discovery costs one wasted request PER LISTING
+# (a 20-listing run would burn 20 of them); with it, once per run.
+_NO_THINKING_MODELS: set[str] = set()
+
 
 def _reserve_gemini_slot(pcfg: dict) -> bool:
     """Take a slot in the rolling minute window. False if none frees up in time."""
@@ -396,6 +401,7 @@ def call_gemini(text: str, cfg: dict, *, request_cap: int | None = None) -> tupl
             # Gemini 2.5 "thinks" out of the same token budget, which truncates
             # the JSON (finishReason=MAX_TOKENS). We want extraction, not
             # reasoning — spend the whole budget on the object.
+            # Not every model accepts this — see the 400 retry below.
             "thinkingConfig": {"thinkingBudget": 0},
             # Native JSON mode: the server constrains decoding, so there are no
             # ```fences``` or prose to strip. _parse_json_object still runs as
@@ -412,13 +418,19 @@ def call_gemini(text: str, cfg: dict, *, request_cap: int | None = None) -> tupl
     with httpx.Client(timeout=httpx.Timeout(float(pcfg.get("timeout_seconds", 60)), connect=10.0)) as client:
         for model in pcfg["models"]:
             url = f"{base}/models/{model}:generateContent"
+            # gemini-flash-lite rejects thinkingConfig outright ("400 Request
+            # contains an invalid argument") on text AND images, while the
+            # flash models need it — without it they spend the token budget
+            # thinking and truncate the JSON. So carry the knob by default,
+            # learn which models refuse it, and remember that.
+            payload = _payload_for(payload_base, model)
             for attempt in range(1, attempts + 1):
                 if request_cap is not None and n_requests >= request_cap:
                     return None, n_requests
                 if not _reserve_gemini_slot(pcfg):
                     return None, n_requests
                 try:
-                    resp = client.post(url, json=payload_base, headers=headers)
+                    resp = client.post(url, json=payload, headers=headers)
                     n_requests += 1
                 except httpx.RequestError as e:
                     logger.warning("Gemini connection error (%s): %s", model, e)
@@ -449,10 +461,26 @@ def call_gemini(text: str, cfg: dict, *, request_cap: int | None = None) -> tupl
                     logger.warning("Gemini auth error HTTP %s — abandoning provider: %s",
                                    resp.status_code, resp.text[:200])
                     return None, n_requests
+                if resp.status_code == 400 and "thinkingConfig" in payload["generationConfig"]:
+                    # Not a model failure — a payload this model won't take.
+                    # Remember it, strip the knob, retry immediately.
+                    logger.info("Gemini %s rejects thinkingConfig — retrying without it", model)
+                    _NO_THINKING_MODELS.add(model)
+                    payload = _payload_for(payload_base, model)
+                    continue
                 logger.warning("Gemini %s HTTP %s — trying next model: %s",
                                model, resp.status_code, resp.text[:200])
                 break
     return None, n_requests
+
+
+def _payload_for(payload_base: dict, model: str) -> dict:
+    """The request body for *model*, minus any knob it is known to reject."""
+    if model not in _NO_THINKING_MODELS:
+        return payload_base
+    gen = {k: v for k, v in payload_base["generationConfig"].items()
+           if k != "thinkingConfig"}
+    return dict(payload_base, generationConfig=gen)
 
 
 def _gemini_text(resp) -> str | None:

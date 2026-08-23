@@ -895,3 +895,58 @@ def test_gate_survives_listings_without_a_description_column(monkeypatch):
     ])
     _gate_with_listings(monkeypatch, listings, signals)
     assert value_gate.rank_deal_olx_ids(None, gate=_GATE, limit=5) == ["x"]
+
+
+# ---------------------------------------------------------------------------
+# thinkingConfig — needed by flash, rejected by flash-lite
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _clear_thinking_memo():
+    ce._NO_THINKING_MODELS.clear()
+    yield
+    ce._NO_THINKING_MODELS.clear()
+
+
+def test_gemini_strips_thinking_knob_when_the_model_rejects_it(monkeypatch, _cfg):
+    """flash-lite answers 400 to thinkingConfig — that's a payload fault, not a model fault."""
+    monkeypatch.setenv("GEMINI_API_KEY", "g-test")
+    fake = _FakeClient([
+        _Resp(400, text='{"error":{"code":400,"message":"Request contains an invalid argument."}}'),
+        _Resp(200, _gem({"sub_model": "320d"})),
+    ])
+    monkeypatch.setattr(ce.httpx, "Client", lambda **kw: fake)
+    out, n = ce.call_gemini("some long enough description text here", _cfg)
+    assert out == {"sub_model": "320d"} and n == 2
+    assert "thinkingConfig" in fake.calls[0]["generationConfig"]
+    assert "thinkingConfig" not in fake.calls[1]["generationConfig"]
+
+
+def test_thinking_rejection_is_remembered_across_calls(monkeypatch, _cfg):
+    """Otherwise the discovery costs a wasted request on every single listing."""
+    monkeypatch.setenv("GEMINI_API_KEY", "g-test")
+    first = _FakeClient([
+        _Resp(400, text="invalid argument"),
+        _Resp(200, _gem({"a": 1})),
+    ])
+    monkeypatch.setattr(ce.httpx, "Client", lambda **kw: first)
+    ce.call_gemini("some long enough description text here", _cfg)
+
+    second = _FakeClient([_Resp(200, _gem({"b": 2}))])
+    monkeypatch.setattr(ce.httpx, "Client", lambda **kw: second)
+    out, n = ce.call_gemini("another long enough description text here", _cfg)
+    assert out == {"b": 2}
+    assert n == 1                                        # no wasted probe this time
+    assert "thinkingConfig" not in second.calls[0]["generationConfig"]
+
+
+def test_bad_key_400_is_not_mistaken_for_a_thinking_rejection(monkeypatch, _cfg):
+    monkeypatch.setenv("GEMINI_API_KEY", "bad")
+    fake = _FakeClient([
+        _Resp(400, text='{"error":{"message":"API key not valid. Please pass a valid API key."}}'),
+        _Resp(200, _gem({"a": 1})),
+    ])
+    monkeypatch.setattr(ce.httpx, "Client", lambda **kw: fake)
+    out, n = ce.call_gemini("some long enough description text here", _cfg)
+    assert out is None and n == 1
+    assert not ce._NO_THINKING_MODELS
