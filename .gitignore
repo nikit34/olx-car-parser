@@ -43,3 +43,15 @@ node_modules/
 .wrangler/
 .dev.vars
 *.log
+
+# Damage-seg dataset: annotations are the artefact worth keeping; photos,
+# generated labels and overlays are bulky and reproducible from ann/ + harvest.
+data/damage_seg/raw/
+data/damage_seg/images/
+data/damage_seg/overlays/
+data/damage_seg/labels/
+data/damage_seg/subset/
+data/damage_seg/manifest.jsonl
+data/damage_seg/exterior_filter.json
+data/damage_seg/worklist.json
+data/damage_seg/dataset.yaml

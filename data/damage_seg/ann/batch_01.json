@@ -1,0 +1,14 @@
+{
+ "648578027_0": [],
+ "666541764_0": [],
+ "672500795_0": [],
+ "672431556_0": [
+   {"box": [0, 250, 170, 530], "type": "dent_crease", "note": "crumpled front left wing, bumper corner gone"},
+   {"box": [295, 225, 470, 345], "type": "cracked_glass", "note": "crack lines across windscreen"}
+ ],
+ "672431556_1": [
+   {"box": [85, 285, 330, 430], "type": "exposed_structure", "note": "headlight missing, cavity + structure visible"},
+   {"box": [65, 380, 260, 520], "type": "detached_part", "note": "front bumper torn and hanging"},
+   {"box": [150, 200, 430, 330], "type": "dent_crease", "note": "bonnet buckled, wing crumpled"}
+ ]
+}
