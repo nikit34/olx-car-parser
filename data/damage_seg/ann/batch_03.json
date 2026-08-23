@@ -1,0 +1,20 @@
+{
+ "672810621_1": [
+   {"box": [165, 350, 830, 500], "type": "dent_crease", "note": "bonnet buckled and lifted"},
+   {"box": [70, 600, 830, 820], "type": "detached_part", "note": "front bumper torn away, hanging"},
+   {"box": [75, 495, 260, 600], "type": "broken_lamp", "note": "left headlight dislodged"},
+   {"box": [700, 490, 880, 610], "type": "broken_lamp", "note": "right headlight smashed"},
+   {"box": [300, 610, 800, 760], "type": "exposed_structure", "note": "radiator and crossmember exposed"}
+ ],
+ "672810621_3": [
+   {"box": [95, 250, 900, 700], "type": "dent_crease", "note": "bonnet heavily buckled"},
+   {"box": [420, 720, 780, 900], "type": "broken_lamp", "note": "right headlight smashed"},
+   {"box": [0, 480, 260, 800], "type": "exposed_structure", "note": "front left corner crushed open"},
+   {"box": [400, 60, 690, 250], "type": "airbag_deployed", "note": "airbag visible through windscreen"}
+ ],
+ "672986301_2": [
+   {"box": [0, 380, 900, 800], "type": "dent_crease", "note": "rear crumple zone, panel and bumper folded"},
+   {"box": [0, 60, 250, 330], "type": "broken_lamp", "note": "tail light cracked at inner corner"},
+   {"box": [370, 500, 700, 870], "type": "exposed_structure", "note": "bumper torn open, structure visible"}
+ ]
+}

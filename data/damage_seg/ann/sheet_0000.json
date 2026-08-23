@@ -1,0 +1,120 @@
+{
+ "672810621_0": [
+  {
+   "type": "dent_crease",
+   "note": "bonnet and wing crumpled",
+   "box": [
+    0,
+    315,
+    784,
+    821
+   ]
+  },
+  {
+   "type": "exposed_structure",
+   "note": "front bumper gone, structure open",
+   "box": [
+    0,
+    734,
+    524,
+    1074
+   ]
+  },
+  {
+   "type": "cracked_glass",
+   "note": "windscreen shattered",
+   "box": [
+    424,
+    221,
+    830,
+    561
+   ]
+  }
+ ],
+ "672810621_2": [
+  {
+   "type": "cracked_glass",
+   "note": "windscreen shattered",
+   "box": [
+    366,
+    418,
+    761,
+    616
+   ]
+  },
+  {
+   "type": "airbag_deployed",
+   "note": "airbag hanging out",
+   "box": [
+    326,
+    411,
+    524,
+    559
+   ]
+  },
+  {
+   "type": "exposed_structure",
+   "note": "engine bay opened by impact",
+   "box": [
+    514,
+    595,
+    1016,
+    877
+   ]
+  },
+  {
+   "type": "dent_crease",
+   "note": "front wing crumpled",
+   "box": [
+    634,
+    771,
+    1086,
+    1011
+   ]
+  }
+ ],
+ "672925369_3": [
+  {
+   "type": "torn_panel",
+   "note": "bumper torn through",
+   "box": [
+    501,
+    384,
+    719,
+    597
+   ]
+  },
+  {
+   "type": "dent_crease",
+   "note": "bumper creased and scuffed",
+   "box": [
+    149,
+    286,
+    522,
+    441
+   ]
+  }
+ ],
+ "671985540_1": [
+  {
+   "type": "exposed_structure",
+   "note": "front end destroyed",
+   "box": [
+    222,
+    519,
+    922,
+    963
+   ]
+  },
+  {
+   "type": "dent_crease",
+   "note": "wing and bonnet crumpled",
+   "box": [
+    209,
+    331,
+    814,
+    667
+   ]
+  }
+ ]
+}

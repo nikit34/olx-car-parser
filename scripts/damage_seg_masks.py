@@ -53,7 +53,7 @@ CLASS_NAMES = ["damage"]
 # side too, on the evidence.
 SAM_SUBTYPES = {
     "broken_lamp", "missing_part", "detached_part",
-    "shattered_glass", "torn_panel", "burnt",
+    "shattered_glass", "torn_panel", "burnt", "airbag_deployed",
 }
 BOX_SUBTYPES = {"dent_crease", "scratch", "paint_damage", "misaligned_panel",
                 "cracked_glass", "exposed_structure"}

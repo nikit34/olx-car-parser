@@ -1,0 +1,90 @@
+{
+ "672986301_3": [
+  {
+   "type": "dent_crease",
+   "note": "side and rear quarter crumpled",
+   "box": [
+    148,
+    324,
+    922,
+    829
+   ]
+  },
+  {
+   "type": "torn_panel",
+   "note": "rear bumper torn",
+   "box": [
+    424,
+    728,
+    922,
+    936
+   ]
+  }
+ ],
+ "672864432_0": [
+  {
+   "type": "torn_panel",
+   "note": "front bumper and grille broken open",
+   "box": [
+    238,
+    348,
+    622,
+    459
+   ]
+  },
+  {
+   "type": "dent_crease",
+   "note": "bonnet leading edge crumpled",
+   "box": [
+    278,
+    277,
+    601,
+    348
+   ]
+  }
+ ],
+ "672997434_1": [
+  {
+   "type": "exposed_structure",
+   "note": "front left crushed open",
+   "box": [
+    0,
+    495,
+    504,
+    980
+   ]
+  },
+  {
+   "type": "cracked_glass",
+   "note": "windscreen shattered",
+   "box": [
+    145,
+    136,
+    666,
+    495
+   ]
+  },
+  {
+   "type": "dent_crease",
+   "note": "wing and door creased",
+   "box": [
+    397,
+    442,
+    756,
+    890
+   ]
+  }
+ ],
+ "672914444_2": [
+  {
+   "type": "dent_crease",
+   "note": "bumper deformed, trim hanging",
+   "box": [
+    228,
+    298,
+    622,
+    419
+   ]
+  }
+ ]
+}

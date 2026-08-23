@@ -1,0 +1,12 @@
+{
+ "672864432_1": [
+   {"box": [200, 600, 850, 790], "type": "torn_panel", "note": "front bumper split open"},
+   {"box": [140, 560, 380, 700], "type": "dent_crease", "note": "bumper corner creased under headlight"},
+   {"box": [530, 430, 830, 620], "type": "dent_crease", "note": "bonnet edge crumpled at badge"}
+ ],
+ "672926049_3": [
+   {"box": [150, 240, 470, 460], "type": "dent_crease", "note": "rear door heavily dented"},
+   {"box": [400, 240, 500, 500], "type": "dent_crease", "note": "door gap forced open at pillar"},
+   {"box": [130, 430, 620, 530], "type": "dent_crease", "note": "sill creased along impact line"}
+ ]
+}

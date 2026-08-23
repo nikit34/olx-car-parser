@@ -1,0 +1,69 @@
+{
+ "672894428_0": [
+  {
+   "type": "dent_crease",
+   "note": "front right wing crumpled",
+   "box": [
+    489,
+    430,
+    885,
+    733
+   ]
+  },
+  {
+   "type": "exposed_structure",
+   "note": "headlight gone, cavity open",
+   "box": [
+    410,
+    575,
+    674,
+    746
+   ]
+  },
+  {
+   "type": "detached_part",
+   "note": "front bumper dropped",
+   "box": [
+    239,
+    726,
+    700,
+    918
+   ]
+  }
+ ],
+ "672983706_2": [
+  {
+   "type": "dent_crease",
+   "note": "crease along lower rear door and sill",
+   "box": [
+    57,
+    198,
+    420,
+    304
+   ]
+  }
+ ],
+ "672895662_0": [],
+ "672926049_2": [
+  {
+   "type": "dent_crease",
+   "note": "rear quarter dented along impact line",
+   "box": [
+    127,
+    277,
+    662,
+    469
+   ]
+  },
+  {
+   "type": "dent_crease",
+   "note": "bumper and lamp line pushed",
+   "box": [
+    369,
+    368,
+    722,
+    510
+   ]
+  }
+ ]
+}

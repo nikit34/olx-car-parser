@@ -1,0 +1,28 @@
+{
+ "672986301_0": [
+  {
+   "type": "dent_crease",
+   "note": "front right corner: bonnet edge and wing creased",
+   "box": [
+    622,
+    242,
+    843,
+    409
+   ]
+  }
+ ],
+ "672983706_0": [
+  {
+   "type": "exposed_structure",
+   "note": "lower grille/bumper section missing",
+   "box": [
+    218,
+    299,
+    531,
+    379
+   ]
+  }
+ ],
+ "669594157_3": [],
+ "673002083_0": []
+}

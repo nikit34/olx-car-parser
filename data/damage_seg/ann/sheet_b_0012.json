@@ -1,0 +1,27 @@
+{
+ "672659820_2": [],
+ "672950336_0": [],
+ "672971648_0": [],
+ "673005939_1": [
+  {
+   "type": "cracked_glass",
+   "note": "windscreen shattered by impact",
+   "box": [
+    248,
+    166,
+    702,
+    409
+   ]
+  },
+  {
+   "type": "dent_crease",
+   "note": "bonnet deformed",
+   "box": [
+    228,
+    388,
+    803,
+    550
+   ]
+  }
+ ]
+}

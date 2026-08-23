@@ -1,0 +1,171 @@
+{
+ "672997434_0": [
+  {
+   "box": [
+    400,
+    340,
+    830,
+    520
+   ],
+   "type": "dent_crease",
+   "note": "bonnet buckled open"
+  },
+  {
+   "box": [
+    255,
+    195,
+    620,
+    400
+   ],
+   "type": "cracked_glass",
+   "note": "windscreen shattered"
+  },
+  {
+   "box": [
+    280,
+    430,
+    640,
+    660
+   ],
+   "type": "dent_crease",
+   "note": "front wing and door creased"
+  },
+  {
+   "box": [
+    620,
+    380,
+    900,
+    700
+   ],
+   "type": "exposed_structure",
+   "note": "front corner opened up"
+  }
+ ],
+ "672926049_1": [
+  {
+   "box": [
+    175,
+    380,
+    420,
+    570
+   ],
+   "type": "detached_part",
+   "note": "rear bumper corner torn away"
+  },
+  {
+   "box": [
+    320,
+    340,
+    545,
+    500
+   ],
+   "type": "exposed_structure",
+   "note": "absorber and arch liner exposed"
+  },
+  {
+   "box": [
+    230,
+    235,
+    460,
+    400
+   ],
+   "type": "broken_lamp",
+   "note": "tail light dislodged"
+  },
+  {
+   "box": [
+    250,
+    100,
+    620,
+    300
+   ],
+   "type": "dent_crease",
+   "note": "quarter panel dented"
+  }
+ ],
+ "672993773_0": [],
+ "672895662_1": [
+  {
+   "box": [
+    95,
+    470,
+    790,
+    620
+   ],
+   "type": "dent_crease",
+   "note": "bonnet crumpled"
+  },
+  {
+   "box": [
+    0,
+    690,
+    790,
+    870
+   ],
+   "type": "torn_panel",
+   "note": "front bumper split"
+  },
+  {
+   "box": [
+    270,
+    610,
+    620,
+    720
+   ],
+   "type": "exposed_structure",
+   "note": "grille pushed in"
+  },
+  {
+   "box": [
+    620,
+    590,
+    800,
+    690
+   ],
+   "type": "broken_lamp",
+   "note": "right headlight displaced"
+  }
+ ],
+ "672895662_2": [
+  {
+   "box": [
+    95,
+    470,
+    790,
+    620
+   ],
+   "type": "dent_crease",
+   "note": "bonnet crumpled (same frame as _1)"
+  },
+  {
+   "box": [
+    0,
+    690,
+    790,
+    870
+   ],
+   "type": "torn_panel",
+   "note": "front bumper split (same frame as _1)"
+  },
+  {
+   "box": [
+    270,
+    610,
+    620,
+    720
+   ],
+   "type": "exposed_structure",
+   "note": "grille pushed in (same frame as _1)"
+  },
+  {
+   "box": [
+    620,
+    590,
+    800,
+    690
+   ],
+   "type": "broken_lamp",
+   "note": "right headlight displaced (same frame as _1)"
+  }
+ ]
+}

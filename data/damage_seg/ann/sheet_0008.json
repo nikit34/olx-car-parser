@@ -1,0 +1,79 @@
+{
+ "671985540_2": [
+  {
+   "type": "exposed_structure",
+   "note": "front end destroyed, structure hanging",
+   "box": [
+    343,
+    479,
+    814,
+    694
+   ]
+  },
+  {
+   "type": "dent_crease",
+   "note": "wing and bonnet crumpled",
+   "box": [
+    289,
+    432,
+    774,
+    573
+   ]
+  }
+ ],
+ "672645025_1": [],
+ "672431556_2": [
+  {
+   "type": "dent_crease",
+   "note": "front right wing and bonnet crumpled",
+   "box": [
+    521,
+    187,
+    904,
+    388
+   ]
+  },
+  {
+   "type": "exposed_structure",
+   "note": "headlight missing, cavity open",
+   "box": [
+    632,
+    318,
+    803,
+    439
+   ]
+  },
+  {
+   "type": "detached_part",
+   "note": "bumper detached and hanging",
+   "box": [
+    561,
+    388,
+    833,
+    520
+   ]
+  }
+ ],
+ "672986301_1": [
+  {
+   "type": "dent_crease",
+   "note": "bonnet corner crumpled",
+   "box": [
+    478,
+    566,
+    821,
+    708
+   ]
+  },
+  {
+   "type": "dent_crease",
+   "note": "headlight pushed, bumper corner deformed",
+   "box": [
+    478,
+    667,
+    821,
+    883
+   ]
+  }
+ ]
+}
