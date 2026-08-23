@@ -23,6 +23,7 @@ from src.parser.seller_profile import (
     parse_seller_link,
     parse_seller_profile_html,
 )
+from src.parser.tls_fingerprint import build_ssl_context
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,8 @@ USER_AGENTS = [
 ]
 
 BASE_URL = "https://www.olx.pt/carros-motos-e-barcos/carros/"
+
+
 
 # Internal JSON API the OLX frontend itself calls. Undocumented but
 # auth-free and far more robust than HTML scraping: the list payload
@@ -182,7 +185,16 @@ class OlxScraper:
             timeout=self.config.timeout,
             follow_redirects=True,
             http2=True,
+            # See build_ssl_context: httpx's stock handshake is 403'd by
+            # OLX's CDN, and passing our own context is the whole fix.
+            verify=build_ssl_context(),
             headers={
+                # Client-level default so no request can ever go out
+                # advertising ``python-httpx/x.y`` — that literal
+                # User-Agent is 403'd by the same CDN rules independently
+                # of the TLS fingerprint. Per-request headers from
+                # _random_headers() override it with a rotating browser UA.
+                "User-Agent": USER_AGENTS[0],
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.5",
                 # NB: do NOT advertise `br`. OLX flipped its encoder to

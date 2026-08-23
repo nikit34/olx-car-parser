@@ -26,6 +26,8 @@ from pathlib import Path
 
 import httpx
 
+from src.parser.tls_fingerprint import build_ssl_context
+
 
 _DEFAULT_HEADERS = {"User-Agent": "Mozilla/5.0"}
 _DEFAULT_TIMEOUT = 30
@@ -42,6 +44,11 @@ _DEFAULT_TIMEOUT = 30
 # HTTP keep-alive across requests, so 20 sockets serve thousands of
 # fetches and the pool never saturates.
 _CLIENT = httpx.Client(
+    # olx.pt listing pages (the source of the photo URLs) are behind the
+    # same CDN rule that 403s httpx's stock handshake — see
+    # src/parser/tls_fingerprint. The image CDN itself doesn't care, but
+    # this client fetches both.
+    verify=build_ssl_context(),
     headers=_DEFAULT_HEADERS,
     timeout=_DEFAULT_TIMEOUT,
     follow_redirects=True,

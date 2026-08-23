@@ -2,6 +2,8 @@
 
 from datetime import datetime, date, timedelta, timezone
 
+from src.parser.tls_fingerprint import build_ssl_context
+
 
 def _utcnow() -> datetime:
     """Timezone-aware UTC now, then stripped to naive for schema compat.
@@ -31,6 +33,11 @@ from src.models.seller import Seller
 # (the pattern that hit the 16 384-port pool ceiling on 2026-05-10 and
 # made the host reject every outbound TCP connect for ~10 minutes).
 _PROBE_CLIENT = httpx.Client(
+    # Same CDN wall as the scraper: with httpx's stock TLS context every
+    # olx.pt probe comes back 403, which _verify_listing_alive reads as
+    # "unknown" and mark_inactive then skips — so nothing gets deactivated
+    # and nothing complains. See src/parser/tls_fingerprint.
+    verify=build_ssl_context(),
     headers={
         "User-Agent": (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
