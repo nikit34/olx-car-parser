@@ -1,0 +1,37 @@
+{
+ "672948770_1": [],
+ "672948770_2": [],
+ "673005939_0": [
+  {
+   "type": "dent_crease",
+   "note": "bonnet heavily dented",
+   "box": [
+    209,
+    546,
+    787,
+    735
+   ]
+  },
+  {
+   "type": "cracked_glass",
+   "note": "windscreen star-cracked",
+   "box": [
+    155,
+    331,
+    491,
+    519
+   ]
+  },
+  {
+   "type": "dent_crease",
+   "note": "grille and bumper line pushed in",
+   "box": [
+    410,
+    694,
+    814,
+    829
+   ]
+  }
+ ],
+ "667608789_0": []
+}

@@ -1,0 +1,69 @@
+{
+ "672903723_0": [
+  {
+   "type": "dent_crease",
+   "note": "rear bumper corner pushed in",
+   "box": [
+    127,
+    393,
+    369,
+    530
+   ]
+  }
+ ],
+ "673005939_2": [
+  {
+   "type": "dent_crease",
+   "note": "bonnet dented",
+   "box": [
+    61,
+    533,
+    545,
+    694
+   ]
+  },
+  {
+   "type": "detached_part",
+   "note": "lower bumper section hanging",
+   "box": [
+    87,
+    829,
+    424,
+    963
+   ]
+  },
+  {
+   "type": "dent_crease",
+   "note": "front wing and door creased",
+   "box": [
+    545,
+    573,
+    814,
+    829
+   ]
+  },
+  {
+   "type": "cracked_glass",
+   "note": "windscreen cracked",
+   "box": [
+    303,
+    398,
+    652,
+    533
+   ]
+  }
+ ],
+ "672619597_3": [],
+ "671721953_3": [
+  {
+   "type": "dent_crease",
+   "note": "rear bumper corner damaged",
+   "box": [
+    0,
+    987,
+    306,
+    1193
+   ]
+  }
+ ]
+}
