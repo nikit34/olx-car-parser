@@ -26,100 +26,96 @@ analytics:
   buy_signal_threshold: 10
 
 llm:
-  # Local Ollama with qwen3:4b-instruct. /api/chat with format=json constrains
-  # the model to emit parseable JSON; the system prompt documents the
-  # 15-field schema, so no separate tool wrapper is required.
-  ollama_model: "qwen3:4b-instruct"
-  # Production inference pool — both hosts handle traffic in parallel
-  # via sticky-per-thread round-robin in _pick_ollama_url(). The dev Mac
-  # is intentionally NOT in this list; it orchestrates but never inferences.
-  #   localhost      — runner's own Ollama (was 192.168.1.77; switched to
-  #                    localhost because the runner's DHCP-assigned IP was
-  #                    drifting and self-references via the LAN IP started
-  #                    failing with EHOSTUNREACH whenever the route
-  #                    table didn't include the new IP).
-  #   192.168.1.69   — Windows partner, 16 GB (7B+ headroom). Must run
-  #                    Ollama with OLLAMA_HOST=0.0.0.0 + Windows Firewall
-  #                    rule on TCP 11434 inbound.
-  ollama_urls:
-    - "http://localhost:11434"
-    - "http://192.168.1.69:11434"
-  # Legacy single-URL field kept for back-compat; ignored if ollama_urls is set.
-  ollama_url: "http://localhost:11434"
-  # Server slots: .77 NUM_PARALLEL=2 (3 OOMs Metal at 4096 ctx on M1 Air 8GB
-  # → Ollama silently caps ctx to 1536, head of system prompt gets truncated).
-  # .69 must stay at NUM_PARALLEL=1 — its MX230 has only 4 GB VRAM, and
-  # NUM_PARALLEL=2 forces KvSize=8192 which trips "failure during GPU
-  # discovery" (CUDA discovery timeout) under load. Verified empirically
-  # 2026-04-28: 10 consecutive runner-start failures, model never loaded.
-  # Two workers oversubscribing one slot on .69 still fine — Ollama queues
-  # the second request internally.
-  max_workers: 6
-  # Weight per backend host (substring match against ollama_urls). Repeats
-  # the URL in the assignment pool, so weight=2 gets twice as many sticky
-  # workers as weight=1. With max_workers=6 and 2:1, we land at 4 workers
-  # on .77 (2 slots × 2 oversub) and 2 on .69 (1 slot × 2 oversub). The
-  # 2 oversub per slot smooths over individual call latency variance.
-  ollama_weights:
-    "localhost": 2
-    "192.168.1.69": 1
-  max_tokens: 80     # 3-field JSON ≈ 50 tokens (sub_model + trim_level +
-                     # mileage_in_description_km); 80 leaves slack and caps
-                     # "model looping" failures within <1 s wall time.
-  max_chars: 2500    # Tail of long ads is usually contact boilerplate, not
-                     # features — safe to truncate.
-  # System(~280) + description(≤750 @ ~3.3 chars/token pt-PT) + reply(≤80)
-  # ≈ 1110 tokens. 2048 leaves ~900 tokens of margin and cuts prefill
-  # compute ~33 % vs the previous 3072. The 2026-04 prompt slim shrank the
-  # system block from 1582 → ~280 tokens, so the previous 3072 floor is no
-  # longer needed.
-  num_ctx: 2048
-
-openrouter:
-  # Cloud LLM enrichment for the TOP DEALS only (value-gated). The local
-  # Ollama pool was retired 2026-07-24; this recovers condition NLP on the
-  # handful of genuinely-undervalued listings the GBM flags each day, via a
-  # FREE OpenRouter model. The API key is NOT stored here — it lives in the
-  # GitHub Actions secret OPENROUTER_API_KEY, injected as env into the
-  # "Value-gated OpenRouter enrichment" step. src/parser/openrouter_enrichment
-  # reads os.environ["OPENROUTER_API_KEY"]; a missing key makes the step a
-  # warn-and-skip no-op (same convention as TELEGRAM_BOT_TOKEN / CF hook).
-  base_url: "https://openrouter.ai/api/v1"
-  # Free models only, tried in order as a fallback chain. Free models are
-  # frequently upstream-rate-limited (HTTP 429) → on 429 we advance to the
-  # next model. Shortlist validated 2026-07-24: gemma-4-26b-a4b returns clean
-  # JSON in ~8 s; gemma-4-31b 429s often; gpt-oss-20b is the last resort.
-  models:
-    - "google/gemma-4-26b-a4b-it:free"
-    - "google/gemma-4-31b-it:free"
-    - "openai/gpt-oss-20b:free"
+  # Cloud LLM enrichment. The local Ollama pool is GONE (retired 2026-07-24,
+  # removed from both hosts 2026-08-23) — there is no self-hosted inference
+  # here any more and nothing should try to reach :11434.
+  #
+  # Providers are a CASCADE, tried in this order: the first one that returns
+  # usable JSON wins, and any refusal (missing key, 429, 5xx, unparseable
+  # output, spent daily budget) advances to the next. Gemini leads because its
+  # free tier is an order of magnitude bigger than OpenRouter's ~50 req/day;
+  # OpenRouter is the backstop for when Gemini 503s or the daily quota is out.
+  providers:
+    - "gemini"
+    - "openrouter"
+  # Shared generation knobs — both providers use the same prompt and schema,
+  # so these live here rather than per-provider.
   temperature: 0.1
-  max_tokens: 500     # richer schema (base 3 fields + condition NLP + red_flags)
-  max_chars: 2500
-  timeout_seconds: 90
-  max_retries: 0      # 0 = no same-model retry; a free-model 429 is upstream
-                      # congestion, so advance the fallback chain instead of
-                      # burning budget retrying the same (stuck) model.
-  retry_backoff_seconds: 1.0  # brief pause before trying the next model on 429/5xx
-  referer: "https://olx-car-parser.permikov134.workers.dev"
-  title: "olx-car-parser"
-  # Free-tier daily ceiling is ~50 requests/day; stay under it. Budget is in
-  # REQUESTS (each POST counts, incl. 429-triggered fallback attempts), tracked
-  # per-UTC-day in the state file (auto-resets at midnight). Each listing is
-  # normally 1 request. per_run_request_cap spreads spend across the day's
-  # scheduled runs (5 shallow + 1 deep).
-  daily_request_budget: 40
-  per_run_request_cap: 12
-  budget_state_file: "data/openrouter_budget.json"
+  max_tokens: 500    # base 3 fields + condition NLP + red_flags
+  max_chars: 2500    # tail of a long ad is contact boilerplate, not features
+  # One state file for every provider's spend, keyed per UTC day and per
+  # provider name (auto-resets at midnight).
+  budget_state_file: "data/llm_budget.json"
+  # Requests one scrape run may spend across ALL providers. The daily ceiling
+  # is per-provider (below); this spreads spend over the day's runs.
+  per_run_request_cap: 20
   # Pre-LLM value gate — reproduces the non-LLM half of the deal funnel so we
   # only pay for genuinely-undervalued listings. Applied on top of
-  # compute_signals (which already enforces band ≤ 0.40, net ≥ €500, 0<disc≤60%).
+  # compute_signals (which already enforces band ≤ 0.40, net ≥ €500,
+  # 0 < disc ≤ 60%). Provider-independent, hence here and not under a provider.
   gate:
     min_price_eur: 4000     # skip the condition-blind cheap tail (< €4k)
     min_spec_fill: 0.5      # need ≥2 of 4 discriminative specs
     max_band_pct: 0.40      # (informational; compute_signals already gates this)
     min_discount_pct: 0.0   # undervaluation_pct is a percent (GBM discount)
     max_discount_pct: 60.0
+
+gemini:
+  # Google AI Studio free tier. Key is NOT stored here — it lives in the
+  # GitHub Actions secret GEMINI_API_KEY, injected as env into the enrichment
+  # step. A missing key makes the provider a warn-and-skip no-op, so the
+  # cascade simply moves on to OpenRouter.
+  base_url: "https://generativelanguage.googleapis.com/v1beta"
+  # Tried in order within the provider, before the cascade moves on.
+  models:
+    - "gemini-flash-latest"
+    - "gemini-flash-lite-latest"
+  timeout_seconds: 60
+  # Retry inside the provider: free-tier Gemini answers 503 "model overloaded"
+  # in bursts (three consecutive 503s observed while validating this prompt on
+  # 2026-08-23), and the next attempt usually lands. A 429 is different — see
+  # the rate-limit handling in cloud_enrichment.
+  max_attempts: 2
+  retry_backoff_seconds: 3
+  # Client-side pacing, so we discover "no slot" in ~2 s instead of burning a
+  # quota unit on a guaranteed 429.
+  max_rpm: 4
+  slot_wait_seconds: 2
+  daily_request_budget: 150
+
+
+openrouter:
+  # Cascade backstop, used when Gemini has no key / no slot / no quota, or
+  # returns nothing usable. Free tier is ~50 requests/day, an order of
+  # magnitude tighter than Gemini's, which is why it sits second.
+  # The API key is NOT stored here — GitHub Actions secret OPENROUTER_API_KEY,
+  # injected as env into the enrichment step. A missing key makes this
+  # provider a no-op and the cascade ends (same convention as
+  # TELEGRAM_BOT_TOKEN / CF hook).
+  base_url: "https://openrouter.ai/api/v1"
+  # Free models only, tried in order WITHIN this provider before the cascade
+  # gives up on it. The free pool churns — models get rate-limited, delisted,
+  # or quietly moved to paid — so this list is re-verified whenever it's
+  # touched rather than trusted. Checked 2026-08-23 against the real
+  # extraction prompt: the first two return clean JSON; both gemmas were
+  # 429-ing that day (kept as tail candidates since they recover); the old
+  # gpt-oss-20b entry was DROPPED because it now 404s with "unavailable for
+  # free — the paid version is available".
+  models:
+    - "dots-studio/dots-3-note-preview:free"
+    - "nvidia/nemotron-3-nano-30b-a3b:free"
+    - "google/gemma-4-26b-a4b-it:free"
+    - "google/gemma-4-31b-it:free"
+  timeout_seconds: 90
+  max_attempts: 1     # 1 = no same-model retry; a free-model 429 is upstream
+                      # congestion, so advance the model chain instead of
+                      # burning budget retrying the same (stuck) model.
+  retry_backoff_seconds: 1.0  # brief pause before the next model on 429/5xx
+  referer: "https://olx-car-parser.permikov134.workers.dev"
+  title: "olx-car-parser"
+  # Budget is in REQUESTS (each POST counts, incl. 429-triggered fallback
+  # attempts), tracked per-UTC-day in llm.budget_state_file.
+  daily_request_budget: 40
 
 alerts:
   # Bot token is NOT stored here — it lives in the GitHub Actions secret

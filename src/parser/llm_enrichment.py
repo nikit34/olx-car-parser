@@ -1,25 +1,23 @@
-"""Enrich listing data using a local Ollama model.
+"""Domain logic for LLM-extracted listing facts — no transport, no provider.
 
-Extracts 3 structured fields from title + description text:
-sub_model, trim_level, mileage_in_description_km. damage_severity is
-derived deterministically by ``_derive_damage_severity`` (regex), not
-asked from the LLM — the 2026-04 ablation showed no model-quality
-benefit from any of the LLM-extracted condition / urgency / warranty /
-flag fields, so they were removed to free Ollama throughput.
+This module owns everything that turns a raw extraction into trustworthy DB
+columns: the deterministic ``damage_severity`` derivation (regex over
+title+description, no model call), sub_model validation against brand tech-tag
+families, mileage sanity bounds, and the ``correct_listing_data`` /
+``apply_corrections`` write path.
+
+The transport used to live here too — a pool of local Ollama backends. That is
+gone (retired 2026-07-24, removed from both machines 2026-08-23). The single
+LLM entry point is now :mod:`src.parser.cloud_enrichment`, a Gemini →
+OpenRouter cascade fed only by the top-K ranked deals from
+:mod:`src.analytics.value_gate`. Keeping the domain rules here means both the
+cloud path and the offline backfills apply exactly the same validation.
 """
 
-import json
 import logging
 import re
-import threading
-from pathlib import Path
-
-import httpx
-import yaml
 
 logger = logging.getLogger(__name__)
-
-CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "settings.yaml"
 
 
 # ---------------------------------------------------------------------------
@@ -29,7 +27,7 @@ CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "settin
 # enrichment run but is missing the (newer) damage_severity field, we don't
 # need a fresh LLM call to backfill it — the existing accident/repair/
 # condition flags plus a keyword scan over title+description carry enough
-# signal. This path is ~1000× faster than going to Ollama, and on the
+# signal. This path costs nothing (no model call at all), and on the
 # 30-listing oracle it matches the LLM's choice on damage_severity exactly.
 # Schema: 0=pristine, 1=normal wear, 2=needs repair OR accident history,
 #         3=salvage / parts-only / non-runner.
@@ -154,11 +152,6 @@ def _derive_damage_severity(extras: dict, title: str, description: str) -> int:
 # annotation tools — share one source of truth for the field set).
 # ---------------------------------------------------------------------------
 
-_FIELD_NAMES = [
-    "sub_model", "trim_level", "mileage_in_description_km",
-]
-
-
 # Mileage sanity bounds for the LLM-extracted ``mileage_in_description_km``.
 # 1M km absolute cap covers every plausible odometer (the highest-mileage
 # car ever recorded crossed ~5M km, but those don't show up on OLX). The
@@ -171,48 +164,6 @@ _FIELD_NAMES = [
 _MILEAGE_SANITY_MAX_KM = 1_000_000
 _MILEAGE_SANITY_RELATIVE_MAX = 10
 
-
-_SYSTEM_PROMPT = """\
-Extract structured features from a Portuguese (pt-PT) car listing as ONE JSON object. Use null when a field cannot be determined from the text.
-
-Field rules:
-sub_model: engine/body variant only (displacement+fuel+power), e.g. "320d","1.6 TDI","2.0 TFSI","A 200","CLA 45". NOT a trim/package, NOT a bare model name. Tech tags belong to specific brand families — never assign a tag from the wrong family: TDI/TFSI/TSI = VAG only (VW/Audi/Seat/Skoda); HDi/BlueHDi/PureTech = PSA only (Peugeot/Citroën/DS); CDI/BlueTec = Mercedes only; dCi/TCe = Renault/Dacia/Nissan only; M-Jet/Multijet = FCA only (Fiat/Alfa Romeo); TDCi/EcoBoost = Ford only. BMW uses its own model-code form (116d, 320d, 535d) — never "1.6 TDI" and never just "Touring"/"xDrive". If unsure, output null.
-trim_level: equipment line e.g. "AMG Line","M Sport","S-Line","GTI","FR","Tekna". null if basic.
-mileage_in_description_km: integer km. "mil"=thousand only as separate word ("150 mil km"→150000; "89.500km"→89500). Service-interval km ("revisão aos 60.000 km") is NOT current mileage.
-
-Examples:
-
-"BMW Série 3 320d Pack M com 180.000 km, 1 dono, garantia até 2026."
-→ {"sub_model":"320d","trim_level":"Pack M","mileage_in_description_km":180000}
-
-"BMW 318d Touring Navigation Sport 143cv."
-→ {"sub_model":"318d","trim_level":null,"mileage_in_description_km":null}
-
-"Audi A4 B7 2.0 TDI 140cv."
-→ {"sub_model":"2.0 TDI","trim_level":null,"mileage_in_description_km":null}
-
-"Audi A3 1.6 TDI S-Line, 150 mil km."
-→ {"sub_model":"1.6 TDI","trim_level":"S-Line","mileage_in_description_km":150000}
-
-"Seat Ibiza FR 1.4 TSI com 89.500km."
-→ {"sub_model":"1.4 TSI","trim_level":"FR","mileage_in_description_km":89500}
-
-"Vendo Honda Civic Impecável." → {"sub_model":null,"trim_level":null,"mileage_in_description_km":null}
-"""
-
-
-# ---------------------------------------------------------------------------
-# Brand-family validator for sub_model
-# ---------------------------------------------------------------------------
-# 2026-05-10 audit (1016 regex/LLM disagreements over 10.5k labeled rows)
-# found two repeating LLM hallucinations:
-#   - cross-brand tech tags ("2.0 HDi" on Audi/VW/Mercedes; "1.3 CDTI" on Fiat)
-#   - BMW losing the model code ("BMW 318d Touring" → "Touring"; "BMW 116d"
-#     → "1.6 TDI" — both wrong: Touring is body, TDI is VAG-only)
-# Defense-in-depth: even if the prompt fix lapses, this validator drops the
-# sub_model to NULL when its tech tag belongs to a different brand family.
-# Conservative: brands without a clear tag namespace (Opel — straddles
-# GM/PSA eras; Toyota/Volvo/Porsche — own conventions) pass through.
 
 _BRAND_FAMILY: dict[str, str] = {
     "Volkswagen": "VAG", "VW": "VAG", "Audi": "VAG",
@@ -282,382 +233,6 @@ def _validate_sub_model(brand: str, sub_model: str) -> str | None:
 # ---------------------------------------------------------------------------
 # Config / availability
 # ---------------------------------------------------------------------------
-
-def _get_config() -> dict:
-    cfg = {}
-    if CONFIG_PATH.exists():
-        with open(CONFIG_PATH) as f:
-            data = yaml.safe_load(f) or {}
-        cfg = data.get("llm", {})
-    urls = cfg.get("ollama_urls")
-    if not urls:
-        urls = [cfg.get("ollama_url", "http://localhost:11434")]
-    return {
-        "ollama_model": cfg.get("ollama_model", "qwen3:4b-instruct"),
-        "ollama_url": cfg.get("ollama_url", "http://localhost:11434"),
-        "ollama_urls": [u for u in urls if u],
-        "ollama_weights": cfg.get("ollama_weights") or {},
-        "max_workers": cfg.get("max_workers", 3),
-        "max_tokens": cfg.get("max_tokens", 300),
-        "max_chars": cfg.get("max_chars", 4000),
-        "num_ctx": cfg.get("num_ctx", 4096),
-    }
-
-
-_ollama_status: bool | None = None
-_resolved_ollama_url: str | None = None
-_resolved_ollama_urls: list[str] | None = None
-_resolved_assignment_pool: list[str] | None = None
-_resolve_lock = threading.Lock()
-
-# Maps thread native ID → assigned backend URL. First time a thread asks for
-# a backend we hand it the next one in round-robin order; that pinning sticks
-# for the thread's lifetime so each backend's KV-cache stays warm. Atomic via
-# a single lock — assignment happens once per worker, not per call.
-_thread_backend: dict[int, str] = {}
-_thread_backend_lock = threading.Lock()
-_next_backend_idx = [0]
-
-# Thread-local persistent httpx.Client. Reusing the TCP connection saves
-# ~10-30 ms per call (handshake + slow-start) which on a 1700-listing batch
-# adds up to ~30-50 s.
-_thread_local = threading.local()
-
-
-def _get_client(base_url: str) -> httpx.Client:
-    """Return a per-(thread, base_url) httpx.Client, creating it on first use.
-
-    Keying by base_url lets us hold persistent connections to several Ollama
-    backends in parallel — the local one and the LAN failover — without
-    one client's base URL leaking into requests aimed at the other.
-    """
-    clients = getattr(_thread_local, "http_clients", None)
-    if clients is None:
-        clients = {}
-        _thread_local.http_clients = clients
-        # Also expose a single-client alias for back-compat with tests that
-        # only check that _get_client was called (don't care about URL).
-        _thread_local.http_client = None
-    client = clients.get(base_url)
-    if client is None:
-        client = httpx.Client(base_url=base_url,
-                              timeout=httpx.Timeout(120.0, connect=10.0))
-        clients[base_url] = client
-        _thread_local.http_client = client
-    return client
-
-
-def _resolve_all_ollama_urls() -> list[str]:
-    """Probe every URL in `ollama_urls` once and cache the list of healthy ones.
-
-    Used for load-balancing across multiple Ollama hosts (e.g. the M1 8 GB
-    scraper at .77 + the Windows 16 GB box at .69). Per-process cache so
-    we hit `/api/tags` once at startup, not on every enrichment call.
-    """
-    global _resolved_ollama_urls
-    if _resolved_ollama_urls is not None:
-        return _resolved_ollama_urls
-    with _resolve_lock:
-        if _resolved_ollama_urls is not None:
-            return _resolved_ollama_urls
-        cfg = _get_config()
-        candidates = cfg.get("ollama_urls") or []
-        healthy: list[str] = []
-        for url in candidates:
-            try:
-                resp = _get_client(url).get("/api/tags", timeout=2.0)
-                if resp.status_code == 200:
-                    healthy.append(url)
-            except Exception as e:
-                logger.warning("Ollama at %s unreachable: %s", url, e)
-        _resolved_ollama_urls = healthy
-        if healthy:
-            logger.info("Ollama backends ready (%d): %s", len(healthy), healthy)
-    return healthy
-
-
-def _resolve_ollama_url() -> str | None:
-    """First reachable Ollama backend, or None. Kept for back-compat callers
-    that just want any working URL (legacy `_call_ollama` fallback path,
-    `_ollama_available()`, ad-hoc scripts). For per-call load balancing use
-    `_pick_ollama_url()` instead."""
-    healthy = _resolve_all_ollama_urls()
-    return healthy[0] if healthy else None
-
-
-def _build_assignment_pool() -> list[str]:
-    """Healthy backends expanded by weight, used for round-robin pinning.
-
-    Weights are read from ``ollama_weights`` in settings.yaml — keys are
-    substring-matched against backend URLs (so ``"localhost": 2`` covers
-    ``http://localhost:11434`` regardless of port). A backend with no
-    matching weight defaults to 1. Cached per process; cleared together
-    with the URL cache in :func:`_invalidate_ollama_url`.
-    """
-    global _resolved_assignment_pool
-    if _resolved_assignment_pool is not None:
-        return _resolved_assignment_pool
-    # Resolve URLs OUTSIDE the lock — `_resolve_all_ollama_urls` holds the
-    # same `_resolve_lock` internally, so calling it under our acquisition
-    # would deadlock on a non-reentrant Lock. Manifested only after a
-    # cache-clear (e.g. in tests after `_invalidate_ollama_url`); in steady
-    # state production something else seeded the cache before us, so the
-    # nested call took the early-return path.
-    healthy = _resolve_all_ollama_urls()
-    with _resolve_lock:
-        if _resolved_assignment_pool is not None:
-            return _resolved_assignment_pool
-        weights = _get_config().get("ollama_weights") or {}
-        pool: list[str] = []
-        for url in healthy:
-            w = 1
-            for key, value in weights.items():
-                if key and key in url:
-                    try:
-                        w = max(int(value), 1)
-                    except (TypeError, ValueError):
-                        w = 1
-                    break
-            pool.extend([url] * w)
-        _resolved_assignment_pool = pool
-    return _resolved_assignment_pool
-
-
-def _pick_ollama_url() -> str | None:
-    """Sticky-per-thread round-robin across healthy Ollama backends.
-
-    Each ThreadPoolExecutor worker is pinned to one backend on its first
-    call and keeps hitting it for the rest of its life. That way every
-    backend retains its own KV-cache for our 1210-token system prompt
-    instead of paying re-prefill every time the load shifts.
-
-    Backends listed in ``ollama_weights`` get repeated in the assignment
-    pool, so a 2:1 weight gives twice as many workers to the faster host.
-    Without weights, distribution is exact-uniform — first worker →
-    backend[0], second → backend[1], etc.
-    """
-    healthy = _resolve_all_ollama_urls()
-    if not healthy:
-        return None
-    tid = threading.get_ident()
-    pinned = _thread_backend.get(tid)
-    if pinned is not None and pinned in healthy:
-        return pinned
-    pool = _build_assignment_pool() or healthy
-    with _thread_backend_lock:
-        # Re-check under lock to avoid double-assignment under contention.
-        pinned = _thread_backend.get(tid)
-        if pinned is None or pinned not in healthy:
-            pinned = pool[_next_backend_idx[0] % len(pool)]
-            _next_backend_idx[0] += 1
-            _thread_backend[tid] = pinned
-    return pinned
-
-
-def _invalidate_ollama_url() -> None:
-    global _resolved_ollama_url, _resolved_ollama_urls, _resolved_assignment_pool, _ollama_status
-    _resolved_ollama_url = None
-    _resolved_ollama_urls = None
-    _resolved_assignment_pool = None
-    _ollama_status = None
-    # Drop sticky pinning so the next probe re-distributes work among
-    # whichever backends come back healthy.
-    _thread_backend.clear()
-    _next_backend_idx[0] = 0
-
-
-def _ollama_available(_url: str = "") -> bool:
-    """True iff at least one configured Ollama backend answers. Result cached
-    per process so we don't probe `/api/tags` on every enrichment call."""
-    global _ollama_status
-    if _ollama_status is not None:
-        return _ollama_status
-    if _url:
-        # Legacy single-URL probe path retained for callers that pass a URL
-        # explicitly (tests, ad-hoc scripts).
-        try:
-            resp = _get_client(_url).get("/api/tags", timeout=2.0)
-            _ollama_status = resp.status_code == 200
-        except Exception:
-            _ollama_status = False
-        if not _ollama_status:
-            logger.warning("Ollama not reachable at %s — LLM enrichment disabled.", _url)
-        return _ollama_status
-    _ollama_status = _resolve_ollama_url() is not None
-    if not _ollama_status:
-        cfg = _get_config()
-        logger.warning("No Ollama backend reachable (tried %s) — LLM enrichment disabled.",
-                       ", ".join(cfg.get("ollama_urls") or []))
-    return _ollama_status
-
-
-def _llm_available() -> bool:
-    """Backwards-compat name. Same semantics as _ollama_available()."""
-    return _ollama_available()
-
-
-# ---------------------------------------------------------------------------
-# Core API call
-# ---------------------------------------------------------------------------
-
-def _call_ollama(text: str, cfg: dict) -> dict | None:
-    """Run one extraction round-trip against Ollama. Returns the parsed JSON
-    payload as a dict, or None on any failure.
-
-    Uses /api/generate (not /api/chat) on purpose:
-      - the `system` field is byte-stable across calls, so Ollama keeps the
-        same KV-cache slot and skips ~700 tokens of prefill every call;
-      - no chat-template wrapping → fewer tokens, no template-version drift;
-      - keep_alive holds the model in RAM between bursts so we don't pay the
-        5 s reload cost on the M1 8 GB box.
-    format=json constrains the output to parseable JSON; the system prompt
-    documents the 3-field schema, so any instruction-tuned model
-    (e.g. qwen3:4b-instruct) matches it without a separate tool wrapper.
-
-    Inference options are tuned for latency on M1 8 GB without quality loss:
-      - num_ctx 2048 = budget for system(~280) + desc(≤1200) + reply(≤80).
-        Halved from 4096 after the 2026-04 prompt slim — system shrank
-        from 1210 → ~280 tokens.
-      - num_predict 80 hard-caps generation; 3 fields × ~12 tokens + JSON
-        wrapping ≈ 50, so 80 is a comfortable ceiling and cuts the rare
-        "model loops" failure mode short.
-      - top_k=1 + top_p=1 + repeat_penalty=1 disable every per-token
-        sampling check; with temperature=0 the result is identical (greedy)
-        and ~3-5 % faster decoding.
-      - stop=["}\\n{","} {"] — belt-and-suspenders against the model
-        emitting two JSON objects in a row, even though format=json should
-        already prevent it.
-    """
-    # Sticky-per-thread backend pick — each worker prints to its own backend
-    # so each backend's prompt cache stays warm. _resolve_ollama_url() is the
-    # single-host fallback for environments with one configured backend.
-    url = _pick_ollama_url() or _resolve_ollama_url() \
-        or cfg.get("ollama_url", "http://localhost:11434")
-    client = _get_client(url)
-    truncated = text[:cfg.get("max_chars", 4000)]
-    payload = {
-        "model": cfg.get("ollama_model", "qwen3:4b-instruct"),
-        "system": _SYSTEM_PROMPT,
-        "prompt": truncated,
-        "format": "json",
-        "stream": False,
-        "keep_alive": "30m",
-        "options": {
-            "temperature": 0.0,
-            "top_k": 1,
-            "top_p": 1.0,
-            "repeat_penalty": 1.0,
-            "num_ctx": cfg.get("num_ctx", 2048),
-            "num_predict": cfg.get("max_tokens", 80),
-            "stop": ["}\n{", "} {"],
-        },
-    }
-    for attempt in range(2):
-        try:
-            resp = client.post("/api/generate", json=payload)
-            if resp.status_code != 200:
-                logger.warning("Ollama HTTP %s (attempt %d)", resp.status_code, attempt + 1)
-                continue
-            content = resp.json().get("response", "")
-            if not content:
-                return None
-            try:
-                parsed = json.loads(content)
-            except json.JSONDecodeError:
-                # Some fine-tuned checkpoints occasionally wrap with ```json …```;
-                # one strip pass before giving up.
-                stripped = content.strip().strip("`").lstrip("json").strip()
-                try:
-                    parsed = json.loads(stripped)
-                except json.JSONDecodeError:
-                    logger.debug("Ollama returned non-JSON: %s", content[:200])
-                    return None
-            return parsed if isinstance(parsed, dict) else None
-        except httpx.RequestError as e:
-            logger.warning("Ollama connection error at %s (attempt %d): %s",
-                           url, attempt + 1, e)
-            # The backend we picked is down. Try a different healthy backend
-            # *without* invalidating the global cache (other threads may still
-            # be reaching their own backend just fine). Only when no other
-            # backend is available do we fall back to invalidating + reprobing.
-            healthy = _resolve_all_ollama_urls()
-            alt = next((u for u in healthy if u != url), None)
-            if alt:
-                url = alt
-                client = _get_client(url)
-                logger.info("Failing over to %s for this request", url)
-            else:
-                _invalidate_ollama_url()
-                new_url = _resolve_ollama_url()
-                if new_url and new_url != url:
-                    url = new_url
-                    client = _get_client(url)
-        except Exception as e:  # noqa: BLE001 — last-resort log so a worker never dies
-            logger.debug("Ollama enrichment failed: %s", e)
-            return None
-    return None
-
-
-# Public alias used by callers and tests; lets us swap the backend later
-# without touching cli.py / enrich_local.py / the test patch targets.
-def _call_llm(text: str, cfg: dict) -> dict | None:
-    return _call_ollama(text, cfg)
-
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-def enrich_from_description(description: str, title: str = "") -> dict | None:
-    """Extract structured data from title + description via the local LLM.
-
-    Returns dict with extracted fields, or None on failure / when Ollama is
-    unreachable / when the description is too short to bother.
-    """
-    if not description or len(description.strip()) < 20:
-        return None
-
-    if not _llm_available():
-        return None
-
-    cfg = _get_config()
-    text = f"{title}\n{description}" if title else description
-    return _call_llm(text, cfg)
-
-
-def enrich_listings_batch(listings: list, batch_size: int = 50) -> int:
-    """Enrich a batch of RawListing objects with LLM-extracted data.
-
-    Modifies listings in place. Returns count of enriched listings.
-    """
-    if not _llm_available():
-        logger.info("Ollama not available. Skipping LLM enrichment.")
-        return 0
-
-    cfg = _get_config()
-    logger.info("LLM enrichment using Ollama (%s) for up to %d listings",
-                cfg["ollama_model"], min(batch_size, len(listings)))
-
-    enriched = 0
-    failures = 0
-    for listing in listings[:batch_size]:
-        if not listing.description:
-            continue
-
-        result = enrich_from_description(listing.description, getattr(listing, "title", ""))
-        if result:
-            listing._llm_extras = result
-            enriched += 1
-            failures = 0
-        else:
-            failures += 1
-            if failures >= 5:
-                logger.warning("5 consecutive LLM failures, stopping enrichment.")
-                break
-
-    logger.info("LLM-enriched %d / %d listings", enriched, len(listings))
-    return enriched
-
 
 # ---------------------------------------------------------------------------
 # Data correction — cross-check and fix attributes using LLM-extracted data

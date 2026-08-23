@@ -1,22 +1,18 @@
-"""Tests for LLM enrichment: Ollama call, pipeline, corrections, export."""
+"""Tests for the LLM-enrichment domain rules: corrections, validation, export.
 
-import json
-import queue
-import threading
+Transport lives in test_cloud_enrichment.py — this module is about what a
+listing looks like AFTER an extraction comes back, and the rules that keep a
+model's guess from writing nonsense into a column: brand-family validation of
+sub_model, mileage sanity bounds, and the deterministic damage_severity
+derivation that needs no model at all.
+"""
+
 from dataclasses import dataclass
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import httpx as httpx_mod
-import pytest
-
-import src.parser.llm_enrichment as llm_mod
 from src.parser.llm_enrichment import (
-    _call_llm,
-    _call_ollama,
-    _get_config,
     correct_listing_data,
     apply_corrections,
-    enrich_from_description,
 )
 
 
@@ -43,199 +39,7 @@ VALID_LLM_JSON = {
 
 
 # ---------------------------------------------------------------------------
-# _call_llm / _call_ollama — Ollama JSON-mode round-trip
-# ---------------------------------------------------------------------------
-
-def _make_ollama_resp(content: str, status: int = 200):
-    """Fake httpx.post() return value matching Ollama's /api/generate shape."""
-    resp = MagicMock()
-    resp.status_code = status
-    resp.json.return_value = {"response": content}
-    return resp
-
-
-class TestCallLlm:
-    def setup_method(self):
-        llm_mod._ollama_status = None
-        llm_mod._resolved_ollama_url = None
-        llm_mod._resolved_ollama_urls = None
-        llm_mod._resolved_assignment_pool = None
-        llm_mod._thread_backend.clear()
-        llm_mod._next_backend_idx[0] = 0
-        # _get_client memoises onto thread-local; reset between tests so the
-        # mock client we install here actually replaces it.
-        if hasattr(llm_mod._thread_local, "http_clients"):
-            del llm_mod._thread_local.http_clients
-        if hasattr(llm_mod._thread_local, "http_client"):
-            del llm_mod._thread_local.http_client
-
-    def test_success(self):
-        cfg = _get_config()
-        mock_resp = _make_ollama_resp(json.dumps(VALID_LLM_JSON))
-        mock_client = MagicMock()
-        mock_client.post.return_value = mock_resp
-
-        with patch("src.parser.llm_enrichment._get_client", return_value=mock_client):
-            result = _call_llm("Vendo carro com 100km", cfg)
-
-        assert result is not None
-        assert result["sub_model"] == "320d"
-        assert result["mileage_in_description_km"] == 180000
-        # Confirm we hit /api/generate (NOT /api/chat) so the system prompt
-        # stays byte-identical across calls and Ollama can reuse its KV-cache
-        # slot for the instruction prefix. format=json keeps the output
-        # parseable; the latency-tuned options below are also part of the
-        # contract — regressing them silently would slow every batch.
-        call_args = mock_client.post.call_args
-        assert call_args.args[0] == "/api/generate"
-        body = call_args.kwargs["json"]
-        assert body["format"] == "json"
-        assert body["system"] == llm_mod._SYSTEM_PROMPT
-        assert body["keep_alive"] == "30m"
-        opts = body["options"]
-        assert opts["temperature"] == 0.0
-        assert opts["top_k"] == 1
-        assert opts["num_ctx"] == 2048
-        assert opts["stop"] == ["}\n{", "} {"]
-
-    def test_http_error_returns_none(self):
-        cfg = _get_config()
-        mock_resp = _make_ollama_resp("", status=500)
-        mock_client = MagicMock()
-        mock_client.post.return_value = mock_resp
-        with patch("src.parser.llm_enrichment._get_client", return_value=mock_client):
-            result = _call_llm("Vendo carro", cfg)
-        assert result is None
-
-    def test_invalid_json_returns_none(self):
-        cfg = _get_config()
-        mock_resp = _make_ollama_resp("not json at all")
-        mock_client = MagicMock()
-        mock_client.post.return_value = mock_resp
-        with patch("src.parser.llm_enrichment._get_client", return_value=mock_client):
-            result = _call_llm("Vendo carro", cfg)
-        assert result is None
-
-    def test_markdown_wrapped_json_recovers(self):
-        # Some fine-tuned checkpoints occasionally wrap output in ```json … ```;
-        # the strip pass should still recover the payload.
-        cfg = _get_config()
-        wrapped = "```json\n" + json.dumps(VALID_LLM_JSON) + "\n```"
-        mock_resp = _make_ollama_resp(wrapped)
-        mock_client = MagicMock()
-        mock_client.post.return_value = mock_resp
-        with patch("src.parser.llm_enrichment._get_client", return_value=mock_client):
-            result = _call_llm("Vendo carro", cfg)
-        assert result == VALID_LLM_JSON
-
-    def test_call_llm_delegates_to_ollama(self):
-        # _call_llm is a thin alias; both should resolve to the same payload.
-        cfg = _get_config()
-        mock_resp = _make_ollama_resp(json.dumps(VALID_LLM_JSON))
-        mock_client = MagicMock()
-        mock_client.post.return_value = mock_resp
-        with patch("src.parser.llm_enrichment._get_client", return_value=mock_client):
-            assert _call_llm("x", cfg) == _call_ollama("x", cfg)
-
-    def test_resolve_picks_first_reachable_backend(self):
-        # First URL fails, second succeeds → resolver returns the second.
-        # This is the failover path used when localhost Ollama is down and
-        # the LAN backend (Windows) takes over.
-        ok = MagicMock()
-        ok.status_code = 200
-
-        def fake_get_client(url):
-            client = MagicMock()
-            if "192.168.1.69" in url:
-                client.get.return_value = ok
-            else:
-                client.get.side_effect = httpx_mod.RequestError("boom")
-            return client
-
-        with patch("src.parser.llm_enrichment._get_config",
-                   return_value={"ollama_urls": [
-                       "http://localhost:11434",
-                       "http://192.168.1.69:11434",
-                   ]}), \
-             patch("src.parser.llm_enrichment._get_client", side_effect=fake_get_client):
-            picked = llm_mod._resolve_ollama_url()
-        assert picked == "http://192.168.1.69:11434"
-
-    def test_pick_distributes_across_healthy_backends(self):
-        # With two healthy backends, parallel threads must NOT all land on
-        # one URL — that defeats the load-balancing point and leaves the
-        # second host idle. Sticky-per-thread keeps each thread on the same
-        # backend (so KV-cache stays warm) but the overall distribution
-        # across threads should hit both URLs.
-        ok = MagicMock()
-        ok.status_code = 200
-        with patch("src.parser.llm_enrichment._get_config",
-                   return_value={"ollama_urls": [
-                       "http://192.168.1.77:11434",
-                       "http://192.168.1.69:11434",
-                   ]}), \
-             patch("src.parser.llm_enrichment._get_client",
-                   return_value=MagicMock(get=MagicMock(return_value=ok))):
-            results = []
-            barriers = threading.Barrier(8)
-
-            def worker():
-                barriers.wait()  # max parallelism
-                results.append(llm_mod._pick_ollama_url())
-
-            ts = [threading.Thread(target=worker) for _ in range(8)]
-            for t in ts: t.start()
-            for t in ts: t.join()
-
-        unique = set(results)
-        assert unique == {"http://192.168.1.77:11434", "http://192.168.1.69:11434"}, \
-            f"expected both backends to receive traffic, got {unique}"
-
-    def test_pick_sticky_per_thread(self):
-        # Same thread must always pick the same backend (so prompt-cache
-        # stays warm on its assigned host, instead of bouncing every call).
-        ok = MagicMock()
-        ok.status_code = 200
-        with patch("src.parser.llm_enrichment._get_config",
-                   return_value={"ollama_urls": [
-                       "http://a:11434", "http://b:11434", "http://c:11434",
-                   ]}), \
-             patch("src.parser.llm_enrichment._get_client",
-                   return_value=MagicMock(get=MagicMock(return_value=ok))):
-            picks = [llm_mod._pick_ollama_url() for _ in range(20)]
-        assert len(set(picks)) == 1, f"same thread bounced backends: {set(picks)}"
-
-
-# ---------------------------------------------------------------------------
-# enrich_from_description
-# ---------------------------------------------------------------------------
-
-class TestEnrichFromDescription:
-    def test_empty_description_returns_none(self):
-        assert enrich_from_description("") is None
-        assert enrich_from_description("short") is None
-
-    @patch("src.parser.llm_enrichment._llm_available", return_value=True)
-    @patch("src.parser.llm_enrichment._call_llm", return_value=VALID_LLM_JSON)
-    def test_calls_llm(self, mock_call, mock_avail):
-        result = enrich_from_description("Vendo BMW 320d com 180.000km reais")
-        assert result == VALID_LLM_JSON
-        mock_call.assert_called_once()
-
-    @patch("src.parser.llm_enrichment._llm_available", return_value=True)
-    @patch("src.parser.llm_enrichment._call_llm", return_value=None)
-    def test_returns_none_on_llm_failure(self, mock_call, mock_avail):
-        result = enrich_from_description("Vendo BMW 320d com 180.000km reais")
-        assert result is None
-
-    @patch("src.parser.llm_enrichment._llm_available", return_value=False)
-    def test_returns_none_when_ollama_unavailable(self, mock_avail):
-        result = enrich_from_description("Vendo BMW 320d com 180.000km reais")
-        assert result is None
-
-
-# ---------------------------------------------------------------------------
-# correct_listing_data — cross-check logic
+# Data correction — cross-checking an extraction against the listing
 # ---------------------------------------------------------------------------
 
 class TestCorrectListingData:
@@ -424,66 +228,6 @@ class TestApplyCorrections:
 
 # ---------------------------------------------------------------------------
 # Pipeline: multiprocessing-based LLM worker (uses actual _llm_worker from CLI)
-# ---------------------------------------------------------------------------
-
-class TestLlmPipeline:
-    @patch("src.parser.llm_enrichment._llm_available", return_value=True)
-    @patch("src.parser.llm_enrichment.enrich_from_description", return_value=VALID_LLM_JSON)
-    def test_queue_feeds_llm_worker(self, mock_enrich, mock_avail):
-        """Simulate the CLI pipeline: scraper puts (olx_id, desc) in queue, worker processes."""
-        import multiprocessing
-        import queue
-        from src.cli import _llm_worker
-
-        # Use queue.Queue (not multiprocessing.Queue) since worker runs as a
-        # thread here — avoids the race where mp.Queue's internal feeder daemon
-        # hasn't flushed the pipe by the time we check empty().
-        in_q = queue.Queue()
-        out_q = queue.Queue()
-        shutdown = multiprocessing.Event()
-
-        worker = threading.Thread(target=_llm_worker, args=(in_q, out_q, shutdown))
-        worker.start()
-
-        for i in range(5):
-            in_q.put((f"test-{i}", f"Test Car {i}", f"Vendo carro {i} com {i*50000}km muitos detalhes"))
-
-        in_q.put(None)  # poison pill
-        worker.join(timeout=10)
-
-        results = []
-        while not out_q.empty():
-            results.append(out_q.get_nowait())
-        assert len(results) == 5
-        assert all(r[1] == VALID_LLM_JSON for r in results)
-
-    @patch("src.parser.llm_enrichment._llm_available", return_value=True)
-    @patch("src.parser.llm_enrichment.enrich_from_description", return_value=None)
-    def test_worker_handles_failures(self, mock_enrich, mock_avail):
-        """Worker sends None results and exits after 5 consecutive failures."""
-        import multiprocessing
-        import queue
-        from src.cli import _llm_worker
-
-        in_q = queue.Queue()
-        out_q = queue.Queue()
-        shutdown = multiprocessing.Event()
-
-        for i in range(7):
-            in_q.put((f"fail-{i}", f"Car {i}", f"Vendo carro numero {i} com muitos quilometros"))
-
-        worker = threading.Thread(target=_llm_worker, args=(in_q, out_q, shutdown))
-        worker.start()
-        worker.join(timeout=10)
-
-        results = []
-        while not out_q.empty():
-            results.append(out_q.get_nowait())
-        # Exits after 5 consecutive failures
-        assert len(results) == 5
-        assert all(r[1] is None for r in results)
-
-
 # ---------------------------------------------------------------------------
 # scraper on_detail_ready callback
 # ---------------------------------------------------------------------------

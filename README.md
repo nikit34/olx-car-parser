@@ -1,9 +1,9 @@
 # olx-car-parser
 
 End-to-end pipeline that scrapes Portuguese used-car listings from **OLX.pt**
-and **StandVirtual**, enriches them with a local LLM, runs a vision damage
-classifier on the photos, predicts a fair price with LightGBM, and Telegrams
-the standout deals.
+and **StandVirtual**, prices them with LightGBM, runs a vision damage
+classifier on the photos, reads the descriptions of the top-ranked deals with
+a cloud LLM, and Telegrams the standout ones.
 
 ## Live dashboard
 
@@ -32,35 +32,33 @@ dashboard sees.
 ```mermaid
 flowchart TD
     Cron[cron 0 */4 * * * UTC<br/>or workflow_dispatch] --> Setup
-    Setup[Set up Python venv<br/>install -e .] --> Ollama
-
-    subgraph LLMGate [LLM gate]
-      direction TB
-      Ollama[Ensure Ollama is running<br/>localhost + 192.168.1.69<br/>OLLAMA_NUM_PARALLEL=2] --> Probe[Probe LAN partner<br/>ifconfig / route / arp / ping]
-      Probe --> Smoke[Run Ollama smoke tests<br/>pytest -m smoke<br/>fail-fast]
-    end
-
-    Smoke --> Scrape
+    Setup[Set up Python venv<br/>install -e .] --> Scrape
 
     subgraph Pipeline [Per-cron pipeline]
       direction TB
-      Scrape[Scrape OLX + SV<br/>BeautifulSoup, HTTP/2<br/>≤90 min cap] --> Enrich[Enrich with LLM<br/>workers=6, sticky 2:1<br/>qwen3:4b-instruct]
-      Enrich --> Weights[Ensure damage_classifier_v2.pt<br/>cached in data/]
+      Scrape[Scrape OLX + SV<br/>JSON APIs, raw only<br/>≤90 min cap] --> Weights[Ensure damage_classifier_v2.pt<br/>cached in data/]
       Weights --> Verify[Verify photos<br/>ResNet50 @ 0.20<br/>priority: text-flagged first]
       Verify --> Alerts[Send Telegram alerts<br/>blocking_deal_reason vetoes]
       Alerts --> Checkpoint[SQLite WAL checkpoint]
       Checkpoint --> Train[Train price model + backtest<br/>LightGBM 5-split CQR]
     end
 
-    Train --> Witnesses[Build dashboard witnesses<br/>predict_prices + TreeSHAP<br/>→ data/dashboard/*.parquet]
+    Train --> Enrich
+
+    subgraph LLMStep [Value-gated LLM]
+      direction TB
+      Enrich[Rank every listing by GBM<br/>undervaluation, keep top-K] --> Cascade[Gemini → OpenRouter<br/>condition NLP on those only<br/>per-provider daily budget]
+    end
+
+    Cascade --> Witnesses[Build dashboard witnesses<br/>predict_prices + TreeSHAP<br/>→ data/dashboard/*.parquet]
     Witnesses --> Upload[Upload to latest-data Release<br/>olx_cars.db, *.joblib, *.json,<br/>damage_classifier_v2.pt, dashboard parquets]
     Upload --> Dashboard[Cloudflare Pages rebuild<br/>fetches release at build time<br/>serves stlite same-origin]
 
     classDef gate fill:#fef3c7,stroke:#92400e,color:#78350f
     classDef step fill:#dbeafe,stroke:#1e40af,color:#1e3a8a
     classDef terminal fill:#dcfce7,stroke:#166534,color:#14532d
-    class Ollama,Probe,Smoke gate
-    class Scrape,Enrich,Weights,Verify,Alerts,Checkpoint,Train step
+    class Enrich,Cascade gate
+    class Scrape,Weights,Verify,Alerts,Checkpoint,Train step
     class Cron,Upload,Dashboard terminal
 ```
 
@@ -80,9 +78,10 @@ flowchart LR
     B[OLX/SV detail HTML<br/>BeautifulSoup parse] --> C
     C[(SQLite<br/>listings)]:::db
 
-    C --> D
-    D[Ollama qwen3:4b-instruct<br/>JSON-mode<br/>3 fields]
-    D -->|sub_model<br/>trim_level<br/>mileage_in_description_km| E
+    C --> V[value gate<br/>GBM ranks every listing<br/>top-K undervalued only]
+    V --> D
+    D[Gemini flash → OpenRouter<br/>JSON mode, condition NLP]
+    D -->|sub_model · trim_level · mileage<br/>mechanical_condition · accident<br/>owners · warranty · urgency| E
 
     C --> R[regex<br/>_derive_damage_severity]
     R -->|damage_severity 0-3| E
@@ -113,7 +112,7 @@ flowchart LR
 
 | Stage | Model | Where | Latency | Quality |
 |---|---|---|---|---|
-| Text enrichment | **qwen3:4b-instruct** (Ollama) | `localhost` + `192.168.1.69` (LAN partner), sticky 2:1 routing, 6 workers | ~3-5 s/listing | 100% match vs LLM oracle on damage_severity |
+| Text enrichment | **gemini-flash-latest** → OpenRouter free models | cloud, cascade with per-provider daily budget | ~3-8 s/listing | top-K deals only (~20/run), never the whole corpus |
 | Damage from text | **regex** `_derive_damage_severity` | in-process | ~1 ms/listing | rule-based, calibrated against the 30-listing oracle |
 | Photo damage | **ResNet50 v2** (`damage_classifier_v2.pt`, 90 MB) | M1 MPS or CPU | ~50 ms/photo, ~10 s/listing on the runner (network-bound) | per-photo F1=0.750 @0.30 · listing-level F1=0.818 @0.20, **R=100%** on the 51-listing gold set |
 | Price estimate | **LightGBM CQR** (`price_model.joblib`) | in-process | <1 ms/listing | MAPE ~12% on the 5-split time backtest, 80% pinball coverage |
@@ -177,10 +176,13 @@ src/
 ├── cli.py                  # Typer entrypoint — all the `python -m src.cli ...` commands
 ├── parser/
 │   ├── scraper.py          # OLX + SV crawl (BeautifulSoup, HTTP/2)
-│   ├── llm_enrichment.py   # Ollama client, sticky-per-thread routing, JSON-mode prompts
+│   ├── llm_enrichment.py   # domain rules for extracted facts (validation, corrections)
+│   ├── cloud_enrichment.py # Gemini → OpenRouter cascade + per-provider budget ledger
+│   ├── tls_fingerprint.py  # the ClientHello every OLX-facing client must use
 │   ├── photo_damage.py     # ResNet50 wrapper — DamageClassifier
 │   └── damage_decision.py  # torch-free flag rules — imported by the dashboard
 ├── analytics/
+│   ├── value_gate.py       # ranks listings by GBM undervaluation → top-K for the LLM
 │   ├── price_model.py      # LightGBM CQR pipeline + features
 │   ├── model_eval.py       # 5-split time backtest
 │   └── computed_columns.py # depreciation / liquidity / per-segment stats
@@ -209,7 +211,8 @@ scripts/
 tests/
 ├── test_*.py                          # unit + integration suite
 ├── test_release_cache.py              # marker-gated TTL + CDN fallback
-└── test_ollama_integration.py         # live smoke marker (needs Ollama on LAN)
+├── test_cloud_enrichment.py           # value gate, provider cascade, budget ledger
+└── test_tls_fingerprint.py            # OLX handshake (+ a live `-m smoke` check)
 ```
 
 ## License

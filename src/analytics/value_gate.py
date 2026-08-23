@@ -1,10 +1,12 @@
 """Pre-LLM value gate — pick the genuinely interesting listings to enrich.
 
-Free-tier OpenRouter can only afford ~40 listings/day, so we must spend those
-calls on the deals that matter. The GBM price model needs NO LLM input to
-estimate fair value (mileage/hp/cc/fuel/brand/model/year are structured scrape
-fields), so we can price every fresh listing *before* spending a cloud call
-and rank by undervaluation.
+This is the step that makes cloud enrichment affordable, and the ORDER is the
+point: the GBM price model needs NO LLM input to estimate fair value
+(mileage/hp/cc/fuel/brand/model/year are structured scrape fields), so every
+fresh listing is priced and ranked by undervaluation *before* a single cloud
+call is spent. Ranking is free; a call is not. Free tiers allow a few hundred
+requests a day against a corpus of ~90k listings, so anything that enriches
+first and filters later is off by three orders of magnitude.
 
 Rather than re-implement the deal funnel, this reuses the exact production
 path — ``compute_signals`` — which already materialises the deal feed with the
@@ -37,7 +39,7 @@ def rank_deal_olx_ids(
         tail where the model over-predicts phantom bargains.
       * ``spec_fill >= gate['min_spec_fill']`` — need ≥2 of 4 discriminative
         specs, else the fair value is a coarse baseline guess.
-      * exclude ``exclude_ids`` — listings already OpenRouter-enriched.
+      * exclude ``exclude_ids`` — listings already cloud-enriched.
 
     Returns [] (never raises) when there is no fresh model / no signals.
     """

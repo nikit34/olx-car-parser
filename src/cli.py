@@ -3,14 +3,12 @@
 import fcntl
 import json
 import logging
-import multiprocessing
 import signal
 import sys
 import threading
 import time
-from hashlib import md5
 from pathlib import Path
-from queue import Queue, Empty, Full
+from queue import Queue
 
 import pandas as pd
 import typer
@@ -51,113 +49,28 @@ def _load_scraper_config() -> dict:
     return {}
 
 
-# How long to let the inline LLM workers drain the queue at shutdown before
-# terminating them and saving the rest raw. Bounds the scrape step on a cold
-# full-coverage run (huge new-listing backlog) so it can't time out; the tail
-# enriches across subsequent runs / via the `enrich` command.
-_LLM_DRAIN_BUDGET_S = 20 * 60
-
-
-def _llm_worker(in_q: multiprocessing.Queue, out_q: multiprocessing.Queue,
-                shutdown: multiprocessing.Event):
-    """Separate process: reads (olx_id, description) from in_q, sends (olx_id, result) to out_q.
-
-    Exits when it receives a poison pill (None) or when the shutdown event is set
-    and the queue is empty.
-    """
-    from src.parser.llm_enrichment import enrich_from_description, _llm_available, _get_config
-    from queue import Empty
-
-    log = logging.getLogger("llm_worker")
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-                        handlers=[logging.StreamHandler(sys.stdout)])
-
-    cfg = _get_config()
-    if not _llm_available():
-        log.warning("Ollama unreachable at %s, worker exiting.", cfg["ollama_url"])
-        return
-
-    log.info("LLM worker started (Ollama %s)", cfg["ollama_model"])
-
-    enriched = 0
-    failures = 0
-    while True:
-        try:
-            item = in_q.get(timeout=60)
-        except Empty:
-            if shutdown.is_set():
-                break
-            continue
-        if item is None:  # poison pill
-            break
-        olx_id, title, description = item
-        if not description or len(description.strip()) < 20:
-            out_q.put((olx_id, None))
-            continue
-        result = enrich_from_description(description, title)
-        out_q.put((olx_id, result))
-        if result:
-            enriched += 1
-            failures = 0
-            if enriched % 25 == 0:
-                log.info("LLM progress: %d enriched", enriched)
-        else:
-            failures += 1
-            if failures >= 5:
-                log.warning("5 consecutive LLM failures, worker stopping.")
-                break
-
-    log.info("LLM worker done: %d enriched", enriched)
-
-
-def _desc_hash(text: str) -> str:
-    return md5(text.strip().encode()).hexdigest()
-
-
-def _llm_to_db(llm_out: multiprocessing.Queue, raw_by_id: dict, db_queue: Queue):
-    """Thread: pairs LLM results with raw listings, forwards to db_queue."""
-    merged = 0
-    while True:
-        item = llm_out.get()
-        if item is None:
-            break
-        olx_id, result = item
-        raw = raw_by_id.get(olx_id)
-        if raw:
-            db_queue.put((raw, result))
-            merged += 1
-    log.info("LLM merger done: %d forwarded to DB", merged)
-
-
 def _db_worker(db_queue: Queue, result: dict):
-    """Thread: reads (raw_listing, llm_data|None) from db_queue, saves to DB."""
-    from src.parser.llm_enrichment import correct_listing_data
+    """Thread: reads raw listings off db_queue and saves them.
 
+    Raw only. Description NLP is a separate value-gated step over the ranked
+    top deals (``enrich-cloud``) and writes its columns directly, so nothing
+    here needs an LLM result. Note that upsert_listing skips None values, so a
+    re-scrape of an enriched listing never blanks its llm_extras.
+    """
     session = get_session()
     saved = 0
-    enriched = 0
     unmatched = 0
     active_ids: set[str] = set()
     processed = 0
 
     while True:
-        item = db_queue.get()
-        if item is None:
+        raw = db_queue.get()
+        if raw is None:
             break
-
-        raw, llm_data = item
 
         if not raw.brand and not raw.title:
             processed += 1
             continue
-
-        if llm_data:
-            raw._llm_extras = llm_data
-            corrections = correct_listing_data(raw)
-            enriched += 1
-        else:
-            corrections = {}
 
         # StandVirtual detail pages frequently leave model="" (the
         # data-testid="model" container isn't always populated). The title
@@ -183,9 +96,6 @@ def _db_worker(db_queue: Queue, result: dict):
             "registration_month": raw.registration_month,
             "city": raw.city, "district": raw.district,
             "seller_type": raw.seller_type, "description": raw.description,
-            "llm_extras": json.dumps(llm_data, ensure_ascii=False) if llm_data else None,
-            "llm_description_hash": _desc_hash(raw.description) if llm_data and raw.description else None,
-            **{k: v for k, v in corrections.items() if not k.startswith("_")},
             "source": getattr(raw, "source", "olx"),
             "posted_at": getattr(raw, "_posted_at", None),
             # Seller-profile pointer (resolved to seller_uuid asynchronously
@@ -212,8 +122,7 @@ def _db_worker(db_queue: Queue, result: dict):
         processed += 1
         if processed % 100 == 0:
             session.commit()
-            log.info("DB save progress: %d saved, %d enriched, %d unmatched",
-                     saved, enriched, unmatched)
+            log.info("DB save progress: %d saved, %d unmatched", saved, unmatched)
 
     # Dedup + market stats used to run incrementally inside this loop every
     # 500 saves, but the final passes after the whole pipeline drains already
@@ -221,10 +130,8 @@ def _db_worker(db_queue: Queue, result: dict):
     # added seconds per batch.  Keep only the final passes (see main scrape()).
     session.commit()
     session.close()
-    log.info("DB worker done: %d saved, %d enriched, %d unmatched",
-             saved, enriched, unmatched)
+    log.info("DB worker done: %d saved, %d unmatched", saved, unmatched)
     result["saved"] = saved
-    result["enriched"] = enriched
     result["unmatched"] = unmatched
     result["active_ids"] = active_ids
 
@@ -236,17 +143,19 @@ def scrape(
     delay_max: float = typer.Option(None, help="Max delay between requests (sec)"),
     private_only: bool = typer.Option(None, help="Only private sellers (Particular)"),
     concurrency: int = typer.Option(None, help="Parallel detail page workers (default 8)"),
-    llm_workers: int = typer.Option(None, help="Parallel LLM enrichment workers (default from config, or 1)"),
-    deep: bool = typer.Option(False, "--deep", help="Disable early-stop: walk all pages so stale tail listings get last_seen_at + price refreshed. Already-known olx_ids skip detail-fetch (just SERP-card refresh) so the LLM cost stays flat."),
+    deep: bool = typer.Option(False, "--deep", help="Disable early-stop: walk all pages so stale tail listings get last_seen_at + price refreshed. Already-known olx_ids skip detail-fetch (just SERP-card refresh) so the cost stays flat."),
 ):
-    """Scrape OLX.pt car listings, enrich with LLM, save to database.
+    """Scrape OLX.pt + StandVirtual car listings and save them to the database.
 
-    Streaming pipeline: Scraper -> LLM -> DB all run in parallel.
-    Listings are saved to DB as soon as LLM finishes (or immediately if
-    no enrichment needed), without waiting for the full scrape to complete.
+    Streaming pipeline: Scraper -> DB. Nothing here calls a language model.
+    Description NLP is a separate, value-gated step (``enrich-cloud``): the
+    GBM prices every listing from structured fields first, and only the
+    top-ranked undervalued deals are worth a cloud call. Enriching inline
+    would mean one call per scraped listing — tens of thousands a day against
+    a free tier that allows a few hundred.
 
-    LLM enrichment runs inline whenever Ollama is reachable; if it isn't,
-    listings are saved raw and can be filled in later via `enrich`.
+    Listings are written as they arrive, without waiting for the full scrape
+    to complete.
     """
     _LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     lock_file = open(_LOCK_PATH, "w")
@@ -278,9 +187,6 @@ def scrape(
 
     log.info("Starting scrape of OLX.pt: up to %d pages...", config.max_pages)
 
-    # Load existing enrichment hashes to skip unchanged descriptions
-    from src.storage.repository import get_enriched_hashes
-    enriched_hashes = get_enriched_hashes(session)
     duplicate_ids = get_duplicate_ids(session)
     # Already-known olx_ids drive scrape early-stop: when a search page is
     # ≥95% revisits across 3 pages in a row, OLX has nothing new this cycle
@@ -291,16 +197,13 @@ def scrape(
         olx_id for (olx_id,) in session.query(_Listing.olx_id).all()
     }
     session.close()
-    log.info(
-        "Already enriched: %d listings, %d duplicates, %d known olx_ids in DB",
-        len(enriched_hashes), len(duplicate_ids), len(known_ids),
-    )
+    log.info("%d duplicates, %d known olx_ids in DB", len(duplicate_ids), len(known_ids))
 
     # Deep sweep: walk every page (no early-stop), but skip detail-fetch for
     # already-known olx_ids. SERP card alone refreshes last_seen_at and adds
     # a price snapshot, so listings that sank below page ~30 — invisible to
     # the shallow 4h cycle — still get their prices kept current. Detail
-    # fetch + LLM still fire for genuinely new listings.
+    # fetch still fires for genuinely new listings.
     if deep:
         log.info(
             "DEEP SWEEP: early-stop disabled, %d known olx_ids will skip detail-fetch",
@@ -320,55 +223,21 @@ def scrape(
         scrape_skip_ids = duplicate_ids | known_ids
         scrape_early_stop_ratio = 0.95
 
-    # --- Streaming pipeline: Scraper -> [LLM] -> DB ---
+    # --- Streaming pipeline: Scraper -> DB ---
 
     db_queue: Queue = Queue()
     raw_by_id: dict = {}
-
-    # LLM pipeline — runs inline if Ollama is reachable, otherwise we save
-    # raw and let the separate `enrich` command catch up.
-    llm_in: multiprocessing.Queue | None = None
-    llm_out: multiprocessing.Queue | None = None
-    llm_shutdown = None
-    llm_procs = []
-    merger = None
-
-    from src.parser.llm_enrichment import _get_config as _get_llm_config, _llm_available
-    llm_cfg = _get_llm_config()
-    llm_enabled = _llm_available()
-    if llm_enabled:
-        # Bounded queue caps how much we buffer in RAM. The scraper enqueues
-        # non-blocking (saves raw when full — see _on_batch), and the shutdown
-        # drain is time-boxed (_LLM_DRAIN_BUDGET_S), so this is roughly the
-        # per-run inline-enrichment ceiling; the rest is saved raw and enriched
-        # on later runs. Each item (id, title, desc) ≈ 3 KB → ~3 MB peak.
-        llm_in = multiprocessing.Queue(maxsize=1000)
-        llm_out = multiprocessing.Queue()
-        llm_shutdown = multiprocessing.Event()
-        num_workers = llm_workers if llm_workers is not None else llm_cfg.get("max_workers", 6)
-        for _ in range(num_workers):
-            p = multiprocessing.Process(target=_llm_worker, args=(llm_in, llm_out, llm_shutdown), daemon=True)
-            p.start()
-            llm_procs.append(p)
-        merger = threading.Thread(target=_llm_to_db, args=(llm_out, raw_by_id, db_queue), daemon=True)
-        merger.start()
-        log.info("Inline LLM enrichment enabled (%d Ollama workers)", num_workers)
-    else:
-        log.warning("Ollama unreachable at %s — saving listings raw, run `enrich` later",
-                    llm_cfg["ollama_url"])
 
     # DB worker thread: saves listings as they arrive
     db_result: dict = {}
     db_thread = threading.Thread(target=_db_worker, args=(db_queue, db_result), daemon=True)
     db_thread.start()
 
-    # Scraper callback: sends each listing to LLM or directly to DB
-    sent_to_llm = 0
-    skipped_llm = 0
+    # Scraper callback: hands each listing straight to the DB writer.
     skipped_no_photos = 0
 
     def _on_batch(batch):
-        nonlocal sent_to_llm, skipped_llm, skipped_no_photos
+        nonlocal skipped_no_photos
         for listing in batch:
             # Drop listings the detail page confirmed have zero photos —
             # they're typically reposts of expired ads or low-effort scams,
@@ -380,51 +249,9 @@ def scrape(
                 skipped_no_photos += 1
                 continue
             raw_by_id[listing.olx_id] = listing
-            if not llm_enabled:
-                db_queue.put((listing, None))
-                continue
-            if not listing.description or len(listing.description.strip()) < 20:
-                db_queue.put((listing, None))
-                continue
-            if listing.olx_id in duplicate_ids:
-                skipped_llm += 1
-                db_queue.put((listing, None))
-                continue
-            # Listings that won't match a known generation flow into the
-            # unmatched table, where llm_extras is unused — sending them to
-            # Ollama is pure waste. ~18% of inline traffic on a steady-state
-            # DB. Cheap to recompute (lookup table), worth the early skip.
-            if not get_generation(listing.brand, listing.model or "", listing.year):
-                skipped_llm += 1
-                db_queue.put((listing, None))
-                continue
-            # Enrich only listings we have never enriched. The JSON-API
-            # description text is formatted differently from the old HTML
-            # (tags stripped, entities unescaped), so a hash comparison would
-            # miss on every already-known row and re-enrich the entire corpus
-            # once — which is exactly what timed the 2026-06-09 cutover run
-            # out. Already-enriched rows keep their llm_extras; we trade
-            # re-enrichment on seller description edits (rare, low value) for a
-            # per-run LLM cost that scales with new listings, not corpus size.
-            if listing.olx_id in enriched_hashes:
-                skipped_llm += 1
-                db_queue.put((listing, None))
-                continue
-            try:
-                # Non-blocking: under full coverage the cold run discovers tens
-                # of thousands of never-enriched listings. Blocking on a full
-                # LLM queue here is what stalled the scrape into the 90-min
-                # timeout. When the queue is saturated, save the listing raw
-                # instead; the inline workers + the `enrich` command drain the
-                # backlog across subsequent runs.
-                llm_in.put((listing.olx_id, listing.title, listing.description),
-                           block=False)
-                sent_to_llm += 1
-            except Full:
-                skipped_llm += 1
-                db_queue.put((listing, None))
-        log.info("Page done: %d listings -> %d sent to LLM, %d skipped, %d dropped (no photos)",
-                 len(batch), sent_to_llm, skipped_llm, skipped_no_photos)
+            db_queue.put(listing)
+        log.info("Page done: %d listings -> DB, %d dropped (no photos)",
+                 len(batch), skipped_no_photos)
 
     with OlxScraper(config) as scraper:
         # Full coverage: price-band bisection over the whole cars category
@@ -516,29 +343,6 @@ def scrape(
     # --- SIGTERM handler: graceful shutdown on timeout ---
     def _sigterm_handler(signum, frame):
         log.warning("SIGTERM received — initiating graceful shutdown...")
-        if llm_shutdown:
-            llm_shutdown.set()
-        if llm_in:
-            drained = 0
-            while True:
-                try:
-                    item = llm_in.get_nowait()
-                except Empty:
-                    break
-                if item is not None:
-                    # llm_in carries (olx_id, title, description) — unpack
-                    # tolerantly so the drain works regardless of payload arity.
-                    olx_id, *_ = item
-                    raw = raw_by_id.get(olx_id)
-                    if raw:
-                        db_queue.put((raw, None))
-                        drained += 1
-            if drained:
-                log.warning("SIGTERM drain: %d listings saved without enrichment", drained)
-        if llm_out:
-            llm_out.put(None)
-        if merger:
-            merger.join(timeout=10)
         db_queue.put(None)
         db_thread.join(timeout=30)
         if any(scraped_by_source.values()):
@@ -549,9 +353,8 @@ def scrape(
                 s.close()
             except Exception as e:
                 log.warning("mark_inactive failed on SIGTERM: %s", e)
-        log.info("Graceful shutdown complete: %d saved, %d enriched, %d unmatched",
-                 db_result.get("saved", 0), db_result.get("enriched", 0),
-                 db_result.get("unmatched", 0))
+        log.info("Graceful shutdown complete: %d saved, %d unmatched",
+                 db_result.get("saved", 0), db_result.get("unmatched", 0))
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, _sigterm_handler)
@@ -560,47 +363,7 @@ def scrape(
     log.info("Scraping done (%d OLX + %d SV = %d total). Waiting for pipeline to drain...",
              len(raw_listings) - len(sv_listings), len(sv_listings), len(raw_listings))
 
-    if llm_enabled:
-        # 1. Stop LLM workers — TIME-BOXED. On a cold full-coverage run the
-        #    queue holds up to maxsize new listings and Ollama (~10-15 s/item,
-        #    6 workers) can't drain that within the 90-min step budget; an
-        #    unbounded join here is what timed the step out. Give the workers a
-        #    bounded window to enrich what they can, then terminate — the
-        #    leftover-drain below saves the rest raw, and they get enriched on
-        #    a later run / via the `enrich` command.
-        for _ in llm_procs:
-            llm_in.put(None)
-        llm_shutdown.set()
-        deadline = time.monotonic() + _LLM_DRAIN_BUDGET_S
-        for p in llm_procs:
-            p.join(timeout=max(1.0, deadline - time.monotonic()))
-        for p in llm_procs:
-            if p.is_alive():
-                log.warning("LLM worker still draining at budget — terminating")
-                p.terminate()
-                p.join(timeout=5)
-
-        # 2. Drain leftover llm_in
-        drained = 0
-        while True:
-            try:
-                item = llm_in.get_nowait()
-            except Empty:
-                break
-            if item is not None:
-                olx_id, *_ = item
-                raw = raw_by_id.get(olx_id)
-                if raw:
-                    db_queue.put((raw, None))
-                    drained += 1
-        if drained:
-            log.warning("LLM workers exited early: %d listings saved without enrichment", drained)
-
-        # 3. Stop merger
-        llm_out.put(None)
-        merger.join()
-
-    # 4. Stop DB worker
+    # Stop the DB worker and let it flush.
     db_queue.put(None)
     db_thread.join()
 
@@ -608,7 +371,7 @@ def scrape(
         log.error("No listings scraped.")
         raise typer.Exit(1)
 
-    # 5. Mark inactive, dedup & market stats (single session, no contention)
+    # Mark inactive, dedup & market stats (single session, no contention)
     final_session = get_session()
     total_scraped = sum(len(v) for v in scraped_by_source.values())
     if total_scraped:
@@ -645,233 +408,70 @@ def scrape(
     final_session.commit()
     final_session.close()
 
-    log.info("Saved %d listings (%d enriched), %d unmatched",
-             db_result.get("saved", 0), db_result.get("enriched", 0),
-             db_result.get("unmatched", 0))
+    log.info("Saved %d listings, %d unmatched",
+             db_result.get("saved", 0), db_result.get("unmatched", 0))
     log.info("Done!")
 
 
-@app.command()
-def enrich(
-    workers: int = typer.Option(6, help="Parallel Ollama workers (default 6)"),
-    cheap_first: bool = typer.Option(True, help="Prioritize cheaper listings"),
-    active_only: bool = typer.Option(
-        False, help="Skip sold/expired listings (is_active=False) — useful "
-                    "for fast schema-backfill runs that only matter to the "
-                    "currently-trained model.",
-    ),
-):
-    """Enrich unenriched listings with the local LLM (parallel).
-
-    Processes listings that don't have llm_extras yet. Uses ThreadPoolExecutor
-    so several Ollama requests are inflight at once; on M1 8 GB the model
-    saturates around 6 workers.
-    """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    from src.parser.llm_enrichment import (
-        enrich_from_description, correct_listing_data,
-        _llm_available, _get_config, _derive_damage_severity,
-    )
-    from src.models.listing import Listing
-
-    init_db()
-    session = get_session()
-
-    cfg = _get_config()
-    # Pending = no llm_extras yet, OR llm_extras lacks the v2 damage_severity
-    # field (post-schema-bump backfill). The json_extract clause is SQLite-
-    # specific but the project pins SQLite, so this is fine.
-    from sqlalchemy import or_, func as sa_func, text as sa_text
-    needs_damage_backfill = sa_func.json_extract(
-        Listing.llm_extras, "$.damage_severity",
-    ).is_(None)
-    q = (
-        session.query(Listing)
-        .filter(
-            or_(Listing.llm_extras.is_(None), needs_damage_backfill),
-            Listing.description.isnot(None),
-        )
-    )
-    if active_only:
-        q = q.filter(Listing.is_active == True)  # noqa: E712 — SQLAlchemy needs ==
-    pending = q.all()
-
-    if not pending:
-        log.info("All listings already enriched.")
-        return
-
-    # Two-stage split: rows that already have llm_extras only need the new
-    # damage_severity field, which we derive deterministically from existing
-    # extras + a keyword scan (validated 100% LLM-equivalent on the eval set).
-    # Only rows with NO extras hit Ollama. Cuts ~80% of LLM calls in the
-    # post-schema-bump backfill case.
-    backfill_only = [l for l in pending if l.llm_extras]
-    fresh = [l for l in pending if not l.llm_extras]
-
-    if backfill_only:
-        log.info("Backfill-only path: deriving damage_severity for %d listings (no LLM)...",
-                 len(backfill_only))
-        derived_count = 0
-        for listing in backfill_only:
-            try:
-                extras = json.loads(listing.llm_extras) if listing.llm_extras else {}
-            except (json.JSONDecodeError, TypeError):
-                continue
-            severity = _derive_damage_severity(
-                extras, listing.title or "", listing.description or "",
-            )
-            extras["damage_severity"] = severity
-            listing.llm_extras = json.dumps(extras, ensure_ascii=False)
-            listing.damage_severity = severity
-            derived_count += 1
-            if derived_count % 500 == 0:
-                session.commit()
-                log.info("Derive progress: %d / %d", derived_count, len(backfill_only))
-        session.commit()
-        log.info("Derived damage_severity for %d listings without LLM.", derived_count)
-
-    if not fresh:
-        log.info("No fresh enrichment needed — all listings had existing extras.")
-        return
-
-    if not _llm_available():
-        log.error("Ollama not reachable; %d listings still need fresh enrichment.", len(fresh))
-        raise typer.Exit(1)
-
-    if cheap_first:
-        # Fetch min price per listing in one SQL query instead of firing a
-        # lazy relationship lookup per listing (N+1 over price_snapshots).
-        from sqlalchemy import func
-        from src.models.listing import PriceSnapshot
-        fresh_ids = [l.id for l in fresh]
-        min_prices = dict(
-            session.query(
-                PriceSnapshot.listing_id,
-                func.min(PriceSnapshot.price_eur),
-            )
-            .filter(PriceSnapshot.listing_id.in_(fresh_ids))
-            .group_by(PriceSnapshot.listing_id)
-            .all()
-        )
-        fresh.sort(key=lambda l: min_prices.get(l.id) or float("inf"))
-
-    pending = fresh
-    log.info("Fresh enrichment: %d listings with %d workers (Ollama %s)...",
-             len(pending), workers, cfg['ollama_model'])
-
-    enriched = 0
-    failed = 0
-    consecutive_failures = 0
-    batch_size = 25
-
-    def _enrich_one(listing, description, title):
-        # Worker runs on a non-main thread — must not touch ORM attributes,
-        # because the shared Session is not thread-safe and attributes get
-        # expired after each main-thread commit, triggering lazy reloads.
-        if not description or len(description.strip()) < 20:
-            return listing, {}
-        result = enrich_from_description(description, title or "")
-        return listing, result
-
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {}
-        for listing in pending:
-            # Snapshot fields on the main thread before submitting, so the
-            # worker never needs to hit the Session.
-            desc = listing.description or ""
-            title = listing.title or ""
-            futures[pool.submit(_enrich_one, listing, desc, title)] = listing
-
-        for fut in as_completed(futures):
-            listing, result = fut.result()
-            if result == {}:
-                listing.llm_extras = "{}"
-                continue
-            if result:
-                listing._llm_extras = result
-                corrections = correct_listing_data(listing)
-                # damage_severity is derived deterministically inside
-                # correct_listing_data — fold it back into extras so the next
-                # enrich run's needs_damage_backfill filter recognizes the
-                # row as already done.
-                if "damage_severity" in corrections:
-                    result["damage_severity"] = corrections["damage_severity"]
-                listing.llm_extras = json.dumps(result, ensure_ascii=False)
-                for field, value in corrections.items():
-                    if hasattr(listing, field):
-                        setattr(listing, field, value)
-                enriched += 1
-                consecutive_failures = 0
-                if enriched % batch_size == 0:
-                    session.commit()
-                    log.info("Enrich progress: %d / %d (failed: %d)",
-                             enriched, len(pending), failed)
-            else:
-                failed += 1
-                consecutive_failures += 1
-                if consecutive_failures >= 10:
-                    log.error("10 consecutive LLM failures, stopping.")
-                    pool.shutdown(wait=False, cancel_futures=True)
-                    break
-
-    session.commit()
-    log.info("Enriched %d listings (%d failed).", enriched, failed)
-
-
-@app.command("enrich-openrouter")
-def enrich_openrouter(
-    daily_budget: int = typer.Option(
-        None, help="Override daily OpenRouter request budget (free tier ~50/day). "
-                   "Default from config/settings.yaml openrouter.daily_request_budget."),
+@app.command("enrich-cloud")
+def enrich_cloud(
     per_run_cap: int = typer.Option(
-        None, help="Override per-run request cap. Default from config."),
+        None, help="Override how many LLM requests this run may spend across all "
+                   "providers. Default from config/settings.yaml llm.per_run_request_cap."),
     dry_run: bool = typer.Option(
         False, help="Rank + select candidates and print them, but make NO API calls "
                     "and touch neither the DB nor the budget state file."),
 ):
-    """Value-gated enrichment of the top deals via a free OpenRouter model.
+    """Value-gated description NLP on the top deals, via the provider cascade.
 
-    The GBM value model needs no LLM to price a listing, so we rank ALL fresh
-    listings by undervaluation FIRST (via the production deal funnel) and send
-    only the top-K most-undervalued, non-cheap-tail deals to a free OpenRouter
-    model for condition NLP. Spend is bounded by a daily + per-run request
-    budget (free tier ≈ 50/day) tracked in a state file. Safe to run on every
-    scheduled scrape: no-ops (exit 0) when OPENROUTER_API_KEY is unset, when
-    the budget is exhausted, or when no fresh model / no candidate deals exist.
+    The order matters and is the whole point of the design. The GBM needs no
+    LLM to value a car, so we price and rank EVERY fresh listing first, and
+    only the top-K most-undervalued rows that clear the gate (not the cheap
+    tail, not the spec-poor ones, not the ones already enriched) are sent to a
+    model. Ranking is free; a cloud call is the scarce thing.
+
+    Providers cascade in ``llm.providers`` order — Gemini, then OpenRouter —
+    and each listing takes the first usable answer. Spend is metered per
+    provider per UTC day, so a Gemini outage drains OpenRouter's much smaller
+    free tier no faster than its own ceiling allows.
+
+    Safe to run on every scheduled scrape: it exits 0 when no provider has a
+    key, when every provider's budget is spent, or when nothing clears the
+    gate.
     """
     from sqlalchemy import func as sa_func
     from src.models.listing import Listing
-    from src.parser.openrouter_enrichment import (
-        get_openrouter_config, openrouter_available, openrouter_corrections,
-        enrich_from_description as or_enrich, load_budget, save_budget,
+    from src.parser.cloud_enrichment import (
+        get_llm_config, available_providers, cloud_corrections,
+        enrich_from_description as cloud_enrich, BudgetLedger, KEY_ENV,
     )
     from src.analytics.value_gate import rank_deal_olx_ids
 
-    cfg = get_openrouter_config()
-    if daily_budget is not None:
-        cfg["daily_request_budget"] = daily_budget
+    cfg = get_llm_config()
     if per_run_cap is not None:
         cfg["per_run_request_cap"] = per_run_cap
 
     # --dry-run only ranks + prints candidates: it makes no API calls, so it
-    # needs neither the key nor budget headroom (useful for validating the
-    # gate anywhere, e.g. on the scrape host without the secret exported).
-    if not dry_run and not openrouter_available():
-        log.warning("OPENROUTER_API_KEY not set — skipping OpenRouter enrichment.")
+    # needs neither a key nor budget headroom (useful for validating the gate
+    # anywhere, e.g. on the scrape host without the secrets exported).
+    providers = available_providers(cfg)
+    if not dry_run and not providers:
+        log.warning("No LLM provider has an API key (%s) — skipping enrichment.",
+                    ", ".join(f"{p}→${KEY_ENV[p]}" for p in cfg["providers"]))
         return
 
-    budget = load_budget(cfg["budget_state_file"])
-    daily_remaining = max(0, int(cfg["daily_request_budget"]) - budget["requests"])
-    run_request_budget = min(int(cfg["per_run_request_cap"]), daily_remaining)
+    ledger = BudgetLedger(cfg["budget_state_file"])
+    daily_left = {p: ledger.remaining(p, cfg) for p in cfg["providers"]}
+    run_request_budget = min(int(cfg["per_run_request_cap"]), sum(daily_left.values()))
     if not dry_run and run_request_budget <= 0:
-        log.info("OpenRouter daily budget exhausted (%d/%d used today) — skipping.",
-                 budget["requests"], cfg["daily_request_budget"])
+        log.info("Daily LLM budget spent on every provider (%s) — skipping.",
+                 ", ".join(f"{p}: {ledger.used(p)}" for p in cfg["providers"]))
         return
 
     init_db()
     session = get_session()
 
-    # Exclude listings already OpenRouter-enriched (marker stored in llm_extras).
+    # Exclude listings already cloud-enriched (marker stored in llm_extras).
     already = {
         oid for (oid,) in session.query(Listing.olx_id).filter(
             sa_func.json_extract(Listing.llm_extras, "$._or_enriched").isnot(None)
@@ -887,12 +487,13 @@ def enrich_openrouter(
         session, gate=cfg["gate"], limit=candidate_limit, exclude_ids=already,
     )
     if not ranked_ids:
-        log.info("OpenRouter gate: no candidate deals to enrich.")
+        log.info("Value gate: no candidate deals to enrich.")
         return
 
     if dry_run:
-        log.info("DRY RUN — %d candidate deals (run budget %d req, daily remaining %d):",
-                 len(ranked_ids), run_request_budget, daily_remaining)
+        log.info("DRY RUN — %d candidate deals (run budget %d req; daily left %s):",
+                 len(ranked_ids), run_request_budget,
+                 ", ".join(f"{p}={n}" for p, n in daily_left.items()))
         for oid in ranked_ids:
             log.info("  candidate olx_id=%s", oid)
         return
@@ -900,69 +501,64 @@ def enrich_openrouter(
     rows = {
         l.olx_id: l for l in session.query(Listing).filter(Listing.olx_id.in_(ranked_ids)).all()
     }
-    log.info("OpenRouter enrichment: up to %d requests this run (daily remaining %d), "
-             "models=%s", run_request_budget, daily_remaining, cfg["models"])
+    log.info("Cloud enrichment: up to %d requests this run; providers %s; daily left %s",
+             run_request_budget, " → ".join(providers),
+             ", ".join(f"{p}={n}" for p, n in daily_left.items()))
 
     requests_spent = 0
     enriched = 0
     failed = 0
     consecutive_failures = 0
-    try:
-        for oid in ranked_ids:
-            if requests_spent >= run_request_budget:
-                break
-            listing = rows.get(oid)
-            if listing is None:
-                continue
-            remaining = run_request_budget - requests_spent
+    for oid in ranked_ids:
+        if requests_spent >= run_request_budget:
+            break
+        listing = rows.get(oid)
+        if listing is None:
+            continue
+        remaining = run_request_budget - requests_spent
+        try:
+            result, n_req = cloud_enrich(
+                listing.description or "", listing.title or "", cfg,
+                ledger=ledger, request_cap=remaining,
+            )
+        except Exception as e:  # noqa: BLE001 — one bad listing must not abort the run
+            log.warning("Cloud enrichment raised for %s: %s", oid, e)
+            result, n_req = None, 0
+        requests_spent += n_req
+        # The ledger persists inside every charge(), so a SIGKILL mid-run can
+        # lose at most the request in flight — never a whole run's spend.
+        if result:
             try:
-                result, n_req = or_enrich(
-                    listing.description or "", listing.title or "", cfg, request_cap=remaining,
-                )
-            except Exception as e:  # noqa: BLE001 — one bad listing must not abort the run
-                log.warning("OpenRouter call raised for %s: %s", oid, e)
-                result, n_req = None, 0
-            requests_spent += n_req
-            # Persist the running spend after EVERY call: the workflow step has a
-            # 20-min SIGKILL and the concurrency rule can cancel this late step, so
-            # a single end-of-loop save would silently drop the spend and let the
-            # next of the day's runs re-spend past the free-tier ceiling.
-            save_budget(cfg["budget_state_file"], budget["requests"] + requests_spent)
-            if result:
-                try:
-                    listing._llm_extras = result
-                    corrections = openrouter_corrections(listing)
-                    if "damage_severity" in corrections:
-                        result["damage_severity"] = corrections["damage_severity"]
-                    result["_or_enriched"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-                    listing.llm_extras = json.dumps(result, ensure_ascii=False)
-                    for field, value in corrections.items():
-                        if hasattr(listing, field):
-                            setattr(listing, field, value)
-                    session.commit()
-                except Exception as e:  # noqa: BLE001 — DB lock contention etc. must not abort
-                    log.warning("OpenRouter DB write failed for %s: %s — rolling back", oid, e)
-                    session.rollback()
-                    continue
-                enriched += 1
-                consecutive_failures = 0
-                log.info("OpenRouter enriched %s (%d/%d req)", oid, requests_spent, run_request_budget)
-            elif n_req > 0:
-                # A real API attempt that failed (429 chain exhausted / bad output).
-                failed += 1
-                consecutive_failures += 1
-                if consecutive_failures >= 3:
-                    log.warning("3 consecutive OpenRouter failures (free tier rate-limited?) "
-                                "— stopping run to preserve daily budget.")
-                    break
-            # n_req == 0 → description too short (or the call raised); skip silently.
-    finally:
-        # Belt-and-suspenders for the exception path (SIGKILL bypasses finally,
-        # which is why the per-call save above is the real guard).
-        save_budget(cfg["budget_state_file"], budget["requests"] + requests_spent)
-    log.info("OpenRouter enrichment done: %d enriched, %d failed, %d requests "
-             "(daily total %d/%d).", enriched, failed, requests_spent,
-             budget["requests"] + requests_spent, cfg["daily_request_budget"])
+                listing._llm_extras = result
+                corrections = cloud_corrections(listing)
+                if "damage_severity" in corrections:
+                    result["damage_severity"] = corrections["damage_severity"]
+                result["_or_enriched"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                listing.llm_extras = json.dumps(result, ensure_ascii=False)
+                for field, value in corrections.items():
+                    if hasattr(listing, field):
+                        setattr(listing, field, value)
+                session.commit()
+            except Exception as e:  # noqa: BLE001 — DB lock contention etc. must not abort
+                log.warning("Cloud enrichment DB write failed for %s: %s — rolling back", oid, e)
+                session.rollback()
+                continue
+            enriched += 1
+            consecutive_failures = 0
+            log.info("Enriched %s (%d/%d req)", oid, requests_spent, run_request_budget)
+        elif n_req > 0:
+            # A real API attempt that failed: every provider in the cascade
+            # refused or returned junk.
+            failed += 1
+            consecutive_failures += 1
+            if consecutive_failures >= 3:
+                log.warning("3 consecutive failures across the whole cascade "
+                            "— stopping run to preserve the daily budget.")
+                break
+        # n_req == 0 → description too short (or no provider had budget); skip.
+    log.info("Cloud enrichment done: %d enriched, %d failed, %d requests "
+             "(today: %s).", enriched, failed, requests_spent,
+             ", ".join(f"{p}={ledger.used(p)}" for p in cfg["providers"]))
 
 
 @app.command("verify-photos")

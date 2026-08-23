@@ -30,7 +30,7 @@ import httpx
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.parser.llm_enrichment import enrich_from_description
+from src.parser.llm_enrichment import _derive_damage_severity
 from src.parser.photo_fetch import download_photo, fetch_standvirtual_advert
 
 OLLAMA_URL = "http://localhost:11434"
@@ -122,18 +122,19 @@ def main():
     print(f"Desc head: {listing['description'][:150]!r}\n")
 
     # ------ Text-side damage assessment ------
-    print("--- text-side (qwen3:4b-instruct) ---")
+    # The text baseline used to be an Ollama call on the same box as the VLM.
+    # That pool is gone, and this comparison never needed a model on the text
+    # side anyway: _derive_damage_severity is the rule-based derivation
+    # production actually consumes, and it matched the LLM exactly on the
+    # 30-listing oracle.
+    print("--- text-side (rule-based damage_severity) ---")
     t0 = time.monotonic()
-    text_result = enrich_from_description(listing["description"], listing["title"])
+    text_severity = _derive_damage_severity(
+        {}, listing["title"], listing["description"],
+    )
     text_dt = time.monotonic() - t0
-    if text_result:
-        keys = ["damage_severity", "desc_mentions_accident",
-                "desc_mentions_repair", "mechanical_condition"]
-        for k in keys:
-            print(f"  {k:30s} = {text_result.get(k)!r}")
-    else:
-        print("  (no text result)")
-    print(f"  latency = {text_dt:.1f}s\n")
+    print(f"  {'damage_severity':30s} = {text_severity!r}")
+    print(f"  latency = {text_dt:.3f}s\n")
 
     # ------ Photo-side damage assessment ------
     cache = Path(args.cache_dir)
@@ -178,7 +179,7 @@ def main():
         worst_idx, worst, sev_counts = None, None, {}
 
     print("\n--- comparison ---")
-    print(f"  text  damage_severity  : {text_result.get('damage_severity') if text_result else None}")
+    print(f"  text  damage_severity  : {text_severity}")
     print(f"  photo damage_severity  : {photo_severity}  (max across {len(indexed)} photos)")
     if worst is not None and photo_severity:
         print(f"  worst photo            : #{worst_idx}  areas={worst.get('damage_areas')}")
@@ -190,8 +191,8 @@ def main():
     print(f"  photo damage_areas     : {all_areas}")
     print(f"  photo any_studio_shot  : {any_studio}")
 
-    if text_result and photo_severity is not None:
-        delta = photo_severity - (text_result.get("damage_severity") or 0)
+    if photo_severity is not None:
+        delta = photo_severity - (text_severity or 0)
         if delta >= 1:
             print(f"\n  >>> photo severity is {delta} higher than text — "
                   "possible undisclosed damage <<<")

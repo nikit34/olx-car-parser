@@ -44,7 +44,7 @@ sshpass -p 1234 ssh anastasia@192.168.1.77 \
 
 > If the SSH times out, the host's IP has drifted (DHCP rotates `anastasiasair2` between .74 and .77). **ARP-scan before declaring it down** — see `remote-hosts` skill, "When a host doesn't ping / SSH-connect". Quick: `arp -a | grep anastasiasair2`.
 
-`scripts/eval_model.py` (`REMOTE_HOST`, `REMOTE_DB`) is the canonical example of how to sample listings from the host without ever pulling the file down.
+Sample listings over SSH with `sqlite3` on the host instead of pulling the file down — e.g. `ssh anastasia@192.168.1.77 "sqlite3 ~/olx-car-parser/data/olx_cars.db 'SELECT ...'"`.
 
 ## Release publishing
 

@@ -21,26 +21,26 @@ on:
         description: "Deep sweep (no early-stop, walk all pages — refreshes prices on the stale tail)"
         type: boolean
         default: false
-      with_openrouter:
-        description: "Value-gated cloud LLM enrichment of top deals via a free OpenRouter model"
+      with_llm:
+        description: "Value-gated cloud LLM enrichment of top deals (Gemini → OpenRouter)"
         type: boolean
         default: true
 
 permissions:
   contents: write
 
-# The local Ollama inference pool was fully retired 2026-07-24 (both backends
-# unhealthy; the pool + its launchd/service agents were stopped on both LAN
-# machines) and its workflow steps — Ensure/Probe/Smoke Ollama and the Ollama
-# "Enrich with LLM" pass — were removed. LLM enrichment now runs ONLY via the
-# value-gated OpenRouter step (a free cloud model over the top deals). Scrape
-# is raw-only and always runs — it never needed Ollama.
+# There is no self-hosted inference here. The local Ollama pool was retired
+# 2026-07-24 and uninstalled from both LAN machines 2026-08-23, along with the
+# last of its workflow steps. LLM work happens ONLY in the value-gated cloud
+# step below, which reads free-text descriptions for the top-ranked deals via
+# a Gemini → OpenRouter cascade. The scrape itself is raw-only and always
+# runs — it never needed a model.
 # Deep sweep fires on the dedicated 04:00 cron OR when manually requested.
 env:
-  # OpenRouter cloud enrichment (value-gated, free model) runs on scheduled
-  # runs by default; manual dispatch respects the with_openrouter input. The
-  # step no-ops when OPENROUTER_API_KEY is unset, so 'true' is harmless then.
-  WITH_OPENROUTER: ${{ github.event_name == 'schedule' && 'true' || inputs.with_openrouter }}
+  # Cloud enrichment (value-gated, free tiers) runs on scheduled runs by
+  # default; manual dispatch respects the with_llm input. The step no-ops when
+  # neither provider key is set, so 'true' is harmless then.
+  WITH_LLM: ${{ github.event_name == 'schedule' && 'true' || inputs.with_llm }}
   IS_DEEP: ${{ github.event.schedule == '37 4 * * *' || inputs.deep == 'true' }}
   # The only HF Hub consumer in this pipeline is the CLIP exterior filter
   # (openai/clip-vit-base-patch32) loaded by the photo-verify steps. Its
@@ -119,10 +119,10 @@ jobs:
         # finishes before scrape's heavy market_stats commit (~30+ min into
         # scrape) and stays under the Wait step's 45-min backstop — but the
         # contention window is wider than at 200, so revisit if lock-retry
-        # warnings climb. No Ollama dependency
-        # either (cli.py:873 — backfill_plates skips DamageClassifier and
-        # uses CLIP + EasyOCR only), so this doesn't fight inline LLM
-        # workers for the model pool. The matching "Wait for background
+        # warnings climb. It also loads no heavy model of its own
+        # (backfill_plates skips DamageClassifier and uses CLIP + EasyOCR
+        # only), so it doesn't fight the photo-verify step for the GPU.
+        # The matching "Wait for background
         # plate-OCR backfill" step downstream blocks on the PID and
         # surfaces the log; that step's 30-min timeout backstops a stuck
         # background job.
@@ -156,9 +156,9 @@ jobs:
 
       - name: Scrape
         # Runs on !cancelled() (not the default success()) so data collection
-        # is never silently skipped by an upstream flake. Scrape is raw-only —
-        # the Ollama inline-enrichment path was retired 2026-07-24; LLM
-        # enrichment now happens later in the value-gated OpenRouter step.
+        # is never silently skipped by an upstream flake. Scrape is raw-only:
+        # description NLP happens later, in the value-gated cloud step, on the
+        # top-ranked deals only.
         if: ${{ !cancelled() }}
         env:
           PYTHONPATH: ${{ github.workspace }}
@@ -231,7 +231,7 @@ jobs:
 
       - name: Wait for background plate-OCR backfill
         # Backfill was kicked off right after venv setup and has been
-        # running concurrently with Scrape / Enrich / Backfill sellers /
+        # running concurrently with Scrape / Backfill sellers /
         # Verify photos. By the time we hit this step, the ~17-min job
         # (--limit 500 at ~30/min) is almost always done — this just
         # collects the log and surfaces the exit code. Polls on the PID
@@ -389,33 +389,37 @@ jobs:
           print('load_model accepted the fresh bundle')
           "
 
-      - name: Value-gated OpenRouter enrichment (top deals)
-        # Cloud condition-NLP on the handful of genuinely-undervalued deals the
-        # fresh GBM model flags — the only LLM enrichment left after the local
-        # Ollama pool was retired. A free cloud call, so it runs on scheduled
-        # runs; gated on WITH_OPENROUTER (defaults true on schedule). Ranks all fresh
-        # listings by GBM undervaluation via the production deal funnel, sends
-        # only the top-K (bounded by a free-tier daily/per-run request budget in
-        # data/openrouter_budget.json) to a free OpenRouter model, and writes
-        # condition columns (desc_mentions_*, mechanical_condition, urgency,
-        # warranty, damage_severity) back to the DB. Placed AFTER train/verify
-        # (so a fair value exists to rank on) and BEFORE build-dashboard/hot_deals
-        # (so the new fields propagate into signals + decisions with no retrain).
-        # No-ops (exit 0) when the OPENROUTER_API_KEY secret is unset or the daily
+      - name: Value-gated cloud LLM enrichment (top deals)
+        # Condition-NLP on the handful of genuinely-undervalued deals the fresh
+        # GBM flags — the only LLM work in the pipeline. Ranks ALL fresh
+        # listings by GBM undervaluation through the production deal funnel and
+        # sends only the top-K (bounded by a per-run cap and a per-provider
+        # daily budget in data/llm_budget.json) to the provider cascade:
+        # Gemini first, OpenRouter when Gemini has no key, no slot, no quota or
+        # no usable answer. Writes condition columns (desc_mentions_*,
+        # mechanical_condition, urgency, warranty, damage_severity) back to the
+        # DB.
+        #
+        # Placed AFTER train/verify (so a fair value exists to rank on) and
+        # BEFORE build-dashboard/hot_deals (so the new fields propagate into
+        # signals + decisions with no retrain).
+        #
+        # No-ops (exit 0) when neither provider key is set or every daily
         # budget is spent, and `|| warn` keeps a genuine error non-fatal — the
         # deal feed still builds from the raw pipeline either way.
-        if: ${{ !cancelled() && env.WITH_OPENROUTER == 'true' && steps.train_model.outputs.train_rc == '0' }}
+        if: ${{ !cancelled() && env.WITH_LLM == 'true' && steps.train_model.outputs.train_rc == '0' }}
         timeout-minutes: 20
         env:
           PYTHONPATH: ${{ github.workspace }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
-          if [ -z "$OPENROUTER_API_KEY" ]; then
-            echo "::warning::OPENROUTER_API_KEY secret not set — skipping OpenRouter enrichment. Add it in repo Settings → Secrets and variables → Actions."
+          if [ -z "$GEMINI_API_KEY" ] && [ -z "$OPENROUTER_API_KEY" ]; then
+            echo "::warning::Neither GEMINI_API_KEY nor OPENROUTER_API_KEY is set — skipping cloud enrichment. Add one in repo Settings → Secrets and variables → Actions."
             exit 0
           fi
-          .venv/bin/python -m src.cli enrich-openrouter \
-            || echo "::warning::OpenRouter enrichment failed — non-fatal; deals still build from the raw pipeline"
+          .venv/bin/python -m src.cli enrich-cloud \
+            || echo "::warning::Cloud enrichment failed — non-fatal; deals still build from the raw pipeline"
 
       - name: Build dashboard witnesses
         # Bakes predict_prices / TreeSHAP / anomaly / hazard / signals into

@@ -1,21 +1,27 @@
 ---
 name: remote-hosts
-description: Map of the LAN machines this project depends on. Two hosts — the scrape host (anastasia@192.168.1.77, macOS, owns the DB and runs the GitHub Actions self-hosted runner + Streamlit dashboard) and the Windows LLM partner (permi@192.168.1.69, Win11 16 GB, runs an Ollama backend on :11434). Use when you need to SSH in, probe Ollama health, debug LAN routing, or understand which host owns what. The dev Mac is *not* part of this pool — it only orchestrates.
+description: Map of the LAN machines this project depends on. One host that matters — the scrape host (anastasia@192.168.1.77, macOS, owns the DB and runs the GitHub Actions self-hosted runner + Streamlit dashboard) — plus the Windows box (permi@192.168.1.69) which no longer runs anything for this project. Use when you need to SSH in, debug LAN routing, or understand which host owns what. There is NO local inference any more: LLM work is a cloud Gemini → OpenRouter cascade. The dev Mac only orchestrates.
 ---
 
 # remote-hosts
 
 The project runs on two LAN machines, not on this dev Mac. This skill is the map.
 
-> **Status 2026-07-24**: the Ollama inference pool went unhealthy (scrape-host
-> `localhost` `/api/generate` hung to timeout; the `.69` backend returned HTTP
-> 500) and was **fully retired** — stopped on both hosts, agents unloaded, and
-> its workflow steps (Ensure/Probe/Smoke Ollama + the Ollama "Enrich with LLM"
-> pass) plus the `WITH_LLM` env/input **removed from `scrape.yml`** (commit
-> 8512f5a). LLM enrichment now runs ONLY via the value-gated **OpenRouter**
-> step (a free cloud model over the top deals; `openrouter:` section in
-> `config/settings.yaml`, key in the `OPENROUTER_API_KEY` repo secret).
-> **Nothing in the workflow revives Ollama anymore.**
+> **Status 2026-08-23**: Ollama is **uninstalled from both machines** — not
+> stopped, removed. Scrape host: launchd agents unloaded and deleted,
+> `/Applications/Ollama.app`, `/usr/local/bin/ollama` and `~/.ollama` (5.3 GB)
+> gone. Windows box: the NSSM service `Ollama` removed, the Inno uninstaller
+> run, `%LOCALAPPDATA%\Programs\Ollama` (6.3 GB) and `%USERPROFILE%\.ollama`
+> (3.1 GB) gone, the TCP 11434 firewall rule deleted, `OLLAMA_HOST` unset.
+> Port 11434 answers on neither host and nothing on the boxes will bring it
+> back on reboot.
+>
+> LLM enrichment is a **cloud provider cascade** — Gemini first, OpenRouter as
+> backstop (`llm.providers` in `config/settings.yaml`; keys in the
+> `GEMINI_API_KEY` / `OPENROUTER_API_KEY` repo secrets) — and it only ever
+> sees the top-K deals the GBM ranks as undervalued. If you find yourself
+> reaching for a local model here, the answer is no: an 8 GB Air is the
+> scraper, not an inference box.
 
 ## Hosts
 
@@ -26,43 +32,51 @@ The project runs on two LAN machines, not on this dev Mac. This skill is the map
   - Cron scraper (every run writes to `~/olx-car-parser/data/olx_cars.db`).
   - GitHub Actions self-hosted runner — executes `.github/workflows/scrape.yml`.
   - Streamlit dashboard.
-  - Local Ollama on `http://localhost:11434` (`NUM_PARALLEL=2`, ctx 1536 — capped by Metal at 8 GB; higher OOMs).
-- **Ollama lifecycle (macOS)**: kept alive by a **custom launchd agent** `com.olx-car-parser.ollama` (`~/Library/LaunchAgents/com.olx-car-parser.ollama.plist`, since 2026-04-26, `KeepAlive`) — plus the stock `com.ollama.ollama`. A plain `kill`/quit respawns within seconds. To stop it **and keep it down**:
-  ```bash
-  launchctl unload -w ~/Library/LaunchAgents/com.olx-car-parser.ollama.plist
-  launchctl bootout gui/$(id -u)/com.ollama.ollama 2>/dev/null; pkill -9 -f ollama
-  ```
-  As of 2026-07-24 **the workflow no longer touches Ollama at all** — the "Ensure Ollama is running" step and the `WITH_LLM` gate were removed (commit 8512f5a), so a manual stop stays down until someone reloads the launchd agent by hand (`launchctl load -w …`). (History: that step used to `open -a Ollama.app` and revive it on every `WITH_LLM=true` run.)
+- **No local model server.** Ollama was uninstalled 2026-08-23 (app, symlink,
+  launchd agents and the 5.3 GB model store). `curl localhost:11434` fails by
+  design — that is not a bug to fix.
 - **Owns**: `olx_cars.db` (the only authoritative copy — see the `release-db` skill).
 - **SSH**:
   ```bash
   sshpass -p 1234 ssh -o StrictHostKeyChecking=no anastasia@192.168.1.77
   ```
-  Same one-liner pattern is used by `scripts/eval_model.py` (`REMOTE_HOST`, `SSH`).
-- **Note**: Ollama on this host is referenced as `http://localhost:11434` in `config/settings.yaml`, *not* as `192.168.1.77` — the runner's DHCP-assigned IP drifts and self-references over LAN started failing with `EHOSTUNREACH`. Don't "fix" it back to the IP.
+  Key auth works too, so `ssh anastasia@192.168.1.77` alone is usually enough.
+- **Note**: the host's DHCP address drifts between .74 and .77 — resolve it by ARP (below) instead of hard-coding, and don't put a LAN self-reference in config.
 
-### Windows LLM partner — `permi@192.168.1.69`
+### Windows box — `permi@192.168.1.69`
 
 - **OS / hw**: Windows 11, 16 GB RAM, MX230 GPU (4 GB VRAM).
-- **Role**: second Ollama backend in the inference pool. Model `qwen3:4b-instruct`. Used by `_pick_ollama_url()` in `src/parser/llm_enrichment.py` via sticky-per-thread round-robin against `config/settings.yaml → llm.ollama_urls`.
-- **Endpoint**: `http://192.168.1.69:11434`.
-- **SSH**: `ssh permi@192.168.1.69` — **key-auth works** (default shell is `cmd.exe`; use `powershell -NoProfile -EncodedCommand <base64 UTF-16LE>` to dodge nested-quote mangling). The older "HTTP only, no shell access wired up" note is **stale** — SSH is wired up (reachable over LAN and Tailscale).
-- **Ollama lifecycle (Windows)**: runs as a **Windows service** `Ollama` (DisplayName "Ollama LLM Server", StartType Automatic) — *not* a tray app, *not* NSSM. Stop it with `ssh permi@192.168.1.69 'net stop Ollama'`; it restarts on reboot (Automatic) unless set Manual/Disabled.
-- **⚠️ Not ours — don't touch**: this box also hosts an **unrelated** project (`first-message-builder` / `vacancy_service`) under **NSSM services** `FirstMessageBuilder` / `VacancyService` / `VacancyInbox`, served by `waitress` on `127.0.0.1:8000`, exposed via a `cloudflared` tunnel (`firstmessage`) and reachable over `tailscaled`. Each service shows as a **pair** — a `venv\Scripts\python.exe` launcher stub (MEM ~0) → `C:\Python311\python.exe` worker (holds the port). Those are one deployment, **not** duplicate instances; killing the stub breaks the live worker.
-- **Required server config**:
-  - `OLLAMA_HOST=0.0.0.0` (otherwise binds loopback only, LAN can't reach it).
-  - Windows Firewall inbound rule on TCP 11434.
-  - **`NUM_PARALLEL=1`**. `2` forces KvSize=8192 → "failure during GPU discovery" (CUDA timeout). Verified empirically 2026-04-28: 10 consecutive runner-start failures.
-- **Pool weight**: 1 (vs 2 for the scrape host's localhost) — see `llm.ollama_weights` in `config/settings.yaml`.
-- **Health check** (matches the workflow's "Probe LAN partner Ollama" step):
+- **Role for this project: none.** It used to be the second Ollama backend;
+  the service, the binaries, the 3.1 GB model store and the TCP 11434 firewall
+  rule were all removed on 2026-08-23. Nothing here is wired into the scrape
+  pipeline any more.
+- **SSH**: `ssh permi@192.168.1.69` — key auth works. The default shell is
+  `cmd.exe`, and nested quoting mangles anything interesting, so drive it with
+  `powershell -NoProfile -EncodedCommand <base64 UTF-16LE>`:
   ```bash
-  curl -sf --max-time 5 http://192.168.1.69:11434/api/tags >/dev/null \
-    && echo "✓ reachable" || echo "✗ unreachable"
+  B64=$(iconv -f UTF-8 -t UTF-16LE < script.ps1 | base64)
+  ssh permi@192.168.1.69 "powershell -NoProfile -EncodedCommand $B64"
   ```
+- **⚠️ Not ours — don't touch**: this box hosts an **unrelated** project
+  (`first-message-builder` / `vacancy_service`) under NSSM services
+  `FirstMessageBuilder` / `VacancyService` / `VacancyInbox` / `FirstMessageBot`,
+  served by `waitress` on `127.0.0.1:8000`, exposed via a `cloudflared` tunnel
+  (`firstmessage`) and reachable over `tailscaled`. Each shows as a **pair** —
+  a `venv\Scripts\python.exe` launcher stub (MEM ~0) → `C:\Python311\python.exe`
+  worker (holds the port). That is one deployment, **not** duplicates; killing
+  the stub breaks the live worker. When removing anything on this machine,
+  filter by exact service name and verify these four are still Running
+  afterwards.
+- **Worth borrowing, not touching**: that project is where the working
+  `GEMINI_API_KEY` / `OPENROUTER_API_KEY` come from, and its
+  `builder/message_generator.py` is the reference implementation of the
+  provider cascade this project copied.
 
-## What's *not* in the pool
+## The dev Mac
 
-This dev Mac (M1, 32 GB) **orchestrates but never inferences**. Don't add `localhost` of *this* machine to `ollama_urls` — that's a different "localhost" than the one the runner sees, and the LLM enrichment is supposed to run on the runner, not here.
+This machine (M1, 32 GB) **orchestrates and never runs the pipeline**. Scrapes,
+trains and enrichment all happen on the scrape host via the self-hosted runner.
+Running them here writes to a database that isn't the authoritative one.
 
 ## When a host doesn't ping / SSH-connect
 
@@ -79,7 +93,7 @@ arp -a | grep -v incomplete
 
 Match by hostname in ARP output:
 - `anastasiasair2.home` → the scrape Mac (was .77, may be .74 today)
-- `dell.home` → the Windows LLM box (.69)
+- `dell.home` → the Windows box (.69)
 - `mac.home` → this dev Mac (don't SSH to self)
 
 SSH to the resolved IP and update this skill's "Hosts" section if the address has drifted.
@@ -92,12 +106,14 @@ SSH to the resolved IP and update this skill's "Hosts" section if the address ha
 sshpass -p 1234 ssh anastasia@192.168.1.77 \
   "sqlite3 ~/olx-car-parser/data/olx_cars.db 'SELECT MAX(last_seen_at) FROM listings;'"
 
-# LLM partner: HTTP liveness + model loaded
-curl -sf --max-time 5 http://192.168.1.69:11434/api/tags | jq -r '.models[].name'
+# LLM providers are cloud now — check them from the host, not the LAN:
+ssh anastasia@192.168.1.77 \
+  "cd ~/olx-car-parser && GEMINI_API_KEY=... .venv/bin/python -m src.cli enrich-cloud --dry-run"
 ```
 
 ## Related
 
 - DB location & release flow → `release-db` skill.
-- Inference pool config → `config/settings.yaml` (`llm.ollama_urls`, `llm.ollama_weights`).
-- Eval-from-host pattern → `scripts/eval_model.py` (`REMOTE_HOST`, `REMOTE_DB`, `SSH`).
+- Provider cascade config → `config/settings.yaml` (`llm.providers`, `gemini:`, `openrouter:`).
+- Cascade implementation → `src/parser/cloud_enrichment.py`; the gate that decides
+  which listings are worth a call → `src/analytics/value_gate.py`.

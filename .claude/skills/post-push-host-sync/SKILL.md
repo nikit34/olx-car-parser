@@ -5,9 +5,9 @@ description: Post-push runbook — after `git push` to origin/master, sync the p
 
 # post-push-host-sync
 
-After every successful `git push origin master`, run this. The scrape host's persistent clone at `~/olx-car-parser` is what backs the Streamlit dashboard, manual `enrich_local.py` runs, ad-hoc SSH operations, and any non-CI execution. It does not auto-pull, so it silently drifts behind master.
+After every successful `git push origin master`, run this. The scrape host's persistent clone at `~/olx-car-parser` is what backs the Streamlit dashboard, ad-hoc SSH operations, manual `enrich-cloud` / `-m smoke` runs, and any non-CI execution. It does not auto-pull, so it silently drifts behind master.
 
-The Windows LLM box has no project clone — only an Ollama service. It's only relevant if config touching `llm.ollama_urls`/`llm.ollama_weights` changed, in which case the runner's next checkout already picks it up; nothing to do on .69 itself.
+The Windows box has no project clone and, since 2026-08-23, runs nothing for this project at all — skip it.
 
 ## Steps
 
@@ -50,8 +50,7 @@ Only restart what actually depends on the changed code:
 
 | Pushed change touched… | Action |
 |---|---|
-| `config/settings.yaml` (Ollama URLs/weights/model name) | `launchctl kickstart -k gui/$(id -u anastasia)/com.olx-car-parser.ollama` on the host (bounces Ollama LaunchAgent so it re-reads env). |
-| Modelfile / `scripts/setup-ollama.sh` / new model required | `ssh anastasia@<ip> '~/olx-car-parser/scripts/setup-ollama.sh'` to (re)pull. |
+| `config/settings.yaml` (provider cascade, budgets, gate) | Nothing to restart — the next workflow run reads it from a fresh checkout. Sanity-check with `enrich-cloud --dry-run` on the host if the gate changed. |
 | `src/dashboard/**` or anything Streamlit serves | `pkill -f 'streamlit run'` on the host (it's started manually; the user re-launches as needed — note in your reply so they know). |
 | `.github/workflows/scrape.yml` or anything in `src/parser/`, `src/storage/`, `scripts/` (non-dashboard) | Nothing — next scheduled or dispatched workflow run picks it up via `actions/checkout`. |
 | Skills / docs / `.claude/**` only | Nothing. |
