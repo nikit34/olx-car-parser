@@ -40,6 +40,7 @@ def rank_deal_olx_ids(
       * ``spec_fill >= gate['min_spec_fill']`` — need ≥2 of 4 discriminative
         specs, else the fair value is a coarse baseline guess.
       * exclude ``exclude_ids`` — listings already cloud-enriched.
+      * require a description long enough to read — see below.
 
     Returns [] (never raises) when there is no fresh model / no signals.
     """
@@ -52,6 +53,7 @@ def rank_deal_olx_ids(
     from src.analytics.computed_columns import enrich_listings
     from src.analytics.turnover import compute_turnover_stats
     from src.parser.llm_enrichment import merge_real_mileage
+    from src.parser.cloud_enrichment import MIN_DESCRIPTION_CHARS
     from src.dashboard.data_loader import compute_signals
 
     listings = get_listings_df(session)
@@ -80,6 +82,33 @@ def rank_deal_olx_ids(
         return []
 
     df = signals.copy()
+
+    # A listing with no description has nothing for a model to read, and the
+    # ranking has no idea about that: undervaluation comes from structured
+    # fields. StandVirtual rows are the specific hazard — their feed carries no
+    # description at all (95% empty as of 2026-08), they price as aggressively
+    # undervalued, and they crowd out the OLX rows that DO have text. Left
+    # unfiltered, a run selects its whole top-K from them, spends nothing,
+    # enriches nothing, and logs success.
+    if "description" in listings.columns:
+        readable = listings[["olx_id", "description"]].copy()
+        readable["_desc_len"] = (
+            readable["description"].fillna("").astype(str).str.strip().str.len()
+        )
+        keep = set(
+            readable.loc[readable["_desc_len"] >= MIN_DESCRIPTION_CHARS, "olx_id"]
+            .astype(str)
+        )
+        before = len(signals)
+        df = df[df["olx_id"].astype(str).isin(keep)]
+        dropped = before - len(df)
+        if dropped:
+            logger.info("value_gate: %d/%d deals have no readable description — skipped",
+                        dropped, before)
+    else:
+        logger.warning("value_gate: listings frame has no description column — "
+                       "cannot tell which deals are readable")
+
     df = df[
         (df["price_eur"] >= gate["min_price_eur"])
         & (df["spec_fill"] >= gate["min_spec_fill"])

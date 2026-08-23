@@ -61,6 +61,14 @@ KEY_ENV = {
     "openrouter": "OPENROUTER_API_KEY",
 }
 
+# Shortest description worth paying a model to read. Below this there is no
+# free text to extract from and the call would be pure spend. The value gate
+# uses the same floor when picking candidates — otherwise the top-K slots go
+# to listings that cost nothing but also produce nothing, and the run quietly
+# does no work at all (which is exactly what StandVirtual rows did: 95% of
+# them carry no description).
+MIN_DESCRIPTION_CHARS = 20
+
 
 # ---------------------------------------------------------------------------
 # Extraction prompt — base 3 fields + condition NLP
@@ -665,7 +673,7 @@ def enrich_from_description(
     carry any signal costs zero requests — the caller relies on that to keep
     filling the run's budget with the next candidate.
     """
-    if not description or len(description.strip()) < 20:
+    if not description or len(description.strip()) < MIN_DESCRIPTION_CHARS:
         return None, 0
     text = f"{title}\n{description}" if title else description
     return call_llm(text, cfg, ledger=ledger, request_cap=request_cap)

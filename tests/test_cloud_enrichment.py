@@ -825,3 +825,73 @@ def test_openrouter_disables_reasoning(monkeypatch, _cfg):
     monkeypatch.setattr(ce.httpx, "Client", lambda **kw: fake)
     ce.call_openrouter("some long enough description text here", _cfg)
     assert fake.calls[0]["reasoning"] == {"enabled": False}
+
+
+# ---------------------------------------------------------------------------
+# Value gate — a deal with no description is not a candidate
+# ---------------------------------------------------------------------------
+
+def _gate_with_listings(monkeypatch, listings, signals):
+    monkeypatch.setattr("src.storage.repository.get_listings_df", lambda s: listings)
+    monkeypatch.setattr("src.storage.repository.get_price_history_df", lambda s: pd.DataFrame())
+    monkeypatch.setattr("src.analytics.computed_columns.enrich_listings", lambda df: df)
+    monkeypatch.setattr("src.analytics.turnover.compute_turnover_stats", lambda df: pd.DataFrame())
+    monkeypatch.setattr("src.parser.llm_enrichment.merge_real_mileage", lambda df: df)
+    monkeypatch.setattr("src.dashboard.data_loader.compute_signals",
+                        lambda l, h, turnover=None: (signals, None, None, None, None, None))
+
+
+_GATE = {"min_price_eur": 4000, "min_spec_fill": 0.5, "max_band_pct": 0.40,
+         "min_discount_pct": 0.0, "max_discount_pct": 60.0}
+
+
+def test_gate_skips_deals_with_no_description(monkeypatch):
+    """The exact production failure: StandVirtual rows rank top and carry no text.
+
+    Undervaluation comes from structured fields, so a description-less listing
+    can outrank everything and then produce nothing — the run spends zero
+    requests and reports success while doing no work.
+    """
+    from src.analytics import value_gate
+
+    listings = pd.DataFrame([
+        {"olx_id": "sv_top", "description": None},
+        {"olx_id": "sv_blank", "description": "   "},
+        {"olx_id": "olx_readable", "description": "Vendo BMW 320d nacional, 2 donos, com garantia."},
+    ])
+    signals = pd.DataFrame([
+        {"olx_id": "sv_top", "price_eur": 15000, "undervaluation_pct": 40.0, "spec_fill": 1.0},
+        {"olx_id": "sv_blank", "price_eur": 14000, "undervaluation_pct": 35.0, "spec_fill": 1.0},
+        {"olx_id": "olx_readable", "price_eur": 12000, "undervaluation_pct": 20.0, "spec_fill": 1.0},
+    ])
+    _gate_with_listings(monkeypatch, listings, signals)
+    ids = value_gate.rank_deal_olx_ids(None, gate=_GATE, limit=10)
+    assert ids == ["olx_readable"]
+
+
+def test_gate_keeps_ranking_among_readable_deals(monkeypatch):
+    from src.analytics import value_gate
+
+    listings = pd.DataFrame([
+        {"olx_id": f"d{i}", "description": "Descrição suficientemente longa para ler."}
+        for i in range(3)
+    ])
+    signals = pd.DataFrame([
+        {"olx_id": "d0", "price_eur": 9000, "undervaluation_pct": 10.0, "spec_fill": 1.0},
+        {"olx_id": "d1", "price_eur": 9000, "undervaluation_pct": 30.0, "spec_fill": 1.0},
+        {"olx_id": "d2", "price_eur": 9000, "undervaluation_pct": 20.0, "spec_fill": 1.0},
+    ])
+    _gate_with_listings(monkeypatch, listings, signals)
+    assert value_gate.rank_deal_olx_ids(None, gate=_GATE, limit=10) == ["d1", "d2", "d0"]
+
+
+def test_gate_survives_listings_without_a_description_column(monkeypatch):
+    """Older frames may not carry it — warn, don't crash a scheduled run."""
+    from src.analytics import value_gate
+
+    listings = pd.DataFrame([{"olx_id": "x"}])
+    signals = pd.DataFrame([
+        {"olx_id": "x", "price_eur": 9000, "undervaluation_pct": 20.0, "spec_fill": 1.0},
+    ])
+    _gate_with_listings(monkeypatch, listings, signals)
+    assert value_gate.rank_deal_olx_ids(None, gate=_GATE, limit=5) == ["x"]
