@@ -622,12 +622,29 @@ def test_call_gemini_503_retries_then_succeeds(monkeypatch, _cfg):
     assert out == {"urgency": "low"} and n == 2
 
 
-def test_call_gemini_429_abandons_provider_without_retrying(monkeypatch, _cfg):
-    """The quota window is a minute wide — a retry is a guaranteed second 429."""
+def test_call_gemini_429_advances_to_the_next_model(monkeypatch, _cfg):
+    """Gemini quotas are per MODEL, so an exhausted model must not kill the provider.
+
+    Measured 2026-08-23: the free tier allows ~20 requests/day for EACH model
+    and the buckets are separate — flash was answering 429 while flash-lite
+    served the identical request. Abandoning the provider on the first 429
+    would throw away the second model's untouched daily allowance.
+    """
     monkeypatch.setenv("GEMINI_API_KEY", "g-test")
     fake = _FakeClient([_Resp(429, text="quota"), _Resp(200, _gem({"a": 1}))])
     monkeypatch.setattr(ce.httpx, "Client", lambda **kw: fake)
     out, n = ce.call_gemini("some long enough description text here", _cfg)
+    assert out == {"a": 1} and n == 2
+
+
+def test_call_gemini_429_does_not_retry_the_same_model(monkeypatch, _cfg):
+    """The window is a day wide — an immediate retry is a guaranteed second 429."""
+    monkeypatch.setenv("GEMINI_API_KEY", "g-test")
+    cfg = _make_cfg()
+    cfg["providers_cfg"]["gemini"]["models"] = ["only-model"]
+    fake = _FakeClient([_Resp(429, text="quota"), _Resp(200, _gem({"a": 1}))])
+    monkeypatch.setattr(ce.httpx, "Client", lambda **kw: fake)
+    out, n = ce.call_gemini("some long enough description text here", cfg)
     assert out is None and n == 1
 
 

@@ -443,9 +443,16 @@ def call_gemini(text: str, cfg: dict, *, request_cap: int | None = None) -> tupl
                     logger.info("Gemini %s returned unusable text; trying next model", model)
                     break
                 if resp.status_code == 429:
-                    logger.warning("Gemini %s rate-limited (429) — not retrying within provider",
-                                   model)
-                    return None, n_requests
+                    # Quotas are PER MODEL, not per project: the free tier is
+                    # ~20 generate-content requests per day for EACH model
+                    # (verified 2026-08-23 — flash was exhausted and answering
+                    # 429 while flash-lite served the same request fine). So a
+                    # 429 retires this model for now and moves to the next one;
+                    # abandoning the whole provider would throw away every other
+                    # model's untouched daily allowance. Retrying the SAME model
+                    # is pointless — the window is a day wide, not a second.
+                    logger.warning("Gemini %s rate-limited (429) — moving to the next model", model)
+                    break
                 if resp.status_code >= 500:
                     logger.info("Gemini %s HTTP %s (attempt %d/%d)",
                                 model, resp.status_code, attempt, attempts)

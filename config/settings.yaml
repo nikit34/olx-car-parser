@@ -81,7 +81,13 @@ gemini:
   # quota unit on a guaranteed 429.
   max_rpm: 4
   slot_wait_seconds: 2
-  daily_request_budget: 150
+  # MEASURED, not guessed. The free tier allows ~20 generate-content requests
+  # per day PER MODEL ("GenerateRequestsPerDayPerProjectPerModel-FreeTier,
+  # limit: 20", read straight off a 429 on 2026-08-23), and each model has its
+  # own bucket — flash was exhausted while flash-lite still served. With two
+  # models in the chain that is ~40/day; 34 leaves headroom for the requests
+  # spent outside the scrape (manual runs, smoke checks).
+  daily_request_budget: 34
 
 
 openrouter:
