@@ -1,0 +1,100 @@
+{
+ "672957722_0": [
+  {
+   "type": "dent_crease",
+   "note": "bonnet crumpled",
+   "box": [
+    228,
+    156,
+    733,
+    348
+   ]
+  },
+  {
+   "type": "exposed_structure",
+   "note": "grille smashed, front open",
+   "box": [
+    208,
+    288,
+    541,
+    409
+   ]
+  },
+  {
+   "type": "broken_lamp",
+   "note": "right headlight broken",
+   "box": [
+    531,
+    318,
+    692,
+    399
+   ]
+  }
+ ],
+ "668675554_1": [
+  {
+   "type": "detached_part",
+   "note": "rear wiper bent off its rest",
+   "box": [
+    383,
+    398,
+    626,
+    600
+   ]
+  }
+ ],
+ "672812676_2": [
+  {
+   "type": "dent_crease",
+   "note": "bonnet and wing damaged",
+   "box": [
+    420,
+    136,
+    833,
+    338
+   ]
+  },
+  {
+   "type": "exposed_structure",
+   "note": "front bumper corner torn away",
+   "box": [
+    702,
+    308,
+    894,
+    469
+   ]
+  }
+ ],
+ "672336529_2": [
+  {
+   "type": "dent_crease",
+   "note": "front wing crumpled",
+   "box": [
+    289,
+    439,
+    679,
+    667
+   ]
+  },
+  {
+   "type": "broken_lamp",
+   "note": "headlight smashed",
+   "box": [
+    370,
+    573,
+    585,
+    708
+   ]
+  },
+  {
+   "type": "dent_crease",
+   "note": "bumper corner damaged",
+   "box": [
+    316,
+    667,
+    733,
+    829
+   ]
+  }
+ ]
+}

@@ -33,16 +33,28 @@ from src.parser.photo_fetch import download_photo, fetch_photos_olx_from_api  # 
 # Portuguese salvage/damage vocabulary, strongest first. "para peças" and
 # "desmancha" pull parts-cars (severity 3); "sinistrado" / "batido" pull the
 # mid-range crash damage that is actually the hard case for a classifier.
+# Round 2 (2026-08-23): the first pass showed the generic terms ("para peças",
+# "salvado") pull plenty of listings whose PHOTOS are of intact cars — the ad
+# sells parts, or the seller photographed the good side. The phrases that
+# describe the damage itself ("frente batida", "capotado", "embate") put the
+# damage in the frame far more often, so they go first and get the depth.
 DAMAGE_QUERIES = [
+    "frente batida",
+    "traseira batida",
     "sinistrado",
-    "batido",
-    "salvado",
-    "para peças",
-    "acidentado",
-    "desmancha",
-    "para abate",
-    "danificado",
     "capotado",
+    "batido",
+    "embate",
+    "chocado",
+    "acidentado",
+    "amolgado",
+    "danos frente",
+    "para chapa",
+    "salvado",
+    "desmancha",
+    "danificado",
+    "para peças",
+    "para abate",
     "para restauro",
 ]
 

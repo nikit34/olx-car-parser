@@ -1,0 +1,120 @@
+{
+ "672886673_1": [
+  {
+   "type": "dent_crease",
+   "note": "bonnet buckled",
+   "box": [
+    107,
+    136,
+    622,
+    368
+   ]
+  },
+  {
+   "type": "broken_lamp",
+   "note": "left headlight smashed",
+   "box": [
+    107,
+    368,
+    379,
+    510
+   ]
+  },
+  {
+   "type": "exposed_structure",
+   "note": "front panel torn open",
+   "box": [
+    198,
+    308,
+    521,
+    449
+   ]
+  },
+  {
+   "type": "dent_crease",
+   "note": "wing creased at door edge",
+   "box": [
+    561,
+    267,
+    803,
+    409
+   ]
+  }
+ ],
+ "672886673_2": [
+  {
+   "type": "dent_crease",
+   "note": "bonnet crumpled",
+   "box": [
+    178,
+    146,
+    722,
+    368
+   ]
+  },
+  {
+   "type": "broken_lamp",
+   "note": "right headlight smashed",
+   "box": [
+    601,
+    267,
+    823,
+    409
+   ]
+  },
+  {
+   "type": "exposed_structure",
+   "note": "front panel and rad support exposed",
+   "box": [
+    278,
+    348,
+    702,
+    510
+   ]
+  }
+ ],
+ "672530242_2": [
+  {
+   "type": "dent_crease",
+   "note": "boot lid heavily crumpled",
+   "box": [
+    278,
+    55,
+    803,
+    378
+   ]
+  },
+  {
+   "type": "dent_crease",
+   "note": "rear bumper deformed",
+   "box": [
+    198,
+    358,
+    803,
+    499
+   ]
+  }
+ ],
+ "672957722_1": [
+  {
+   "type": "dent_crease",
+   "note": "bonnet and wing crumpled",
+   "box": [
+    480,
+    166,
+    803,
+    368
+   ]
+  },
+  {
+   "type": "exposed_structure",
+   "note": "front end torn open",
+   "box": [
+    581,
+    318,
+    854,
+    489
+   ]
+  }
+ ]
+}

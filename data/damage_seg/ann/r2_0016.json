@@ -1,0 +1,38 @@
+{
+ "670010286_3": [],
+ "668100611_1": [],
+ "672394718_0": [
+  {
+   "type": "torn_panel",
+   "note": "rear bumper corner torn open",
+   "box": [
+    518,
+    667,
+    706,
+    883
+   ]
+  },
+  {
+   "type": "dent_crease",
+   "note": "quarter and bumper deformed",
+   "box": [
+    478,
+    573,
+    706,
+    735
+   ]
+  }
+ ],
+ "672911692_2": [
+  {
+   "type": "torn_panel",
+   "note": "mirror housing cracked and split",
+   "box": [
+    424,
+    573,
+    814,
+    829
+   ]
+  }
+ ]
+}
