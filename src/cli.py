@@ -571,6 +571,13 @@ def verify_deals(
                     "nothing, call nothing, write nothing."),
     recheck: bool = typer.Option(
         False, help="Re-verify deals that already carry a verdict."),
+    budget: int = typer.Option(
+        None, help="Manual override of how many requests this run may spend, "
+                   "for a full pass over the surfaced deals. The configured "
+                   "daily budget is a self-imposed ceiling under the provider's "
+                   "own per-model quota; the chain falls back to a second model "
+                   "on 429, so real same-day capacity is roughly double. Spend "
+                   "is still charged to the ledger."),
 ):
     """Vision check on the deals a buyer is actually shown — the photo veto.
 
@@ -608,7 +615,7 @@ def verify_deals(
     llm_cfg = get_llm_config()
     llm_cfg["providers_cfg"][PROVIDER_KEY] = vcfg
     ledger = BudgetLedger(llm_cfg["budget_state_file"])
-    left = ledger.remaining(PROVIDER_KEY, llm_cfg)
+    left = budget if budget is not None else ledger.remaining(PROVIDER_KEY, llm_cfg)
     budget = min(top_k, left) if top_k else left
     if not dry_run and budget <= 0:
         log.info("Vision daily budget spent (%d used) — skipping.", ledger.used(PROVIDER_KEY))
