@@ -309,6 +309,35 @@ _WATCH_SCORE = 15.0
 _CHEAP_TIER_EUR = 4000.0
 _CHEAP_PRED_W = 0.30
 _CHEAP_DIVERGENCE_CAP = 2.0
+# Photo-damage ranking weight (2026-08-24). Below the floor the score carries
+# nothing worth acting on — the classifier's low end is dominated by ordinary
+# reflections — so nothing happens. Above it the penalty ramps linearly to the
+# cap.
+#
+# The cap is deliberately small, and the reason is a NULL RESULT rather than
+# caution. The penalty asserts that likely body damage makes a car harder to
+# resell. That was tested against outcomes and the assertion did not survive:
+#
+#   * 59 505 closed listings with a photo score — share closing early (<25d,
+#     the closest proxy to a sale, since OLX expires listings at 30 days):
+#     42.3% for scores ≥0.30 vs 43.2% below. Spearman(score, days) = +0.03.
+#   * 44 421 listings with ≥2 price snapshots — median asking-price cut
+#     +4.00% vs +4.04%; 61.1% vs 61.5% cut at all. Spearman = +0.01.
+#
+# Two readings, and current data cannot separate them: either the score is too
+# noisy to expose a real effect (it ranks damage at ROC-AUC 0.74, so a true
+# relationship would be heavily attenuated), or damaged cars are simply
+# priced for it already and therefore sell no slower. Either way, raising this
+# cap would be inventing an effect nobody has measured. Raise it only after an
+# outcome test that actually finds one — on hand-labelled damage, not on this
+# score.
+#
+# What IS justified is the direction and the smallness: 0.10 is milder than
+# the taxi/rental penalty (0.92), it moves 15 of 188 surfaced deals by at most
+# 2.4 points, and it leaves the visible top-20 unchanged.
+_PHOTO_DAMAGE_FLOOR = 0.30
+_PHOTO_DAMAGE_MAX_PENALTY = 0.10
+
 # Low-feature-confidence penalty (audit 2026-06-08). When the
 # discriminative per-car features are absent the price model collapses to a
 # coarse brand+generation+year baseline (enc_plat alone is 54% of model
@@ -739,6 +768,32 @@ def decide(
     if pd.notna(n_owners) and n_owners and int(n_owners) >= 3:
         exit_penalty *= 0.95
         reasons.append(f"{int(n_owners)} prior owners — exit penalty")
+
+    # Photo-damage probability as a RANKING weight, not a veto (2026-08-24).
+    #
+    # The same score used to gate the feed outright and was wrong four times
+    # out of five doing it: precision 0.20 on a stratified sample of production
+    # photos, 571 of 20 497 active listings removed. But precision at a
+    # threshold and ordering quality are different properties, and the ordering
+    # holds up — on 33 held-out hand-labelled photos it ranks damaged above
+    # clean with ROC-AUC 0.74. So it belongs here, next to the taxi-history and
+    # many-owners penalties, expressing the same idea: likely body damage makes
+    # a car harder to resell.
+    #
+    # Deliberately gentle. A signal that is right ~3 times in 4 must not move a
+    # listing further than "was a rental" does (0.92), so the worst case is
+    # capped at _PHOTO_DAMAGE_MAX_PENALTY and scales linearly with the score.
+    # It nudges the ordering; it never decides.
+    photo_damage_p = g("photo_damage_p")
+    if pd.notna(photo_damage_p):
+        try:
+            p_dmg = max(0.0, min(1.0, float(photo_damage_p)))
+        except (TypeError, ValueError):
+            p_dmg = 0.0
+        if p_dmg > _PHOTO_DAMAGE_FLOOR:
+            span = (p_dmg - _PHOTO_DAMAGE_FLOOR) / (1.0 - _PHOTO_DAMAGE_FLOOR)
+            exit_penalty *= 1.0 - _PHOTO_DAMAGE_MAX_PENALTY * span
+            reasons.append(f"photos suggest body damage (p={p_dmg:.2f}) — exit penalty")
 
     # ---- Step 14: expected profit + score.
     expected_drop_eur = price * (expected_drop_pct / 100)

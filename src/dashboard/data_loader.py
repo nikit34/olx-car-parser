@@ -472,13 +472,11 @@ def _blocking_deal_reason(listing: pd.Series) -> str | None:
     4. Regex scan over ``title`` for salvage phrasings — defense-in-depth
        for listings whose enrichment hasn't run yet (``damage_severity`` and
        ``mechanical_condition`` are both NULL on freshly scraped rows).
-    5. ``mechanical_condition == "poor"`` and ``photo_damage_flagged`` (from
-       ``llm_extras``). Photo decision uses :func:`is_listing_flagged` so
-       the multi-photo agreement rule (issue #8) takes precedence over a
-       single high-p frame for post-#2 listings, with a fall-back to the
-       v2 max-rule for the ~6 271 pre-#2 rows we never backfilled.
+    5. ``mechanical_condition == "poor"`` (from ``llm_extras``).
+
+    Note what is NOT here: the photo classifier. It vetoed until 2026-08-24 at
+    precision 0.20, and now contributes a ranking weight in decide() instead.
     """
-    from src.parser.damage_decision import is_listing_flagged
 
     desc_mentions_accident = listing.get("desc_mentions_accident")
     if pd.notna(desc_mentions_accident) and bool(desc_mentions_accident):
@@ -512,12 +510,15 @@ def _blocking_deal_reason(listing: pd.Series) -> str | None:
     if str(extras.get("mechanical_condition") or "").strip().lower() == "poor":
         return "poor mechanical condition"
 
-    if is_listing_flagged(extras):
-        photo_p = extras.get("photo_damage_p")
-        if isinstance(photo_p, (int, float)):
-            return f"photo damage detected (p={photo_p:.2f})"
-        return "photo damage detected"
-
+    # The photo classifier used to veto here. It no longer does, and the
+    # reason is measured, not stylistic: on a stratified sample of production
+    # photos its flag had precision 0.20 — 8 of its 10 most confident calls
+    # were undamaged cars — while removing 571 of 20 497 active listings from
+    # the feed, more than every text veto combined. As a RANKER the same score
+    # is fine (ROC-AUC 0.74 on held-out hand-labelled photos), so it now feeds
+    # decide() as a resale-difficulty weight instead. The precise instrument
+    # for an actual veto is a vision model on the handful of surfaced deals,
+    # where the per-call cost is affordable.
     return None
 
 
@@ -1194,6 +1195,18 @@ def compute_signals(
         )
 
         # --- Build signal dict ---
+        # Photo-damage probability travels in llm_extras, not as a column.
+        # It is surfaced here because decide() now uses it as a RANKING weight
+        # (a resale-difficulty penalty), and a weight is a different thing from
+        # the veto it used to drive: measured on 33 held-out hand-labelled
+        # photos it ranks damaged above clean with ROC-AUC 0.74, which is a
+        # useful ordering signal and nowhere near a reliable classifier.
+        photo_damage_p = _load_llm_extras(listing.get("llm_extras")).get("photo_damage_p")
+        try:
+            photo_damage_p = float(photo_damage_p) if photo_damage_p is not None else None
+        except (TypeError, ValueError):
+            photo_damage_p = None
+
         desc_mentions_accident = listing.get("desc_mentions_accident")
         desc_mentions_repair = listing.get("desc_mentions_repair")
         desc_mentions_num_owners = listing.get("desc_mentions_num_owners")
@@ -1218,6 +1231,7 @@ def compute_signals(
             "discount_pct": discount_pct,
             "undervaluation_pct": undervaluation_pct,
             "damage_severity": severity_int,
+            "photo_damage_p": photo_damage_p,
             # 0 (not None) when no repair: pandas upcasts the column to
             # float64 once any row has a real cost and turns None → NaN,
             # which downstream `decide()` couldn't tell apart from a real

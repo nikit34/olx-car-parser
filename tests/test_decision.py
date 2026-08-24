@@ -460,3 +460,50 @@ def test_condition_fault_cost_reduces_margin(monkeypatch):
     assert any("disclosed fault" in r for r in faulty.reasons)
     # the fault provision lowers the score vs the clean twin
     assert faulty.score <= clean.score
+
+
+# ---------------------------------------------------------------------------
+# Photo damage: a ranking weight, not a veto (2026-08-24)
+# ---------------------------------------------------------------------------
+
+class TestPhotoDamageWeight:
+    """The photo classifier orders well (ROC-AUC 0.74 held out) and classifies
+    badly (precision 0.20 in production). So it may move a listing down the
+    feed and must never remove it."""
+
+    def _score(self, p):
+        return decide(_row(photo_damage_p=p), _ctx()).score
+
+    def test_high_photo_damage_scores_below_clean(self):
+        assert self._score(0.95) < self._score(0.0)
+
+    def test_penalty_is_monotone_in_the_score(self):
+        scores = [self._score(p) for p in (0.0, 0.4, 0.7, 1.0)]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_low_scores_do_nothing(self):
+        """Below the floor the classifier's output is mostly reflections."""
+        assert self._score(0.29) == self._score(0.0)
+
+    def test_worst_case_is_milder_than_a_rental_history(self):
+        """A signal right 3 times in 4 must not outweigh a fact we are sure of."""
+        from src.analytics.decision import _PHOTO_DAMAGE_MAX_PENALTY
+        assert _PHOTO_DAMAGE_MAX_PENALTY < 0.08 + 0.05      # taxi penalty is 0.92
+        worst = self._score(1.0)
+        clean = self._score(0.0)
+        assert worst >= clean * (1 - _PHOTO_DAMAGE_MAX_PENALTY) - 1e-6
+
+    def test_missing_score_is_not_a_penalty(self):
+        """Most of the corpus predates the classifier; absence must cost nothing."""
+        assert self._score(None) == self._score(0.0)
+        assert self._score(pd.NA) == self._score(0.0)
+
+    def test_garbage_score_is_ignored_not_fatal(self):
+        assert self._score("very damaged") == self._score(0.0)
+
+    def test_it_never_vetoes(self):
+        """A maxed-out photo score must not turn a BUY into a SKIP on its own."""
+        clean = decide(_row(photo_damage_p=0.0), _ctx())
+        if clean.verdict != VERDICT_BUY:
+            pytest.skip("base row is not a BUY; nothing to demote")
+        assert decide(_row(photo_damage_p=1.0), _ctx()).verdict == VERDICT_BUY
