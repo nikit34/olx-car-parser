@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+import typer
 
 # ``src.parser.photo_damage`` imports torch/torchvision at module load. The
 # minimal CI test environment doesn't install torchvision (heavy GPU dep),
@@ -609,11 +610,12 @@ class TestVerifyPhotosZeroOutputGuard:
             )
             photo_urls[olx_id] = [f"{olx_id}#1"]
 
-        # typer.Exit is click.exceptions.Exit (RuntimeError subclass), not
-        # SystemExit — typer's runner converts it to a process exit code,
-        # but called directly in-process it propagates as the click type.
-        import click
-        with pytest.raises(click.exceptions.Exit) as exc_info:
+        # typer.Exit is a RuntimeError subclass, not SystemExit — typer's
+        # runner converts it to a process exit code, but called directly
+        # in-process it propagates as-is. Catch typer's own alias: since
+        # typer 0.25 click is vendored as typer._click, so the identically
+        # named class in the top-level click package no longer matches.
+        with pytest.raises(typer.Exit) as exc_info:
             _run_verify(
                 db_session, monkeypatch, tmp_path,
                 photo_urls_by_listing=photo_urls,
@@ -1033,8 +1035,7 @@ class TestVerifyPhotosBackfillPlates:
         """``--backfill-plates`` and ``--upgrade-legacy`` model conflicting
         intents (skip vs re-run damage). Combining must raise so an
         operator typo doesn't silently misroute the cron."""
-        import click
-        with pytest.raises(click.exceptions.UsageError):
+        with pytest.raises(typer.BadParameter):
             cli_module.verify_photos(
                 threshold=0.2,
                 workers=1,
