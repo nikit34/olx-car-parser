@@ -63,7 +63,11 @@ _DEFAULTS = {
     # surfaced deals, nothing else can do the job, and 4/min simply means
     # the pass takes minutes. Measured the hard way: at 2 s, a 24-deal pass
     # gave up on 17 of them without spending a single request.
-    "slot_wait_seconds": 25,
+    # 70 s, not 25: at 4 requests/minute the worst case is waiting out a full
+    # window, and 25 s still abandoned 4 deals of 17 on the second pass.
+    # The window is shared with the text cascade, so a deal needing a retry
+    # can queue behind five other calls.
+    "slot_wait_seconds": 70,
     "daily_request_budget": 20,
     "max_photos": 3,
     "sheet_height": 460,
