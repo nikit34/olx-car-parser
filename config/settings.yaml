@@ -104,7 +104,10 @@ gemini_vision:
   max_attempts: 2
   retry_backoff_seconds: 3
   max_rpm: 4
-  slot_wait_seconds: 2
+  # Wait for a pacing slot rather than skipping the deal. A batch pass has
+  # nowhere else to go, so 4/min just means it takes a few minutes; at the
+  # interactive default of 2 s a 24-deal pass abandoned 17 of them.
+  slot_wait_seconds: 25
   # The measured per-model free-tier ceiling. With ~26 deals surfacing a
   # day, the top 20 by decision score get checked and the tail does not —
   # which is the right way round: the veto matters most where people look.

@@ -57,7 +57,13 @@ _DEFAULTS = {
     "max_attempts": 2,
     "retry_backoff_seconds": 3,
     "max_rpm": 4,
-    "slot_wait_seconds": 2,
+    # Wait for a slot instead of giving up on one. The 2-second default in
+    # the text cascade is right there — a person is waiting and another
+    # provider can answer — and wrong here: this is a batch over the day's
+    # surfaced deals, nothing else can do the job, and 4/min simply means
+    # the pass takes minutes. Measured the hard way: at 2 s, a 24-deal pass
+    # gave up on 17 of them without spending a single request.
+    "slot_wait_seconds": 25,
     "daily_request_budget": 20,
     "max_photos": 3,
     "sheet_height": 460,
