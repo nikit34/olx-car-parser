@@ -90,6 +90,33 @@ gemini:
   daily_request_budget: 34
 
 
+gemini_vision:
+  # Photo veto on the surfaced deals. Same key as the text cascade
+  # (GEMINI_API_KEY), deliberately a DIFFERENT model: the free-tier quota is
+  # per model (~20/day, read off a 429 body on 2026-08-23), so pointing the
+  # vision channel at flash-lite while the text cascade leads with flash means
+  # they draw on separate buckets instead of starving each other.
+  base_url: "https://generativelanguage.googleapis.com/v1beta"
+  models:
+    - "gemini-flash-lite-latest"
+    - "gemini-flash-latest"
+  timeout_seconds: 90
+  max_attempts: 2
+  retry_backoff_seconds: 3
+  max_rpm: 4
+  slot_wait_seconds: 2
+  # The measured per-model free-tier ceiling. With ~26 deals surfacing a
+  # day, the top 20 by decision score get checked and the tail does not —
+  # which is the right way round: the veto matters most where people look.
+  daily_request_budget: 20
+  # One request carries this many photos side by side — the exact format the
+  # 30-listing accuracy check was run on.
+  max_photos: 3
+  sheet_height: 460
+  # Veto at "needs repair" and above only. Severity 1 is wear for age, and
+  # vetoing on that is the mistake the ResNet veto was making.
+  veto_min_severity: 2
+
 openrouter:
   # Cascade backstop, used when Gemini has no key / no slot / no quota, or
   # returns nothing usable. Free tier is ~50 requests/day, an order of

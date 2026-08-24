@@ -561,6 +561,170 @@ def enrich_cloud(
              ", ".join(f"{p}={ledger.used(p)}" for p in cfg["providers"]))
 
 
+@app.command("verify-deals")
+def verify_deals(
+    top_k: int = typer.Option(
+        None, help="How many surfaced deals to check. Default: whatever the "
+                   "vision daily budget still allows."),
+    dry_run: bool = typer.Option(
+        False, help="Pick and print the deals that would be checked; download "
+                    "nothing, call nothing, write nothing."),
+    recheck: bool = typer.Option(
+        False, help="Re-verify deals that already carry a verdict."),
+):
+    """Vision check on the deals a buyer is actually shown — the photo veto.
+
+    The corpus-wide classifier no longer removes anything: at precision 0.20 it
+    was vetoing four good listings for every bad one. The veto now lives here
+    instead, on the ~20 deals per day that reach the top of the feed, where an
+    accurate but rate-limited model is affordable — the free tier allows about
+    20 requests per day per model, which is hopeless for 90 000 listings and
+    ample for twenty.
+
+    Only BUY/WATCH verdicts are checked, ranked by decision score, because a
+    listing nobody is shown does not need a veto. Each deal costs one request:
+    its first few photos go up as a single side-by-side image.
+
+    Writes ``llm_extras.vlm_damage``; ``_blocking_deal_reason`` reads it and
+    blocks at severity ≥ 2. Exits 0 when there is no key, no budget or no deal
+    to check.
+    """
+    import tempfile
+    from sqlalchemy import func as sa_func
+    from src.models.listing import Listing
+    from src.parser.cloud_enrichment import BudgetLedger, get_llm_config, get_api_key
+    from src.parser.photo_verdict import (
+        PROVIDER_KEY, get_vision_config, build_sheet, judge_sheet, verdict_blocks,
+    )
+    from src.parser.photo_fetch import fetch_photos, download_photo
+
+    vcfg = get_vision_config()
+    if not dry_run and not get_api_key("gemini"):
+        log.warning("GEMINI_API_KEY not set — skipping photo verification.")
+        return
+
+    # The ledger is shared with the text cascade but keyed per channel, so the
+    # vision budget is its own; see photo_verdict.PROVIDER_KEY.
+    llm_cfg = get_llm_config()
+    llm_cfg["providers_cfg"][PROVIDER_KEY] = vcfg
+    ledger = BudgetLedger(llm_cfg["budget_state_file"])
+    left = ledger.remaining(PROVIDER_KEY, llm_cfg)
+    budget = min(top_k, left) if top_k else left
+    if not dry_run and budget <= 0:
+        log.info("Vision daily budget spent (%d used) — skipping.", ledger.used(PROVIDER_KEY))
+        return
+
+    init_db()
+    session = get_session()
+
+    from src.storage.repository import get_listings_df, get_price_history_df
+    from src.analytics.computed_columns import enrich_listings
+    from src.analytics.turnover import compute_turnover_stats
+    from src.parser.llm_enrichment import merge_real_mileage
+    from src.dashboard.data_loader import compute_signals
+    from src.analytics.decision import build_context, decide_many, VERDICT_BUY, VERDICT_WATCH
+
+    listings = merge_real_mileage(enrich_listings(get_listings_df(session)))
+    if listings is None or listings.empty:
+        log.info("No listings.")
+        return
+    try:
+        signals, *_ = compute_signals(
+            listings, get_price_history_df(session),
+            turnover=compute_turnover_stats(listings))
+    except Exception as e:  # noqa: BLE001 — a stale model must not fail the step
+        log.warning("compute_signals failed (%s) — nothing to verify", e)
+        return
+    if signals is None or signals.empty:
+        log.info("No surfaced deals.")
+        return
+
+    decisions = decide_many(signals, build_context(listings))
+    shown = decisions[decisions["verdict"].isin([VERDICT_BUY, VERDICT_WATCH])]
+    shown = shown.sort_values("score", ascending=False)
+    log.info("Surfaced deals: %d of %d signals", len(shown), len(signals))
+    if shown.empty:
+        return
+
+    already = set()
+    if not recheck:
+        already = {
+            oid for (oid,) in session.query(Listing.olx_id).filter(
+                sa_func.json_extract(Listing.llm_extras, "$.vlm_damage").isnot(None)
+            ).all()
+        }
+    queue = [o for o in shown["olx_id"].tolist() if o not in already][: max(budget, 0) or None]
+
+    if dry_run:
+        log.info("DRY RUN — %d deals would be checked (budget %d, %d already verified):",
+                 len(queue), budget, len(already))
+        for oid in queue:
+            log.info("  %s", oid)
+        return
+    if not queue:
+        log.info("Every surfaced deal already has a photo verdict.")
+        return
+
+    rows = {l.olx_id: l for l in session.query(Listing).filter(Listing.olx_id.in_(queue)).all()}
+    log.info("Photo veto: checking %d deals (budget %d, models %s)",
+             len(queue), budget, vcfg["models"])
+
+    checked = blocked = failed = spent = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        for oid in queue:
+            if spent >= budget:
+                break
+            listing = rows.get(oid)
+            if listing is None or not listing.url:
+                continue
+            try:
+                urls = fetch_photos(listing.url)[: int(vcfg["max_photos"])]
+            except Exception as e:  # noqa: BLE001 — a dead listing must not abort
+                log.warning("photo fetch failed for %s: %s", oid, e)
+                continue
+            paths = []
+            for i, u in enumerate(urls):
+                dest = Path(tmp) / f"{oid}_{i}.jpg"
+                if download_photo(u, dest):
+                    paths.append(dest)
+            if not paths:
+                log.info("%s: no photos reachable — skipped (no verdict written)", oid)
+                continue
+            sheet = build_sheet(paths, int(vcfg["sheet_height"]))
+            if sheet is None:
+                continue
+            verdict, n_req = judge_sheet(sheet, vcfg, request_cap=budget - spent)
+            spent += n_req
+            ledger.charge(PROVIDER_KEY, n_req)
+            if not verdict:
+                failed += 1
+                continue
+            verdict["checked_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            verdict["n_photos"] = len(paths)
+            try:
+                extras = json.loads(listing.llm_extras) if listing.llm_extras else {}
+                if not isinstance(extras, dict):
+                    extras = {}
+                extras["vlm_damage"] = verdict
+                listing.llm_extras = json.dumps(extras, ensure_ascii=False)
+                session.commit()
+            except Exception as e:  # noqa: BLE001 — lock contention must not abort
+                log.warning("verdict write failed for %s: %s — rolling back", oid, e)
+                session.rollback()
+                continue
+            checked += 1
+            if verdict_blocks(verdict, vcfg):
+                blocked += 1
+                log.info("%s BLOCKED severity=%s — %s", oid,
+                         verdict.get("severity"), str(verdict.get("evidence"))[:70])
+            else:
+                log.info("%s ok severity=%s", oid, verdict.get("severity"))
+
+    log.info("Photo veto done: %d checked, %d blocked, %d failed, %d requests "
+             "(today %d/%d).", checked, blocked, failed, spent,
+             ledger.used(PROVIDER_KEY), vcfg["daily_request_budget"])
+
+
 @app.command("verify-photos")
 def verify_photos(
     threshold: float = typer.Option(0.20, help="P(damaged) threshold (0.20 = production default, F1=0.818 R=100%% on gold)."),

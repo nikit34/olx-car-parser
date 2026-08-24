@@ -421,6 +421,38 @@ jobs:
           .venv/bin/python -m src.cli enrich-cloud \
             || echo "::warning::Cloud enrichment failed — non-fatal; deals still build from the raw pipeline"
 
+      - name: Photo veto on surfaced deals (vision check)
+        # The precise half of the damage decision. The cheap corpus-wide
+        # classifier no longer removes anything — at precision 0.20 it vetoed
+        # four good listings for every bad one — and now only contributes a
+        # ranking weight. Here a vision model looks at the photos of the deals
+        # that actually surfaced (BUY/WATCH, ranked by decision score) and that
+        # verdict becomes the veto.
+        #
+        # It runs on ~20 listings a day because that is what the free tier
+        # allows (~20 requests per day PER MODEL) and, not coincidentally, how
+        # many deals a buyer is shown. It uses a different model than the text
+        # enrichment above, so the two draw on separate quota buckets.
+        #
+        # Placed AFTER enrich-cloud (the condition fields it may rely on are
+        # written there) and BEFORE build-dashboard/hot_deals, so a blocked
+        # deal never reaches the feed.
+        #
+        # No-ops (exit 0) without a key, without budget, or with nothing
+        # surfaced; `|| warn` keeps a genuine failure non-fatal.
+        if: ${{ !cancelled() && env.WITH_LLM == 'true' && steps.train_model.outputs.train_rc == '0' }}
+        timeout-minutes: 20
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::warning::GEMINI_API_KEY not set — skipping the photo veto; deals ship unchecked."
+            exit 0
+          fi
+          .venv/bin/python -m src.cli verify-deals \
+            || echo "::warning::Photo veto failed — non-fatal; deals ship without a vision check"
+
       - name: Build dashboard witnesses
         # Bakes predict_prices / TreeSHAP / anomaly / hazard / signals into
         # parquet+json artifacts under data/dashboard/. The browser dashboard

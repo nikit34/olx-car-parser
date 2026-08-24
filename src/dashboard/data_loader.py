@@ -458,6 +458,13 @@ _HARD_BLOCK_TEXT_PATTERN = re.compile(
 )
 
 
+# Severity at which the vision verdict removes a deal from the feed. Kept in
+# lock-step with gemini_vision.veto_min_severity in settings.yaml; duplicated
+# as a constant because this module is also mounted in the browser dashboard,
+# where settings.yaml is not present.
+_VLM_VETO_MIN_SEVERITY = 2
+
+
 def _blocking_deal_reason(listing: pd.Series) -> str | None:
     """Return a hard-stop reason for listings that should not be shown as deals.
 
@@ -509,6 +516,22 @@ def _blocking_deal_reason(listing: pd.Series) -> str | None:
 
     if str(extras.get("mechanical_condition") or "").strip().lower() == "poor":
         return "poor mechanical condition"
+
+    # The vision verdict from `verify-deals` — this IS the photo veto now.
+    # Written only for deals that actually surfaced, because the model behind
+    # it is accurate but capped at ~20 requests/day/model: hopeless for 90k
+    # listings, ample for the twenty a buyer sees. Blocks at severity >= 2
+    # ("needs repair" and above); severity 1 is wear for age and vetoing on it
+    # would repeat the mistake below.
+    vlm = extras.get("vlm_damage")
+    if isinstance(vlm, dict):
+        try:
+            sev = int(vlm.get("severity"))
+        except (TypeError, ValueError):
+            sev = None
+        if sev is not None and sev >= _VLM_VETO_MIN_SEVERITY:
+            ev = str(vlm.get("evidence") or "").strip()
+            return f"photo check: {ev}" if ev else f"photo check: damage severity {sev}"
 
     # The photo classifier used to veto here. It no longer does, and the
     # reason is measured, not stylistic: on a stratified sample of production
