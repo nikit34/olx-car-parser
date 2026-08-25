@@ -75,5 +75,17 @@ id = "5ae27bd650e94beeb2de2adf5ac2108c"
 DEPOSIT_AMOUNT_CENTS = "500"
 CURRENCY = "eur"
 
+# Canonical public hostname. When set, every request to any OTHER hostname
+# (i.e. the workers.dev subdomain) is permanently redirected here, so the two
+# hostnames stop splitting ranking signals. /healthz and /webhook/stripe are
+# never redirected — see the guard in flipper-club/src/index.js.
+#
+# Kept commented out until BOTH are true:
+#   1. carsbuyer.org actually serves (DNS delegated + Custom Domain + cert), and
+#   2. the workers.dev deposit flow has been re-checked end to end.
+# Enabling it before (1) would 301 live traffic at a hostname that does not
+# resolve yet. Uncomment to activate; no code change needed.
+# CANONICAL_HOST = "carsbuyer.org"
+
 [observability]
 enabled = true

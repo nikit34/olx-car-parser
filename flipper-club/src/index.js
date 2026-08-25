@@ -67,6 +67,26 @@ export default {
         return handleWebhook(request, env);
       }
 
+      // Canonical host — the product answers on both carsbuyer.org and the
+      // workers.dev subdomain, and identical content on two hostnames splits
+      // ranking signals. Send everything to CANONICAL_HOST, preserving path and
+      // query. Deliberately placed AFTER /healthz and /webhook/stripe so neither
+      // can ever be redirected: Stripe's signed POST has to reach the exact
+      // origin the endpoint was registered against, and a redirect would drop
+      // the body and silently break deposit confirmation.
+      // Dormant until CANONICAL_HOST is set (see wrangler.toml [vars]).
+      const canonicalHost = (env.CANONICAL_HOST || "").trim();
+      if (canonicalHost && url.hostname !== canonicalHost && !isLocalHost(url.hostname)) {
+        const dest = new URL(url);
+        dest.hostname = canonicalHost;
+        dest.protocol = "https:";
+        dest.port = "";
+        // 301 on GET/HEAD (cacheable, passes ranking signals to the new host);
+        // 308 elsewhere, which is the only redirect that preserves method+body.
+        const perm = (method === "GET" || method === "HEAD") ? 301 : 308;
+        return Response.redirect(dest.toString(), perm);
+      }
+
       // Internal stlite dashboard + its assets — Basic-Auth gated, fail-closed.
       if (pathname === "/analytics" || pathname.startsWith("/analytics/")) {
         return handleAnalytics(request, env, url);
@@ -847,6 +867,12 @@ function redirect(loc, status = 302, setCookie = null) {
   const headers = { "Location": loc };
   if (setCookie) headers["Set-Cookie"] = setCookie;
   return new Response(null, { status, headers });
+}
+
+// Local dev hostnames must never be redirected to the public domain.
+function isLocalHost(h) {
+  return h === "localhost" || h.endsWith(".localhost")
+    || h === "127.0.0.1" || h === "::1" || h === "[::1]";
 }
 
 function notFound() { return new Response("Not found", { status: 404 }); }
