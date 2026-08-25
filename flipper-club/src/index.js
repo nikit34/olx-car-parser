@@ -118,6 +118,7 @@ export default {
       if (pathname === "/sitemap.xml" && method === "GET") return handleSitemap(request, env, url);
       if (pathname === "/robots.txt" && method === "GET") return handleRobots(request, env, url);
       if (pathname === "/llms.txt" && method === "GET") return handleLlmsTxt(request, env, url);
+      if (pathname === "/_olx" && method === "GET") return handleOlxRelay(request, env, url);
       if (pathname === "/avaliar" && method === "GET") return handleAvaliar(request, env, url);
       if (pathname === "/mercado" && method === "GET") return handleFeed(request, env, url);
       if (pathname === "/car" && method === "GET") return handleCar(request, env, url);
@@ -340,6 +341,62 @@ async function handleSitemap(request, env, url) {
     status: 200,
     headers: { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=3600" },
   });
+}
+
+// /_olx — narrow egress relay for the scraper.
+//
+// OLX sits behind CloudFront and its WAF answers "Request blocked" to both the
+// scrape host's address and a GitHub-hosted one, so the scraper has no clean
+// address of its own. This forwards a single, tightly-shaped request from
+// Cloudflare's network instead.
+//
+// Deliberately not a general proxy, because a general proxy on a public domain
+// is an open relay someone else will find and use:
+//   * requires RELAY_TOKEN, compared in constant time;
+//   * GET only;
+//   * one hardcoded origin and path prefix — the offers API, nothing else;
+//   * query string is forwarded verbatim, everything else is dropped.
+// Absent RELAY_TOKEN the route does not exist at all (404), so deploying this
+// without setting the secret changes nothing.
+const RELAY_ORIGIN = "https://www.olx.pt";
+const RELAY_PATH_PREFIX = "/api/v1/offers";
+
+async function handleOlxRelay(request, env, url) {
+  const expected = (env.RELAY_TOKEN || "").trim();
+  if (!expected) return notFound();
+  const given = request.headers.get("X-Relay-Token") || "";
+  if (given.length !== expected.length || !constantTimeEqStr(given, expected)) {
+    return forbidden();
+  }
+  const path = url.searchParams.get("path") || "";
+  if (!path.startsWith(RELAY_PATH_PREFIX)) return forbidden();
+  const target = new URL(RELAY_ORIGIN + path);
+  const upstream = await fetch(target.toString(), {
+    method: "GET",
+    headers: {
+      "User-Agent": request.headers.get("X-Relay-UA")
+        || "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+           + "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      "Accept": "application/json, text/plain, */*",
+      "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.5",
+    },
+    // No edge caching: the scraper needs what OLX says now, and a cached 403
+    // would be worse than the 403 itself.
+    cf: { cacheEverything: false },
+  });
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers: {
+      "content-type": upstream.headers.get("content-type") || "application/json",
+      "cache-control": "no-store",
+    },
+  });
+}
+
+function constantTimeEqStr(a, b) {
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
 }
 
 // /llms.txt — a plain-language map of the site for tool-using models.
