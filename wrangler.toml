@@ -33,15 +33,17 @@ account_id = "6545f93bd664df2dfebb147bda85a191"
 #
 # The workers.dev hostname stays live on purpose: the Stripe webhook is
 # registered against it, and pSEO pages have been indexed there since July.
-# Redirecting it to the apex is a separate change that has to land AFTER the
-# webhook URL is repointed in the Stripe dashboard — a 301 would drop the POST
-# body and silently break deposit confirmation.
+# It no longer serves content though: CANONICAL_HOST below redirects it to the
+# apex. The webhook is unaffected: the redirect guard sits after the
+# /webhook/stripe branch, so Stripe's signed POST still reaches this origin
+# intact and the endpoint does NOT need repointing in the Stripe dashboard.
 #
-# www is deliberately NOT bound yet: two hostnames serving identical content
-# with self-referencing canonicals is a duplicate-content split. It gets bound
-# together with the redirect to the apex.
+# www is bound so that typing it resolves at all; it is not the canonical host,
+# so the same guard 301s it to the apex. No duplicate content: exactly one
+# hostname ever serves a 200.
 routes = [
   { pattern = "carsbuyer.org", custom_domain = true },
+  { pattern = "www.carsbuyer.org", custom_domain = true },
 ]
 # MUST stay true while routes are configured. Wrangler turns the workers.dev
 # subdomain OFF as soon as a route exists unless this is set, and that hostname
@@ -86,12 +88,9 @@ CURRENCY = "eur"
 # hostnames stop splitting ranking signals. /healthz and /webhook/stripe are
 # never redirected — see the guard in flipper-club/src/index.js.
 #
-# Kept commented out until BOTH are true:
-#   1. carsbuyer.org actually serves (DNS delegated + Custom Domain + cert), and
-#   2. the workers.dev deposit flow has been re-checked end to end.
-# Enabling it before (1) would 301 live traffic at a hostname that does not
-# resolve yet. Uncomment to activate; no code change needed.
-# CANONICAL_HOST = "carsbuyer.org"
+# Verified live before enabling: .org delegation published, Custom Domain
+# bound, and the edge serving 200 under a valid CN=carsbuyer.org certificate.
+CANONICAL_HOST = "carsbuyer.org"
 
 [observability]
 enabled = true
