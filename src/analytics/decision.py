@@ -32,7 +32,7 @@ import pandas as pd
 # Module-level (not lazy) so the stlite bundler's import tracer
 # (scripts/build_stlite_bundle.py walks only top-level imports) pulls
 # condition_signal.py into the browser bundle. It has no heavy deps (re only).
-from src.analytics.condition_signal import minor_fault_cost
+from src.analytics.condition_signal import fault_cost_from_flag, minor_fault_cost
 
 
 # Public types --------------------------------------------------------------
@@ -610,9 +610,17 @@ def decide(
     # an import's real margin is raw_margin − ISV.
     isv_eur = 0.0
     try:
-        from src.analytics.valuations import _import_flags
         from src.analytics.isv import compute_isv
-        imp, leg = _import_flags(g("title") or "", g("description") or "", g("origin"))
+        # Precomputed at build time (text_signals.add_text_signals) so the
+        # browser dashboard never has to carry the raw description. Falls back
+        # to scanning the text for callers that still hold it: CLI runs off the
+        # DB, older witnesses, bare rows in tests.
+        if _has("text_import_flag"):
+            imp = int(_num(g("text_import_flag")))
+            leg = int(_num(g("text_import_legalised")))
+        else:
+            from src.analytics.valuations import _import_flags
+            imp, leg = _import_flags(g("title") or "", g("description") or "", g("origin"))
         if imp and not leg:
             ry = g("year")
             res = compute_isv(g("co2_g_km"), g("engine_cc"), g("fuel_type"),
@@ -625,11 +633,19 @@ def decide(
     # ---- Step 5b: condition NLP — disclosed minor faults (2026-06-25 audit).
     # The spec-only model can't see "check-engine on / catalisador a precisar /
     # precisa de reparação" — these land at damage_severity 1 (normal wear) yet
-    # are real €-costs that erase a thin flip margin. Reads title+desc (carried
-    # via Recommendations _extra_cols); never blocks a verdict. Adds to
-    # repair_cost so it flows through net margin.
-    fault_cost, fault_flag = minor_fault_cost(
-        g("title") or "", g("description") or "", price)
+    # are real €-costs that erase a thin flip margin. Never blocks a verdict;
+    # adds to repair_cost so it flows through net margin.
+    #
+    # Detection is precomputed (text_minor_fault, carried via Recommendations
+    # _extra_cols); only the €-sizing, which needs the asking price, happens
+    # here. Same fallback as the ISV flags.
+    if _has("text_minor_fault"):
+        flag = g("text_minor_fault")
+        fault_cost, fault_flag = fault_cost_from_flag(
+            flag if isinstance(flag, str) and flag else None, price)
+    else:
+        fault_cost, fault_flag = minor_fault_cost(
+            g("title") or "", g("description") or "", price)
     if fault_cost > 0:
         repair_cost += fault_cost
         components["condition_fault_cost_eur"] = round(fault_cost, 0)

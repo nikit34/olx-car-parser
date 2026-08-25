@@ -507,3 +507,55 @@ class TestPhotoDamageWeight:
         if clean.verdict != VERDICT_BUY:
             pytest.skip("base row is not a BUY; nothing to demote")
         assert decide(_row(photo_damage_p=1.0), _ctx()).verdict == VERDICT_BUY
+
+
+# ---------------------------------------------------------------------------
+# Precomputed text signals (2026-08-25): the witness ships scan results, not
+# the prose they came from. decide() must reach the same verdict either way.
+# ---------------------------------------------------------------------------
+
+class TestPrecomputedTextSignals:
+    def _witness(self, row: pd.Series) -> pd.Series:
+        """Turn a server-side row into the witness shape: scans resolved into
+        columns, ``description`` dropped — exactly what build_dashboard_data
+        writes to listings.parquet."""
+        from src.analytics.text_signals import add_text_signals
+        frame = add_text_signals(row.to_frame().T.copy())
+        return frame.drop(columns=["description"], errors="ignore").iloc[0]
+
+    def test_fault_cost_survives_the_drop(self, monkeypatch):
+        monkeypatch.setattr(_decision_mod, "_CHEAP_PRED_W", 1.0)
+        monkeypatch.setattr(_decision_mod, "_CHEAP_DIVERGENCE_CAP", 1e9)
+        row = _cheap_row(description="luz da injeção acesa, catalisador a precisar")
+        server = decide(row, _cheap_ctx())
+        witness = decide(self._witness(row), _cheap_ctx())
+        assert server.components["condition_fault_cost_eur"] > 0
+        assert witness.components["condition_fault_cost_eur"] == \
+            server.components["condition_fault_cost_eur"]
+        assert witness.components["condition_fault"] == server.components["condition_fault"]
+
+    def test_isv_survives_the_drop(self):
+        row = _row(price_eur=9000.0, title="BMW 320d importado da Alemanha",
+                   description="ainda por legalizar, ISV por pagar",
+                   origin=None, co2_g_km=120, engine_cc=1995,
+                   fuel_type="Diesel", year=2015)
+        server = decide(row, _ctx())
+        witness = decide(self._witness(row), _ctx())
+        assert server.components["isv_eur"] > 0
+        assert witness.components["isv_eur"] == server.components["isv_eur"]
+        assert witness.verdict == server.verdict
+
+    def test_clean_listing_unaffected(self):
+        row = _row()
+        assert decide(self._witness(row), _ctx()).verdict == decide(row, _ctx()).verdict
+
+    def test_empty_column_is_authoritative(self, monkeypatch):
+        """Column present but empty means the build scanned and found nothing.
+        decide() must trust it rather than re-scanning a description that a
+        caller happens to have merged back in."""
+        monkeypatch.setattr(_decision_mod, "_CHEAP_PRED_W", 1.0)
+        monkeypatch.setattr(_decision_mod, "_CHEAP_DIVERGENCE_CAP", 1e9)
+        row = _cheap_row(description="luz da injeção acesa",
+                         text_minor_fault=None, text_import_flag=0,
+                         text_import_legalised=0)
+        assert decide(row, _cheap_ctx()).components.get("condition_fault_cost_eur", 0) == 0

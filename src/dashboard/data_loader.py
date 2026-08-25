@@ -428,34 +428,13 @@ def _normalized_text_list(value) -> list[str]:
     return [str(item).strip().lower() for item in value if item not in (None, "")]
 
 
-# Salvage / non-runner phrases that should hard-block a deal even when
-# enrichment is stale (i.e. ``damage_severity`` was set under the old
-# regex). Scans title + description: the 2026-05-02 audit cases JmUNP /
-# JmutI / JmR3C all had the giveaway phrase only in the description, so a
-# title-only scan would miss them. Title-or-description match is cheap on
-# the active subset — ~3 MB of text on the 18 k-row release.
-#
-# The phrase set is the union of ``llm_enrichment._PARTS_ONLY_HARD_PATTERN``,
-# ``_NON_RUNNER_HARD_PATTERN``, and ``_SEVERE_DAMAGE_PATTERN``. We re-list
-# them rather than import to avoid an enrichment-module import on every
-# dashboard refresh; staleness is acceptable because both modules are
-# touched in lock-step.
-_HARD_BLOCK_TEXT_PATTERN = re.compile(
-    r"para\s+pe[çc]as|vender\s+as\s+pe[çc]as|venda\s+de\s+pe[çc]as|"
-    r"vende[-\s]se\s+a?\s*pe[çc]as|"
-    r"para\s+sucata|para\s+desmanchar|s[óo]\s+pe[çc]as|abate|"
-    r"sem\s+documentos|sem\s+matr[ií]cula|"
-    r"motor\s+(?:fundido|avariad[oa])|caixa\s+avariad[oa]|"
-    r"transmiss[ãa]o\s+avariad[oa]|capotamento|"
-    r"avaria\s+(?:no|do)\s+motor|"
-    r"junta\s+(?:de\s+cabe[çc]a\s+)?queimada|"
-    r"n[ãa]o\s+pega|n[ãa]o\s+anda|n[ãa]o\s+funciona|"
-    r"(?:o\s+carro\s+)?n[ãa]o\s+liga|n[ãa]o\s+arranca|"
-    r"n[ãa]o\s+(?:é\s+)?poss[ií]vel\s+test(?:ar|á-lo)|"
-    r"(?:s[óo]|apenas)\s+(?:de\s+|com\s+)?reboque|"
-    r"non[\s-]runner|engine\s+seized",
-    re.IGNORECASE,
-)
+# Salvage / non-runner phrasing lives in src.analytics.text_signals, which also
+# precomputes the match into the ``text_hard_block_phrase`` column at build
+# time — that is what lets the witness ship without the ``description`` column
+# (57% of it) and stay under Cloudflare's 25 MiB per-asset limit. The pattern is
+# still imported here for the fallback path: CLI runs off the DB and older
+# witnesses carry the prose but not the column.
+from src.analytics.text_signals import hard_block_phrase  # noqa: E402
 
 
 # Severity at which the vision verdict removes a deal from the feed. Kept in
@@ -476,8 +455,11 @@ def _blocking_deal_reason(listing: pd.Series) -> str | None:
        parts-only / non-runner / salvage phrasings without an LLM round-trip.
     3. ``right_hand_drive`` (DB column) — the PT market doesn't accept RHD
        cars at any meaningful resale price, so they never qualify as deals.
-    4. Regex scan over ``title`` for salvage phrasings — defense-in-depth
-       for listings whose enrichment hasn't run yet (``damage_severity`` and
+    4. ``text_hard_block_phrase`` — the salvage-phrasing scan over
+       title + description, precomputed by
+       :func:`src.analytics.text_signals.add_text_signals`; scanned inline
+       when the column is absent. Defense-in-depth for listings whose
+       enrichment hasn't run yet (``damage_severity`` and
        ``mechanical_condition`` are both NULL on freshly scraped rows).
     5. ``mechanical_condition == "poor"`` (from ``llm_extras``).
 
@@ -502,13 +484,17 @@ def _blocking_deal_reason(listing: pd.Series) -> str | None:
     if pd.notna(right_hand_drive) and bool(right_hand_drive):
         return "right-hand drive (PT market mismatch)"
 
-    title = listing.get("title") or ""
-    description = listing.get("description") or ""
-    haystack = f"{title} {description}" if isinstance(title, str) and isinstance(description, str) else ""
-    if haystack.strip():
-        m = _HARD_BLOCK_TEXT_PATTERN.search(haystack)
-        if m:
-            return f"salvage phrasing in text: '{m.group(0).lower()}'"
+    has_precomputed = (
+        "text_hard_block_phrase" in listing.index
+        if hasattr(listing, "index") else "text_hard_block_phrase" in listing
+    )
+    if has_precomputed:
+        phrase = listing.get("text_hard_block_phrase")
+        phrase = phrase if isinstance(phrase, str) and phrase else None
+    else:
+        phrase = hard_block_phrase(listing.get("title"), listing.get("description"))
+    if phrase:
+        return f"salvage phrasing in text: '{phrase}'"
 
     extras = _load_llm_extras(listing.get("llm_extras"))
     if not extras:

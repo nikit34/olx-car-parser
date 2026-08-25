@@ -94,6 +94,7 @@ def _build(db_path: Path, out_dir: Path) -> dict:
         get_unmatched_df, get_portfolio_df,
     )
     from src.analytics.computed_columns import enrich_listings
+    from src.analytics.text_signals import TEXT_SIGNAL_COLUMNS, add_text_signals
     from src.analytics.turnover import compute_turnover_stats, compute_sell_speed_by_model
     from src.analytics.valuations import build_valuations
     from src.analytics.model_pages import build_model_pages
@@ -153,7 +154,30 @@ def _build(db_path: Path, out_dir: Path) -> dict:
     contributions_df = _contributions_to_long(contributions)
 
     sizes: dict[str, int] = {}
-    sizes["listings.parquet"] = _to_parquet(listings, out_dir / "listings.parquet")
+    # The witness ships without the raw prose. ``description`` was 57% of the
+    # file (15.75 MB zstd of 27.6 MB) and pushed it past Cloudflare's 25 MiB
+    # per-asset cap, breaking every Worker deploy from 2026-08-24. Nothing
+    # renders it: the three consumers that scanned it (ISV import flags,
+    # condition-NLP faults, salvage hard block) read the precomputed columns
+    # instead. Dropped only on the way to parquet — build_valuations and
+    # build_model_pages below still get the full frame.
+    #
+    # The scans cost ~26 s over the full corpus (47 MB of text, four regexes),
+    # which is why they run here and not in enrich_listings: every CLI command
+    # calls that, and none of them need the columns — they still hold the prose
+    # and scan it inline.
+    # Scans mutate ``listings`` in place (four narrow columns, harmless to the
+    # valuations/model-pages consumers below) rather than copying a 100k×90
+    # frame — the scrape host has 8 GB. The drop is copy-on-write cheap.
+    listings = add_text_signals(listings)
+    listings_witness = listings.drop(columns=["description"], errors="ignore")
+    missing_signals = [c for c in TEXT_SIGNAL_COLUMNS if c not in listings_witness.columns]
+    if missing_signals:
+        raise SystemExit(
+            "text-signal columns missing from the witness — the browser would "
+            f"silently lose these scans: {', '.join(missing_signals)}"
+        )
+    sizes["listings.parquet"] = _to_parquet(listings_witness, out_dir / "listings.parquet")
     sizes["history.parquet"] = _to_parquet(history, out_dir / "history.parquet")
     sizes["snapshots.parquet"] = _to_parquet(snapshots, out_dir / "snapshots.parquet")
     sizes["signals.parquet"] = _to_parquet(signals, out_dir / "signals.parquet")
