@@ -7,6 +7,7 @@ that are not available on CI runners, and OLX blocks datacenter IPs regardless.
 
 import json
 import logging
+import os
 import random
 import re
 import threading
@@ -176,15 +177,34 @@ class RawListing:
     seller_displayed_as: str | None = None
 
 
+def _redact_proxy(url: str) -> str:
+    """Proxy URLs routinely carry user:pass — log the endpoint, not the creds."""
+    if "@" not in url:
+        return url
+    scheme, _, rest = url.partition("://")
+    return f"{scheme}://***@{rest.rpartition('@')[2]}" if rest else "***"
+
+
 class OlxScraper:
     """Scraper using httpx. No browser dependencies."""
 
     def __init__(self, config: ScraperConfig | None = None):
         self.config = config or ScraperConfig()
+        # Optional egress override. OLX's CDN blocks by source address as well
+        # as by client fingerprint: on 2026-08-25 the same request that 403'd
+        # from our IP returned normal JSON from an unrelated one, from a plain
+        # curl with no fingerprint work at all. When that happens there is
+        # nothing to fix in the request — only where it leaves from. Set
+        # OLX_PROXY to any http(s)/socks5 proxy to move egress without a code
+        # change; unset (the default) keeps the direct connection.
+        proxy = (os.environ.get("OLX_PROXY") or "").strip() or None
+        if proxy:
+            logger.info("OLX egress via proxy %s", _redact_proxy(proxy))
         self.client = httpx.Client(
             timeout=self.config.timeout,
             follow_redirects=True,
             http2=True,
+            proxy=proxy,
             # See build_ssl_context: httpx's stock handshake is 403'd by
             # OLX's CDN, and passing our own context is the whole fix.
             verify=build_ssl_context(),

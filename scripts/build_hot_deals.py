@@ -27,6 +27,7 @@ import re
 import sys
 import time
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import pandas as pd
@@ -64,11 +65,25 @@ _OLX_PHOTO_RE = re.compile(
 _PHOTO_CACHE: dict[str, list[str]] = {}
 
 
-def fetch_photo_urls(url: str, timeout: int = 10) -> list[str]:
-    """Fetch the OLX listing page and return all gallery photo URLs in
-    page order. Empty list means the listing is dead (410/redirect) or
-    has no usable photos. Cached in-memory per process so the same
-    listing-URL across zones triggers one HTTP request."""
+def fetch_photo_urls(url: str, timeout: int = 10) -> list[str] | None:
+    """Fetch the OLX listing page and return all gallery photo URLs in page
+    order.
+
+    Three outcomes, and the caller must tell them apart:
+
+    * ``[...]`` — page fetched, photos found.
+    * ``[]``    — page fetched and it has no usable photos, i.e. the listing is
+      dead (410/redirect) and its link would be broken anyway. Drop the deal.
+    * ``None``  — we could not reach OLX at all (403 block, timeout, DNS).
+      That says nothing about the listing, so the deal must survive without an
+      image. Returning ``[]`` here is what emptied the whole feed on
+      2026-08-25: OLX started 403ing our address, every fetch raised, and all
+      21 BUY/WATCH deals were discarded as "dead" while the site showed
+      "Sem negócios".
+
+    Cached in-memory per process so the same listing-URL across zones triggers
+    one HTTP request.
+    """
     if url in _PHOTO_CACHE:
         return _PHOTO_CACHE[url]
     try:
@@ -92,10 +107,17 @@ def fetch_photo_urls(url: str, timeout: int = 10) -> list[str]:
             for pid in order
             if any(w >= 1000 for w in sizes_by_id[pid])
         ]
+    except HTTPError as e:
+        # 404/410 — the listing really is gone. Anything else (403 block, 5xx)
+        # is our problem, not the listing's.
+        dead = e.code in (404, 410)
+        print(f"[hot_deals]   photos {'gone' if dead else 'unreachable'} "
+              f"(HTTP {e.code}): {url[:60]}…", file=sys.stderr, flush=True)
+        photos = [] if dead else None
     except Exception as e:
-        print(f"[hot_deals]   photos fail ({type(e).__name__}): {url[:60]}…",
+        print(f"[hot_deals]   photos unreachable ({type(e).__name__}): {url[:60]}…",
               file=sys.stderr, flush=True)
-        photos = []
+        photos = None
     _PHOTO_CACHE[url] = photos
     return photos
 
@@ -389,19 +411,25 @@ def main() -> None:
     built_at = pd.Timestamp.now("UTC").tz_localize(None).isoformat(timespec="seconds") + "Z"
     overall_counts: dict[str, int] = {}
 
+    unreachable = 0
     for zone, districts in zone_plan:
         picked = _pick_zone_deals(signals, zone, districts, args.top_n, args.max_age_days)
         deals: list[dict] = []
         for _, row in picked.iterrows():
             photos: list[str] = []
             if args.fetch_photos and row.get("url"):
-                photos = fetch_photo_urls(row["url"])
-                if photos:
+                fetched = fetch_photo_urls(row["url"])
+                if fetched:
+                    photos = fetched
                     time.sleep(args.photo_sleep_sec)
+                elif fetched is None:
+                    # Couldn't reach OLX. Ship the deal without an image
+                    # rather than pretend it doesn't exist — a blocked
+                    # scraper must not look like an empty market.
+                    unreachable += 1
                 else:
-                    # Skip listings whose OLX page is 410/redirected — we
-                    # can't show them without a working image, and the link
-                    # would be dead anyway.
+                    # Page fetched and carries no usable photo: the listing is
+                    # 410/redirected and its link would be dead anyway.
                     continue
             deals.append(_format_deal(row.to_dict(), photos))
 
@@ -418,7 +446,9 @@ def main() -> None:
         out_path.write_text(json.dumps(payload, ensure_ascii=False, default=str,
                                        indent=2, allow_nan=False))
         overall_counts[zone] = len(deals)
-        print(f"[hot_deals]   {zone:<6} {len(deals):>3} deals → {out_path.name}", flush=True)
+        print(f"[hot_deals]   {zone:<6} {len(deals):>3} deals → {out_path.name}"
+              + (f"  ({unreachable} shipped without a photo — OLX unreachable)"
+                 if unreachable else ""), flush=True)
 
     print(f"[hot_deals] DONE  built_at={built_at}  zones={overall_counts}", flush=True)
 
