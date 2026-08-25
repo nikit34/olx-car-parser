@@ -1,0 +1,30 @@
+name: OLX reachability
+
+# Diagnostic, run by hand. When the scrape 403s, the first question is always
+# the same: is OLX refusing this request, or refusing this address? The self
+# hosted runner and the dev Mac sit behind one NAT, so they cannot answer it —
+# they are the same address. A GitHub-hosted runner is a different address on
+# the same code path, which settles it in about twenty seconds.
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe the OLX JSON API from a GitHub-hosted address
+        run: |
+          echo "egress IP: $(curl -s --max-time 10 https://api.ipify.org || echo unknown)"
+          URL="https://www.olx.pt/api/v1/offers/?offset=0&limit=1&category_id=378"
+          code=$(curl -s -o /tmp/body -w '%{http_code}' --max-time 20 "$URL" || echo 000)
+          echo "plain curl        -> $code"
+          UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+          code_ua=$(curl -s -o /tmp/body_ua -w '%{http_code}' --max-time 20 -A "$UA" "$URL" || echo 000)
+          echo "browser UA        -> $code_ua"
+          echo "first bytes: $(head -c 120 /tmp/body_ua)"
+          # Non-fatal: the point is the numbers above, not a green check.
+          if [ "$code" = "200" ] || [ "$code_ua" = "200" ]; then
+            echo "::notice::OLX answers from a GitHub-hosted address — the block is on our own IP."
+          else
+            echo "::notice::OLX refuses this address too ($code/$code_ua) — not an IP-scoped block."
+          fi
