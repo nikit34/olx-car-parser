@@ -62,6 +62,12 @@ export default {
     try {
       if (pathname === "/healthz") return new Response("ok", { status: 200 });
 
+      // Scraper egress relay. Must sit here, above both the canonical-host
+      // redirect and the PRODUCT_PATHS asset gate: it is neither a product
+      // page nor an internal asset, and gating it behind Basic-Auth (which is
+      // what the fallthrough does) makes it answer 401 to its only caller.
+      if (pathname === "/_olx" && method === "GET") return handleOlxRelay(request, env, url);
+
       if (pathname === "/webhook/stripe") {
         if (method !== "POST") return notFound();
         return handleWebhook(request, env);
@@ -118,7 +124,6 @@ export default {
       if (pathname === "/sitemap.xml" && method === "GET") return handleSitemap(request, env, url);
       if (pathname === "/robots.txt" && method === "GET") return handleRobots(request, env, url);
       if (pathname === "/llms.txt" && method === "GET") return handleLlmsTxt(request, env, url);
-      if (pathname === "/_olx" && method === "GET") return handleOlxRelay(request, env, url);
       if (pathname === "/avaliar" && method === "GET") return handleAvaliar(request, env, url);
       if (pathname === "/mercado" && method === "GET") return handleFeed(request, env, url);
       if (pathname === "/car" && method === "GET") return handleCar(request, env, url);
@@ -471,7 +476,7 @@ async function handleRobots(request, env, url) {
   const body = [
     "User-agent: *", "Allow: /",
     "Disallow: /analytics", "Disallow: /claim", "Disallow: /reserve",
-    "Disallow: /unlocked", "Disallow: /reservas",
+    "Disallow: /unlocked", "Disallow: /reservas", "Disallow: /_olx",
     // /widget stays crawlable on purpose: it is noindex,follow and links back to
     // the canonical /preco page, so it works as a backlink lever when embedded.
     "",
