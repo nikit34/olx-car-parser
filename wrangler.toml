@@ -1,7 +1,8 @@
 # Unified Cloudflare Worker — serves both:
 #   1. The public flip-deal product (one car at a time, Stripe deposit per
 #      listing) — main Worker script under flipper-club/src/. This is the public
-#      entry point at https://olx-car-parser.permikov134.workers.dev/.
+#      entry point at https://carsbuyer.org/ (also reachable at the
+#      original olx-car-parser.permikov134.workers.dev).
 #   2. The internal stlite analytics dashboard at /analytics/* — gated by HTTP
 #      Basic Auth (ANALYTICS_USER / ANALYTICS_PASS secrets), served from the
 #      ./dashboard-static asset bundle via the ASSETS binding. Not a product —
@@ -25,6 +26,23 @@ name = "olx-car-parser"
 main = "flipper-club/src/index.js"
 compatibility_date = "2024-12-01"
 account_id = "6545f93bd664df2dfebb147bda85a191"
+
+# Public domain. Registered through Cloudflare Registrar, so the zone is
+# already in this account and `custom_domain = true` lets the deploy create
+# both the Custom Domain and its DNS record — no dashboard step.
+#
+# The workers.dev hostname stays live on purpose: the Stripe webhook is
+# registered against it, and pSEO pages have been indexed there since July.
+# Redirecting it to the apex is a separate change that has to land AFTER the
+# webhook URL is repointed in the Stripe dashboard — a 301 would drop the POST
+# body and silently break deposit confirmation.
+#
+# www is deliberately NOT bound yet: two hostnames serving identical content
+# with self-referencing canonicals is a duplicate-content split. It gets bound
+# together with the redirect to the apex.
+routes = [
+  { pattern = "carsbuyer.org", custom_domain = true },
+]
 
 # Assets are served via env.ASSETS.fetch() — the Worker chooses which paths
 # get to them (Basic-Auth-gated /analytics dashboard + /files /data assets)
