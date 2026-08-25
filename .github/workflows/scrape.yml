@@ -167,6 +167,12 @@ jobs:
           # request returned normal JSON from an unrelated IP). Unset by
           # default — the scraper then connects directly, as before.
           OLX_PROXY: ${{ secrets.OLX_PROXY }}
+          # Relay egress via our own Cloudflare Worker. OLX's WAF blocks this
+          # runner's address and GitHub-hosted ones alike, while Cloudflare's
+          # path is clean. Only the offers API goes through it — the Worker
+          # refuses any other path.
+          OLX_RELAY_URL: ${{ secrets.OLX_RELAY_URL }}
+          OLX_RELAY_TOKEN: ${{ secrets.OLX_RELAY_TOKEN }}
         # Per-step timeout caps how long scrape can monopolise the 4h budget.
         # On SIGTERM at the cap, cli._sigterm_handler drains the queue and
         # saves what's collected. Deep sweep walks all 200 pages instead of

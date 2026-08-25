@@ -200,6 +200,20 @@ class OlxScraper:
         proxy = (os.environ.get("OLX_PROXY") or "").strip() or None
         if proxy:
             logger.info("OLX egress via proxy %s", _redact_proxy(proxy))
+        # Relay egress. OLX's CloudFront WAF answers "Request blocked" to this
+        # network AND to GitHub-hosted runners, so there is no clean address to
+        # connect from directly; Cloudflare's is clean, and we already run a
+        # Worker there. When both are set, offers-API calls are re-pointed at
+        # the Worker's /_olx route, which forwards exactly that one API.
+        # Everything else (StandVirtual, listing detail pages) still goes out
+        # directly, because the relay deliberately refuses any other path.
+        self._relay_url = (os.environ.get("OLX_RELAY_URL") or "").strip() or None
+        self._relay_token = (os.environ.get("OLX_RELAY_TOKEN") or "").strip() or None
+        if self._relay_url and not self._relay_token:
+            logger.warning("OLX_RELAY_URL set without OLX_RELAY_TOKEN — relay disabled")
+            self._relay_url = None
+        if self._relay_url:
+            logger.info("OLX offers API relayed via %s", self._relay_url)
         self.client = httpx.Client(
             timeout=self.config.timeout,
             follow_redirects=True,
@@ -269,6 +283,26 @@ class OlxScraper:
                 return None
         return None
 
+    def _relay_rewrite(self, url: str, headers: dict) -> tuple[str, dict]:
+        """Re-point an offers-API URL at the Worker relay, or pass it through.
+
+        Only the OLX offers API is relayed: the Worker accepts one path prefix
+        and refuses everything else, so sending StandVirtual or a listing page
+        through it would just earn a 403 with extra steps.
+        """
+        if not self._relay_url or not url.startswith(OLX_API_URL):
+            return url, {}
+        parts = urllib.parse.urlsplit(url)
+        path_q = parts.path + (("?" + parts.query) if parts.query else "")
+        relay = f"{self._relay_url}?path={urllib.parse.quote(path_q, safe='')}"
+        extra = {"X-Relay-Token": self._relay_token}
+        # Carry the rotating UA through, so the relay forwards the same
+        # identity the direct path would have sent rather than its default.
+        ua = headers.get("User-Agent")
+        if ua:
+            extra["X-Relay-UA"] = ua
+        return relay, extra
+
     def _fetch_json(self, url: str, retries: int = 3) -> dict | None:
         """Fetch *url* and return parsed JSON, or *None*.
 
@@ -280,7 +314,8 @@ class OlxScraper:
                 return None
             try:
                 headers = {**self._random_headers(), "Accept": "application/json"}
-                resp = self.client.get(url, headers=headers)
+                req_url, relay_headers = self._relay_rewrite(url, headers)
+                resp = self.client.get(req_url, headers={**headers, **relay_headers})
                 resp.raise_for_status()
                 with self._lock_403:
                     self._consecutive_403 = 0
