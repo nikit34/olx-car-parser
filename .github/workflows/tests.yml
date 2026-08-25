@@ -3,7 +3,18 @@ name: Tests
 on:
   push:
     branches: [master]
+  # PRs run the same suite before merge. Without this, a PR's only checks are
+  # GitGuardian and the Workers build, so a red suite is discovered only after
+  # the merge push — which is how the typer 0.27 breakage reached master.
+  pull_request:
+    branches: [master]
   workflow_dispatch:
+
+# A PR gets one run per head commit; pushing a fixup cancels the run still
+# grinding through the previous one instead of queueing behind it.
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test-full:
