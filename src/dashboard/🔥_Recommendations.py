@@ -326,10 +326,14 @@ deals["est_roi_pct"] = ((deals["predicted_price"] - deals["price_eur"]) / _price
 _extra_cols = [
     "urgency", "warranty", "first_owner_selling", "taxi_fleet_rental",
     "days_listed", "price_change_eur", "mechanical_condition",
-    # title + description carry the raw text decide() scans for ISV import
-    # flags and the condition-NLP minor-fault detector (2026-06-25 audit).
-    # Without them both scans are inert on the feed.
+    # decide() needs the ISV import flags and the condition-NLP fault label
+    # (2026-06-25 audit); without them both scans are inert on the feed.
+    # The witness carries them precomputed and drops the prose they came from
+    # (src.analytics.text_signals); a server-side frame read straight off the
+    # DB carries the prose instead and decide() scans it inline. _present
+    # below keeps whichever half this frame actually has.
     "title", "description",
+    "text_import_flag", "text_import_legalised", "text_minor_fault",
 ]
 _present = [c for c in _extra_cols if c in listings_df.columns]
 if _present:

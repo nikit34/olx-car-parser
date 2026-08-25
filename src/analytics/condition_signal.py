@@ -81,15 +81,14 @@ def detect_minor_fault(title: str | None, description: str | None) -> str | None
     return None
 
 
-def minor_fault_cost(
-    title: str | None, description: str | None, price
-) -> tuple[float, str | None]:
-    """Repair provision (€, ``flag``) for a disclosed minor fault.
+def fault_cost_from_flag(flag: str | None, price) -> tuple[float, str | None]:
+    """Size the repair provision for an already-detected fault label.
 
-    Returns ``(0.0, None)`` when no fault phrase is present. The provision is
-    ``clamp(price * 0.18, 400, 1500)`` and never exceeds half the asking price.
+    Split out from :func:`minor_fault_cost` because the detection half is
+    text-only (so it is precomputed into ``text_minor_fault`` at build time —
+    see :mod:`src.analytics.text_signals`) while the sizing half needs the
+    asking price, which every consumer already has.
     """
-    flag = detect_minor_fault(title, description)
     if not flag:
         return 0.0, None
     try:
@@ -101,3 +100,14 @@ def minor_fault_cost(
     cost = min(max(_FAULT_COST_FLOOR, p * _FAULT_COST_PCT), _FAULT_COST_CAP)
     cost = min(cost, p * 0.5)
     return round(cost, 0), flag
+
+
+def minor_fault_cost(
+    title: str | None, description: str | None, price
+) -> tuple[float, str | None]:
+    """Repair provision (€, ``flag``) for a disclosed minor fault.
+
+    Returns ``(0.0, None)`` when no fault phrase is present. The provision is
+    ``clamp(price * 0.18, 400, 1500)`` and never exceeds half the asking price.
+    """
+    return fault_cost_from_flag(detect_minor_fault(title, description), price)
