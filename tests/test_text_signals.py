@@ -28,8 +28,11 @@ class TestAddTextSignals:
             assert col in df.columns
         row = df.iloc[0]
         assert row["text_import_flag"] == 0
-        assert row["text_minor_fault"] is None
-        assert row["text_hard_block_phrase"] is None
+        # "no match" is None on pandas 2 and NaN on pandas 3 (PDEP-14 gives
+        # the column a str dtype), so every consumer tests the value rather
+        # than its identity — and so does every assertion here.
+        assert pd.isna(row["text_minor_fault"])
+        assert pd.isna(row["text_hard_block_phrase"])
 
     def test_resolves_each_scan(self):
         df = add_text_signals(pd.DataFrame([
@@ -40,7 +43,7 @@ class TestAddTextSignals:
         ]))
         assert df.loc[0, "text_import_flag"] == 1
         assert df.loc[0, "text_import_legalised"] == 0
-        assert df.loc[1, "text_minor_fault"] is not None
+        assert not pd.isna(df.loc[1, "text_minor_fault"])
         assert "não pega" in df.loc[2, "text_hard_block_phrase"]
 
     def test_structured_origin_feeds_the_import_flag(self):
@@ -61,9 +64,8 @@ class TestAddTextSignals:
             {"title": "Golf para peças"},
             {"title": None},
         ]))
-        assert "não" not in str(df.loc[0, "text_hard_block_phrase"])
         assert df.loc[0, "text_hard_block_phrase"] == "para peças"
-        assert df.loc[1, "text_hard_block_phrase"] is None
+        assert pd.isna(df.loc[1, "text_hard_block_phrase"])
 
     def test_no_op_without_title_column(self):
         df = add_text_signals(pd.DataFrame([{"olx_id": "x1"}]))

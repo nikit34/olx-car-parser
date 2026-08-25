@@ -22,7 +22,14 @@ So the scans run once, host-side, and land as four narrow columns:
 
 Consumers read the column when it is present and fall back to scanning the raw
 text when it is absent, so a CLI run against the DB, an older witness, or a
-test that hands in a bare row all keep working.
+test that hands in a bare row all keep working. Note what "present" means: the
+COLUMN decides, not the value. A column that is present and empty says the
+build scanned and found nothing, so re-scanning there would resurrect exactly
+the coupling this module removes.
+
+An empty string cell reads back as None on pandas 2 and NaN on pandas 3, which
+gives the column a str dtype (PDEP-14). Consumers must therefore test the value
+(``isinstance(x, str)`` or ``pd.isna``) and never its identity against None.
 """
 
 from __future__ import annotations
@@ -68,11 +75,23 @@ TEXT_SIGNAL_COLUMNS = (
 
 
 def _clean(value) -> str:
-    """Coerce a cell to a scannable string. pandas missing values arrive as
-    float NaN, and ``str(nan)`` would put the literal "nan" in the haystack."""
-    if value is None or (isinstance(value, float) and pd.isna(value)):
+    """Coerce a cell to a scannable string.
+
+    Missing values must become empty, not their repr: a float NaN would put the
+    literal "nan" in the haystack, and ``pd.NA`` from a nullable column would
+    put "<NA>" there. Neither matches a salvage phrase today, but both would
+    quietly widen every scan the moment a phrase list grew a short alternative.
+    """
+    if value is None:
         return ""
-    return value if isinstance(value, str) else str(value)
+    if isinstance(value, str):
+        return value
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):  # arrays and other non-scalars
+        pass
+    return str(value)
 
 
 def hard_block_phrase(title, description) -> str | None:
@@ -100,9 +119,10 @@ def add_text_signals(df: pd.DataFrame) -> pd.DataFrame:
     from src.analytics.condition_signal import detect_minor_fault
     from src.analytics.valuations import _import_flags
 
-    titles = df["title"] if "title" in df.columns else pd.Series([None] * len(df))
-    descs = df["description"] if "description" in df.columns else pd.Series([None] * len(df))
-    origins = df["origin"] if "origin" in df.columns else pd.Series([None] * len(df))
+    blank = pd.Series([None] * len(df), index=df.index, dtype=object)
+    titles = df["title"]
+    descs = df["description"] if "description" in df.columns else blank
+    origins = df["origin"] if "origin" in df.columns else blank
 
     imp_flags: list[int] = []
     leg_flags: list[int] = []
