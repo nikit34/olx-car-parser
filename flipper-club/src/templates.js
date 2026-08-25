@@ -1757,6 +1757,45 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
   const body = `${crumb}<div style="padding-top:14px;">${hero}</div>${gbmCard}${bridge1}${table}${bridge2}${trust}${sellerCta}${sib}`;
 
   const canonical = `https://${host}/preco/${slug}`;
+  const faq = (q, a) => ({
+    "@type": "Question", "name": q,
+    "acceptedAnswer": { "@type": "Answer", "text": a },
+  });
+  const faqEntries = [
+    faq(
+      `Quanto vale um ${rec.b} ${rec.m} usado em Portugal?`,
+      `Com base em ${rec.n} anúncios ativos no OLX, um ${rec.b} ${rec.m} usado pede em mediana ${FM}, com um intervalo típico entre ${FL} e ${FH}. É o preço pedido no mercado hoje, não o valor de uma viatura concreta. Estimativa independente e indicativa.`,
+    ),
+    faq(
+      `O preço mediano de um ${rec.b} ${rec.m} é o preço de venda?`,
+      `Não. Mostramos a mediana e o intervalo dos preços PEDIDOS em ${rec.n} anúncios ativos do OLX, não preços de venda fechados. O valor real depende de quilómetros, estado, extras, histórico e de ser importado com ISV por pagar.`,
+    ),
+  ];
+  if (rec.fl != null && rec.fh != null) {
+    faqEntries.push(faq(
+      `Qual é o intervalo de preços de um ${rec.b} ${rec.m} usado?`,
+      `Metade dos ${rec.b} ${rec.m} anunciados no OLX pede entre ${FL} e ${FH} (intervalo interquartil P25–P75)${yrRange ? `, para anos ${yrRange}` : ""}. Fora deste intervalo ficam os 25% mais baratos e os 25% mais caros.`,
+    ));
+  }
+  if (rec.sd != null && rec.sn != null) {
+    faqEntries.push(faq(
+      `Quanto tempo demora a vender um ${rec.b} ${rec.m} em Portugal?`,
+      `Um ${rec.b} ${rec.m} vende, em mediana, em cerca de ${rec.sd} dias no OLX, medido numa amostra de ${rec.sn} vendas deste modelo. Modelos que demoram mais a vender costumam exigir preço mais agressivo.`,
+    ));
+  }
+  if (rec.kmm != null) {
+    faqEntries.push(faq(
+      `Qual é a quilometragem típica de um ${rec.b} ${rec.m} à venda?`,
+      `A quilometragem mediana dos ${rec.b} ${rec.m} anunciados é de ${fmtKm(rec.kmm)}${yrRange ? `, para anos ${yrRange}` : ""}. Acima desse valor espera-se um preço abaixo da mediana, e vice-versa.`,
+    ));
+  }
+  if (hasG) {
+    faqEntries.push(faq(
+      `O ${rec.b} ${rec.m} está caro ou barato neste momento?`,
+      `O preço pedido em mercado (${FM}) compara com um valor justo estimado de ${fmtEur(rec.gm)} (intervalo ${fmtEur(rec.gl)} a ${fmtEur(rec.gh)}), calculado pelo nosso modelo para quilometragem e specs típicas deste modelo. Para uma leitura da tua viatura concreta é preciso avaliar o anúncio específico.`,
+    ));
+  }
+
   const jsonLd = {
     "@context": "https://schema.org",
     "@graph": [
@@ -1779,19 +1818,13 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
           { "@type": "ListItem", "position": 3, "name": `${rec.b} ${rec.m}` },
         ],
       },
-      // FAQPage — the H1 is a literal question; the answer text mirrors the
-      // visible lede (no content mismatch) and can win a FAQ rich result.
-      {
-        "@type": "FAQPage",
-        "mainEntity": [{
-          "@type": "Question",
-          "name": `Quanto vale um ${rec.b} ${rec.m} usado em Portugal?`,
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": `Com base em ${rec.n} anúncios ativos no OLX, um ${rec.b} ${rec.m} usado pede em mediana ${FM}, com um intervalo típico entre ${FL} e ${FH}. É o preço pedido no mercado hoje, não o valor de uma viatura concreta. Estimativa independente e indicativa.`,
-          },
-        }],
-      },
+      // FAQPage — the H1 is a literal question; every answer mirrors a figure
+      // the page already shows (no content mismatch) and can win a FAQ rich
+      // result. Generative engines cite data-backed Q&A far more readily than
+      // prose, but only entries whose numbers actually exist are emitted:
+      // a fabricated answer is worse than a missing one, and a model with no
+      // sell-speed sample must not claim one.
+      { "@type": "FAQPage", "mainEntity": faqEntries },
     ],
   };
   return layout({

@@ -50,7 +50,7 @@ const DEFAULT_CURRENCY = "eur";
 //   /reservas  my claimed cars
 const PRODUCT_PATHS = new Set([
   "/", "/mercado", "/car", "/claim", "/reserve", "/unlocked", "/reservas", "/avaliar",
-  "/precos", "/sitemap.xml", "/robots.txt",
+  "/precos", "/sitemap.xml", "/robots.txt", "/llms.txt",
 ]);
 
 export default {
@@ -117,6 +117,7 @@ export default {
       if (pathname === "/precos" && method === "GET") return handleModelsHub(request, env, url);
       if (pathname === "/sitemap.xml" && method === "GET") return handleSitemap(request, env, url);
       if (pathname === "/robots.txt" && method === "GET") return handleRobots(request, env, url);
+      if (pathname === "/llms.txt" && method === "GET") return handleLlmsTxt(request, env, url);
       if (pathname === "/avaliar" && method === "GET") return handleAvaliar(request, env, url);
       if (pathname === "/mercado" && method === "GET") return handleFeed(request, env, url);
       if (pathname === "/car" && method === "GET") return handleCar(request, env, url);
@@ -341,6 +342,73 @@ async function handleSitemap(request, env, url) {
   });
 }
 
+// /llms.txt — a plain-language map of the site for tool-using models.
+//
+// Deliberately modest expectations: the 2026 evidence is that no engine ranks
+// or cites on the strength of this file, so it is not an SEO lever. What it
+// does do is answer, in one fetch, the question an agent actually has — what
+// is here, how current is it, what may I quote — and that is cheap to serve.
+//
+// It is generated, not a static asset, so the figures cannot drift away from
+// what the pages show: the model count and freshness come from the same blob
+// the pages render from.
+async function handleLlmsTxt(request, env, url) {
+  const mdoc = await getModels(env);
+  const models = (mdoc && mdoc.models) || null;
+  const count = models ? Object.keys(models).length : 0;
+  const built = (mdoc && mdoc.built_at) ? String(mdoc.built_at).slice(0, 10) : null;
+  const base = `https://${url.host}`;
+  // A handful of the best-covered models, so an agent has real entry points
+  // rather than a bare index it would have to crawl to be useful.
+  const top = models
+    ? Object.entries(models)
+        .sort((a, b) => (b[1].n || 0) - (a[1].n || 0))
+        .slice(0, 12)
+        .map(([slug, r]) => `- [${r.b} ${r.m}](${base}/preco/${slug}): mediana pedida €${r.fm}, ${r.n} anúncios ativos`)
+    : [];
+  const body = [
+    "# Carsbuyer",
+    "",
+    "> Avaliação independente de carros usados em Portugal. Preços medianos e",
+    "> intervalos calculados a partir de anúncios ativos do OLX Portugal,",
+    "> recolhidos e atualizados diariamente por nós.",
+    "",
+    "## O que estes números são",
+    "",
+    "- Preços **pedidos** em anúncios ativos, não preços de venda fechados.",
+    "- Mediana e intervalo interquartil (P25-P75) por modelo e por ano.",
+    "- Dias medianos até vender, quando há amostra de vendas suficiente.",
+    "- Valor justo estimado por um modelo GBM treinado nos mesmos dados,",
+    "  para quilometragem e specs típicas do modelo — não para uma viatura concreta.",
+    count ? `- Cobertura: ${count} modelos.` : null,
+    built ? `- Dados atualizados a ${built}.` : null,
+    "",
+    "## Atribuição",
+    "",
+    "Os números podem ser citados com atribuição a Carsbuyer (" + base + ")",
+    "e indicação da data, porque mudam diariamente.",
+    "",
+    "## Páginas",
+    "",
+    `- [Índice de preços por modelo](${base}/precos)`,
+    `- [Avaliar um anúncio concreto](${base}/avaliar)`,
+    `- [Mercado: carros abaixo do valor justo](${base}/mercado)`,
+    `- [Sitemap](${base}/sitemap.xml)`,
+    top.length ? "" : null,
+    top.length ? "## Modelos com mais dados" : null,
+    top.length ? "" : null,
+    ...top,
+    "",
+  ].filter(v => v !== null).join("\n");
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
+      "cache-control": "public, max-age=3600",
+    },
+  });
+}
+
 // /robots.txt — allow public, block transactional/internal, point at the sitemap.
 async function handleRobots(request, env, url) {
   const body = [
@@ -349,7 +417,26 @@ async function handleRobots(request, env, url) {
     "Disallow: /unlocked", "Disallow: /reservas",
     // /widget stays crawlable on purpose: it is noindex,follow and links back to
     // the canonical /preco page, so it works as a backlink lever when embedded.
-    `Sitemap: https://${url.host}/sitemap.xml`, "",
+    "",
+    // Answer engines are named explicitly rather than left to the wildcard.
+    // The wildcard already allows them, but naming them states the intent so a
+    // later tightening of `*` cannot silently cut off AI citations — the one
+    // distribution channel where being the ORIGINAL source of the numbers
+    // (median asking price, IQR, days-to-sell, per-year table) is the whole
+    // advantage. Blocking these is how sites vanish from AI answers.
+    "User-agent: GPTBot", "Allow: /",          // OpenAI crawler (training/index)
+    "User-agent: OAI-SearchBot", "Allow: /",   // OpenAI, powers ChatGPT search
+    "User-agent: ChatGPT-User", "Allow: /",    // live fetch on a user's request
+    "User-agent: PerplexityBot", "Allow: /",
+    "User-agent: ClaudeBot", "Allow: /",
+    "User-agent: Google-Extended", "Allow: /", // Gemini / AI Overviews grounding
+    "User-agent: CCBot", "Allow: /",
+    "",
+    `Sitemap: https://${url.host}/sitemap.xml`,
+    // Not a search-ranking signal — no engine ranks on it. It is an
+    // agent-readiness convenience: a single fetch that tells a tool-using
+    // model what this site holds and how to reach it.
+    `LLM-Content: https://${url.host}/llms.txt`, "",
   ].join("\n");
   return new Response(body, {
     status: 200,
