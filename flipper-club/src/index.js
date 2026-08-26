@@ -1409,7 +1409,16 @@ async function sendServerPurchase(env, meta, session) {
   const secret = (env.GA4_API_SECRET || "").trim();
   const id = (env.GA4_MEASUREMENT_ID || "").trim();
   const cid = (meta.ga_cid || "").trim();
-  if (!secret || !id || !cid) return;
+  // Три причины не отправлять, и молчать можно только про две. Нет тега -
+  // аналитики нет вообще. Нет client_id - человек отказался от аналитики, это
+  // обычный путь, и жаловаться на него значит забить лог. А вот пустой секрет
+  // при живом теге это недоделанная настройка, и в тишине она неотличима от
+  // того, что покупок просто не было.
+  if (!id || !cid) return;
+  if (!secret) {
+    console.error("mp purchase skipped: GA4_API_SECRET is not set");
+    return;
+  }
   const value = (session.amount_total || 0) / 100;
   const body = {
     client_id: cid,
@@ -1430,7 +1439,11 @@ async function sendServerPurchase(env, meta, session) {
       `&api_secret=${encodeURIComponent(secret)}`,
       { method: "POST", body: JSON.stringify(body) });
     // MP отвечает 204 и молчит об ошибках в payload, поэтому логируем сам код:
-    // иначе поломка выглядела бы как отсутствие покупок.
+    // иначе поломка выглядела бы как отсутствие покупок. Неверный секрет так
+    // не поймать ничем: отладочный эндпоинт тоже отвечает 200 с пустым списком
+    // ошибок и на выдуманный ключ, и на чужой measurement_id - проверяет он
+    // только форму payload (замерено 26.08.2026). Единственная проверка пары -
+    // увидеть событие в Realtime своего ресурса.
     if (r.status !== 204) console.error("mp purchase unexpected status", r.status);
   } catch (err) {
     console.error("mp purchase failed", err && err.message || err);
