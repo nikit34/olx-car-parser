@@ -1405,7 +1405,7 @@ export function renderClaim({ deal, zone, depositEur, stripeReady, depositCount 
 }
 
 // ── Unlocked success (/unlocked) ──────────────────────────────────────────────
-export function renderClaimSuccess({ deal, zone, depositEur, claimedAtMs, depositCount }) {
+export function renderClaimSuccess({ deal, zone, depositEur, claimedAtMs, depositCount, txnId }) {
   const p = present(deal);
   const cdAttr = claimedAtMs ? ` data-claimed-at="${claimedAtMs}"` : "";
   const nextSteps = [
@@ -1446,13 +1446,13 @@ export function renderClaimSuccess({ deal, zone, depositEur, claimedAtMs, deposi
       </div>
       <a class="btn-outline" href="/reservas">Ver as minhas reservas</a>
     </div>`;
-  // purchase на странице после оплаты. transaction_id склеен из объявления и
-  // момента резервации: он стабилен при обновлении страницы, поэтому GA4 не
-  // посчитает одну оплату дважды. Клиентское событие теряется, если человек
-  // закрыл вкладку на редиректе Stripe, поэтому надёжный источник - вебхук
-  // через Measurement Protocol, он ещё не подключён.
+  // purchase на странице после оплаты. transaction_id приходит из обработчика и
+  // склеен из объявления и id сессии Stripe: он стабилен при обновлении
+  // страницы и совпадает с тем, что шлёт вебхук, поэтому одна оплата не
+  // посчитается дважды. Клиентское событие теряется, если человек закрыл
+  // вкладку на редиректе Stripe - для этого и нужен серверный дубль.
   const purchase = analyticsEvent("purchase", {
-    transaction_id: `${deal.olx_id}-${claimedAtMs || 0}`,
+    transaction_id: txnId || `${deal.olx_id}-${claimedAtMs || 0}`,
     currency: "EUR",
     value: depositEur,
     items: [{ item_id: deal.olx_id, item_name: p.name }],
@@ -1757,8 +1757,12 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
   // выбору модели с годом (spec). Событие должно быть на обоих - сначала оно
   // висело только на rec, а это более редкий путь.
   const shown = rec || (spec && spec.rec);
+  // У объявления название лежит в t, у записи модели названия нет вовсе - только
+  // марка и модель по отдельности. Взял t на обоих путях, и на пути модели
+  // параметр уходил пустым.
   const valuation = shown ? analyticsEvent("valuation_result", {
-    model: (rec ? rec.t : spec.rec.t) || "",
+    model: rec ? (rec.t || "")
+                : (`${spec.rec.b || ""} ${spec.rec.m || ""}`.trim() || spec.slug || ""),
     source: rec ? "listing" : "model",
     has_listing: Boolean(olxId),
   }) : "";

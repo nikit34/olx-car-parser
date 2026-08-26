@@ -740,6 +740,7 @@ async function handleUnlocked(request, env, url) {
   if (rec) {
     return html(renderClaimSuccess({
       deal, zone, claimedAtMs: claimedAtMs(rec), depositCount,
+      txnId: txnId(deal.olx_id, rec),
       depositEur: depositCents(env) / 100,
     }), 200, setCookie);
   }
@@ -794,8 +795,9 @@ async function handleWebhook(request, env) {
       });
       // Клиентский purchase на странице после оплаты теряется, если человек
       // закрыл вкладку на редиректе Stripe. Вебхук - единственный надёжный
-      // источник выручки, поэтому событие дублируется отсюда. transaction_id
-      // тот же, что на клиенте, поэтому GA4 не посчитает оплату дважды.
+      // источник выручки, поэтому событие дублируется отсюда. Оба конца
+      // склеивают transaction_id из объявления и id сессии Stripe, поэтому GA4
+      // видит одну и ту же покупку и не считает её дважды.
       await sendServerPurchase(env, m, s);
     }
   }
@@ -870,6 +872,16 @@ function claimedAtMs(rec) {
   if (!rec || !rec.paid_at) return null;
   const t = Date.parse(rec.paid_at);
   return Number.isFinite(t) ? t : null;
+}
+
+// Идентификатор покупки для GA4. Должен совпадать с тем, что шлёт вебхук через
+// Measurement Protocol, иначе одна оплата посчитается дважды. Общая величина у
+// двух сторон только одна - id сессии Stripe: вебхук получает его из события, а
+// страница берёт из записи разблокировки. У старых записей его нет, там остаётся
+// момент оплаты, и вебхук по ним всё равно уже не придёт.
+function txnId(olxId, rec) {
+  const sid = rec && rec.stripe_session_id;
+  return `${olxId}-${sid || claimedAtMs(rec) || 0}`;
 }
 
 // Every unlock for this visitor as { olxId, claimedAtMs } — one prefix scan

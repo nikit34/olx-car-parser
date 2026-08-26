@@ -79,7 +79,34 @@ jobs:
               throw new Error('consent mode default is not denied');
             if (tagged.indexOf(\"consent','default'\") > tagged.indexOf('googletagmanager'))
               throw new Error('consent declared after the gtag loader');
+
+            // Оценка показывается двумя путями, и у записи модели нет поля
+            // названия, которое есть у объявления. Параметр модели уходил
+            // пустым ровно на частом пути, а событие при этом было на месте.
+            const { renderAvaliar, renderClaimSuccess } = await import('./flipper-club/src/templates.js');
+            const mrec = { b:'Audi', m:'A3', n:40, fm:15000, fl:12000, fh:19000,
+                           y0:2012, y1:2020, kmm:150000, fu:[['Diesel',0.9]],
+                           yr:[{y:2017,m:16000,l:14000,h:18000,n:12}] };
+            const av = renderAvaliar({ rec:null, olxId:null, sourceUrl:null, query:'',
+                                       models:{'audi-a3':mrec}, host:'carsbuyer.org',
+                                       spec:{ rec:mrec, slug:'audi-a3', year:2017, cell:mrec.yr[0] },
+                                       depositCount:0, builtAt:'2026-01-01T00:00:00Z' });
+            if (!av.includes('valuation_result')) throw new Error('valuation_result lost on the model path');
+            if (!av.includes('\"model\":\"Audi A3\"')) throw new Error('valuation_result model param is empty');
+
+            // Идентификатор покупки приходит из обработчика: он один и тот же у
+            // страницы и у вебхука, иначе одна оплата легла бы в GA4 дважды.
+            const suc = renderClaimSuccess({ deal:{olx_id:'123', url:'https://olx.pt/x', make:'Audi'},
+                                             zone:'all', depositEur:20, claimedAtMs:1700000000000,
+                                             depositCount:1, txnId:'123-cs_test_abc' });
+            if (!suc.includes('123-cs_test_abc')) throw new Error('claim success ignores the passed transaction id');
+
             setAnalyticsId('');
 
             console.log('worker templates render OK');
           "
+          # Клиентский purchase и серверный через Measurement Protocol обязаны
+          # склеивать transaction_id из одной величины - id сессии Stripe.
+          # Разъедутся формулы, и согласившийся покупатель даст двойную выручку.
+          grep -q 'session.id}`' flipper-club/src/index.js
+          grep -q 'rec.stripe_session_id' flipper-club/src/index.js
