@@ -173,6 +173,11 @@ jobs:
           # refuses any other path.
           OLX_RELAY_URL: ${{ secrets.OLX_RELAY_URL }}
           OLX_RELAY_TOKEN: ${{ secrets.OLX_RELAY_TOKEN }}
+          # Pacing overrides, both optional. Defaults (2 req/s, 8 workers) are
+          # in scraper.py; set a repo variable to slow down further without a
+          # deploy — e.g. after a block, to come back gently.
+          OLX_MAX_RPS: ${{ vars.OLX_MAX_RPS }}
+          OLX_FETCH_WORKERS: ${{ vars.OLX_FETCH_WORKERS }}
         # Per-step timeout caps how long scrape can monopolise the 4h budget.
         # On SIGTERM at the cap, cli._sigterm_handler drains the queue and
         # saves what's collected. Deep sweep walks all 200 pages instead of

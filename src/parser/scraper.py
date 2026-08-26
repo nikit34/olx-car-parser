@@ -54,6 +54,22 @@ BASE_URL = "https://www.olx.pt/carros-motos-e-barcos/carros/"
 
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        val = float(raw)
+    except ValueError:
+        logger.warning("%s=%r is not a number — using %s", name, raw, default)
+        return default
+    return val if val > 0 else default
+
+
+def _env_int(name: str, default: int) -> int:
+    return max(1, int(_env_float(name, float(default))))
+
+
 # Internal JSON API the OLX frontend itself calls. Undocumented but
 # auth-free and far more robust than HTML scraping: the list payload
 # already carries every structured param, the full description, the
@@ -79,7 +95,13 @@ _MIN_BAND_WIDTH_EUR = 1
 # Concurrency for parallel page fetching (OLX bands + SV GraphQL pages).
 # 12 concurrent OLX API requests verified to return all 200 (no rate-limit);
 # the bounded pool is the rate limit, so no per-request delay is applied.
-_PARALLEL_FETCH_WORKERS = 8
+_PARALLEL_FETCH_WORKERS = _env_int("OLX_FETCH_WORKERS", 8)
+# Requests per second across ALL worker threads. 2.0 is a touch below the 2.5/s
+# the last healthy run averaged, so throughput is barely affected (a 6-minute
+# scrape becomes ~7.5), while the bursts that make the traffic look automated
+# are gone. Override with OLX_MAX_RPS; the relay does not make this free —
+# hammering from Cloudflare's addresses would just get those blocked instead.
+_OLX_MAX_RPS = _env_float("OLX_MAX_RPS", 2.0)
 
 # StandVirtual GraphQL "listingScreen" — focused JSON (id, url, price,
 # sellerUUID, createdAt, params + totalCount), far lighter than the 2.4 MB
@@ -177,6 +199,55 @@ class RawListing:
     seller_displayed_as: str | None = None
 
 
+def _parse_retry_after(value) -> float | None:
+    """Seconds from a Retry-After header, or None. Accepts the delta-seconds
+    form; the HTTP-date form is rare here and not worth a parser."""
+    if not value:
+        return None
+    try:
+        secs = float(str(value).strip())
+    except ValueError:
+        return None
+    # Cap it: a header asking for hours would stall the whole run, and the
+    # scheduled cron will come back around anyway.
+    return min(max(secs, 0.0), 300.0)
+
+
+class _RateLimiter:
+    """Token bucket shared by every worker thread.
+
+    The bounded pool used to be the only brake, which is not a rate limit but a
+    burst limit: eight threads fire together, drain, and fire together again.
+    Measured on the 2026-08-25 run that was 905 requests in 6m07s — ~2.5/s in
+    bursts of eight. A CDN's reputation rules read that shape, so this spaces
+    requests instead of merely capping how many are in flight.
+
+    Refills continuously rather than per-tick, so a slow stretch banks a little
+    slack and a fast one cannot overshoot the configured rate.
+    """
+
+    def __init__(self, rate_per_sec: float, burst: float | None = None):
+        self.rate = max(0.01, float(rate_per_sec))
+        self.capacity = float(burst if burst is not None else max(1.0, self.rate))
+        self._tokens = self.capacity
+        self._last = time.monotonic()
+        self._lock = threading.Lock()
+
+    def acquire(self) -> None:
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                self._tokens = min(
+                    self.capacity, self._tokens + (now - self._last) * self.rate)
+                self._last = now
+                if self._tokens >= 1.0:
+                    self._tokens -= 1.0
+                    return
+                deficit = (1.0 - self._tokens) / self.rate
+            # Sleep outside the lock so other threads can still be served.
+            time.sleep(min(deficit, 1.0))
+
+
 def _redact_proxy(url: str) -> str:
     """Proxy URLs routinely carry user:pass — log the endpoint, not the creds."""
     if "@" not in url:
@@ -242,6 +313,7 @@ class OlxScraper:
                 "Accept-Encoding": "gzip, deflate",
             },
         )
+        self._limiter = _RateLimiter(_OLX_MAX_RPS)
         self._consecutive_403 = 0
         self._lock_403 = threading.Lock()
         self._stop_event = threading.Event()
@@ -272,6 +344,12 @@ class OlxScraper:
                             self._stop_event.set()
                             return None
                     wait = min(30 * (2 ** attempt), 120) + random.uniform(5, 15)
+                    # If the CDN says how long to wait, that beats our guess —
+                    # backing off for less than it asked is what turns a
+                    # throttle into a block.
+                    retry_after = _parse_retry_after(e.response.headers.get("Retry-After"))
+                    if retry_after is not None:
+                        wait = max(wait, retry_after)
                     logger.warning("403 blocked (attempt %d/%d). Waiting %.0fs...",
                                    attempt + 1, retries, wait)
                     time.sleep(wait)
@@ -313,6 +391,7 @@ class OlxScraper:
             if self._stop_event.is_set():
                 return None
             try:
+                self._limiter.acquire()
                 headers = {**self._random_headers(), "Accept": "application/json"}
                 req_url, relay_headers = self._relay_rewrite(url, headers)
                 resp = self.client.get(req_url, headers={**headers, **relay_headers})
@@ -329,6 +408,12 @@ class OlxScraper:
                             self._stop_event.set()
                             return None
                     wait = min(30 * (2 ** attempt), 120) + random.uniform(5, 15)
+                    # If the CDN says how long to wait, that beats our guess —
+                    # backing off for less than it asked is what turns a
+                    # throttle into a block.
+                    retry_after = _parse_retry_after(e.response.headers.get("Retry-After"))
+                    if retry_after is not None:
+                        wait = max(wait, retry_after)
                     logger.warning("403 blocked (attempt %d/%d). Waiting %.0fs...",
                                    attempt + 1, retries, wait)
                     time.sleep(wait)

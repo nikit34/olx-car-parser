@@ -32,3 +32,28 @@ jobs:
         # upstream hiccup into a red PR. Run them from the scrape host
         # with `pytest -m smoke` when a transport or provider changes.
         run: pytest tests/ -v --tb=short -m "not smoke"
+
+      - name: Worker smoke
+        # The Python suite cannot see flipper-club/src. `node --check` only
+        # parses — it happily accepts a const used above its declaration, which
+        # then throws at request time in production. Actually rendering a page
+        # is what catches that; it caught exactly this bug on 2026-08-26.
+        # No npm install: these modules import nothing outside themselves.
+        run: |
+          for f in flipper-club/src/*.js; do node --check "$f"; done
+          node --input-type=module -e "
+            import { renderModelPage, renderModelsHub } from './flipper-club/src/templates.js';
+            const rec = { b:'Volkswagen', m:'Golf', n:42, fm:7200, fl:4800, fh:9500,
+                          gm:7100, gl:4400, gh:9800, y0:2010, y1:2019, kmm:180000,
+                          sd:28, sn:134, fu:[['Diesel',0.95]], yrs:[] };
+            const html = renderModelPage({ rec, slug:'volkswagen-golf', liveDeals:[],
+                                           siblings:[], host:'carsbuyer.org',
+                                           depositCount:0, builtAt:'2026-01-01T00:00:00Z' });
+            if (!html.includes('FAQPage')) throw new Error('model page lost its FAQ schema');
+            if (!html.includes('canonical')) throw new Error('model page lost its canonical');
+            const hub = renderModelsHub({ models:[{slug:'volkswagen-golf',b:'Volkswagen',m:'Golf',fm:7200,n:42}],
+                                          depositCount:0, builtAt:'2026-01-01T00:00:00Z',
+                                          host:'carsbuyer.org' });
+            if (!hub.includes('volkswagen-golf')) throw new Error('hub lost its links');
+            console.log('worker templates render OK');
+          "
