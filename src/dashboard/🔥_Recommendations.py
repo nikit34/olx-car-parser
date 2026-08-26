@@ -377,19 +377,19 @@ for _, deal in deals.iterrows():
             details = []
             if pd.notna(deal.get("mileage_km")):
                 details.append(f"{int(deal['mileage_km']):,} km")
-            if deal.get("fuel_type"):
+            if pd.notna(deal.get("fuel_type")) and deal.get("fuel_type"):
                 details.append(str(deal["fuel_type"]))
             if pd.notna(deal.get("engine_cc")) and deal.get("engine_cc"):
                 details.append(f"{int(deal['engine_cc'])/1000:.1f}L")
             if pd.notna(deal.get("horsepower")) and deal.get("horsepower"):
                 details.append(f"{int(deal['horsepower'])} cv")
-            if deal.get("transmission"):
+            if pd.notna(deal.get("transmission")) and deal.get("transmission"):
                 details.append(str(deal["transmission"]))
-            if deal.get("drive_type"):
+            if pd.notna(deal.get("drive_type")) and deal.get("drive_type"):
                 details.append(str(deal["drive_type"]))
-            if deal.get("color"):
+            if pd.notna(deal.get("color")) and deal.get("color"):
                 details.append(str(deal["color"]))
-            if deal.get("district"):
+            if pd.notna(deal.get("district")) and deal.get("district"):
                 details.append(str(deal["district"]))
             if details:
                 st.caption(" · ".join(details))
