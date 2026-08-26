@@ -457,7 +457,7 @@ export function faqLd(pairs) {
 export function priceChart(cells, { w = 640, h = 220, color = "#177A47" } = {}) {
   const pts = cells.slice().sort((a, b) => a.y - b.y);
   if (pts.length < 2) return "";
-  const padL = 52, padR = 14, padT = 16, padB = 30;
+  const padL = 16, padR = 14, padT = 20, padB = 30;
   const xs = pts.map(p => p.y);
   const ys = pts.map(p => p.fm);
   const x0 = Math.min(...xs), x1 = Math.max(...xs);
@@ -470,12 +470,15 @@ export function priceChart(cells, { w = 640, h = 220, color = "#177A47" } = {}) 
     `<circle cx="${X(p.y).toFixed(1)}" cy="${Y(p.fm).toFixed(1)}" r="3" fill="${color}"><title>${p.y}: ${fmtEur(p.fm)} (${p.n} anúncios)</title></circle>`).join("");
   // At most six year labels, otherwise they collide on a phone.
   const step = Math.max(1, Math.ceil(pts.length / 6));
-  const xlab = pts.filter((_, i) => i % step === 0 || i === pts.length - 1).map(p =>
-    `<text x="${X(p.y).toFixed(1)}" y="${h - 9}" text-anchor="middle" class="c-ax">${p.y}</text>`).join("");
+  const xlab = pts.filter((_, i) => i % step === 0 || i === pts.length - 1).map(p => {
+    // The end labels are anchored inwards or half of them falls outside the viewBox.
+    const anchor = p.y === x0 ? "start" : p.y === x1 ? "end" : "middle";
+    return `<text x="${X(p.y).toFixed(1)}" y="${h - 9}" text-anchor="${anchor}" class="c-ax">${p.y}</text>`;
+  }).join("");
   const ticks = [0, 0.5, 1].map(f => {
     const v = y1 * f;
     return `<line x1="${padL}" x2="${w - padR}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" class="c-grid"/>`
-      + `<text x="${padL - 8}" y="${(Y(v) + 4).toFixed(1)}" text-anchor="end" class="c-ax">${fmtEur(Math.round(v))}</text>`;
+      + `<text x="${padL + 2}" y="${(Y(v) - 5).toFixed(1)}" text-anchor="start" class="c-ax">${fmtEur(Math.round(v))}</text>`;
   }).join("");
   return `<svg class="fc-chart" viewBox="0 0 ${w} ${h}" role="img"
     aria-label="Preço mediano pedido por ano de fabrico">${ticks}
@@ -975,8 +978,8 @@ export function renderComparePage({ a, b, ra, rb, stats, host, depositCount, bui
 
   const vrows = verdicts.map(v => `<tr>
       <td>${escapeHtml(v.k)}</td>
-      <td>${v.w === "a" ? `<b>${escapeHtml(ra.m)}</b>` : escapeHtml(ra.m)}${v.w === "a" ? '<span class="fc-win">+</span>' : ""}</td>
-      <td>${v.w === "b" ? `<b>${escapeHtml(rb.m)}</b>` : escapeHtml(rb.m)}${v.w === "b" ? '<span class="fc-win">+</span>' : ""}</td>
+      <td class="nm">${v.w === "a" ? `<b>${escapeHtml(ra.m)}</b>` : escapeHtml(ra.m)}${v.w === "a" ? '<span class="fc-win">+</span>' : ""}</td>
+      <td class="nm">${v.w === "b" ? `<b>${escapeHtml(rb.m)}</b>` : escapeHtml(rb.m)}${v.w === "b" ? '<span class="fc-win">+</span>' : ""}</td>
     </tr>`).join("");
 
   const body = crumbs([
@@ -1232,7 +1235,7 @@ export function renderMarketIndex({ snapshot, history, host, depositCount, isArc
     </section>` : ""}
     <section class="section fc-wrap" style="padding-bottom:70px;">
       <h2 class="fc-h2">Podes citar isto</h2>
-      <p class="fc-p">Estes números podem ser usados com atribuição a Carsbuyer e indicação da data — mudam todas as semanas, por isso a data faz parte do número. ${isArchive ? `Endereço permanente desta semana: <span class="mono">${escapeHtml(canonical)}</span>.` : ""}</p>
+      <p class="fc-p">Estes números podem ser usados com atribuição a Carsbuyer e indicação da data — mudam todas as semanas, por isso a data faz parte do número. ${isArchive ? `Endereço permanente desta semana: <span class="mono fc-url">${escapeHtml(canonical)}</span>.` : ""}</p>
       <p class="fc-p"><a href="/precos">Preços por modelo</a> · <a href="/liquidez">Tempo de venda</a> · <a href="/sobrevalorizados">Pedido vs. valor justo</a> · <a href="/metodologia">Metodologia</a></p>
     </section>`;
 
