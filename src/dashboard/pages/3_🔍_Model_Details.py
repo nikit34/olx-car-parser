@@ -478,18 +478,21 @@ else:
 
 # --- Panel: Per-listing price trajectories ---
 # Each listing's ask over time, one line per olx_id, colored by current
-# status. Snapshots come from price_snapshots (one row per scrape per
-# listing — see src/cli.py:193). Flat line = seller never moved; step
-# down = price cut; line ending mid-window = listing deactivated.
+# status. price_snapshots only records a row when the price *changes*
+# (repository.add_price_snapshot), so the raw rows are step corners: the
+# flat stretch between two cuts, and the stretch from the last cut to the
+# listing's last confirmed sighting, are reconstructed here.
 #
 # Single Scatter trace per status group with ``None`` separators between
-# listings — much cheaper than N traces when the segment has 100+ lines.
-st.subheader("Price history — every listing")
+# listings - much cheaper than N traces when the segment has 100+ lines.
+st.subheader("Price history - every listing")
 st.caption(
     "Each line = one listing's ask over time, colored by current status. "
-    "Step-downs are price cuts, abrupt ends mark deactivation. "
-    "Shaded band = weekly p25–p75 of the segment. "
-    "Snapshots are capped at the last 365 days."
+    "Step-downs are price cuts. Every line runs to the last moment we can "
+    "vouch for: deactivation for sold/expired, last sighting for active - "
+    "an active line that stops short is one the scraper has not re-seen "
+    "since that date. Shaded band = weekly p25-p75 of the asks that were "
+    "live that week. Snapshots are capped at the last 365 days."
 )
 _snapshots_all = load_snapshots_cached(_release_cache_signature(), 365)
 _seg_ids = set(seg["olx_id"].dropna().astype(str).tolist())
@@ -508,28 +511,58 @@ else:
         hist.dropna(subset=["scraped_at", "price_eur"])
         .sort_values(["olx_id", "scraped_at"])
     )
-    # Map olx_id -> status using the page-level is_active / is_sold
-    # masks (indexed by seg.index, not olx_id).
+    # Map olx_id -> status / url / end-of-life using the page-level
+    # is_active / is_sold masks (indexed by seg.index, not olx_id).
     _status_by_oid: dict[str, str] = {}
     _url_by_oid: dict[str, str] = {}
+    _end_by_oid: dict[str, pd.Timestamp] = {}
     for _idx, _oid in seg["olx_id"].items():
         if is_active.get(_idx, False):
             _status_by_oid[_oid] = "active"
-        elif is_sold.get(_idx, False):
-            _status_by_oid[_oid] = "sold"
+            _end = seg.at[_idx, "__last_dt"]
         else:
-            _status_by_oid[_oid] = "expired"
+            _status_by_oid[_oid] = (
+                "sold" if is_sold.get(_idx, False) else "expired"
+            )
+            _end = seg.at[_idx, "__deact_dt"]
+            if pd.isna(_end):
+                _end = seg.at[_idx, "__last_dt"]
         _url_by_oid[_oid] = str(seg.at[_idx, "url"]) if "url" in seg.columns else ""
+        _end_by_oid[_oid] = min(_end, now) if pd.notna(_end) else pd.NaT
     hist["__status"] = hist["olx_id"].map(_status_by_oid)
     hist = hist.dropna(subset=["__status"])
 
+    # Rows from before snapshot-on-change (pre-2026) repeat the same price
+    # every scrape. Keeping only the first and last row of each equal run
+    # draws an identical step and cuts the points ~9x, which is what makes
+    # per-vertex markers (the click targets below) affordable.
+    _same_prev = (
+        (hist["olx_id"] == hist["olx_id"].shift())
+        & (hist["price_eur"] == hist["price_eur"].shift())
+    )
+    _same_next = (
+        (hist["olx_id"] == hist["olx_id"].shift(-1))
+        & (hist["price_eur"] == hist["price_eur"].shift(-1))
+    )
+    hist = hist[~(_same_prev & _same_next)]
+
     # Listings whose ask actually moved are the only informative
-    # trajectories — flat lines just clutter. Pre-compute the set so
+    # trajectories - flat lines just clutter. Pre-compute the set so
     # the user can toggle to it.
     _price_range = hist.groupby("olx_id")["price_eur"].agg(["min", "max"])
     _changed_ids = set(
         _price_range[_price_range["max"] > _price_range["min"]].index.tolist()
     )
+
+    # Carry the last known ask forward to the listing's end date.
+    _tail_by_oid: dict[str, tuple] = {}
+    _last_rows = hist.groupby("olx_id", sort=False).tail(1)
+    for _oid, _ts, _price in zip(
+        _last_rows["olx_id"], _last_rows["scraped_at"], _last_rows["price_eur"],
+    ):
+        _end = _end_by_oid.get(_oid)
+        if pd.notna(_end) and _end > _ts:
+            _tail_by_oid[_oid] = (_end, _price)
 
     _ctrl_l, _ctrl_r = st.columns([3, 2])
     with _ctrl_l:
@@ -543,10 +576,13 @@ else:
         )
     with _ctrl_r:
         show_endpoints = st.checkbox(
-            "Mark deactivation points",
+            "Mark line ends",
             value=True,
             key="price_history_endpoints",
-            help="Dot at the last snapshot of each sold/expired listing.",
+            help=(
+                "Dot where the listing was last confirmed: deactivation "
+                "for sold/expired, last sighting for active."
+            ),
         )
 
     if view_mode == "only with price cuts":
@@ -558,17 +594,45 @@ else:
 
     fig_t = go.Figure()
 
-    # Weekly p25 / median / p75 band — drawn first so listing lines and
-    # the median trace render on top. The band uses the *full* segment,
-    # not the filtered view, so the reference is stable regardless of
+    # Weekly p25 / median / p75 band, drawn first so listing lines and the
+    # median trace render on top. Quantiles are taken over the asks that
+    # were live in each week (last snapshot carried forward inside every
+    # listing's own window), not over snapshot rows: rows only exist where
+    # a price moved, so quantiles over them describe the listings that
+    # happened to move that week, not the segment. Uses the *full* segment,
+    # not the filtered view, so the reference stays stable regardless of
     # which listings the user toggles.
-    _wk = (
-        hist.set_index("scraped_at")
-        .groupby(pd.Grouper(freq="W"))["price_eur"]
-        .agg(["median", lambda s: s.quantile(0.25), lambda s: s.quantile(0.75)])
+    _wk = pd.DataFrame()
+    _grid = (
+        pd.date_range(hist["scraped_at"].min().ceil("D"), now, freq="W")
+        if not hist.empty else pd.DatetimeIndex([])
     )
-    _wk.columns = ["median", "p25", "p75"]
-    _wk = _wk.dropna()
+    if len(_grid) >= 3:
+        _starts = hist.groupby("olx_id")["scraped_at"].min()
+        _ends = pd.to_datetime(
+            _starts.index.to_series().map(_end_by_oid), utc=True, errors="coerce",
+        ).fillna(hist.groupby("olx_id")["scraped_at"].max())
+        _panel = (
+            pd.DataFrame({"olx_id": _starts.index})
+            .merge(pd.DataFrame({"wk": _grid}), how="cross")
+            .merge(_starts.rename("__start"), left_on="olx_id", right_index=True)
+            .merge(_ends.rename("__end"), left_on="olx_id", right_index=True)
+        )
+        _panel = _panel[
+            (_panel["wk"] >= _panel["__start"]) & (_panel["wk"] <= _panel["__end"])
+        ]
+        if not _panel.empty:
+            _live = pd.merge_asof(
+                _panel[["olx_id", "wk"]].sort_values("wk"),
+                hist[["olx_id", "scraped_at", "price_eur"]].sort_values("scraped_at"),
+                left_on="wk", right_on="scraped_at",
+                by="olx_id", direction="backward",
+            ).dropna(subset=["price_eur"])
+            _wk = _live.groupby("wk")["price_eur"].agg(
+                median="median",
+                p25=lambda s: s.quantile(0.25),
+                p75=lambda s: s.quantile(0.75),
+            )
     if len(_wk) >= 3:
         fig_t.add_scatter(
             x=_wk.index, y=_wk["p75"],
@@ -579,8 +643,8 @@ else:
             x=_wk.index, y=_wk["p25"],
             mode="lines", line=dict(width=0),
             fill="tonexty", fillcolor="rgba(255, 153, 0, 0.10)",
-            name="p25–p75 band",
-            hovertemplate="p25–p75<extra></extra>",
+            name="p25-p75 band",
+            hovertemplate="p25-p75<extra></extra>",
         )
 
     _color_map = {
@@ -588,15 +652,25 @@ else:
         "sold":    "rgba(200, 70, 70, 0.65)",
         "expired": "rgba(140, 140, 140, 0.20)",
     }
+    # Markers sit on every vertex: they are the click targets Plotly
+    # hit-tests, and a lines-only trace has none between its corners.
+    _marker_color_map = {
+        "active":  "rgba(31, 119, 180, 0.50)",
+        "sold":    "rgba(200, 70, 70, 0.75)",
+        "expired": "rgba(140, 140, 140, 0.35)",
+    }
     _endpoint_color_map = {
+        "active":  "rgba(31, 119, 180, 0.85)",
         "sold":    "rgba(200, 70, 70, 0.95)",
         "expired": "rgba(140, 140, 140, 0.70)",
     }
-    # Draw expired first (background), then active, then sold on top —
+    _end_label_map = {
+        "active": "last seen", "sold": "sold", "expired": "expired",
+    }
+    # Draw expired first (background), then active, then sold on top -
     # sold are the most informative outcomes, so they should win z-order.
     for _status_val in ("expired", "active", "sold"):
         sub = hist_view[hist_view["__status"] == _status_val]
-        n_total = (hist["__status"] == _status_val).sum()
         n_listings_total = (
             hist[hist["__status"] == _status_val]["olx_id"].nunique()
         )
@@ -617,41 +691,54 @@ else:
         end_ys: list = []
         end_cds: list = []
         for _oid, g in sub.groupby("olx_id", sort=False):
-            xs.extend(g["scraped_at"].tolist())
-            ys.extend(g["price_eur"].tolist())
-            cds.extend([[_oid, _url_by_oid.get(_oid, "")]] * len(g))
+            gx = g["scraped_at"].tolist()
+            gy = g["price_eur"].tolist()
+            tail = _tail_by_oid.get(_oid)
+            if tail is not None:
+                gx.append(tail[0])
+                gy.append(tail[1])
+            xs.extend(gx)
+            ys.extend(gy)
+            cds.extend([[_oid, _url_by_oid.get(_oid, "")]] * len(gx))
             xs.append(None); ys.append(None); cds.append([None, None])
-            if _status_val in ("sold", "expired"):
-                last = g.iloc[-1]
-                end_xs.append(last["scraped_at"])
-                end_ys.append(last["price_eur"])
-                end_cds.append([_oid, _url_by_oid.get(_oid, "")])
-        n_listings = sub["olx_id"].nunique()
+            end_xs.append(gx[-1])
+            end_ys.append(gy[-1])
+            end_cds.append([_oid, _url_by_oid.get(_oid, "")])
         fig_t.add_scatter(
-            x=xs, y=ys, mode="lines",
+            x=xs, y=ys, mode="lines+markers",
             line=dict(color=_color_map[_status_val], width=1.2),
+            marker=dict(
+                color=_marker_color_map[_status_val], size=4,
+                line=dict(width=0),
+            ),
+            unselected=dict(marker=dict(opacity=0.65)),
             name=f"{_status_val} ({n_listings_total})",
             customdata=cds,
             hovertemplate=(
                 "<b>€%{y:,.0f}</b> · %{x|%Y-%m-%d}<br>"
-                "%{customdata[0]}<extra></extra>"
+                "%{customdata[0]} - click to open<extra></extra>"
             ),
         )
-        if show_endpoints and end_xs and _status_val in _endpoint_color_map:
+        if show_endpoints and end_xs:
+            _open = _status_val == "active"
             fig_t.add_scatter(
                 x=end_xs, y=end_ys, mode="markers",
                 marker=dict(
                     color=_endpoint_color_map[_status_val],
-                    size=5, symbol="circle",
-                    line=dict(width=0),
+                    size=6, symbol="circle-open" if _open else "circle",
+                    line=dict(
+                        width=1.2 if _open else 0,
+                        color=_endpoint_color_map[_status_val],
+                    ),
                 ),
+                unselected=dict(marker=dict(opacity=0.65)),
                 name=f"{_status_val} ended",
                 customdata=end_cds,
                 showlegend=False,
                 hovertemplate=(
-                    f"{_status_val} · last seen<br>"
+                    f"{_status_val} · {_end_label_map[_status_val]}<br>"
                     "<b>€%{y:,.0f}</b> · %{x|%Y-%m-%d}<br>"
-                    "%{customdata[0]}<extra></extra>"
+                    "%{customdata[0]} - click to open<extra></extra>"
                 ),
             )
     # Median trajectory drawn last so it sits on top of everything.
@@ -690,7 +777,7 @@ else:
     st.caption(
         f"{n_total_listings} listings in window · {n_changed} changed price "
         f"({n_changed / n_total_listings * 100:.0f}%) · "
-        f"click any line to open the listing."
+        f"click a dot on any line to open that listing."
         if n_total_listings else ""
     )
 
