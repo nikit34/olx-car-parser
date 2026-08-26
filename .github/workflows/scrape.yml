@@ -492,10 +492,15 @@ jobs:
         timeout-minutes: 15
         env:
           PYTHONPATH: ${{ github.workspace }}
-          # This step fetches og:image straight from OLX with urllib, which
-          # reads proxy settings from the environment rather than from
-          # ScraperConfig — so the same secret has to arrive under the name
-          # urllib looks for. Empty is ignored by getproxies_environment.
+          # This step fetches each deal's og:image from the listing page, which
+          # OLX's WAF blocks from here just like the API — so it goes through
+          # the same Worker relay. Without it every card ships with a
+          # placeholder instead of a photo.
+          OLX_RELAY_URL: ${{ secrets.OLX_RELAY_URL }}
+          OLX_RELAY_TOKEN: ${{ secrets.OLX_RELAY_TOKEN }}
+          # Kept as a fallback egress: urllib reads proxy settings from the
+          # environment, so the same secret has to arrive under this name.
+          # Empty is ignored by getproxies_environment.
           HTTPS_PROXY: ${{ secrets.OLX_PROXY }}
         run: |
           .venv/bin/python scripts/build_hot_deals.py

@@ -23,11 +23,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
 from pathlib import Path
 from urllib.error import HTTPError
+from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
 import pandas as pd
@@ -62,7 +64,34 @@ _OLX_PHOTO_RE = re.compile(
     r"(?:;s=(\d+)x(\d+))?"
 )
 
-_PHOTO_CACHE: dict[str, list[str]] = {}
+_PHOTO_CACHE: dict[str, list[str] | None] = {}
+
+# Relay egress, same Worker route the scraper uses. OLX's WAF blocks this
+# machine, so a direct listing-page fetch 403s and every card ships without an
+# image. Unset → direct fetch, exactly as before.
+_RELAY_URL = (os.environ.get("OLX_RELAY_URL") or "").strip() or None
+_RELAY_TOKEN = (os.environ.get("OLX_RELAY_TOKEN") or "").strip() or None
+if _RELAY_URL and not _RELAY_TOKEN:
+    print("[hot_deals]   OLX_RELAY_URL set without OLX_RELAY_TOKEN — relay disabled",
+          file=sys.stderr, flush=True)
+    _RELAY_URL = None
+
+
+def _relay(url: str) -> tuple[str, dict]:
+    """Rewrite an OLX listing URL to go through the Worker relay.
+
+    Only the path is forwarded; the Worker pins the origin itself and refuses
+    anything outside its allowed prefixes, so a URL that is not an OLX listing
+    page simply goes out direct and fails the same way it would have.
+    """
+    if not _RELAY_URL:
+        return url, {}
+    parts = urlsplit(url)
+    if parts.netloc not in ("www.olx.pt", "olx.pt"):
+        return url, {}
+    path_q = parts.path + (("?" + parts.query) if parts.query else "")
+    return (f"{_RELAY_URL}?path={quote(path_q, safe='')}",
+            {"X-Relay-Token": _RELAY_TOKEN})
 
 
 def fetch_photo_urls(url: str, timeout: int = 10) -> list[str] | None:
@@ -87,9 +116,11 @@ def fetch_photo_urls(url: str, timeout: int = 10) -> list[str] | None:
     if url in _PHOTO_CACHE:
         return _PHOTO_CACHE[url]
     try:
-        req = Request(url, headers={
+        target, relay_headers = _relay(url)
+        req = Request(target, headers={
             "User-Agent": UA,
             "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.7",
+            **relay_headers,
         })
         with urlopen(req, timeout=timeout) as r:
             html = r.read().decode("utf-8", errors="ignore")

@@ -364,7 +364,12 @@ async function handleSitemap(request, env, url) {
 // Absent RELAY_TOKEN the route does not exist at all (404), so deploying this
 // without setting the secret changes nothing.
 const RELAY_ORIGIN = "https://www.olx.pt";
-const RELAY_PATH_PREFIX = "/api/v1/offers";
+// Two prefixes, both read-only and both needed by the scrape path:
+//   /api/v1/offers — the listings API the scraper enumerates
+//   /d/anuncio/    — a listing page, fetched only to read its og:image URLs
+// Everything else is refused. Keep this list minimal: each entry widens what
+// a leaked token could reach.
+const RELAY_PATH_PREFIXES = ["/api/v1/offers", "/d/anuncio/"];
 
 async function handleOlxRelay(request, env, url) {
   const expected = (env.RELAY_TOKEN || "").trim();
@@ -374,7 +379,7 @@ async function handleOlxRelay(request, env, url) {
     return forbidden();
   }
   const path = url.searchParams.get("path") || "";
-  if (!path.startsWith(RELAY_PATH_PREFIX)) return forbidden();
+  if (!RELAY_PATH_PREFIXES.some(pre => path.startsWith(pre))) return forbidden();
   const target = new URL(RELAY_ORIGIN + path);
   const upstream = await fetch(target.toString(), {
     method: "GET",
@@ -382,7 +387,7 @@ async function handleOlxRelay(request, env, url) {
       "User-Agent": request.headers.get("X-Relay-UA")
         || "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
            + "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-      "Accept": "application/json, text/plain, */*",
+      "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
       "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.5",
     },
     // No edge caching: the scraper needs what OLX says now, and a cached 403
@@ -392,7 +397,7 @@ async function handleOlxRelay(request, env, url) {
   return new Response(upstream.body, {
     status: upstream.status,
     headers: {
-      "content-type": upstream.headers.get("content-type") || "application/json",
+      "content-type": upstream.headers.get("content-type") || "text/plain",
       "cache-control": "no-store",
     },
   });
