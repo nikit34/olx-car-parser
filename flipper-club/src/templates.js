@@ -798,6 +798,16 @@ function analyticsFormEvent(formSelector, name, params = {}) {
     `Object.assign(${payload},{transport_type:'beacon'}));},{once:true});})();</script>`;
 }
 
+// Подставляет client_id GA4 в скрытое поле формы. Нужен вебхуку Stripe, чтобы
+// серверное событие purchase легло в ту же сессию, а не создало отдельного
+// «пользователя». Куки _ga есть только у согласившегося, поэтому у остальных
+// поле остаётся пустым - и это правильно: без согласия отправлять нечего.
+function gaClientIdFiller() {
+  if (!GA4_MEASUREMENT_ID) return "";
+  return `<script>(function(){var f=document.querySelector('input[name="ga_cid"]');if(!f)return;
+var m=document.cookie.match(/_ga=GA1\.\d+\.(\d+\.\d+)/);if(m)f.value=m[1];})();</script>`;
+}
+
 // ── Shell ─────────────────────────────────────────────────────────────────────
 function layout({ title, body, zone, nav, depositCount, index = false, description = null, canonical = null, jsonLd = null, host = null, image = null, type = "website", ogUrl: ogUrlOverride = null }) {
   const dep = (depositCount || 0) * 5;
@@ -1369,6 +1379,10 @@ export function renderClaim({ deal, zone, depositEur, stripeReady, depositCount 
         <form class="claim-card-body" action="/reserve" method="post">
           <input type="hidden" name="olx_id" value="${escapeHtml(deal.olx_id)}">
           <input type="hidden" name="zone" value="${escapeHtml(zone)}">
+          <!-- Идентификатор клиента GA4. Существует только у согласившегося на
+               аналитику: без согласия куки _ga нет, поле уходит пустым, и
+               серверное событие не отправляется вовсе. -->
+          <input type="hidden" name="ga_cid" value="">
           <div class="dep-row"><span class="l">${fmtEur(depositEur)} para falar com o vendedor</span><span class="r">${fmtEur(depositEur)}</span></div>
           <div style="font-size:12px;color:#8A8F98;margin-top:4px;">Não é sinal do carro — é o que pagas para desbloquear o contacto. Reembolsável.</div>
           <div class="hr"></div>
@@ -1381,7 +1395,7 @@ export function renderClaim({ deal, zone, depositEur, stripeReady, depositCount 
     </div>`;
   return layout({
     title: `Reivindicar ${p.name}`,
-    body: body + analyticsFormEvent('form[action="/reserve"]', "begin_checkout", {
+    body: body + gaClientIdFiller() + analyticsFormEvent('form[action="/reserve"]', "begin_checkout", {
       currency: "EUR",
       value: depositEur,
       items: [{ item_id: deal.olx_id, item_name: p.name }],

@@ -654,6 +654,8 @@ async function handleReserve(request, env, url) {
   const form = await request.formData();
   const olxId = (form.get("olx_id") || "").toString();
   const zone = pickZone(form.get("zone"));
+  // Пусто у отказавшегося от аналитики: тогда серверное событие не уйдёт.
+  const gaCid = (form.get("ga_cid") || "").toString().slice(0, 64);
 
   if (!stripeConfigured(env)) {
     return html(renderInfo({
@@ -680,7 +682,7 @@ async function handleReserve(request, env, url) {
 
   try {
     const session = await createCheckoutSession(env, {
-      uid, olxId, carName,
+      uid, olxId, carName, gaCid,
       amountCents: depositCents(env),
       currency: env.CURRENCY || DEFAULT_CURRENCY,
       successUrl, cancelUrl,
@@ -790,9 +792,51 @@ async function handleWebhook(request, env) {
       await recordUnlock(env, m.uid, m.olx_id, {
         stripe_session_id: s.id, amount: s.amount_total, currency: s.currency,
       });
+      // Клиентский purchase на странице после оплаты теряется, если человек
+      // закрыл вкладку на редиректе Stripe. Вебхук - единственный надёжный
+      // источник выручки, поэтому событие дублируется отсюда. transaction_id
+      // тот же, что на клиенте, поэтому GA4 не посчитает оплату дважды.
+      await sendServerPurchase(env, m, s);
     }
   }
   return new Response("ok", { status: 200 });
+}
+
+// Measurement Protocol. Отправляется только когда есть client_id, то есть
+// только для согласившихся на аналитику: без согласия куки _ga нет, и
+// придумывать синтетический идентификатор нельзя - это была бы обработка
+// данных человека, который отказался. Выручка от отказавшихся в GA4 не
+// попадает, и это осознанный размен.
+async function sendServerPurchase(env, meta, session) {
+  const secret = (env.GA4_API_SECRET || "").trim();
+  const id = (env.GA4_MEASUREMENT_ID || "").trim();
+  const cid = (meta.ga_cid || "").trim();
+  if (!secret || !id || !cid) return;
+  const value = (session.amount_total || 0) / 100;
+  const body = {
+    client_id: cid,
+    non_personalized_ads: true,
+    events: [{
+      name: "purchase",
+      params: {
+        transaction_id: `${meta.olx_id}-${session.id}`,
+        currency: (session.currency || "eur").toUpperCase(),
+        value,
+        items: [{ item_id: meta.olx_id }],
+      },
+    }],
+  };
+  try {
+    const r = await fetch(
+      `https://www.google-analytics.com/mp/collect?measurement_id=${encodeURIComponent(id)}` +
+      `&api_secret=${encodeURIComponent(secret)}`,
+      { method: "POST", body: JSON.stringify(body) });
+    // MP отвечает 204 и молчит об ошибках в payload, поэтому логируем сам код:
+    // иначе поломка выглядела бы как отсутствие покупок.
+    if (r.status !== 204) console.error("mp purchase unexpected status", r.status);
+  } catch (err) {
+    console.error("mp purchase failed", err && err.message || err);
+  }
 }
 
 // ── Unlock state (KV) ─────────────────────────────────────────────────────

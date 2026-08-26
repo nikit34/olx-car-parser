@@ -60,14 +60,16 @@ async function stripeFetch(env, method, path, body) {
 // `uid` is the visitor cookie id; it rides in client_reference_id + metadata so
 // the webhook (which has no cookies) can attribute the unlock back to this user.
 export async function createCheckoutSession(env, {
-  uid, olxId, carName, amountCents, currency, successUrl, cancelUrl,
+  uid, olxId, carName, amountCents, currency, successUrl, cancelUrl, gaCid = "",
 }) {
   const session = await stripeFetch(env, "POST", "/checkout/sessions", {
     mode: "payment",
     success_url: successUrl,
     cancel_url: cancelUrl,
     client_reference_id: uid,
-    metadata: { uid, olx_id: olxId },
+    // ga_cid нужен вебхуку, чтобы серверное событие purchase легло в ту же
+    // сессию GA4. Пусто у отказавшегося от аналитики - тогда событие не уйдёт.
+    metadata: { uid, olx_id: olxId, ga_cid: gaCid },
     // Restrict the payment record so refunds/disputes are traceable to the car.
     payment_intent_data: { metadata: { uid, olx_id: olxId } },
     line_items: [{

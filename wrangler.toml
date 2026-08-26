@@ -89,6 +89,10 @@ CURRENCY = "eur"
 # без кук. Сам ID публичный, он и так виден в исходнике страницы.
 GA4_MEASUREMENT_ID = "G-2RSXJHJJYP"
 
+# GA4_API_SECRET хранится в СЕКРЕТАХ воркера, не здесь: с ним можно писать
+# события в ресурс от чужого имени. Без него серверное событие purchase из
+# вебхука Stripe просто не отправляется, всё остальное работает.
+
 # Canonical public hostname. When set, every request to any OTHER hostname
 # (i.e. the workers.dev subdomain) is permanently redirected here, so the two
 # hostnames stop splitting ranking signals. /healthz and /webhook/stripe are
