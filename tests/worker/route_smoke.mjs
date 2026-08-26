@@ -337,6 +337,15 @@ await check("facet pages appear when the blob carries the cells", async () => {
     for (const want of [`/preco/${deep}/diesel`, `/preco/${deep}/porto`, "/precos/porto"]) {
       assert(xml.includes(`<loc>https://carsbuyer.org${want}</loc>`), `sitemap missing ${want}`);
     }
+
+    // In the sitemap is not enough. A page nothing on the site links to is an
+    // orphan: a crawler reaches it once and a reader never does.
+    const modelPage = await (await get(`/preco/${deep}`)).text();
+    for (const want of [`/preco/${deep}/diesel`, `/preco/${deep}/gasolina`, `/preco/${deep}/porto`]) {
+      assert(modelPage.includes(want), `model page does not link ${want}`);
+    }
+    const hub = await (await get("/precos")).text();
+    assert(hub.includes('href="/precos/porto"'), "/precos does not link the district pages");
   } finally {
     globalThis.fetch = prevFetch;
   }

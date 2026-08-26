@@ -1942,7 +1942,7 @@ export function fmtBuilt(iso) {
 // MODEL fair-value band, present only when it cleared the build-time guards.
 export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositCount, builtAt,
                                   insights = [], yearPages = [], competitors = [], comparisons = [],
-                                  hasDepreciation = false, provenanceHtml = "", altJson = null }) {
+                                  facets = [], hasDepreciation = false, provenanceHtml = "", altJson = null }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
   const FM = fmtEur(rec.fm), FL = fmtEur(rec.fl), FH = fmtEur(rec.fh);
   const FRESH = fmtBuilt(builtAt);
@@ -2073,6 +2073,26 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
       <div style="font-size:13px;color:#5B606B;margin-top:12px;">Tens um ${B} ${M}${yrRange ? " de " + yrRange : ""}? <a href="/avaliar" style="color:#177A47;font-weight:600;">Avalia o teu&nbsp;→</a></div>
     </section>` : "";
 
+  // 3b. Fuel and district cuts of this same model.
+  //
+  // Without these links the facet pages are orphans: in the sitemap, reachable
+  // by a crawler, and reachable by a reader only if they guess the URL. They are
+  // also the natural next question on this page — "and what does the diesel one
+  // go for" — so the link earns its place twice.
+  const fuelFacets = (facets || []).filter(f => f.kind === "fuel");
+  const geoFacets = (facets || []).filter(f => f.kind === "district");
+  const facetRow = (label, list) => list.length ? `
+      <div style="margin-bottom:16px;">
+        <div class="sec-label" style="margin:0 0 9px;">${label}</div>
+        <div class="fc-yearlinks">${list.map(f =>
+          `<a href="/preco/${encodeURIComponent(slug)}/${encodeURIComponent(f.k)}">${escapeHtml(f.lbl)} <span class="mut">${fmtEur(f.fm)}</span></a>`).join("")}</div>
+      </div>` : "";
+  const facetBlock = (fuelFacets.length || geoFacets.length) ? `
+    <section class="section" style="padding:30px 22px 0;max-width:680px;">
+      ${facetRow(`${B} ${M} POR COMBUSTÍVEL`, fuelFacets)}
+      ${facetRow(`${B} ${M} POR DISTRITO`, geoFacets)}
+    </section>` : "";
+
   // 4. Paste-a-link CTA (bridge #2)
   const bridge2 = `
     <section class="section" style="padding:30px 22px 0;max-width:1180px;">
@@ -2146,7 +2166,7 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
   // internal links back to / and /precos (reinforcing the crawl spine).
   const crumb = `<nav class="section" aria-label="Breadcrumb" style="max-width:680px;padding:22px 22px 0;font-size:12.5px;color:#8A8F98;">`
     + `<a href="/" style="color:#8A8F98;">Início</a> › <a href="/precos" style="color:#8A8F98;">Preços</a> › <span style="color:#16181D;">${B} ${M}</span></nav>`;
-  const body = `${crumb}<div style="padding-top:14px;">${hero}</div>${gbmCard}${insightBlock}${bridge1}${table}${depLink}${bridge2}${trust}${rivals}${sellerCta}${sib}`;
+  const body = `${crumb}<div style="padding-top:14px;">${hero}</div>${gbmCard}${insightBlock}${bridge1}${table}${facetBlock}${depLink}${bridge2}${trust}${rivals}${sellerCta}${sib}`;
 
   const canonical = `https://${host}/preco/${slug}`;
   const faq = (q, a) => ({
@@ -2258,7 +2278,7 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
 }
 
 // ── Models hub (/precos) — the crawl spine: one link to every model page ─────
-export function renderModelsHub({ models, depositCount, builtAt, host }) {
+export function renderModelsHub({ models, depositCount, builtAt, host, districts = [] }) {
   const FRESH = fmtBuilt(builtAt);
   // models = [{slug, b, m, fm, n}], pre-sorted by the worker. Group by brand.
   const byBrand = new Map();
@@ -2294,6 +2314,11 @@ export function renderModelsHub({ models, depositCount, builtAt, host }) {
         </p>
       </div>
     </section>
+    ${districts.length ? `<section class="section" style="padding:18px 22px 0;max-width:1180px;">
+      <h2 class="sec-label" style="margin:0 0 10px;">PREÇOS POR DISTRITO</h2>
+      <div class="mchips">${districts.map(d =>
+        `<a class="mchip" href="/precos/${encodeURIComponent(d.k)}">${escapeHtml(d.lbl)} <span class="mut">· mediana ${fmtEur(d.fm)} · ${fmtNum(d.n)}</span></a>`).join("")}</div>
+    </section>` : ""}
     <section class="section" style="padding:18px 22px 70px;max-width:1180px;">${groups}</section>`;
   const origin = host ? `https://${host}` : "";
   // Lightweight CollectionPage (no 465-item ItemList — the visible mchips + the

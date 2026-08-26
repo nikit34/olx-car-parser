@@ -489,6 +489,14 @@ async function handleModelPage(request, env, url) {
     insights: modelInsights(rec, stats),
     yearPages: publishedYearPages(models, slug, rec, builtAt),
     competitors, comparisons,
+    // Fuel/district cuts, tagged with their kind so the page can label them.
+    // Gated by the same wave as everything else, so the page never links a URL
+    // the router would refuse.
+    facets: publishedFacets(models, slug, rec, builtAt).map(k => {
+      const kind = facetKind(rec, k);
+      const cell = facetCell(rec, kind, k);
+      return { k, kind, lbl: cell.lbl, n: cell.n, fm: cell.fm };
+    }),
     hasDepreciation: publishedDepreciation(models, slug, rec, builtAt),
     provenanceHtml: provenance({ n: rec.n, builtAt }),
     altJson: `https://${url.host}/preco/${slug}.json`,
@@ -838,7 +846,14 @@ async function handleModelsHub(request, env, url) {
   const list = Object.entries(models)
     .map(([s, r]) => ({ slug: s, b: r.b, m: r.m, fm: r.fm, n: r.n }))
     .sort((a, b) => (b.n || 0) - (a.n || 0));
-  return html(renderModelsHub({ models: list, depositCount, builtAt: mdoc.built_at, host: url.host }), 200, setCookie);
+  // District pages hang off this hub. Without the row they would exist only in
+  // the sitemap — crawlable in principle, orphaned in practice.
+  const districts = Object.entries((mdoc && mdoc.districts) || {})
+    .map(([k, d]) => ({ k, lbl: d.lbl, n: d.n, fm: d.fm }))
+    .sort((a, b) => (b.n || 0) - (a.n || 0));
+  return html(renderModelsHub({
+    models: list, depositCount, builtAt: mdoc.built_at, host: url.host, districts,
+  }), 200, setCookie);
 }
 
 // /sitemap.xml — every indexable URL, generated from the same selection
