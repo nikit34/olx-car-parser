@@ -1652,8 +1652,13 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
   // Бесплатная оценка это то, ради чего человек приходит, и первый шаг воронки.
   // Событие шлём только когда оценка реально посчиталась, иначе оно означало бы
   // просто открытие формы.
-  const valuation = rec ? analyticsEvent("valuation_result", {
-    model: rec.t || "",
+  // Оценка показывается двумя путями: по ссылке на объявление (rec) и по
+  // выбору модели с годом (spec). Событие должно быть на обоих - сначала оно
+  // висело только на rec, а это более редкий путь.
+  const shown = rec || (spec && spec.rec);
+  const valuation = shown ? analyticsEvent("valuation_result", {
+    model: (rec ? rec.t : spec.rec.t) || "",
+    source: rec ? "listing" : "model",
     has_listing: Boolean(olxId),
   }) : "";
   return layout({
