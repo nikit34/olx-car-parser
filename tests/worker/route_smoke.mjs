@@ -389,5 +389,39 @@ await check("a wave gates the router, the sitemap and the on-page links together
   }
 });
 
+// ── KV must not be load-bearing for a render ────────────────────────────────
+// The outage these exist for: KV refused ops, every rendered page answered
+// 1101, and /healthz plus the sitemap stayed green the whole time.
+const PAGES = ["/", "/mercado", "/precos", "/privacidade", "/sobre", "/metodologia", "/isv",
+  "/liquidez", "/depreciacao", "/comparar", "/mercado/indice", "/sobrevalorizados", "/avaliar",
+  "/reservas", "/car?olx_id=x", `/preco/${deep}`, `/preco/${deep}/${deepYear}`];
+
+await check("a KV that fails every op degrades the page, never 500s", async () => {
+  const bang = op => { throw new Error(`KV ${op} failed: 429 Too Many Requests`); };
+  const hostile = { ...env, KV: {
+    async get() { bang("GET"); }, async put() { bang("PUT"); },
+    async delete() { bang("DELETE"); }, async list() { bang("LIST"); },
+  } };
+  for (const p of PAGES) {
+    const r = await worker.fetch(new Request(`https://${HOST}${p}`), hostile);
+    assert(r.status < 500, `${p} → ${r.status} with KV refusing every op`);
+  }
+});
+
+await check("a cookie-less render spends no KV list op", async () => {
+  // Every crawler hit arrives without the cookie, and one scan per render is
+  // what drained the daily list quota.
+  let lists = 0;
+  const counted = { ...env, KV: { ...env.KV, async list(arg) { lists++; return env.KV.list(arg); } } };
+  for (const p of PAGES) await worker.fetch(new Request(`https://${HOST}${p}`), counted);
+  assert(lists === 0, `${lists} list op(s) on cookie-less renders`);
+
+  // A returning visitor is still scanned: that scan is what badges the tiles.
+  const r = await worker.fetch(new Request(`https://${HOST}/mercado`,
+    { headers: { cookie: "fc_uid=deadbeefdeadbeefdeadbeefdeadbeef" } }), counted);
+  assert(r.status === 200, `returning visitor → ${r.status}`);
+  assert(lists === 1, `returning visitor spent ${lists} list op(s), expected 1`);
+});
+
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall route checks passed");
 process.exit(failures ? 1 : 0);

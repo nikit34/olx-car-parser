@@ -312,7 +312,7 @@ export default {
       // согласия, и за Basic-Auth она отдавала бы 401 и Googlebot, и человеку.
       if (pathname === "/privacidade" && method === "GET") {
         const { uid, setCookie } = ensureUid(request);
-        const depositCount = (await listUnlocked(env, uid)).size;
+        const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
         return html(renderPrivacy({ depositCount, host: url.host }), 200, setCookie);
       }
 
@@ -331,7 +331,7 @@ export default {
 async function handleLanding(request, env, url) {
   const { uid, setCookie } = ensureUid(request);
   const { deals, degraded } = await getDeals(env, "all");
-  const depositCount = (await listUnlocked(env, uid)).size;
+  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
 
   if (degraded || !Array.isArray(deals) || deals.length === 0) {
     return html(renderInfo({
@@ -367,7 +367,7 @@ async function handleLanding(request, env, url) {
 // "not found / ask by email" fallback). No q ⇒ just the lookup form + teaser.
 async function handleAvaliar(request, env, url) {
   const { uid, setCookie } = ensureUid(request);
-  const depositCount = (await listUnlocked(env, uid)).size;
+  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
   const query = (url.searchParams.get("q") || "").toString().trim();
   const modelo = (url.searchParams.get("modelo") || "").toString().trim().toLowerCase();
   const anoRaw = parseInt(url.searchParams.get("ano") || "", 10);
@@ -471,7 +471,7 @@ async function handleModelPage(request, env, url) {
 
   if (wantsJson) return jsonResponse(modelJson(rec, slug, { host: url.host, builtAt }));
 
-  const depositCount = (await listUnlocked(env, uid)).size;
+  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
   const stats = corpusStats(models, builtAt);
 
   // Conversion bridge: live hot_deals matching this model (already below-fair).
@@ -531,7 +531,7 @@ async function renderYear({ request, env, url, models, rec, slug, year, builtAt,
   if (!cell) return notFoundPage(request, env, url);
   if (wantsJson) return jsonResponse(yearJson(rec, slug, year, cell, { host: url.host, builtAt }));
 
-  const depositCount = (await listUnlocked(env, uid)).size;
+  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
   const stats = corpusStats(models, builtAt);
   // Neighbours come from ALL year cells (n>=5), not only those with pages: the
   // comparison "is 2013 worth the premium over 2012" is still true when 2013 is
@@ -593,7 +593,7 @@ async function renderFacet({ request, env, url, models, rec, slug, facet, builtA
   const kind = publishedFacets(models, slug, rec, builtAt).includes(facet) ? facetKind(rec, facet) : null;
   if (!kind) return notFoundPage(request, env, url, setCookie);
   const cell = facetCell(rec, kind, facet);
-  const depositCount = (await listUnlocked(env, uid)).size;
+  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
   return html(renderFacetPage({
     rec, slug, kind, cell,
     siblingsCells: facetCells(rec, kind),
@@ -614,7 +614,7 @@ async function handleDistrict(request, env, url) {
   const districts = (mdoc && mdoc.districts) || null;
   const rec = (districts && districts[key]) || null;
   if (!models || !rec) return notFoundPage(request, env, url, setCookie);
-  const depositCount = (await listUnlocked(env, uid)).size;
+  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
   return html(renderDistrictPage({
     key, rec, models, stats: corpusStats(models, mdoc.built_at),
     host: url.host, depositCount, builtAt: mdoc.built_at,
@@ -634,7 +634,7 @@ async function withModels(request, env, url, fn) {
   const { uid, setCookie } = ensureUid(request);
   const mdoc = await getModels(env);
   const models = mdoc && mdoc.models;
-  const depositCount = (await listUnlocked(env, uid)).size;
+  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
   if (!models) {
     return html(renderInfo({
       zone: "all", depositCount, title: "Serviço indisponível",
@@ -856,7 +856,7 @@ function jsonResponse(payload, status = 200) {
 // Models hub (/precos) — the crawl spine linking every model page.
 async function handleModelsHub(request, env, url) {
   const { uid, setCookie } = ensureUid(request);
-  const depositCount = (await listUnlocked(env, uid)).size;
+  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
   const mdoc = await getModels(env);
   const models = mdoc && mdoc.models;
   if (!models) {
@@ -1174,7 +1174,7 @@ async function handleFeed(request, env, url) {
     zoneCounts[z] = (r && !r.degraded && Array.isArray(r.deals)) ? r.deals.length : null;
   }
   const { deals, degraded } = zoneResults[zone] || { deals: [], degraded: true };
-  const unlockedSet = await listUnlocked(env, uid);
+  const unlockedSet = await listUnlocked(env, uid, { fresh: !!setCookie });
   const depositCount = unlockedSet.size;
 
   if (degraded) {
@@ -1232,7 +1232,7 @@ async function handleCar(request, env, url) {
   const olxId = (url.searchParams.get("olx_id") || "").toString();
   const { uid, setCookie } = ensureUid(request);
   const { deals, degraded } = await getDeals(env, zone);
-  const depositCount = (await listUnlocked(env, uid)).size;
+  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
   if (degraded) {
     return html(renderInfo({
       zone, depositCount, title: "Serviço indisponível",
@@ -1262,7 +1262,7 @@ async function handleClaim(request, env, url) {
   const olxId = (url.searchParams.get("olx_id") || "").toString();
   const { uid, setCookie } = ensureUid(request);
   const { deals, degraded } = await getDeals(env, zone);
-  const depositCount = (await listUnlocked(env, uid)).size;
+  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
   if (degraded) {
     return html(renderInfo({
       zone, depositCount, title: "Serviço indisponível",
@@ -1356,6 +1356,7 @@ async function handleUnlocked(request, env, url) {
   }
 
   const { deals, degraded } = await getDeals(env, zone);
+  // Unconditional: the verify above may have written an unlock under this uid.
   const depositCount = (await listUnlocked(env, uid)).size;
   if (degraded || !Array.isArray(deals) || deals.length === 0) {
     return html(renderInfo({
@@ -1390,7 +1391,7 @@ async function handleUnlocked(request, env, url) {
 async function handleReservas(request, env, url) {
   const { uid, setCookie } = ensureUid(request);
   const { deals, degraded } = await getDeals(env, "all");
-  const records = await listUnlockedRecords(env, uid);
+  const records = await listUnlockedRecords(env, uid, { fresh: !!setCookie });
   const depositCount = records.length;
 
   let claims = [];
@@ -1532,8 +1533,8 @@ function txnId(olxId, rec) {
 
 // Every unlock for this visitor as { olxId, claimedAtMs } — one prefix scan
 // plus a get per key (Reservas only, so the fan-out stays small).
-async function listUnlockedRecords(env, uid) {
-  const ids = [...(await listUnlocked(env, uid))];
+async function listUnlockedRecords(env, uid, { fresh = false } = {}) {
+  const ids = [...(await listUnlocked(env, uid, { fresh }))];
   return Promise.all(ids.map(async olxId => ({
     olxId, claimedAtMs: claimedAtMs(await getUnlock(env, uid, olxId)),
   })));
@@ -1588,7 +1589,8 @@ const DEGRADED_CACHE_TTL_SEC = 30;
 async function getDeals(env, zone) {
   const safeZone = ZONES.includes(zone) ? zone : "all";
   const cacheKey = `cache:deals:${safeZone}`;
-  const cached = await env.KV.get(cacheKey);
+  let cached = null;
+  try { cached = await env.KV.get(cacheKey); } catch (err) { console.warn("deals cache read failed", err && err.message); }
   if (cached) {
     try {
       const parsed = JSON.parse(cached);
@@ -1612,7 +1614,11 @@ async function getDeals(env, zone) {
       return degrade(env, cacheKey);
     }
     if (!Array.isArray(parsed.deals)) return degrade(env, cacheKey);
-    await env.KV.put(cacheKey, body, { expirationTtl: DEALS_CACHE_TTL_SEC });
+    try {
+      await env.KV.put(cacheKey, body, { expirationTtl: DEALS_CACHE_TTL_SEC });
+    } catch (err) {
+      console.warn("deals cache write failed", err && err.message);
+    }
     return { deals: parsed.deals, degraded: false };
   } catch (err) {
     console.warn("hot_deals fetch error", err && err.message);
@@ -1621,8 +1627,12 @@ async function getDeals(env, zone) {
 }
 
 async function degrade(env, cacheKey) {
-  await env.KV.put(cacheKey, JSON.stringify({ __degraded: true }),
-    { expirationTtl: DEGRADED_CACHE_TTL_SEC });
+  try {
+    await env.KV.put(cacheKey, JSON.stringify({ __degraded: true }),
+      { expirationTtl: DEGRADED_CACHE_TTL_SEC });
+  } catch (err) {
+    console.warn("degrade tombstone write failed", err && err.message);
+  }
   return { deals: [], degraded: true };
 }
 
@@ -1691,16 +1701,21 @@ function sortDeals(deals, sort = "score") {
 
 // Every olx_id this visitor has paid-unlocked, via one KV prefix scan instead
 // of N per-deal gets — used to badge tiles in the grid. Returns a Set.
-async function listUnlocked(env, uid) {
+// `fresh` = uid minted in this request, so the prefix cannot hold anything.
+async function listUnlocked(env, uid, { fresh = false } = {}) {
   const set = new Set();
-  if (!uid) return set;
+  if (!uid || fresh) return set;
   const prefix = `unlock:${uid}:`;
   let cursor;
-  do {
-    const page = await env.KV.list({ prefix, cursor });
-    for (const k of page.keys) set.add(k.name.slice(prefix.length));
-    cursor = page.list_complete ? null : page.cursor;
-  } while (cursor);
+  try {
+    do {
+      const page = await env.KV.list({ prefix, cursor });
+      for (const k of page.keys) set.add(k.name.slice(prefix.length));
+      cursor = page.list_complete ? null : page.cursor;
+    } while (cursor);
+  } catch (err) {
+    console.warn("unlock list failed", err && err.message);
+  }
   return set;
 }
 
