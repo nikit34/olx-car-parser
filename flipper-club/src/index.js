@@ -31,6 +31,7 @@ import {
   renderLanding, renderClaim, renderClaimSuccess, renderReservations,
   renderAvaliar, renderModelPage, renderModelsHub, renderModelWidget, slugify,
   setAnalyticsId,
+  renderPrivacy,
 } from "./templates.js";
 import {
   stripeConfigured, createCheckoutSession,
@@ -52,6 +53,10 @@ const DEFAULT_CURRENCY = "eur";
 const PRODUCT_PATHS = new Set([
   "/", "/mercado", "/car", "/claim", "/reserve", "/unlocked", "/reservas", "/avaliar",
   "/precos", "/sitemap.xml", "/robots.txt", "/llms.txt",
+  // Приватность обязана быть здесь: гейт стоит ВЫШЕ её обработчика, и без
+  // записи в этом списке Basic-Auth отдавал бы 401 и Googlebot, и человеку,
+  // пришедшему по ссылке из баннера согласия.
+  "/privacidade",
 ]);
 
 export default {
@@ -150,6 +155,13 @@ export default {
       if (pathname === "/reserve" && method === "POST") return handleReserve(request, env, url);
       if (pathname === "/unlocked" && method === "GET") return handleUnlocked(request, env, url);
       if (pathname === "/reservas" && method === "GET") return handleReservas(request, env, url);
+      // Страница приватности публичная и индексируемая: на неё ссылается баннер
+      // согласия, и за Basic-Auth она отдавала бы 401 и Googlebot, и человеку.
+      if (pathname === "/privacidade" && method === "GET") {
+        const { uid, setCookie } = ensureUid(request);
+        const depositCount = (await listUnlocked(env, uid)).size;
+        return html(renderPrivacy({ depositCount, host: url.host }), 200, setCookie);
+      }
 
       return notFound();
     } catch (err) {
@@ -353,6 +365,7 @@ async function handleSitemap(request, env, url) {
     `<url><loc>${base}/mercado</loc>${lm}<changefreq>daily</changefreq><priority>0.9</priority></url>`,
     `<url><loc>${base}/avaliar</loc>${lm}<changefreq>weekly</changefreq><priority>0.8</priority></url>`,
     `<url><loc>${base}/precos</loc>${lm}<changefreq>weekly</changefreq><priority>0.7</priority></url>`,
+    `<url><loc>${base}/privacidade</loc>${lm}<changefreq>yearly</changefreq><priority>0.2</priority></url>`,
   ];
   if (models) {
     for (const slug of Object.keys(models)) {

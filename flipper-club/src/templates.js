@@ -590,6 +590,18 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
   .grid{grid-template-columns:1fr;}
   .hero-stats{gap:20px;}
 }
+
+.fc-consent{position:fixed;left:12px;right:12px;bottom:12px;z-index:60;display:flex;
+flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;
+background:#12161B;border:1px solid #2A3038;border-radius:12px;padding:12px 14px;
+box-shadow:0 8px 30px rgba(0,0,0,.45);max-width:760px;margin:0 auto;}
+.fc-consent[hidden]{display:none;}
+.fc-consent-text{font-size:13px;color:#C9CFD6;line-height:1.45;flex:1 1 260px;}
+.fc-consent-text a{color:#4FB477;}
+.fc-consent-btns{display:flex;gap:8px;flex:0 0 auto;}
+.fc-consent button{font:inherit;font-size:13px;padding:8px 14px;border-radius:8px;cursor:pointer;}
+.fc-consent-no{background:transparent;color:#C9CFD6;border:1px solid #3A424C;}
+.fc-consent-yes{background:#177A47;color:#fff;border:1px solid #177A47;}
 `;
 
 // Live 24h-exclusivity countdown + detail gallery. Both guard on their own
@@ -730,13 +742,38 @@ export function setAnalyticsId(id) {
 function analyticsSnippet() {
   if (!GA4_MEASUREMENT_ID) return "";
   const id = escapeHtml(GA4_MEASUREMENT_ID);
+  // Сохранённое согласие применяется сразу после default и до конца загрузки
+  // gtag, поэтому у согласившегося измерение полноценное с первого хита.
   return `<script>
 window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}
 gtag('consent','default',{ad_storage:'denied',ad_user_data:'denied',ad_personalization:'denied',analytics_storage:'denied',wait_for_update:500});
+try{if(localStorage.getItem('fc_consent')==='granted'){gtag('consent','update',{analytics_storage:'granted'});}}catch(e){}
 gtag('js',new Date());
 </script>
 <script async src="https://www.googletagmanager.com/gtag/js?id=${id}"></script>
 <script>gtag('config','${id}',{anonymize_ip:true});</script>`;
+}
+
+// Баннер согласия. Отказ такой же простой, как согласие - это требование, а не
+// вежливость. Скрыт, если выбор уже сделан. Технический cookie fc_uid баннер не
+// касается: без него не работает резервация, согласия он не требует.
+function consentBanner() {
+  if (!GA4_MEASUREMENT_ID) return "";
+  return `<div id="fc-consent" hidden class="fc-consent">
+  <div class="fc-consent-text">Usamos estatísticas anónimas para saber que páginas ajudam.
+    Sem elas o site funciona igual. <a href="/privacidade">Privacidade</a></div>
+  <div class="fc-consent-btns">
+    <button type="button" data-consent="denied" class="fc-consent-no">Recusar</button>
+    <button type="button" data-consent="granted" class="fc-consent-yes">Aceitar</button>
+  </div>
+</div>
+<script>(function(){var box=document.getElementById('fc-consent');if(!box)return;
+var saved=null;try{saved=localStorage.getItem('fc_consent');}catch(e){}
+if(saved===null)box.hidden=false;
+box.addEventListener('click',function(ev){var b=ev.target.closest('[data-consent]');if(!b)return;
+var v=b.getAttribute('data-consent');try{localStorage.setItem('fc_consent',v);}catch(e){}
+if(typeof gtag==='function')gtag('consent','update',{analytics_storage:v});
+box.hidden=true;});})();</script>`;
 }
 
 // Событие GA4. Пусто, когда аналитика выключена, поэтому вызов безопасно
@@ -829,6 +866,7 @@ ${FONT_LINKS}
 <style>${CSS}</style>
 </head>
 <body>
+${consentBanner()}
 <header class="fc-header">
   <div class="fc-header-in">
     <a class="fc-brand" href="/">
@@ -1454,6 +1492,55 @@ export function renderReservations({ claims, depositEur, depositCount }) {
 }
 
 // ── Generic info / degraded page ──────────────────────────────────────────────
+// Страница приватности. Содержание сверено с кодом: fc_uid это случайный
+// токен без персональных данных, в KV лежит только «этот псевдоним разблокировал
+// это объявление», email и имя сайт не собирает, платёж целиком у Stripe.
+// Если поведение изменится, эту страницу надо править вместе с кодом.
+export function renderPrivacy({ depositCount, host }) {
+  const origin = host ? `https://${host}` : "";
+  const body = `
+    <section class="fc-doc">
+      <h1>Privacidade</h1>
+      <p>Esta página descreve exatamente o que o Flipper Club guarda. Está escrita a
+      partir do código do site, não de um modelo genérico.</p>
+
+      <h2>O que guardamos sempre</h2>
+      <p>Um cookie técnico <code>fc_uid</code> com um número aleatório. Serve para saber
+      que reservas são tuas quando voltas ao site. Não contém nome, email nem
+      qualquer dado que te identifique, e sem ele a reserva não funciona — por isso
+      não depende de consentimento.</p>
+      <p>Ligado a esse número aleatório guardamos apenas que anúncios desbloqueaste.
+      Nada mais.</p>
+
+      <h2>O que só guardamos com o teu consentimento</h2>
+      <p>Estatísticas anónimas de utilização através do Google Analytics: que páginas
+      são vistas e por que caminho. Até aceitares, o Google Analytics corre sem
+      cookies e sem identificadores — recolhe apenas contagens agregadas. Podes
+      recusar no aviso em baixo da página, e recusar é tão simples como aceitar.</p>
+
+      <h2>Pagamentos</h2>
+      <p>O depósito é processado pela Stripe na página da própria Stripe. Os dados do
+      cartão nunca passam por este site nem ficam guardados aqui. Recebemos da Stripe
+      apenas a confirmação de que o pagamento foi feito.</p>
+
+      <h2>Anúncios de carros</h2>
+      <p>Os anúncios mostrados são públicos e recolhidos de portais como o OLX e o
+      StandVirtual. Não pertencem ao Flipper Club e não contêm dados teus.</p>
+
+      <h2>Os teus direitos</h2>
+      <p>Podes apagar o cookie <code>fc_uid</code> no teu navegador a qualquer momento —
+      perdes o acesso às reservas antigas, e mais nada. Para pedir a eliminação do que
+      está associado ao teu identificador, escreve para
+      <a href="mailto:ola@carsbuyer.org">ola@carsbuyer.org</a>.</p>
+    </section>`;
+  return layout({
+    title: "Privacidade",
+    description: "O que o Flipper Club guarda: cookie técnico de reserva, estatísticas anónimas só com consentimento, pagamentos processados pela Stripe.",
+    body, zone: "all", nav: null, depositCount, index: true,
+    host, canonical: origin ? `${origin}/privacidade` : null,
+  });
+}
+
 export function renderInfo({ zone, title, message, depositCount }) {
   const body = `
     <div class="info">
