@@ -83,6 +83,12 @@ id = "5ae27bd650e94beeb2de2adf5ac2108c"
 DEPOSIT_AMOUNT_CENTS = "500"
 CURRENCY = "eur"
 
+# GA4. Пусто = аналитика выключена целиком, ни одного запроса наружу, что и
+# нужно в dev. Сниппет объявляет Consent Mode v2 с запретом хранилища по
+# умолчанию: аудитория в ЕЭЗ, поэтому до согласия GA4 шлёт обезличенные пинги
+# без кук. Сам ID публичный, он и так виден в исходнике страницы.
+GA4_MEASUREMENT_ID = "G-2RSXJHJJYP"
+
 # Canonical public hostname. When set, every request to any OTHER hostname
 # (i.e. the workers.dev subdomain) is permanently redirected here, so the two
 # hostnames stop splitting ranking signals. /healthz and /webhook/stripe are

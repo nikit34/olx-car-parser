@@ -709,6 +709,58 @@ function thumbBlock(p, h, labelSize, eager = false) {
   return `<div class="striped" style="position:absolute;inset:0;"><span class="striped-label" style="font-size:${labelSize}px;">${escapeHtml(p.make)}</span></div>`;
 }
 
+// ── Analytics ─────────────────────────────────────────────────────────────────
+
+// Measurement ID приходит из wrangler.toml [vars] и ставится один раз за
+// запуск изолята: значение постоянно для деплоя, поэтому модульная переменная
+// безопаснее, чем протаскивать env через одиннадцать вызовов layout().
+// Пусто = аналитика полностью выключена, ни одного запроса наружу.
+let GA4_MEASUREMENT_ID = "";
+
+export function setAnalyticsId(id) {
+  GA4_MEASUREMENT_ID = (id || "").trim();
+}
+
+// Аудитория продукта в Португалии, то есть в ЕЭЗ, поэтому Consent Mode v2
+// объявляется ДО загрузки gtag и по умолчанию запрещает и аналитическое, и
+// рекламное хранилище. В этом состоянии GA4 шлёт обезличенные пинги без кук:
+// измерение работает, согласия не требуется. Баннер согласия, когда он
+// появится, должен звать gtag('consent','update',{...}) - трогать этот код не
+// придётся.
+function analyticsSnippet() {
+  if (!GA4_MEASUREMENT_ID) return "";
+  const id = escapeHtml(GA4_MEASUREMENT_ID);
+  return `<script>
+window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}
+gtag('consent','default',{ad_storage:'denied',ad_user_data:'denied',ad_personalization:'denied',analytics_storage:'denied',wait_for_update:500});
+gtag('js',new Date());
+</script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=${id}"></script>
+<script>gtag('config','${id}',{anonymize_ip:true});</script>`;
+}
+
+// Событие GA4. Пусто, когда аналитика выключена, поэтому вызов безопасно
+// вставлять в любой шаблон. Значения прогоняются через JSON.stringify: они
+// попадают внутрь <script>, где escapeHtml не защищает.
+function analyticsEvent(name, params = {}) {
+  if (!GA4_MEASUREMENT_ID) return "";
+  const payload = JSON.stringify(params).replace(/</g, "\\u003c");
+  return `<script>window.dataLayer=window.dataLayer||[];` +
+    `dataLayer.push(['event',${JSON.stringify(name)},${payload}]);</script>`;
+}
+
+// То же, но по отправке формы: событие должно уйти ДО ухода на Stripe.
+// transport_type beacon, потому что обычный запрос браузер отменяет при
+// навигации, и begin_checkout терялся бы ровно у тех, кто дошёл до оплаты.
+function analyticsFormEvent(formSelector, name, params = {}) {
+  if (!GA4_MEASUREMENT_ID) return "";
+  const payload = JSON.stringify(params).replace(/</g, "\\u003c");
+  return `<script>(function(){var f=document.querySelector(${JSON.stringify(formSelector)});` +
+    `if(!f)return;f.addEventListener('submit',function(){` +
+    `if(typeof gtag==='function')gtag('event',${JSON.stringify(name)},` +
+    `Object.assign(${payload},{transport_type:'beacon'}));},{once:true});})();</script>`;
+}
+
 // ── Shell ─────────────────────────────────────────────────────────────────────
 function layout({ title, body, zone, nav, depositCount, index = false, description = null, canonical = null, jsonLd = null, host = null, image = null, type = "website", ogUrl: ogUrlOverride = null }) {
   const dep = (depositCount || 0) * 5;
@@ -772,6 +824,7 @@ function layout({ title, body, zone, nav, depositCount, index = false, descripti
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚗</text></svg>">
 <title>${escapeHtml(fullTitle)}</title>
 ${head}
+${analyticsSnippet()}
 ${FONT_LINKS}
 <style>${CSS}</style>
 </head>
@@ -1288,7 +1341,15 @@ export function renderClaim({ deal, zone, depositEur, stripeReady, depositCount 
         </form>
       </div>
     </div>`;
-  return layout({ title: `Reivindicar ${p.name}`, body, zone, nav: "feed", depositCount });
+  return layout({
+    title: `Reivindicar ${p.name}`,
+    body: body + analyticsFormEvent('form[action="/reserve"]', "begin_checkout", {
+      currency: "EUR",
+      value: depositEur,
+      items: [{ item_id: deal.olx_id, item_name: p.name }],
+    }),
+    zone, nav: "feed", depositCount,
+  });
 }
 
 // ── Unlocked success (/unlocked) ──────────────────────────────────────────────
@@ -1333,7 +1394,18 @@ export function renderClaimSuccess({ deal, zone, depositEur, claimedAtMs, deposi
       </div>
       <a class="btn-outline" href="/reservas">Ver as minhas reservas</a>
     </div>`;
-  return layout({ title: "Negócio reivindicado", body, zone, nav: "reservas", depositCount });
+  // purchase на странице после оплаты. transaction_id склеен из объявления и
+  // момента резервации: он стабилен при обновлении страницы, поэтому GA4 не
+  // посчитает одну оплату дважды. Клиентское событие теряется, если человек
+  // закрыл вкладку на редиректе Stripe, поэтому надёжный источник - вебхук
+  // через Measurement Protocol, он ещё не подключён.
+  const purchase = analyticsEvent("purchase", {
+    transaction_id: `${deal.olx_id}-${claimedAtMs || 0}`,
+    currency: "EUR",
+    value: depositEur,
+    items: [{ item_id: deal.olx_id, item_name: p.name }],
+  });
+  return layout({ title: "Negócio reivindicado", body: body + purchase, zone, nav: "reservas", depositCount });
 }
 
 // ── Reservas (/reservas) ────────────────────────────────────────────────────────
@@ -1577,12 +1649,19 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
   // thin/transient per-listing view — noindex + canonical-to-bare consolidates
   // that unbounded (user-pasted-URL) param space onto the single sitemap URL.
   const isBare = !rec && !spec && !query;
+  // Бесплатная оценка это то, ради чего человек приходит, и первый шаг воронки.
+  // Событие шлём только когда оценка реально посчиталась, иначе оно означало бы
+  // просто открытие формы.
+  const valuation = rec ? analyticsEvent("valuation_result", {
+    model: rec.t || "",
+    has_listing: Boolean(olxId),
+  }) : "";
   return layout({
     title: rec
       ? `${rec.t}: preço justo e avaliação`
       : "Quanto vale o meu carro? Avaliação grátis de carros usados",
     description: "Cola o link de qualquer anúncio OLX ou StandVirtual e sabe o preço justo do carro, quanto poupas ou pagas a mais, e se tem ISV por pagar. Avaliação independente e grátis.",
-    body, zone: "all", nav: "avaliar", depositCount, index: isBare,
+    body: body + valuation, zone: "all", nav: "avaliar", depositCount, index: isBare,
     host, canonical: origin ? `${origin}/avaliar` : null,
   });
 }

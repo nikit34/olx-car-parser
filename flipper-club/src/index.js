@@ -29,7 +29,8 @@
 import {
   renderGrid, renderCarPage, renderInfo,
   renderLanding, renderClaim, renderClaimSuccess, renderReservations,
-  renderAvaliar, renderModelPage, renderModelsHub, renderModelWidget, slugify,
+  renderAvaliar, renderModelPage, renderModelsHub, renderModelWidget, slugify,,
+  setAnalyticsId,
 } from "./templates.js";
 import {
   stripeConfigured, createCheckoutSession,
@@ -58,6 +59,10 @@ export default {
     const url = new URL(request.url);
     const { pathname } = url;
     const method = request.method;
+
+    // Measurement ID для GA4. Ставится до любой ветки, потому что сниппет
+    // рендерится в общей обёртке страниц. Пусто = аналитики нет вообще.
+    setAnalyticsId(env.GA4_MEASUREMENT_ID);
 
     try {
       if (pathname === "/healthz") return new Response("ok", { status: 200 });

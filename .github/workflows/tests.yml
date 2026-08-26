@@ -55,5 +55,27 @@ jobs:
                                           depositCount:0, builtAt:'2026-01-01T00:00:00Z',
                                           host:'carsbuyer.org' });
             if (!hub.includes('volkswagen-golf')) throw new Error('hub lost its links');
+
+            // Аналитика: без Measurement ID наружу не должно уходить ничего,
+            // а с ним Consent Mode обязан объявляться ДО загрузчика gtag -
+            // иначе первый запрос уйдёт с разрешённым хранилищем, и в ЕЭЗ это
+            // куки без согласия.
+            const { setAnalyticsId } = await import('./flipper-club/src/templates.js');
+            setAnalyticsId('');
+            if (renderModelPage({ rec, slug:'volkswagen-golf', liveDeals:[], siblings:[],
+                                  host:'carsbuyer.org', depositCount:0,
+                                  builtAt:'2026-01-01T00:00:00Z' }).includes('gtag'))
+              throw new Error('analytics leaked with no measurement id');
+            setAnalyticsId('G-TESTONLY');
+            const tagged = renderModelPage({ rec, slug:'volkswagen-golf', liveDeals:[], siblings:[],
+                                             host:'carsbuyer.org', depositCount:0,
+                                             builtAt:'2026-01-01T00:00:00Z' });
+            if (!tagged.includes('G-TESTONLY')) throw new Error('analytics tag missing');
+            if (!tagged.includes(\"analytics_storage:'denied'\"))
+              throw new Error('consent mode default is not denied');
+            if (tagged.indexOf(\"consent','default'\") > tagged.indexOf('googletagmanager'))
+              throw new Error('consent declared after the gtag loader');
+            setAnalyticsId('');
+
             console.log('worker templates render OK');
           "
