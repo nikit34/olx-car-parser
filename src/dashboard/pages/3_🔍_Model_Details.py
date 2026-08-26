@@ -609,9 +609,17 @@ else:
     )
     if len(_grid) >= 3:
         _starts = hist.groupby("olx_id")["scraped_at"].min()
+        # The snapshot parquet carries microsecond timestamps while date_range
+        # and to_datetime build nanosecond ones. Comparisons tolerate the
+        # mismatch, merge_asof does not, so every key is pinned to one unit.
+        _unit = _starts.dtype
+        _last_seen = hist.groupby("olx_id")["scraped_at"].max()
         _ends = pd.to_datetime(
             _starts.index.to_series().map(_end_by_oid), utc=True, errors="coerce",
-        ).fillna(hist.groupby("olx_id")["scraped_at"].max())
+        )
+        if _ends.dtype != _unit:
+            _ends = _ends.astype(_unit)
+        _ends = _ends.fillna(_last_seen)
         _panel = (
             pd.DataFrame({"olx_id": _starts.index})
             .merge(pd.DataFrame({"wk": _grid}), how="cross")
@@ -622,8 +630,11 @@ else:
             (_panel["wk"] >= _panel["__start"]) & (_panel["wk"] <= _panel["__end"])
         ]
         if not _panel.empty:
+            _left = _panel[["olx_id", "wk"]].sort_values("wk")
+            if _left["wk"].dtype != _unit:
+                _left = _left.assign(wk=_left["wk"].astype(_unit))
             _live = pd.merge_asof(
-                _panel[["olx_id", "wk"]].sort_values("wk"),
+                _left,
                 hist[["olx_id", "scraped_at", "price_eur"]].sort_values("scraped_at"),
                 left_on="wk", right_on="scraped_at",
                 by="olx_id", direction="backward",
