@@ -143,6 +143,24 @@ def _build(db_path: Path, out_dir: Path) -> dict:
     # 530k rows fit in ~5 MB zstd parquet — small enough to ship the full
     # year and let the browser filter, beats shipping multiple windows.
     snapshots = get_price_snapshots_df(session, since_days=365)
+    # Two lossless passes that together cut this witness from 22.96 MiB to
+    # 8.24 MiB on the 2.09M-row year window — it was the next file due to hit
+    # Cloudflare's 25 MiB asset cap, which is what broke deploys on 08-24.
+    #
+    # Sorting groups each listing's history together, so the repeated brand /
+    # model / generation values and the near-adjacent timestamps compress as
+    # runs instead of as noise (-37% on its own). Flooring to the second drops
+    # microseconds that only record when the scraper happened to write the row
+    # (another -27pp). No consumer depends on row order or on sub-second
+    # precision: they all group by week or by segment.
+    if not snapshots.empty:
+        for _col in ("scraped_at", "deactivated_at"):
+            if _col in snapshots.columns:
+                snapshots[_col] = pd.to_datetime(
+                    snapshots[_col], errors="coerce").dt.floor("s")
+        _sort_by = [c for c in ("olx_id", "scraped_at") if c in snapshots.columns]
+        if _sort_by:
+            snapshots = snapshots.sort_values(_sort_by).reset_index(drop=True)
     portfolio = get_portfolio_df(session)
     unmatched = get_unmatched_df(session)
 
@@ -189,6 +207,28 @@ def _build(db_path: Path, out_dir: Path) -> dict:
     sizes["turnover.parquet"] = _to_parquet(turnover, out_dir / "turnover.parquet")
     sizes["portfolio.parquet"] = _to_parquet(portfolio, out_dir / "portfolio.parquet")
     sizes["unmatched.parquet"] = _to_parquet(unmatched, out_dir / "unmatched.parquet")
+
+    # Asset-size guard. Cloudflare refuses any single static asset over 25 MiB,
+    # and the failure surfaces as a red Workers build with no hint that data
+    # size is the cause — production sat on stale code for a day and a half in
+    # August before anyone connected the two. Warn with room to act, fail
+    # before the deploy does.
+    _CF_ASSET_LIMIT = 25 * 1024 * 1024
+    _WARN_AT = int(_CF_ASSET_LIMIT * 0.8)
+    _oversized = []
+    for _name, _bytes in sorted(sizes.items(), key=lambda kv: -kv[1]):
+        if _bytes > _CF_ASSET_LIMIT:
+            _oversized.append(f"{_name} ({_bytes / 1048576:.1f} MiB)")
+        elif _bytes > _WARN_AT:
+            print(f"::warning::{_name} is {_bytes / 1048576:.1f} MiB — approaching "
+                  f"Cloudflare's 25 MiB per-asset limit; the Worker deploy fails "
+                  f"outright once it crosses.", flush=True)
+    if _oversized:
+        raise SystemExit(
+            "witness over Cloudflare's 25 MiB asset limit: " + ", ".join(_oversized)
+            + " — the Worker deploy would fail and production would keep serving "
+              "the previous build."
+        )
 
     brands_path = out_dir / "brands_models.json"
     brands_path.write_text(json.dumps(brands_models, ensure_ascii=False))
