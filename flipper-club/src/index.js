@@ -29,7 +29,7 @@
 import {
   renderGrid, renderCarPage, renderInfo,
   renderLanding, renderClaim, renderClaimSuccess, renderReservations,
-  renderAvaliar, renderModelPage, renderModelsHub, renderModelWidget, slugify,,
+  renderAvaliar, renderModelPage, renderModelsHub, renderModelWidget, slugify,
   setAnalyticsId,
 } from "./templates.js";
 import {

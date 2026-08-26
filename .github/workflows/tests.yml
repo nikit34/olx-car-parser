@@ -41,6 +41,10 @@ jobs:
         # No npm install: these modules import nothing outside themselves.
         run: |
           for f in flipper-club/src/*.js; do node --check "$f"; done
+          # node --check пропускает то, что валит настоящий деплой: двойная
+          # запятая в списке импорта прошла проверку и упала уже в CF-сборке на
+          # esbuild. Собираем тем же парсером, которым собирает wrangler.
+          npx --yes esbuild flipper-club/src/index.js --bundle --format=esm --outfile=/dev/null
           node --input-type=module -e "
             import { renderModelPage, renderModelsHub } from './flipper-club/src/templates.js';
             const rec = { b:'Volkswagen', m:'Golf', n:42, fm:7200, fl:4800, fh:9500,
