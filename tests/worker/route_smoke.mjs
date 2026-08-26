@@ -164,6 +164,22 @@ await check("nonsense under /preco 404s instead of 500ing", async () => {
   }
 });
 
+await check("the privacy page survives the new routing", async () => {
+  // Merged with the parallel consent-banner work. It is an exact product path,
+  // so it has to clear normalisation, the 404 fallthrough and the asset gate —
+  // and it is what the consent banner links to, so a 401 or 404 here breaks
+  // consent, not just SEO.
+  const r = await get("/privacidade");
+  assert(r.status === 200, `/privacidade → ${r.status}`);
+  const body = await r.text();
+  assert(body.includes("index,follow"), "/privacidade is not indexable");
+  assert(body.includes("fc-consent"), "consent banner CSS was lost in the merge");
+  const slash = await get("/privacidade/");
+  assert(slash.status === 301, `/privacidade/ → ${slash.status}`);
+  const xml = await (await get("/sitemap.xml")).text();
+  assert(xml.includes(`<loc>https://${HOST}/privacidade</loc>`), "/privacidade missing from sitemap");
+});
+
 await check("the second-layer hubs and pages answer", async () => {
   const depSlug = depreciationSlugs(models)[0];
   const [pa, pb] = comparePairs(models)[0];

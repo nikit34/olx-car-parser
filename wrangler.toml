@@ -110,8 +110,8 @@ CANONICAL_HOST = "carsbuyer.org"
 # promise the site cannot keep, and that is worse than staying anonymous. Fill
 # these in and both pages grow the block; leave them and both render the
 # brand-level version with no author and no mailto.
-SITE_AUTHOR = ""
-SITE_CONTACT_EMAIL = ""
+SITE_AUTHOR = "Nikita Permiakov"
+SITE_CONTACT_EMAIL = "permikov134@yandex.ru"
 
 # Staged rollout of the second SEO layer (model-year, depreciation, comparison
 # and facet pages). Caps it to the N deepest-sampled models; empty = no cap.
@@ -133,7 +133,7 @@ SITE_CONTACT_EMAIL = ""
 # The gate is read by the router, the sitemap AND the year links on the model
 # page, so a page outside the wave is unreachable and unlinked — never a link to
 # a 404. Widening is only this number: no code deploy, no data rebuild.
-SEO_WAVE_MODELS = ""
+SEO_WAVE_MODELS = "10"
 
 [observability]
 enabled = true
