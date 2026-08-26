@@ -1674,9 +1674,12 @@ export function renderInfo({ zone, title, message, depositCount }) {
 // rec = the valuations.json record for the looked-up olx_id (or null). query =
 // the raw user input (URL or id). The verdict is derived from where the asking
 // price sits in the model's fair band [fl, fh].
-export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depositCount, host, builtAt }) {
-  const mailto = "mailto:nikitapermikov@larixon.com?subject=Avaliar%20o%20meu%20carro"
-    + "&body=Marca%2Fmodelo%3A%0AAno%3A%0AQuilometragem%3A%0ACombust%C3%ADvel%3A%0ALink%20do%20an%C3%BAncio%20(se%20tiver)%3A";
+export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depositCount, host, builtAt, contact }) {
+  const to = (contact || "").trim();
+  const mailto = to
+    ? `mailto:${encodeURIComponent(to)}?subject=Avaliar%20o%20meu%20carro`
+      + "&body=Marca%2Fmodelo%3A%0AAno%3A%0AQuilometragem%3A%0ACombust%C3%ADvel%3A%0ALink%20do%20an%C3%BAncio%20(se%20tiver)%3A"
+    : "";
 
   const g = GRADE_COLORS.green, amber = GRADE_COLORS.amber, rd = GRADE_COLORS.red;
 
@@ -1841,9 +1844,9 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
       <div class="cta-banner">
         <div style="flex:1 1 360px;">
           <h2>Vais vender o teu carro?</h2>
-          <p>Cola o teu anúncio acima para veres por quanto está face ao mercado — ou, se ainda não anunciaste, pede uma avaliação por email com o modelo e o ano.</p>
+          <p>Cola o teu anúncio acima para veres por quanto está face ao mercado${mailto ? " — ou, se ainda não anunciaste, pede uma avaliação por email com o modelo e o ano" : ", mesmo que ainda não o tenhas anunciado"}.</p>
         </div>
-        <a class="btn-bright" href="${mailto}">Pedir avaliação por email&nbsp;&nbsp;→</a>
+        ${mailto ? `<a class="btn-bright" href="${mailto}">Pedir avaliação por email&nbsp;&nbsp;→</a>` : ""}
       </div>
     </section>`}`;
   const origin = host ? `https://${host}` : "";

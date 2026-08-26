@@ -396,6 +396,7 @@ async function handleAvaliar(request, env, url) {
   return html(renderAvaliar({
     rec, olxId, sourceUrl, query, models, spec, depositCount,
     host: url.host, builtAt: mdoc && mdoc.built_at,
+    contact: env.SITE_CONTACT_EMAIL,
   }), 200, setCookie);
 }
 
