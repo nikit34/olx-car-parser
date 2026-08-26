@@ -710,7 +710,7 @@ function thumbBlock(p, h, labelSize, eager = false) {
 }
 
 // ── Shell ─────────────────────────────────────────────────────────────────────
-function layout({ title, body, zone, nav, depositCount, index = false, description = null, canonical = null, jsonLd = null, host = null, image = null, type = "website" }) {
+function layout({ title, body, zone, nav, depositCount, index = false, description = null, canonical = null, jsonLd = null, host = null, image = null, type = "website", ogUrl: ogUrlOverride = null }) {
   const dep = (depositCount || 0) * 5;
   const navItem = (key, label, href) =>
     `<a href="${href}" class="${nav === key ? "active" : ""}">${label}</a>`;
@@ -725,7 +725,11 @@ function layout({ title, body, zone, nav, depositCount, index = false, descripti
   // pages thread it in). og:image falls back to the branded 1200×630 card;
   // /car passes its real cover photo (raster, absolute) instead.
   const origin = host ? `https://${host}` : null;
-  const ogUrl = canonical || (origin ? `${origin}/` : null);
+  // og:url must identify THIS page. Falling back to the origin root made every
+  // shared /car link report the homepage, so Facebook and Telegram attributed
+  // the share to "/" instead of the car. Noindex pages have no canonical, hence
+  // the explicit override.
+  const ogUrl = ogUrlOverride || canonical || (origin ? `${origin}/` : null);
   const ogImage = image || (origin ? `${origin}/og-default.png` : null);
   const usingDefaultImage = !image; // only the default card is known 1200×630
   const social = origin ? [
@@ -1242,6 +1246,8 @@ export function renderCarPage({ deal, zone, view, unlocked, justReserved, deposi
   return layout({
     title: p.name, description: desc, body, zone, nav: "feed", depositCount,
     index: false, host, image: ogImg, type: ogImg ? "product" : "website",
+    // Normalised: zone/view are display state, not part of the car's identity.
+    ogUrl: host ? `https://${host}/car?olx_id=${encodeURIComponent(deal.olx_id)}` : null,
   });
 }
 
