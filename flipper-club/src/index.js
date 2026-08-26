@@ -13,6 +13,24 @@
 //                             authoritatively (survives a closed success tab).
 //   GET  /healthz           → unauthenticated liveness.
 //
+// Public valuation surface (indexable; seo-pages.js renders it):
+//   /precos                    every model
+//   /preco/{slug}              one model, by year          (+ .json)
+//   /preco/{slug}/{ano}        one model in one year       (+ .json)
+//   /preco/{slug}/{facet}      one model, one fuel/district
+//   /precos/{distrito}         the market in one district
+//   /depreciacao[/{slug}]      how fast a model loses value
+//   /comparar[/{a}-vs-{b}]     two models side by side
+//   /liquidez                  how long each model takes to sell
+//   /sobrevalorizados          asking price vs. our estimate
+//   /mercado/indice[/{semana}] weekly market index + permanent archive
+//   /metodologia /sobre /isv   how the numbers are made, by whom, and ISV
+//
+// Every one of those exists only where its sample clears a floor, and both the
+// router and sitemap.xml decide that with the SAME functions in seo-pages.js.
+// Anything else is a real 404 — never the Basic-Auth 401 the asset gate used to
+// answer for every unknown path.
+//
 // Internal-only (NOT the product):
 //   GET  /analytics/*  and  /files/* /data/* …  → the stlite analytics bundle
 //   and its raw data assets. Gated by HTTP Basic Auth against the Worker
@@ -37,6 +55,16 @@ import {
   stripeConfigured, createCheckoutSession,
   retrieveCheckoutSession, verifyWebhookSignature,
 } from "./stripe.js";
+import {
+  renderYearPage, renderNotFound, renderDepreciationPage, renderDepreciationHub,
+  renderComparePage, renderCompareHub, renderLiquidityHub, renderValuationGap,
+  renderMarketIndex, renderMethodology, renderAbout, renderIsv,
+  setSiteIdentity, corpusStats, modelInsights, provenance,
+  yearCells, yearCell, yearPageYears, depreciationOk, depreciationFit, depreciationSlugs,
+  comparePairs, parseComparePath, comparePairKey, modelJson, yearJson,
+  renderFacetPage, renderDistrictPage, facetCells, facetCell, facetKind, facetKeys,
+  setWave, publishedYearPages, publishedDepreciation, publishedPairs, publishedFacets,
+} from "./seo-pages.js";
 
 const ZONES = ["norte", "centro", "sul", "all"];
 const COOKIE_UID = "fc_uid";
@@ -55,9 +83,40 @@ const PRODUCT_PATHS = new Set([
   "/precos", "/sitemap.xml", "/robots.txt", "/llms.txt",
   // Приватность обязана быть здесь: гейт стоит ВЫШЕ её обработчика, и без
   // записи в этом списке Basic-Auth отдавал бы 401 и Googlebot, и человеку,
-  // пришедшему по ссылке из баннера согласия.
+  // пришедшему по ссылке из баннера согласия. (Неизвестные пути теперь отдают
+  // настоящую 404, но известный роут всё равно обязан быть в этом списке.)
   "/privacidade",
+  // Second-layer SEO pages (seo-pages.js). Hubs are exact paths; their per-item
+  // children (/depreciacao/{slug}, /comparar/{a}-vs-{b}, /mercado/indice/{week})
+  // are prefix-routed above the asset gate.
+  "/depreciacao", "/comparar", "/liquidez", "/sobrevalorizados",
+  "/metodologia", "/sobre", "/isv",
 ]);
+
+// Paths that belong to the internal analytics bundle rather than the product.
+//
+// This list is what makes a real 404 possible. Before, ANY unknown path fell
+// into the Basic-Auth asset gate and answered 401 — /sobre, /faq, /blog, a
+// mistyped link, a stray trailing slash, all of them. Googlebot reads 401 as
+// "there is something here you may not have", so those URLs sat in Search
+// Console as site-wide access errors and kept getting re-crawled instead of
+// being dropped.
+//
+// It cannot be replaced by "ask ASSETS and 404 if it misses": the bucket is
+// configured single-page-application, so a miss returns index.html with a 200.
+// The set has to be explicit.
+const INTERNAL_ASSET_PREFIXES = ["/files/", "/data/"];
+const INTERNAL_ASSET_EXACT = new Set(["/index.html", "/README.md"]);
+
+// Paths whose case and trailing slash are NOT ours to normalise: Streamlit's
+// multipage nav generates /analytics/Market_Direction, and asset filenames are
+// case-sensitive. Lower-casing those would 404 the dashboard.
+const NO_NORMALISE = ["/analytics", "/files/", "/data/", "/fonts/", "/_olx", "/webhook/"];
+
+function isInternalAsset(pathname) {
+  return INTERNAL_ASSET_EXACT.has(pathname)
+    || INTERNAL_ASSET_PREFIXES.some(pre => pathname.startsWith(pre));
+}
 
 export default {
   async fetch(request, env) {
@@ -103,13 +162,75 @@ export default {
         return Response.redirect(dest.toString(), perm);
       }
 
+      // Identity for the trust pages (/sobre, /metodologia). Unset in [vars]
+      // ⇒ those blocks render the brand-level version instead of inventing a
+      // name and an address the site cannot honour.
+      setSiteIdentity({ author: env.SITE_AUTHOR, contact: env.SITE_CONTACT_EMAIL });
+      // Staged rollout of the second SEO layer. Empty ⇒ everything is live.
+      setWave(env.SEO_WAVE_MODELS);
+
       // Internal stlite dashboard + its assets — Basic-Auth gated, fail-closed.
       if (pathname === "/analytics" || pathname.startsWith("/analytics/")) {
         return handleAnalytics(request, env, url);
       }
-      // Per-model SEO pages (/preco/{slug}) — prefix route, BEFORE the asset gate.
+
+      // URL normalisation — one canonical spelling per page, 301 to it.
+      //
+      // /precos/ and /PRECO/AUDI-A1 used to fall past every branch into the
+      // asset gate and answer 401. They are not errors, they are the same page
+      // typed differently: a trailing slash from a pasted link, an upper-case
+      // path from a copied-out-of-a-document URL. A 301 keeps whatever link
+      // equity they carry instead of throwing it away.
+      //
+      // Skipped for /analytics and the asset paths, whose case is meaningful.
+      if ((method === "GET" || method === "HEAD") && !NO_NORMALISE.some(pre => pathname.startsWith(pre))) {
+        let norm = pathname;
+        if (norm.length > 1 && norm.endsWith("/")) norm = norm.replace(/\/+$/, "") || "/";
+        if (/[A-Z]/.test(norm)) norm = norm.toLowerCase();
+        if (norm !== pathname) {
+          const dest = new URL(url);
+          dest.pathname = norm;
+          return redirect(dest.toString(), 301);
+        }
+      }
+
+      // Self-hosted webfonts. Public and un-gated for the same reason as the
+      // share card: the Basic-Auth fallthrough would answer 401, and a 401 on a
+      // preloaded font is a page that renders in the fallback face.
+      if (pathname.startsWith("/fonts/") && (method === "GET" || method === "HEAD")) {
+        const res = await env.ASSETS.fetch(request);
+        const out = new Response(res.body, res);
+        // Content-addressed by name (the variable font file never changes under
+        // this name), so a year is safe and the second page view pays nothing.
+        out.headers.set("Cache-Control", "public, max-age=31536000, immutable");
+        return out;
+      }
+
+      // Per-model SEO pages — prefix route, BEFORE the asset gate.
+      //   /preco/{slug}            model
+      //   /preco/{slug}.json       model, machine-readable
+      //   /preco/{slug}/{ano}      one model year
+      //   /preco/{slug}/{ano}.json one model year, machine-readable
       if (pathname.startsWith("/preco/") && method === "GET") {
         return handleModelPage(request, env, url);
+      }
+      // District pages (/precos/{distrito}). Prefix route; the bare /precos hub
+      // stays in PRODUCT_PATHS below.
+      if (pathname.startsWith("/precos/") && method === "GET") {
+        return handleDistrict(request, env, url);
+      }
+      // Depreciation curve + its hub.
+      if (pathname.startsWith("/depreciacao/") && method === "GET") {
+        return handleDepreciation(request, env, url);
+      }
+      // Head-to-head comparisons + their hub.
+      if (pathname.startsWith("/comparar/") && method === "GET") {
+        return handleCompare(request, env, url);
+      }
+      // Weekly market index archive (/mercado/indice[/{YYYY-Www}]).
+      if (pathname === "/mercado/indice" || pathname.startsWith("/mercado/indice/")) {
+        if (method !== "GET") return notFound();
+        return handleMarketIndex(request, env, url);
       }
       // Embeddable valuation widget (/widget/preco/{slug}) — public, iframe-able,
       // cached, cookie-less. Also a prefix route before the asset gate.
@@ -139,11 +260,21 @@ export default {
         out.headers.set("Cache-Control", "public, max-age=86400");
         return out;
       }
+      // Internal assets keep the Basic-Auth gate. Everything else that is not a
+      // product route is genuinely not here → real 404 (see notFoundPage).
       if (!PRODUCT_PATHS.has(pathname)) {
-        return handleAssetGated(request, env);
+        if (isInternalAsset(pathname)) return handleAssetGated(request, env);
+        return notFoundPage(request, env, url);
       }
 
       if (pathname === "/" && method === "GET") return handleLanding(request, env, url);
+      if (pathname === "/depreciacao" && method === "GET") return handleDepreciationHub(request, env, url);
+      if (pathname === "/comparar" && method === "GET") return handleCompareHub(request, env, url);
+      if (pathname === "/liquidez" && method === "GET") return handleLiquidity(request, env, url);
+      if (pathname === "/sobrevalorizados" && method === "GET") return handleValuationGap(request, env, url);
+      if (pathname === "/metodologia" && method === "GET") return handleMethodology(request, env, url);
+      if (pathname === "/sobre" && method === "GET") return handleAbout(request, env, url);
+      if (pathname === "/isv" && method === "GET") return handleIsv(request, env, url);
       if (pathname === "/precos" && method === "GET") return handleModelsHub(request, env, url);
       if (pathname === "/sitemap.xml" && method === "GET") return handleSitemap(request, env, url);
       if (pathname === "/robots.txt" && method === "GET") return handleRobots(request, env, url);
@@ -163,7 +294,8 @@ export default {
         return html(renderPrivacy({ depositCount, host: url.host }), 200, setCookie);
       }
 
-      return notFound();
+      // A known path reached with the wrong method (e.g. GET /reserve).
+      return notFoundPage(request, env, url);
     } catch (err) {
       console.error("worker error", err && err.stack || err);
       return new Response("Internal error", { status: 500 });
@@ -268,42 +400,132 @@ function parseOlxId(q) {
   return /^[A-Za-z0-9]{4,14}$/.test(t) ? t : null;
 }
 
-// Per-model SEO page (/preco/{slug}). Exact slug lookup (never re-split the path
-// — models contain hyphens); unknown/sub-threshold slug → real 404 (never indexed).
+// Per-model SEO pages under /preco/.
+//
+//   /preco/{slug}              the model page
+//   /preco/{slug}.json         same figures, machine-readable
+//   /preco/{slug}/{ano}        one model year (10+ active listings)
+//   /preco/{slug}/{ano}.json   same, machine-readable
+//
+// Exact slug lookup, never a re-split on "-" (models contain hyphens). Unknown
+// slug, unknown year, or a year below the publishing floor → real 404: a page
+// nobody can reach from the site and nothing links to must not exist just
+// because someone typed it.
 async function handleModelPage(request, env, url) {
   const { uid, setCookie } = ensureUid(request);
-  // strip the /preco/ prefix + any trailing slash; never split on '-'.
-  // decodeURIComponent throws URIError on a malformed %-escape (e.g. /preco/%) —
-  // a garbage URL must 404, not 500.
-  let slug;
+  let rest;
   try {
-    slug = decodeURIComponent(url.pathname.slice("/preco/".length)).replace(/\/+$/, "").toLowerCase();
+    // decodeURIComponent throws URIError on a malformed %-escape (/preco/%) —
+    // a garbage URL must 404, not 500.
+    rest = decodeURIComponent(url.pathname.slice("/preco/".length)).replace(/\/+$/, "").toLowerCase();
   } catch (_) {
-    return notFound();
+    return notFoundPage(request, env, url);
   }
+  const wantsJson = rest.endsWith(".json");
+  if (wantsJson) rest = rest.slice(0, -".json".length);
+
+  // Split a trailing /{year}. Slugs never contain "/", so this is unambiguous.
+  let slug = rest, year = null, facet = null;
+  const slash = rest.lastIndexOf("/");
+  if (slash > 0) {
+    const tail = rest.slice(slash + 1);
+    slug = rest.slice(0, slash);
+    // Four digits is a model year; anything else is a facet key (fuel or
+    // district) and is resolved against the blob below — a segment that matches
+    // neither is a 404, not a guess.
+    if (/^\d{4}$/.test(tail)) year = parseInt(tail, 10);
+    else if (/^[a-z0-9-]{2,40}$/.test(tail)) facet = tail;
+    else return notFoundPage(request, env, url);
+  }
+
   const mdoc = await getModels(env);
   const models = mdoc && mdoc.models;
   const rec = models ? models[slug] : null;
-  if (!rec) return notFound();
-  const depositCount = (await listUnlocked(env, uid)).size;
+  if (!rec) return notFoundPage(request, env, url);
+  const builtAt = mdoc && mdoc.built_at;
 
-  // Conversion bridge: live hot_deals matching this model (already curated below-fair).
+  if (year != null) return renderYear({ request, env, url, models, rec, slug, year, builtAt, wantsJson, uid, setCookie });
+  if (facet != null) return renderFacet({ request, env, url, models, rec, slug, facet, builtAt, uid, setCookie });
+
+  if (wantsJson) return jsonResponse(modelJson(rec, slug, { host: url.host, builtAt }));
+
+  const depositCount = (await listUnlocked(env, uid)).size;
+  const stats = corpusStats(models, builtAt);
+
+  // Conversion bridge: live hot_deals matching this model (already below-fair).
   let liveDeals = [];
   try {
     const { deals } = await getDeals(env, "all");
     liveDeals = (deals || []).filter(d => slugify(`${d.brand}-${d.model}`) === slug).slice(0, 3);
   } catch (_) { /* bridge is best-effort */ }
 
-  // Sibling models (same brand, by listing count desc, excluding self).
+  // Same-brand siblings (unchanged) …
   const siblings = Object.entries(models)
-    .filter(([s, r]) => r.b === rec.b && s !== slug)
+    .filter(([sl, r]) => r.b === rec.b && sl !== slug)
     .sort((a, b) => (b[1].n || 0) - (a[1].n || 0))
     .slice(0, 8)
-    .map(([s, r]) => ({ slug: s, m: r.m, fm: r.fm, n: r.n }));
+    .map(([sl, r]) => ({ slug: sl, m: r.m, fm: r.fm, n: r.n }));
+
+  // … and the cross-brand alternatives the page never had. Same price band,
+  // different badge — which is the comparison a buyer is actually running, and
+  // the link that turns 243 brand-shaped islands into one graph.
+  const competitors = Object.entries(models)
+    .filter(([sl, r]) => sl !== slug && r.b !== rec.b && r.fm > 0
+      && Math.abs(r.fm - rec.fm) / Math.max(r.fm, rec.fm) <= 0.22)
+    .sort((a, b) => (b[1].n || 0) - (a[1].n || 0))
+    .slice(0, 6)
+    .map(([sl, r]) => ({ slug: sl, b: r.b, m: r.m, fm: r.fm }));
+
+  // Generated comparison pages that include this model.
+  const comparisons = publishedPairs(models, builtAt)
+    .filter(([a, b]) => a === slug || b === slug)
+    .map(([a, b]) => {
+      const other = a === slug ? b : a;
+      return { href: `${a}-vs-${b}`, m: `${models[other].b} ${models[other].m}` };
+    });
 
   return html(renderModelPage({
-    rec, slug, liveDeals, siblings, host: url.host, depositCount,
-    builtAt: mdoc && mdoc.built_at,
+    rec, slug, liveDeals, siblings, host: url.host, depositCount, builtAt,
+    insights: modelInsights(rec, stats),
+    yearPages: publishedYearPages(models, slug, rec, builtAt),
+    competitors, comparisons,
+    hasDepreciation: publishedDepreciation(models, slug, rec, builtAt),
+    provenanceHtml: provenance({ n: rec.n, builtAt }),
+    altJson: `https://${url.host}/preco/${slug}.json`,
+  }), 200, setCookie);
+}
+
+// /preco/{slug}/{ano} — one model year.
+async function renderYear({ request, env, url, models, rec, slug, year, builtAt, wantsJson, uid, setCookie }) {
+  const cell = publishedYearPages(models, slug, rec, builtAt).includes(year) ? yearCell(rec, year) : null;
+  if (!cell) return notFoundPage(request, env, url);
+  if (wantsJson) return jsonResponse(yearJson(rec, slug, year, cell, { host: url.host, builtAt }));
+
+  const depositCount = (await listUnlocked(env, uid)).size;
+  const stats = corpusStats(models, builtAt);
+  // Neighbours come from ALL year cells (n>=5), not only those with pages: the
+  // comparison "is 2013 worth the premium over 2012" is still true when 2013 is
+  // too thin for a page of its own, and dropping it would leave a gap that
+  // reads as missing data.
+  const all = yearCells(rec, 1).slice().sort((a, b) => a.y - b.y);
+  const idx = all.findIndex(c => c.y === year);
+  const older = idx > 0 ? all[idx - 1] : null;
+  const newer = (idx >= 0 && idx < all.length - 1) ? all[idx + 1] : null;
+  const win = all.slice(Math.max(0, idx - 3), idx + 4).slice().sort((a, b) => b.y - a.y);
+
+  let liveDeals = [];
+  try {
+    const { deals } = await getDeals(env, "all");
+    liveDeals = (deals || [])
+      .filter(d => slugify(`${d.brand}-${d.model}`) === slug && Number(d.year) === year)
+      .slice(0, 3);
+  } catch (_) { /* best-effort */ }
+
+  return html(renderYearPage({
+    rec, slug, year, cell,
+    neighbours: { older, newer, window: win },
+    liveDeals, pageYears: publishedYearPages(models, slug, rec, builtAt), stats,
+    host: url.host, depositCount, builtAt,
   }), 200, setCookie);
 }
 
@@ -331,6 +553,276 @@ async function handleModelWidget(request, env, url) {
   });
 }
 
+// /preco/{slug}/{combustivel} and /preco/{slug}/{distrito}.
+//
+// Both live off `fx` / `dt` cells in models.json. Until the pipeline that emits
+// them has run, facetKind() finds nothing and every such URL 404s — which is
+// the correct answer, and means the pages switch on by themselves at the next
+// data build with no deploy.
+async function renderFacet({ request, env, url, models, rec, slug, facet, builtAt, uid, setCookie }) {
+  const kind = publishedFacets(models, slug, rec, builtAt).includes(facet) ? facetKind(rec, facet) : null;
+  if (!kind) return notFoundPage(request, env, url, setCookie);
+  const cell = facetCell(rec, kind, facet);
+  const depositCount = (await listUnlocked(env, uid)).size;
+  return html(renderFacetPage({
+    rec, slug, kind, cell,
+    siblingsCells: facetCells(rec, kind),
+    stats: corpusStats(models, builtAt),
+    host: url.host, depositCount, builtAt,
+  }), 200, setCookie);
+}
+
+// /precos/{distrito}
+async function handleDistrict(request, env, url) {
+  let key;
+  try {
+    key = decodeURIComponent(url.pathname.slice("/precos/".length)).replace(/\/+$/, "").toLowerCase();
+  } catch (_) { return notFoundPage(request, env, url); }
+  const { uid, setCookie } = ensureUid(request);
+  const mdoc = await getModels(env);
+  const models = mdoc && mdoc.models;
+  const districts = (mdoc && mdoc.districts) || null;
+  const rec = (districts && districts[key]) || null;
+  if (!models || !rec) return notFoundPage(request, env, url, setCookie);
+  const depositCount = (await listUnlocked(env, uid)).size;
+  return html(renderDistrictPage({
+    key, rec, models, stats: corpusStats(models, mdoc.built_at),
+    host: url.host, depositCount, builtAt: mdoc.built_at,
+  }), 200, setCookie);
+}
+
+// ── Second-layer SEO handlers ───────────────────────────────────────────────
+//
+// All of them read the same models.json the /preco pages read. Each answers a
+// query the model pages could not: how fast this loses value, which of these two
+// to buy, how long either takes to sell, and what the market as a whole did this
+// week.
+
+// A page that only makes sense once models.json exists. Degrades to a 503 with
+// an honest message rather than a half-empty page or a 500.
+async function withModels(request, env, url, fn) {
+  const { uid, setCookie } = ensureUid(request);
+  const mdoc = await getModels(env);
+  const models = mdoc && mdoc.models;
+  const depositCount = (await listUnlocked(env, uid)).size;
+  if (!models) {
+    return html(renderInfo({
+      zone: "all", depositCount, title: "Serviço indisponível",
+      message: "Os dados de mercado estão a ser preparados. Volta dentro de instantes.",
+    }), 503, setCookie);
+  }
+  return fn({ models, builtAt: mdoc.built_at, depositCount, setCookie,
+              stats: corpusStats(models, mdoc.built_at) });
+}
+
+// /depreciacao/{slug}
+async function handleDepreciation(request, env, url) {
+  let slug;
+  try {
+    slug = decodeURIComponent(url.pathname.slice("/depreciacao/".length)).replace(/\/+$/, "").toLowerCase();
+  } catch (_) { return notFoundPage(request, env, url); }
+  return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, stats }) => {
+    const rec = models[slug];
+    if (!rec || !publishedDepreciation(models, slug, rec, builtAt)) return notFoundPage(request, env, url, setCookie);
+    return html(renderDepreciationPage({
+      rec, slug, fit: depreciationFit(rec), stats,
+      pageYears: publishedYearPages(models, slug, rec, builtAt),
+      host: url.host, depositCount, builtAt,
+    }), 200, setCookie);
+  });
+}
+
+// /depreciacao — ranked hub, fastest-losing first.
+async function handleDepreciationHub(request, env, url) {
+  return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, stats }) => {
+    const rows = depreciationSlugs(models).filter(slug => publishedDepreciation(models, slug, models[slug], builtAt)).map(slug => {
+      const r = models[slug], f = depreciationFit(r);
+      return { slug, b: r.b, m: r.m, n: r.n, rate: f.rate, span: f.span };
+    }).sort((a, b) => b.rate - a.rate);
+    return html(renderDepreciationHub({ rows, stats, host: url.host, depositCount, builtAt }), 200, setCookie);
+  });
+}
+
+// /comparar/{a}-vs-{b}
+async function handleCompare(request, env, url) {
+  let rest;
+  try {
+    rest = decodeURIComponent(url.pathname.slice("/comparar/".length)).replace(/\/+$/, "").toLowerCase();
+  } catch (_) { return notFoundPage(request, env, url); }
+  return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, stats }) => {
+    const pairSet = new Set(publishedPairs(models, builtAt).map(([a, b]) => comparePairKey(a, b)));
+    const pair = parseComparePath(rest, models, pairSet);
+    if (!pair) return notFoundPage(request, env, url, setCookie);
+    return html(renderComparePage({
+      a: pair.a, b: pair.b, ra: models[pair.a], rb: models[pair.b],
+      stats, host: url.host, depositCount, builtAt,
+    }), 200, setCookie);
+  });
+}
+
+// /comparar
+async function handleCompareHub(request, env, url) {
+  return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie }) =>
+    html(renderCompareHub({ pairs: publishedPairs(models, builtAt), models, host: url.host, depositCount, builtAt }), 200, setCookie));
+}
+
+// /liquidez
+async function handleLiquidity(request, env, url) {
+  return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, stats }) => {
+    const rows = Object.entries(models)
+      .filter(([, r]) => r.sd != null && r.sn != null)
+      .map(([slug, r]) => ({ slug, b: r.b, m: r.m, sd: r.sd, sn: r.sn, fm: r.fm }))
+      .sort((a, b) => a.sd - b.sd || b.sn - a.sn);
+    return html(renderLiquidityHub({ rows, stats, host: url.host, depositCount, builtAt }), 200, setCookie);
+  });
+}
+
+// /sobrevalorizados — both directions of the asking-vs-estimate gap.
+async function handleValuationGap(request, env, url) {
+  return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, stats }) => {
+    const withGap = Object.entries(models)
+      .filter(([, r]) => r.gm > 0 && r.fm > 0)
+      .map(([slug, r]) => ({ slug, b: r.b, m: r.m, fm: r.fm, gm: r.gm, n: r.n, gap: r.fm / r.gm - 1 }))
+      .sort((a, b) => b.gap - a.gap);
+    return html(renderValuationGap({
+      over: withGap.slice(0, 25),
+      under: withGap.slice(-25).reverse(),
+      stats, host: url.host, depositCount, builtAt,
+    }), 200, setCookie);
+  });
+}
+
+// /metodologia, /sobre, /isv
+async function handleMethodology(request, env, url) {
+  return withModels(request, env, url, ({ builtAt, depositCount, setCookie, stats }) =>
+    html(renderMethodology({ stats, host: url.host, depositCount, builtAt }), 200, setCookie));
+}
+async function handleAbout(request, env, url) {
+  return withModels(request, env, url, ({ builtAt, depositCount, setCookie, stats }) =>
+    html(renderAbout({ stats, host: url.host, depositCount, builtAt }), 200, setCookie));
+}
+async function handleIsv(request, env, url) {
+  return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie }) => {
+    const topModels = Object.entries(models)
+      .sort((a, b) => (b[1].n || 0) - (a[1].n || 0)).slice(0, 12)
+      .map(([slug, r]) => ({ slug, b: r.b, m: r.m, fm: r.fm }));
+    const refYear = parseInt((builtAt || "").slice(0, 4), 10) || null;
+    return html(renderIsv({ topModels, host: url.host, depositCount, builtAt, refYear }), 200, setCookie);
+  });
+}
+
+// ── /mercado/indice — weekly market index with a permanent archive ──────────
+//
+// The index has to be citable, and a figure that changes under its own URL is
+// not. So each ISO week is written ONCE to KV, at the first request that sees
+// that week, and never rewritten — /mercado/indice/2026-W35 says the same thing
+// next year as it does today. The bare /mercado/indice shows the current week
+// plus the trend.
+//
+// One KV write per week (guarded by a read), so the write-on-read is bounded no
+// matter how much traffic the page gets.
+const IDX_WEEK_PREFIX = "idx:week:";
+const IDX_LIST_KEY = "idx:weeks";
+const IDX_MAX_WEEKS = 120;
+
+function isoWeek(d) {
+  // ISO-8601 week number. Thursday-anchored, which is what makes the "week that
+  // contains Jan 1" edge case come out right.
+  const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const day = t.getUTCDay() || 7;
+  t.setUTCDate(t.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((t - yearStart) / 86400000) + 1) / 7);
+  return `${t.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+function snapshotFrom(models, builtAt, week, date) {
+  const stats = corpusStats(models, builtAt);
+  return {
+    week, date, builtAt: builtAt || null,
+    models: stats.models, listings: stats.listings,
+    priceMed: stats.priceMed, kmMed: stats.kmMed,
+    sellMed: stats.sellMed, depMed: stats.depMed,
+  };
+}
+
+async function handleMarketIndex(request, env, url) {
+  const tail = url.pathname.slice("/mercado/indice".length).replace(/^\/+|\/+$/g, "");
+  return withModels(request, env, url, async ({ models, builtAt, depositCount, setCookie }) => {
+    const now = new Date();
+    const week = isoWeek(now);
+    const today = now.toISOString().slice(0, 10);
+
+    // Write this week's cut once. `add`-style guard: only the first request of
+    // the week pays, and an already-written week is never overwritten — that is
+    // the whole point of a permanent archive URL.
+    let history = [];
+    try {
+      const listed = await env.KV.get(IDX_LIST_KEY, "json");
+      if (Array.isArray(listed)) history = listed;
+    } catch (_) { /* archive is a nice-to-have, never a 500 */ }
+    if (!history.some(h => h.week === week)) {
+      const snap = snapshotFrom(models, builtAt, week, today);
+      history = [...history, snap].sort((a, b) => a.week < b.week ? -1 : 1).slice(-IDX_MAX_WEEKS);
+      try {
+        await env.KV.put(`${IDX_WEEK_PREFIX}${week}`, JSON.stringify(snap));
+        await env.KV.put(IDX_LIST_KEY, JSON.stringify(history));
+      } catch (err) { console.warn("index snapshot write failed", err && err.message); }
+    }
+
+    if (tail) {
+      // An archived week. Only weeks we actually recorded exist — an invented
+      // /mercado/indice/1999-W03 is a 404, not an empty page.
+      // Normalisation has already lower-cased the path, so the URL token is
+      // "2026-w35"; the stored key and the display form are ISO ("2026-W35").
+      const m = /^(\d{4})-w(\d{2})$/i.exec(tail);
+      if (!m) return notFoundPage(request, env, url, setCookie);
+      const wk = `${m[1]}-W${m[2]}`;
+      let snap = null;
+      try { snap = await env.KV.get(`${IDX_WEEK_PREFIX}${wk}`, "json"); } catch (_) {}
+      if (!snap) snap = history.find(h => h.week === wk) || null;
+      if (!snap) return notFoundPage(request, env, url, setCookie);
+      return html(renderMarketIndex({ snapshot: snap, history, host: url.host, depositCount, isArchive: true }), 200, setCookie);
+    }
+
+    const current = history.find(h => h.week === week) || snapshotFrom(models, builtAt, week, today);
+    return html(renderMarketIndex({ snapshot: current, history, host: url.host, depositCount }), 200, setCookie);
+  });
+}
+
+// ── 404 ─────────────────────────────────────────────────────────────────────
+//
+// A styled 404 with real links, not a bare string — and never a 401. Best-effort
+// suggestions from models.json; if that fetch fails the page still renders.
+async function notFoundPage(request, env, url, setCookie = null) {
+  let suggestions = [];
+  let depositCount = 0;
+  try {
+    const mdoc = await getModels(env);
+    if (mdoc && mdoc.models) {
+      suggestions = Object.entries(mdoc.models)
+        .sort((a, b) => (b[1].n || 0) - (a[1].n || 0)).slice(0, 12)
+        .map(([slug, r]) => ({ slug, m: `${r.b} ${r.m}`, fm: r.fm }));
+    }
+  } catch (_) { /* a 404 must never depend on a network call */ }
+  return html(renderNotFound({
+    suggestions, depositCount, host: url.host, path: url.pathname,
+  }), 404, setCookie);
+}
+
+function jsonResponse(payload, status = 200) {
+  return new Response(JSON.stringify(payload, null, 2), {
+    status,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      // Public, cacheable, and cross-origin readable: the point of this endpoint
+      // is that other people's tools can take the numbers.
+      "cache-control": "public, max-age=1800",
+      "access-control-allow-origin": "*",
+    },
+  });
+}
+
 // Models hub (/precos) — the crawl spine linking every model page.
 async function handleModelsHub(request, env, url) {
   const { uid, setCookie } = ensureUid(request);
@@ -349,8 +841,14 @@ async function handleModelsHub(request, env, url) {
   return html(renderModelsHub({ models: list, depositCount, builtAt: mdoc.built_at, host: url.host }), 200, setCookie);
 }
 
-// /sitemap.xml — static indexable URLs + one per model page. Degrades to the
-// static set (never 500) if models.json isn't published yet.
+// /sitemap.xml — every indexable URL, generated from the same selection
+// functions the router uses.
+//
+// Sharing those functions is not tidiness, it is the whole correctness argument:
+// if the sitemap advertised a model-year the router 404s (or the router served
+// one the sitemap never listed), Search Console would report it as a site-wide
+// error and the crawler would learn to distrust the file. One source, both
+// consumers. Degrades to the static set (never 500) if models.json is missing.
 async function handleSitemap(request, env, url) {
   const base = `https://${url.host}`;
   const mdoc = await getModels(env);
@@ -358,20 +856,59 @@ async function handleSitemap(request, env, url) {
   // Real content-change stamp: the models.json build date, NOT the request date.
   // A request-time "today" on every URL makes lastmod a lie Google learns to
   // ignore. Emit <lastmod> only when we actually have a build stamp.
-  const lastmod = ((mdoc && mdoc.built_at) || "").slice(0, 10);
+  const lastmodSrc = (mdoc && mdoc.built_at) || "";
+  const lastmod = lastmodSrc.slice(0, 10);
   const lm = lastmod ? `<lastmod>${lastmod}</lastmod>` : "";
-  const urls = [
-    `<url><loc>${base}/</loc>${lm}<changefreq>daily</changefreq><priority>1.0</priority></url>`,
-    `<url><loc>${base}/mercado</loc>${lm}<changefreq>daily</changefreq><priority>0.9</priority></url>`,
-    `<url><loc>${base}/avaliar</loc>${lm}<changefreq>weekly</changefreq><priority>0.8</priority></url>`,
-    `<url><loc>${base}/precos</loc>${lm}<changefreq>weekly</changefreq><priority>0.7</priority></url>`,
-    `<url><loc>${base}/privacidade</loc>${lm}<changefreq>yearly</changefreq><priority>0.2</priority></url>`,
-  ];
+  const urls = [];
+  const add = (path, freq, prio) =>
+    urls.push(`<url><loc>${base}${path}</loc>${lm}<changefreq>${freq}</changefreq><priority>${prio}</priority></url>`);
+
+  add("/", "daily", "1.0");
+  add("/mercado", "daily", "0.9");
+  add("/avaliar", "weekly", "0.8");
+  add("/precos", "weekly", "0.7");
+  add("/mercado/indice", "weekly", "0.7");
+  // Trust pages: they change rarely but they are what an evaluator looks for.
+  add("/metodologia", "monthly", "0.6");
+  add("/sobre", "monthly", "0.6");
+  add("/isv", "monthly", "0.6");
+  // Consent banner links here, so it has to be crawlable and listed.
+  add("/privacidade", "yearly", "0.2");
+
   if (models) {
-    for (const slug of Object.keys(models)) {
-      urls.push(`<url><loc>${base}/preco/${encodeURIComponent(slug)}</loc>${lm}<changefreq>weekly</changefreq><priority>0.6</priority></url>`);
+    add("/depreciacao", "weekly", "0.7");
+    add("/comparar", "weekly", "0.7");
+    add("/liquidez", "weekly", "0.7");
+    add("/sobrevalorizados", "weekly", "0.6");
+
+    for (const [slug, rec] of Object.entries(models)) {
+      add(`/preco/${encodeURIComponent(slug)}`, "weekly", "0.6");
+      // Model-year pages — only the ones that clear the publishing floor, which
+      // is exactly the set handleModelPage will serve.
+      for (const y of publishedYearPages(models, slug, rec, lastmodSrc)) {
+        add(`/preco/${encodeURIComponent(slug)}/${y}`, "weekly", "0.5");
+      }
+      // Fuel / district facets, where the sample supports them.
+      for (const k of publishedFacets(models, slug, rec, lastmodSrc)) {
+        add(`/preco/${encodeURIComponent(slug)}/${encodeURIComponent(k)}`, "weekly", "0.5");
+      }
+      if (publishedDepreciation(models, slug, rec, lastmodSrc)) add(`/depreciacao/${encodeURIComponent(slug)}`, "monthly", "0.5");
     }
+    for (const k of Object.keys((mdoc && mdoc.districts) || {})) {
+      add(`/precos/${encodeURIComponent(k)}`, "weekly", "0.6");
+    }
+    for (const [a, b] of publishedPairs(models, lastmodSrc)) {
+      add(`/comparar/${encodeURIComponent(a)}-vs-${encodeURIComponent(b)}`, "monthly", "0.5");
+    }
+    // Archived index weeks: permanent URLs, so they belong in the sitemap.
+    try {
+      const history = await env.KV.get(IDX_LIST_KEY, "json");
+      if (Array.isArray(history)) {
+        for (const h of history.slice(-52)) add(`/mercado/indice/${h.week.toLowerCase()}`, "yearly", "0.3");
+      }
+    } catch (_) { /* archive is optional */ }
   }
+
   const xml = `<?xml version="1.0" encoding="UTF-8"?>\n`
     + `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>`;
   return new Response(xml, {
@@ -492,7 +1029,43 @@ async function handleLlmsTxt(request, env, url) {
     `- [Índice de preços por modelo](${base}/precos)`,
     `- [Avaliar um anúncio concreto](${base}/avaliar)`,
     `- [Mercado: carros abaixo do valor justo](${base}/mercado)`,
+    `- [Índice semanal do mercado, com arquivo permanente](${base}/mercado/indice)`,
+    `- [Desvalorização por modelo](${base}/depreciacao)`,
+    `- [Tempo mediano até vender, por modelo](${base}/liquidez)`,
+    `- [Comparações diretas entre modelos](${base}/comparar)`,
+    `- [Preço pedido vs. valor justo estimado](${base}/sobrevalorizados)`,
+    `- [Simulador de ISV](${base}/isv)`,
+    `- [Metodologia](${base}/metodologia)`,
+    `- [Quem somos](${base}/sobre)`,
     `- [Sitemap](${base}/sitemap.xml)`,
+    "",
+    "## Estrutura dos endereços",
+    "",
+    "Constrói o endereço em vez de percorrer o índice. `{slug}` é",
+    "`marca-modelo` sem acentos e em minúsculas (`volkswagen-golf`,",
+    "`alfa-romeo-giulietta`); `{ano}` são quatro dígitos.",
+    "",
+    `- \`${base}/preco/{slug}\` — preços de um modelo, por ano`,
+    `- \`${base}/preco/{slug}/{ano}\` — um modelo num ano concreto (existe a partir de 10 anúncios ativos nesse ano)`,
+    `- \`${base}/preco/{slug}/{combustivel}\` — o mesmo modelo só em diesel, gasolina ou GPL`,
+    `- \`${base}/preco/{slug}/{distrito}\` — o mesmo modelo num distrito`,
+    `- \`${base}/precos/{distrito}\` — o mercado de um distrito`,
+    `- \`${base}/depreciacao/{slug}\` — curva de desvalorização (existe onde há histórico suficiente)`,
+    `- \`${base}/comparar/{slug-a}-vs-{slug-b}\` — comparação entre dois modelos`,
+    `- \`${base}/mercado/indice/{AAAA}-W{SS}\` — corte semanal permanente do mercado`,
+    "",
+    "## Dados em JSON",
+    "",
+    "Cada página de modelo e de modelo-ano tem uma versão JSON no mesmo",
+    "endereço com o sufixo `.json`, ligada no HTML por",
+    "`<link rel=\"alternate\" type=\"application/json\">`. Traz os mesmos números",
+    "com nomes por extenso, mais o tamanho da amostra e a data de recolha.",
+    "",
+    `- \`${base}/preco/{slug}.json\``,
+    `- \`${base}/preco/{slug}/{ano}.json\``,
+    "",
+    "Um endereço que não exista devolve 404 — não há páginas geradas para",
+    "combinações sem amostra suficiente.",
     top.length ? "" : null,
     top.length ? "## Modelos com mais dados" : null,
     top.length ? "" : null,
@@ -585,10 +1158,33 @@ async function handleFeed(request, env, url) {
     }), 200, setCookie);
   }
 
+  // Model links for the models on offer right now.
+  //
+  // Every link the feed emitted pointed at /car?olx_id=… — noindex by design,
+  // because the listing vanishes when the car sells. So the site's freshest page
+  // passed nothing onward and read, to a crawler, as a static advert. These
+  // chips connect it to the stable /preco pages, which is also the next thing a
+  // visitor wants to know ("is that a good price for this model?").
+  const mdoc = await getModels(env);
+  const mmap = (mdoc && mdoc.models) || null;
+  const counted = new Map();
+  if (mmap) {
+    for (const d of sorted) {
+      const sl = slugify(`${d.brand}-${d.model}`);
+      const rec = mmap[sl];
+      if (!rec) continue;
+      const prev = counted.get(sl);
+      if (prev) prev.count += 1;
+      else counted.set(sl, { slug: sl, b: rec.b, m: rec.m, fm: rec.fm, count: 1 });
+    }
+  }
+  const modelLinks = [...counted.values()].sort((a, b) => b.count - a.count || a.b.localeCompare(b.b));
+
   return html(renderGrid({
     deals: sorted, zone, sort, view, unlockedSet, depositCount, zoneCounts,
     depositEur: depositCents(env) / 100,
     stripeReady: stripeConfigured(env), host: url.host,
+    modelLinks, builtAt: mdoc && mdoc.built_at,
   }), 200, setCookie);
 }
 

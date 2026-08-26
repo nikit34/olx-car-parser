@@ -42,19 +42,19 @@ const NB = " "; // narrow no-break space — the design's thousands separator
 
 // Group thousands with a thin space, but only for |n| ≥ 10000 (design quirk:
 // €4500 stays ungrouped, €15 499 groups). Keeps the mock's exact look.
-function fmtNum(n) {
+export function fmtNum(n) {
   if (n == null) return "—";
   n = Math.round(n);
   const s = Math.abs(n).toString();
   const g = (n < 10000 && n > -10000) ? s : s.replace(/\B(?=(\d{3})+(?!\d))/g, NB);
   return (n < 0 ? "-" : "") + g;
 }
-function fmtEur(n) { return n == null ? "—" : "€" + fmtNum(n); }
-function fmtKm(n) {
+export function fmtEur(n) { return n == null ? "—" : "€" + fmtNum(n); }
+export function fmtKm(n) {
   if (n == null) return "—";
   return Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, NB) + " km";
 }
-function fmtPct(p) { return p == null ? "—" : Math.round(p * 100) + "%"; }
+export function fmtPct(p) { return p == null ? "—" : Math.round(p * 100) + "%"; }
 function fmtPct1(p) { return p == null ? "—" : (p * 100).toFixed(1) + "%"; }
 
 function fmtRelativeDays(iso) {
@@ -139,7 +139,7 @@ const ISV_RANGE = {
   premium: "Custo de legalização (estimativa grosseira): pode passar de €10.000 num premium/grande cilindrada. O ISV depende do CO₂ e da idade — confirma na tabela das Finanças.",
 };
 
-function present(deal) {
+export function present(deal) {
   const price = deal.price_eur;
   const fairMedian = deal.fair_median;
   const disc = deal.discount_pct;            // fraction, e.g. 0.355
@@ -250,23 +250,44 @@ function districtZone(district) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-const FONT_HREF = "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap";
-// Load fonts non-render-blocking (media=print flips to all onload) so first paint
-// doesn't wait on the cross-origin CSS round-trip; display=swap already prevents
-// invisible text, and <noscript> keeps it working without JS.
+// Fonts are self-hosted from /fonts/ (dashboard-static/fonts/, served by a
+// public Worker route that bypasses the analytics auth gate).
+//
+// Was: three Google-hosted families behind two cross-origin handshakes
+// (fonts.googleapis.com for the CSS, then fonts.gstatic.com for each face).
+// Even loaded non-blocking that is two connections and a CSS round-trip before
+// the first glyph can be requested — on mobile 4G it was the largest avoidable
+// piece of LCP. Now: same-origin, already-warm connection, and the face URL is
+// in the HTML instead of behind a stylesheet we have to fetch first.
+//
+// Three families became two. JetBrains Mono existed only to give prices and
+// captions a tabular-ish look; the system monospace stack (var(--mono)) does
+// that with zero bytes. The two that carry the actual design — Space Grotesk
+// for display, Hanken Grotesk for text — stay.
+//
+// Both files are the VARIABLE font (one file covers every weight we use), latin
+// subset only: pt-PT lives entirely inside U+0000–U+00FF, so the latin-ext and
+// vietnamese subsets Google was serving were dead weight.
+const FONT_LATIN = "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,"
+  + "U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD";
+const FONT_FACES = `
+@font-face{font-family:'Hanken Grotesk';font-style:normal;font-weight:100 900;font-display:swap;src:url(/fonts/hanken-grotesk-var.woff2) format('woff2');unicode-range:${FONT_LATIN};}
+@font-face{font-family:'Space Grotesk';font-style:normal;font-weight:300 700;font-display:swap;src:url(/fonts/space-grotesk-var.woff2) format('woff2');unicode-range:${FONT_LATIN};}`;
+// Preload both faces: they are same-origin and used above the fold, so the
+// browser should not wait to discover them inside the inlined <style>.
 const FONT_LINKS = `
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="${FONT_HREF}" media="print" onload="this.media='all'">
-<noscript><link rel="stylesheet" href="${FONT_HREF}"></noscript>`;
+<link rel="preload" href="/fonts/hanken-grotesk-var.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/space-grotesk-var.woff2" as="font" type="font/woff2" crossorigin>`;
 
 const CSS = `
+${FONT_FACES}
+:root{--mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;}
 *{box-sizing:border-box;}
 html,body{margin:0;padding:0;}
 body{background:#F7F6F3;color:#16181D;font-family:'Hanken Grotesk',sans-serif;-webkit-font-smoothing:antialiased;}
 ::selection{background:#CDEAD8;}
 a{color:inherit;text-decoration:none;}
-.mono{font-family:'JetBrains Mono',monospace;}
+.mono{font-family:var(--mono);}
 .disp{font-family:'Space Grotesk',sans-serif;}
 .wrap{max-width:1180px;margin:0 auto;}
 
@@ -274,7 +295,7 @@ a{color:inherit;text-decoration:none;}
 .fc-header{position:sticky;top:0;z-index:30;background:rgba(247,246,243,0.85);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid #E8E6E1;}
 .fc-header-in{max-width:1180px;margin:0 auto;padding:13px 22px;display:flex;align-items:center;gap:16px;}
 .fc-brand{display:flex;align-items:center;gap:10px;cursor:pointer;flex-shrink:0;}
-.fc-logo{width:30px;height:30px;border-radius:50%;background:#177A47;color:#fff;display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:15px;box-shadow:0 3px 8px rgba(23,122,71,0.32);}
+.fc-logo{width:30px;height:30px;border-radius:50%;background:#177A47;color:#fff;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-weight:700;font-size:15px;box-shadow:0 3px 8px rgba(23,122,71,0.32);}
 .fc-word{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:18px;letter-spacing:-0.025em;white-space:nowrap;}
 .fc-nav{display:flex;gap:2px;margin-left:6px;}
 .fc-nav a{font-family:'Hanken Grotesk',sans-serif;font-weight:500;font-size:13px;padding:7px 12px;border-radius:9px;border:none;background:none;color:#5B606B;cursor:pointer;white-space:nowrap;}
@@ -303,21 +324,21 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .lede{font-size:18px;line-height:1.55;color:#5B606B;margin:0 0 30px;max-width:480px;text-wrap:pretty;}
 .hero-actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center;}
 .hero-actions .btn-dark{font-size:15px;padding:14px 24px;box-shadow:0 6px 18px -6px rgba(20,24,29,0.4);}
-.note{font-family:'JetBrains Mono',monospace;font-size:13px;color:#8A8F98;}
+.note{font-family:var(--mono);font-size:13px;color:#8A8F98;}
 .hero-stats{display:flex;flex-wrap:wrap;gap:32px;margin-top:42px;}
 .stat-num{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:30px;letter-spacing:-0.02em;}
 .stat-num.green{color:#177A47;}
 .stat-cap{font-size:13px;color:#8A8F98;margin-top:2px;max-width:128px;line-height:1.3;}
 .stat-div{width:1px;background:#E2DFD8;}
 .feature-wrap{flex:1 1 420px;min-width:300px;display:flex;flex-direction:column;align-items:stretch;}
-.feature-lead{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:#177A47;margin:0 0 10px 2px;display:flex;align-items:center;gap:7px;}
+.feature-lead{font-family:var(--mono);font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:#177A47;margin:0 0 10px 2px;display:flex;align-items:center;gap:7px;}
 .feature-card{width:100%;max-width:none;background:#fff;border:1px solid #E8E6E1;border-radius:20px;box-shadow:0 30px 60px -30px rgba(20,24,29,0.28);overflow:hidden;cursor:pointer;}
 
 .section{max-width:1180px;margin:0 auto;}
-.sec-label{font-family:'JetBrains Mono',monospace;font-size:12px;color:#8A8F98;letter-spacing:0.06em;margin-bottom:22px;}
+.sec-label{font-family:var(--mono);font-size:12px;color:#8A8F98;letter-spacing:0.06em;margin-bottom:22px;}
 .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px;}
 .step-card{background:#fff;border:1px solid #E8E6E1;border-radius:16px;padding:22px;}
-.step-n{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:13px;color:#177A47;}
+.step-n{font-family:var(--mono);font-weight:700;font-size:13px;color:#177A47;}
 .step-t{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:17px;margin:12px 0 7px;letter-spacing:-0.01em;}
 .step-d{font-size:14px;line-height:1.5;color:#5B606B;text-wrap:pretty;}
 .cta-banner{background:#16181D;border-radius:22px;padding:44px;display:flex;flex-wrap:wrap;gap:24px;align-items:center;justify-content:space-between;}
@@ -325,7 +346,7 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .cta-banner p{font-size:16px;line-height:1.55;color:#A8ADB6;margin:0;max-width:460px;text-wrap:pretty;}
 .cta-banner .btn-bright{font-size:15px;padding:14px 26px;}
 .indep-note{margin-top:16px;max-width:460px;}
-.indep-note>summary{cursor:pointer;font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.02em;color:#7FE3AB;list-style:none;display:inline-flex;align-items:center;gap:7px;}
+.indep-note>summary{cursor:pointer;font-family:var(--mono);font-size:12px;letter-spacing:0.02em;color:#7FE3AB;list-style:none;display:inline-flex;align-items:center;gap:7px;}
 .indep-note>summary::-webkit-details-marker{display:none;}
 .indep-note>summary::before{content:"+";font-size:15px;line-height:1;width:16px;text-align:center;}
 .indep-note[open]>summary::before{content:"–";}
@@ -337,9 +358,9 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .striped-label{font-family:'Space Grotesk',sans-serif;font-weight:700;color:rgba(20,24,29,0.07);letter-spacing:0.05em;text-transform:uppercase;}
 
 /* Badges */
-.grade{position:absolute;top:12px;left:12px;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:12px;padding:4px 10px;border-radius:8px;}
+.grade{position:absolute;top:12px;left:12px;font-family:var(--mono);font-weight:700;font-size:12px;padding:4px 10px;border-radius:8px;}
 .risk{position:absolute;top:12px;right:12px;font-family:'Hanken Grotesk',sans-serif;font-weight:600;font-size:11px;padding:4px 10px;border-radius:999px;}
-.photo-count{position:absolute;bottom:10px;right:12px;font-family:'JetBrains Mono',monospace;font-size:10px;color:#7A7F88;background:rgba(255,255,255,0.86);padding:3px 7px;border-radius:6px;}
+.photo-count{position:absolute;bottom:10px;right:12px;font-family:var(--mono);font-size:10px;color:#7A7F88;background:rgba(255,255,255,0.86);padding:3px 7px;border-radius:6px;}
 
 /* Feed */
 .feed{max-width:1180px;margin:0 auto;padding:30px 22px 70px;}
@@ -354,7 +375,7 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .chips{display:flex;gap:6px;flex-wrap:wrap;}
 .chip{font-family:'Hanken Grotesk',sans-serif;font-weight:500;font-size:13px;padding:8px 14px;border-radius:10px;border:1px solid #E2DFD8;background:#fff;color:#5B606B;cursor:pointer;white-space:nowrap;}
 .chip.active{font-weight:600;border-color:#16181D;background:#16181D;color:#fff;}
-.chip-count{font-family:'JetBrains Mono',monospace;font-size:11px;color:#8A8F98;margin-left:2px;}
+.chip-count{font-family:var(--mono);font-size:11px;color:#8A8F98;margin-left:2px;}
 .chip.active .chip-count{color:#B8BDC6;}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:18px;}
 .tile{cursor:pointer;background:#fff;border:1px solid #E8E6E1;border-radius:18px;overflow:hidden;display:flex;flex-direction:column;transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease;}
@@ -363,20 +384,20 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .tile .thumb img{width:100%;height:100%;object-fit:cover;display:block;}
 .tile .tbody{padding:16px 17px 17px;display:flex;flex-direction:column;flex:1;}
 .tile-title{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;letter-spacing:-0.01em;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.tile-sub{font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#8A8F98;margin-top:5px;}
+.tile-sub{font-family:var(--mono);font-size:11.5px;color:#8A8F98;margin-top:5px;}
 .price-row{display:flex;align-items:flex-end;gap:9px;margin-top:15px;}
-.price{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:22px;letter-spacing:-0.02em;}
-.fair-strike{font-family:'JetBrains Mono',monospace;font-size:12px;color:#9A9FA8;text-decoration:line-through;margin-bottom:3px;}
-.profit-pill{margin-left:auto;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:13px;color:#177A47;background:#E4F2E9;padding:4px 9px;border-radius:8px;white-space:nowrap;}
+.price{font-family:var(--mono);font-weight:700;font-size:22px;letter-spacing:-0.02em;}
+.fair-strike{font-family:var(--mono);font-size:12px;color:#9A9FA8;text-decoration:line-through;margin-bottom:3px;}
+.profit-pill{margin-left:auto;font-family:var(--mono);font-weight:700;font-size:13px;color:#177A47;background:#E4F2E9;padding:4px 9px;border-radius:8px;white-space:nowrap;}
 .bar-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
 .bar-head .cap{font-size:11px;color:#8A8F98;}
-.bar-head .val{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:12px;color:#16181D;}
+.bar-head .val{font-family:var(--mono);font-weight:700;font-size:12px;color:#16181D;}
 .bar-track{height:6px;border-radius:999px;background:#EEEBE5;overflow:hidden;}
 .bar-fill{height:100%;border-radius:999px;}
-.tile-foot{display:flex;align-items:center;gap:8px;margin-top:14px;padding-top:13px;border-top:1px solid #F0EDE7;font-family:'JetBrains Mono',monospace;font-size:11px;color:#8A8F98;}
+.tile-foot{display:flex;align-items:center;gap:8px;margin-top:14px;padding-top:13px;border-top:1px solid #F0EDE7;font-family:var(--mono);font-size:11px;color:#8A8F98;}
 .tile-foot .sep{color:#D8D5CE;}
 .tile-foot .seller{margin-left:auto;color:#16181D;font-weight:500;}
-.badge-unlocked{position:absolute;bottom:10px;left:12px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:#fff;background:#177A47;padding:3px 8px;border-radius:6px;}
+.badge-unlocked{position:absolute;bottom:10px;left:12px;font-family:var(--mono);font-size:10px;font-weight:700;color:#fff;background:#177A47;padding:3px 8px;border-radius:6px;}
 
 /* Detail */
 .detail{max-width:1180px;margin:0 auto;padding:22px 22px 70px;}
@@ -394,7 +415,7 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .signals{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:1px;background:#F0EDE7;border:1px solid #F0EDE7;border-radius:12px;overflow:hidden;}
 .signal{background:#fff;padding:14px 15px;}
 .signal .k{font-size:12px;color:#8A8F98;margin-bottom:6px;}
-.signal .v{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:16px;color:#16181D;}
+.signal .v{font-family:var(--mono);font-weight:700;font-size:16px;color:#16181D;}
 .signal .v.warn{color:#9A6B12;}
 .signal .v.bad{color:#AA4632;}
 .desc{font-size:14.5px;line-height:1.65;color:#3A3F47;margin:0;white-space:pre-line;text-wrap:pretty;word-wrap:break-word;}
@@ -402,20 +423,20 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .side-card{background:#fff;border:1px solid #E8E6E1;border-radius:20px;padding:24px;box-shadow:0 18px 40px -26px rgba(20,24,29,0.2);}
 .side-head{display:flex;align-items:flex-start;gap:10px;}
 .side-head h1{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:23px;letter-spacing:-0.02em;line-height:1.18;margin:0;flex:1;text-wrap:balance;}
-.grade-badge{flex-shrink:0;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:12px;padding:5px 10px;border-radius:9px;}
-.side-sub{font-family:'JetBrains Mono',monospace;font-size:12px;color:#8A8F98;margin-top:8px;}
+.grade-badge{flex-shrink:0;font-family:var(--mono);font-weight:700;font-size:12px;padding:5px 10px;border-radius:9px;}
+.side-sub{font-family:var(--mono);font-size:12px;color:#8A8F98;margin-top:8px;}
 .side-loc{font-size:12.5px;color:#8A8F98;margin-top:6px;}
 .side-prices{display:flex;align-items:flex-end;gap:12px;margin-top:20px;}
 .side-prices .cap{font-size:12px;color:#8A8F98;}
-.side-prices .big{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:32px;letter-spacing:-0.03em;line-height:1;}
+.side-prices .big{font-family:var(--mono);font-weight:700;font-size:32px;letter-spacing:-0.03em;line-height:1;}
 .side-fair{margin-left:auto;text-align:right;flex-shrink:0;}
 .side-fair .cap{white-space:nowrap;}
-.side-fair .v{font-family:'JetBrains Mono',monospace;font-weight:500;font-size:18px;color:#5B606B;white-space:nowrap;}
+.side-fair .v{font-family:var(--mono);font-weight:500;font-size:18px;color:#5B606B;white-space:nowrap;}
 .verdict-row{display:flex;align-items:center;gap:10px;margin-top:16px;padding:13px 15px;border-radius:12px;background:#E4F2E9;border:1px solid #C9E7D5;}
-.verdict-tag{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:13px;color:#0F5C35;background:#fff;padding:4px 9px;border-radius:7px;white-space:nowrap;}
-.verdict-disc{font-family:'JetBrains Mono',monospace;font-weight:500;font-size:13px;color:#177A47;white-space:nowrap;}
-.verdict-profit{margin-left:auto;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:17px;color:#0F5C35;white-space:nowrap;}
-.gauge-head{display:flex;justify-content:space-between;font-size:11px;color:#8A8F98;font-family:'JetBrains Mono',monospace;margin-bottom:7px;}
+.verdict-tag{font-family:var(--mono);font-weight:700;font-size:13px;color:#0F5C35;background:#fff;padding:4px 9px;border-radius:7px;white-space:nowrap;}
+.verdict-disc{font-family:var(--mono);font-weight:500;font-size:13px;color:#177A47;white-space:nowrap;}
+.verdict-profit{margin-left:auto;font-family:var(--mono);font-weight:700;font-size:17px;color:#0F5C35;white-space:nowrap;}
+.gauge-head{display:flex;justify-content:space-between;font-size:11px;color:#8A8F98;font-family:var(--mono);margin-bottom:7px;}
 .gauge-track{position:relative;height:8px;border-radius:999px;background:linear-gradient(90deg,#E4F2E9,#EEEBE5);}
 .gauge-pin{position:absolute;top:-3px;width:14px;height:14px;border-radius:50%;background:#177A47;border:3px solid #fff;box-shadow:0 2px 6px rgba(20,24,29,0.3);transform:translateX(-50%);}
 .side-foot{text-align:center;font-size:12px;color:#9A9FA8;margin-top:12px;line-height:1.5;}
@@ -444,11 +465,11 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .claimed-head .t{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:15px;color:#0F5C35;}
 .claimed-head .d{font-size:12px;color:#3F7A5B;margin-top:2px;}
 .claimed-body{padding:16px 17px;}
-.contact-label{font-family:'JetBrains Mono',monospace;font-size:11px;color:#8A8F98;letter-spacing:0.04em;margin-bottom:9px;}
+.contact-label{font-family:var(--mono);font-size:11px;color:#8A8F98;letter-spacing:0.04em;margin-bottom:9px;}
 .contact-card{display:flex;align-items:center;gap:11px;padding:12px 14px;border-radius:12px;background:#fff;border:1px solid #E2EFE7;}
 .avatar{width:34px;height:34px;border-radius:50%;background:#16181D;color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:14px;flex-shrink:0;}
 .contact-card .nm{font-weight:600;font-size:14px;}
-.contact-card .meta{font-family:'JetBrains Mono',monospace;font-size:13px;color:#177A47;}
+.contact-card .meta{font-family:var(--mono);font-size:13px;color:#177A47;}
 .olx-row{display:flex;gap:9px;margin-top:12px;}
 .olx-btn{flex:1;font-family:'Hanken Grotesk',sans-serif;font-weight:600;font-size:14px;padding:12px;border-radius:11px;border:none;background:#177A47;color:#fff;cursor:pointer;text-align:center;display:block;}
 .olx-btn:hover{background:#13633a;}
@@ -458,16 +479,16 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .claim-page{max-width:560px;margin:0 auto;padding:42px 22px 70px;}
 .claim-card{background:#fff;border:1px solid #E8E6E1;border-radius:22px;overflow:hidden;box-shadow:0 24px 50px -28px rgba(20,24,29,0.24);}
 .claim-card-head{padding:26px 26px 22px;border-bottom:1px solid #EFECE6;}
-.claim-card-head .eb{font-family:'JetBrains Mono',monospace;font-size:11px;color:#8A8F98;letter-spacing:0.06em;margin-bottom:12px;}
+.claim-card-head .eb{font-family:var(--mono);font-size:11px;color:#8A8F98;letter-spacing:0.06em;margin-bottom:12px;}
 .claim-card-head .t{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:26px;letter-spacing:-0.025em;text-wrap:balance;}
 .claim-summary{display:flex;align-items:center;gap:10px;margin-top:14px;padding:12px 14px;border-radius:12px;background:#FAFAF8;border:1px solid #EFECE6;}
-.claim-summary .mono{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:14px;}
+.claim-summary .mono{font-family:var(--mono);font-weight:700;font-size:14px;}
 .claim-summary .cap{font-size:12px;color:#8A8F98;}
-.claim-summary .prof{margin-left:auto;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:14px;color:#177A47;white-space:nowrap;}
+.claim-summary .prof{margin-left:auto;font-family:var(--mono);font-weight:700;font-size:14px;color:#177A47;white-space:nowrap;}
 .claim-card-body{padding:24px 26px;}
 .dep-row{display:flex;justify-content:space-between;align-items:baseline;}
 .dep-row .l{font-size:15px;color:#3A3F47;}
-.dep-row .r{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:24px;}
+.dep-row .r{font-family:var(--mono);font-weight:700;font-size:24px;}
 .hr{height:1px;background:#EFECE6;margin:18px 0;}
 .benefit{display:flex;align-items:flex-start;gap:11px;margin-bottom:13px;}
 .benefit .tick{width:20px;height:20px;}
@@ -485,12 +506,12 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .success-top p{font-size:15px;color:#5B606B;margin:0 auto;max-width:380px;text-wrap:pretty;}
 .cd-banner{background:#16181D;border-radius:18px;padding:20px 24px;margin:24px 0 16px;display:flex;align-items:center;gap:16px;}
 .cd-banner .cap{font-size:12px;color:#A8ADB6;}
-.cd-banner .big{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:34px;color:#23C268;letter-spacing:0.02em;line-height:1.1;}
+.cd-banner .big{font-family:var(--mono);font-weight:700;font-size:34px;color:#23C268;letter-spacing:0.02em;line-height:1.1;}
 .cd-banner .dep{text-align:right;}
-.cd-banner .dep .v{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:20px;color:#fff;}
+.cd-banner .dep .v{font-family:var(--mono);font-weight:700;font-size:20px;color:#fff;}
 .cd-banner .dep .s{font-size:11px;color:#7E848C;}
 .next-steps .step{display:flex;align-items:flex-start;gap:11px;margin-bottom:11px;}
-.next-steps .n{flex-shrink:0;font-family:'JetBrains Mono',monospace;font-weight:700;font-size:12px;color:#177A47;width:18px;}
+.next-steps .n{flex-shrink:0;font-family:var(--mono);font-weight:700;font-size:12px;color:#177A47;width:18px;}
 .next-steps .tx{font-size:14px;color:#3A3F47;text-wrap:pretty;}
 .success .btn-outline{width:100%;margin-top:16px;font-size:15px;padding:14px;border-radius:13px;display:block;text-align:center;}
 
@@ -504,13 +525,13 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .res-thumb img{width:100%;height:100%;object-fit:cover;display:block;}
 .res-mid{flex:1;min-width:180px;}
 .res-mid .t{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;letter-spacing:-0.01em;}
-.res-mid .s{font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#8A8F98;margin-top:4px;}
+.res-mid .s{font-family:var(--mono);font-size:11.5px;color:#8A8F98;margin-top:4px;}
 .res-prices{display:flex;gap:7px;margin-top:9px;align-items:center;}
-.res-prices .p{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:13px;}
-.res-prices .pr{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:12px;color:#177A47;background:#E4F2E9;padding:3px 8px;border-radius:7px;white-space:nowrap;}
+.res-prices .p{font-family:var(--mono);font-weight:700;font-size:13px;}
+.res-prices .pr{font-family:var(--mono);font-weight:700;font-size:12px;color:#177A47;background:#E4F2E9;padding:3px 8px;border-radius:7px;white-space:nowrap;}
 .res-right{text-align:right;min-width:130px;margin-left:auto;}
 .cd-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;background:#F4FBF6;border:1px solid #C9E7D5;margin-bottom:8px;}
-.cd-pill .mono{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#0F5C35;}
+.cd-pill .mono{font-family:var(--mono);font-size:12px;font-weight:700;color:#0F5C35;}
 .res-right .ex{font-size:11px;color:#8A8F98;margin-bottom:9px;}
 .res-right .btn-dark{font-size:13px;padding:9px 15px;border-radius:10px;white-space:nowrap;display:inline-block;}
 .empty-card{background:#fff;border:1px dashed #DAD7D0;border-radius:18px;padding:54px 24px;text-align:center;}
@@ -524,11 +545,11 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .year-tbl th,.year-tbl td{border:1px solid #E8E6E1;padding:9px 12px;text-align:right;}
 .year-tbl th{font-family:'Hanken Grotesk',sans-serif;font-weight:600;font-size:12px;color:#5B606B;background:#FAFAF8;text-align:right;}
 .year-tbl th:first-child,.year-tbl td:first-child{text-align:left;font-weight:600;}
-.year-tbl td{font-family:'JetBrains Mono',monospace;color:#16181D;}
+.year-tbl td{font-family:var(--mono);color:#16181D;}
 .year-tbl td.mut{color:#8A8F98;}
 .mchips{display:flex;flex-wrap:wrap;gap:7px;}
 .mchip{display:inline-block;padding:8px 12px;border-radius:10px;border:1px solid #E2DFD8;background:#fff;font-size:13px;color:#16181D;}
-.mchip .mut{color:#8A8F98;font-family:'JetBrains Mono',monospace;font-size:11.5px;}
+.mchip .mut{color:#8A8F98;font-family:var(--mono);font-size:11.5px;}
 
 /* Info / degraded */
 .info{max-width:560px;margin:0 auto;padding:72px 22px;text-align:center;}
@@ -540,7 +561,7 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 /* Footer */
 .footer{border-top:1px solid #E8E6E1;margin-top:20px;}
 .footer-in{max-width:1180px;margin:0 auto;padding:22px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;}
-.footer .mono{font-family:'JetBrains Mono',monospace;font-size:11px;color:#9A9FA8;}
+.footer .mono{font-family:var(--mono);font-size:11px;color:#9A9FA8;}
 
 /* Gallery (detail hero) */
 .gallery{position:relative;border-radius:20px;overflow:hidden;border:1px solid #E8E6E1;height:380px;background:#16181D;}
@@ -551,7 +572,7 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .gallery-nav.prev{left:10px;}
 .gallery-nav.next{right:10px;}
 .gallery-nav:hover{background:rgba(20,24,29,0.78);}
-.gallery-counter{position:absolute;bottom:12px;left:14px;background:rgba(255,255,255,0.88);color:#7A7F88;font-family:'JetBrains Mono',monospace;font-size:11px;padding:4px 10px;border-radius:7px;pointer-events:none;}
+.gallery-counter{position:absolute;bottom:12px;left:14px;background:rgba(255,255,255,0.88);color:#7A7F88;font-family:var(--mono);font-size:11px;padding:4px 10px;border-radius:7px;pointer-events:none;}
 .gallery.single .gallery-nav{display:none;}
 .gallery-track img,.thumb-cell img{cursor:zoom-in;}
 .zoom-hint{position:absolute;top:10px;right:12px;background:rgba(20,24,29,0.55);color:#fff;font-family:'Hanken Grotesk',sans-serif;font-size:11px;padding:4px 9px;border-radius:7px;pointer-events:none;}
@@ -565,7 +586,7 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .lb-next{right:14px;}
 .lb-nav:hover,.lb-close:hover{background:rgba(255,255,255,0.28);}
 .gallery.single + .lightbox .lb-nav,.gallery.single + .lightbox .lb-counter{display:none;}
-.lb-counter{position:absolute;bottom:18px;left:50%;transform:translateX(-50%);color:#cfd3da;font-family:'JetBrains Mono',monospace;font-size:12px;}
+.lb-counter{position:absolute;bottom:18px;left:50%;transform:translateX(-50%);color:#cfd3da;font-family:var(--mono);font-size:12px;}
 @media (max-width:760px){.zoom-hint{display:none;}.lb-nav{width:42px;height:42px;}}
 
 @media (max-width:760px){
@@ -602,10 +623,60 @@ box-shadow:0 8px 30px rgba(0,0,0,.45);max-width:760px;margin:0 auto;}
 .fc-consent button{font:inherit;font-size:13px;padding:8px 14px;border-radius:8px;cursor:pointer;}
 .fc-consent-no{background:transparent;color:#C9CFD6;border:1px solid #3A424C;}
 .fc-consent-yes{background:#177A47;color:#fff;border:1px solid #177A47;}
+/* ── Second-layer SEO pages (seo-pages.js) ────────────────────────────────── */
+.fc-crumbs{max-width:760px;padding:22px 22px 0;font-size:12.5px;color:#8A8F98;}
+/* Provenance line: same shape on every data page — sample, freshness, measure. */
+.fc-prov{font-size:11.5px;color:#9A9FA8;line-height:1.6;margin:14px 0 0;}
+.fc-chart{width:100%;height:auto;display:block;margin:6px 0 4px;}
+.fc-chart .c-ax{font-family:var(--mono);font-size:10px;fill:#9A9FA8;}
+.fc-chart .c-grid{stroke:#E8E6E1;stroke-width:1;}
+.fc-wrap{max-width:760px;padding:24px 22px 0;}
+.fc-wide{max-width:1180px;padding:24px 22px 0;}
+.fc-h1{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:30px;letter-spacing:-0.02em;margin:0 0 10px;line-height:1.12;}
+.fc-h2{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:19px;letter-spacing:-0.01em;margin:34px 0 12px;}
+.fc-h3{font-weight:700;font-size:15px;margin:22px 0 8px;}
+.fc-p{font-size:15px;line-height:1.65;color:#3A3F47;margin:0 0 14px;}
+.fc-p a,.fc-li a{color:#177A47;font-weight:600;}
+.fc-ul{margin:0 0 14px;padding-left:20px;}
+.fc-li{font-size:15px;line-height:1.65;color:#3A3F47;margin-bottom:7px;}
+/* Insight list: one sentence per rule that fired, so the block is a different
+   shape on every page instead of the same paragraph with numbers swapped. */
+.fc-insights{list-style:none;margin:0;padding:0;}
+.fc-insights li{position:relative;padding:0 0 0 20px;margin-bottom:11px;font-size:15px;line-height:1.6;color:#3A3F47;}
+.fc-insights li:before{content:"";position:absolute;left:2px;top:9px;width:6px;height:6px;border-radius:50%;background:#177A47;}
+.fc-stat-row{display:flex;flex-wrap:wrap;gap:22px;margin:4px 0 2px;}
+.fc-stat{min-width:120px;}
+.fc-stat .k{font-size:11px;color:#8A8F98;font-family:var(--mono);letter-spacing:.03em;}
+.fc-stat .v{font-family:var(--mono);font-weight:700;font-size:24px;letter-spacing:-.02em;}
+.fc-stat .s{font-family:var(--mono);font-size:12px;color:#5B606B;}
+.fc-tbl{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:13px;}
+.fc-tbl th{text-align:left;font-weight:500;color:#8A8F98;font-size:11px;letter-spacing:.04em;padding:0 10px 8px 0;border-bottom:1px solid #E8E6E1;white-space:nowrap;}
+.fc-tbl td{padding:9px 10px 9px 0;border-bottom:1px solid #F0EDE7;white-space:nowrap;}
+.fc-tbl td.mut{color:#8A8F98;}
+.fc-tbl tr:hover td{background:#FBFAF8;}
+.fc-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+.fc-vs{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+@media(max-width:620px){.fc-vs{grid-template-columns:1fr;}}
+.fc-vs-card{border:1px solid #E8E6E1;border-radius:14px;background:#fff;padding:16px 18px;}
+.fc-vs-card.win{border-color:#BFE3CC;background:#F6FBF8;}
+.fc-win{display:inline-block;font-family:var(--mono);font-size:10.5px;font-weight:700;color:#0F5C35;background:#DCF0E4;padding:3px 7px;border-radius:6px;margin-left:6px;}
+.fc-yearlinks{display:flex;flex-wrap:wrap;gap:7px;margin:2px 0 0;}
+.fc-yearlinks a{font-family:var(--mono);font-size:12.5px;padding:6px 11px;border:1px solid #E8E6E1;border-radius:9px;background:#fff;color:#3A3F47;}
+.fc-yearlinks a.on{background:#16181D;border-color:#16181D;color:#fff;}
+.fc-yearlinks a:hover{border-color:#177A47;color:#177A47;}
+.fc-form{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin:6px 0 16px;}
+.fc-field{display:flex;flex-direction:column;gap:5px;}
+.fc-field label{font-family:var(--mono);font-size:11px;color:#8A8F98;letter-spacing:.03em;}
+.fc-field input,.fc-field select{font-family:var(--mono);font-size:14px;padding:10px 12px;border:1px solid #E0DDD6;border-radius:10px;background:#fff;color:#16181D;min-width:132px;}
+.fc-out{border:1px solid #E8E6E1;border-radius:14px;background:#fff;padding:18px 20px;margin-top:6px;}
+.fc-out .big{font-family:var(--mono);font-weight:700;font-size:30px;letter-spacing:-.02em;}
+.fc-404{max-width:640px;padding:56px 22px 70px;margin:0 auto;text-align:center;}
 `;
 
 // Live 24h-exclusivity countdown + detail gallery. Both guard on their own
 // elements, so it's safe to ship on every page.
+
+
 const PAGE_SCRIPT = `
 (function(){
   function pad(x){return (x<10?'0':'')+x;}
@@ -673,7 +744,7 @@ function gradeBadge(p, cls) {
   const c = p.gcDisplay;
   return `<span class="${cls}" title="${GRADE_RUBRIC}" style="background:${c.bg};color:${c.fg};border:1px solid ${c.br};cursor:help;">${p.gradeDisplayFull}</span>`;
 }
-function gradeChip(p) {
+export function gradeChip(p) {
   const c = p.gcDisplay;
   return `<span class="grade" title="${GRADE_RUBRIC}" style="background:${c.bg};color:${c.fg};border:1px solid ${c.br};cursor:help;">${p.gradeDisplayFull}</span>`;
 }
@@ -686,7 +757,7 @@ function importTag(p) {
   if (!p.importFlag) return "";
   const c = GRADE_COLORS.amber;
   const txt = p.importLegalized ? "🌍 IMPORTADO" : "🌍 IMPORTADO · ISV?";
-  return `<span style="display:inline-block;font-family:'JetBrains Mono',monospace;font-weight:700;`
+  return `<span style="display:inline-block;font-family:var(--mono);font-weight:700;`
     + `font-size:10px;padding:3px 7px;border-radius:6px;margin-top:7px;`
     + `background:${c.bg};color:${c.fg};border:1px solid ${c.br};">${txt}</span>`;
 }
@@ -711,7 +782,7 @@ function netIsvNote(p, base) {
 }
 
 // Photo block for a tile/card — real cover photo, else striped brand placeholder.
-function thumbBlock(p, h, labelSize, eager = false) {
+export function thumbBlock(p, h, labelSize, eager = false) {
   if (p.cover) {
     // eager+high-priority for above-the-fold LCP images (landing featured card);
     // lazy everywhere else (grid tiles, model-page live deals, reservas).
@@ -809,7 +880,9 @@ var m=document.cookie.match(/_ga=GA1\.\d+\.(\d+\.\d+)/);if(m)f.value=m[1];})();<
 }
 
 // ── Shell ─────────────────────────────────────────────────────────────────────
-function layout({ title, body, zone, nav, depositCount, index = false, description = null, canonical = null, jsonLd = null, host = null, image = null, type = "website", ogUrl: ogUrlOverride = null }) {
+export function layout({ title, body, zone, nav, depositCount, index = false, description = null,
+                 canonical = null, jsonLd = null, host = null, image = null, type = "website",
+                 ogUrl: ogUrlOverride = null, altJson = null }) {
   const dep = (depositCount || 0) * 5;
   const navItem = (key, label, href) =>
     `<a href="${href}" class="${nav === key ? "active" : ""}">${label}</a>`;
@@ -855,6 +928,10 @@ function layout({ title, body, zone, nav, depositCount, index = false, descripti
     // jsonLd is our own data (no user input); JSON.stringify already escapes it,
     // and we additionally close-tag-escape to be safe inside <script>.
     jsonLd ? `<script type="application/ld+json">${JSON.stringify(jsonLd).replace(/</g, "\\u003c")}</script>` : "",
+    // Machine-readable twin of this page. An agent that finds the HTML can take
+    // the numbers without parsing our markup, and the link is what tells it the
+    // endpoint exists — a JSON route nobody can discover gets used by nobody.
+    altJson ? `<link rel="alternate" type="application/json" href="${escapeHtml(altJson)}" title="Dados desta página em JSON">` : "",
   ].filter(Boolean).join("\n");
 
   // Keep the SERP title under ~60 chars: append the brand suffix only when it
@@ -862,7 +939,7 @@ function layout({ title, body, zone, nav, depositCount, index = false, descripti
   const suffix = " · Flipper Club";
   const fullTitle = (title.length + suffix.length <= 60) ? title + suffix : title;
   return `<!doctype html>
-<html lang="pt">
+<html lang="pt-PT">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -903,7 +980,8 @@ ${consentBanner()}
 <footer class="footer">
   <div class="footer-in">
     <span class="mono">AVALIAÇÃO INDEPENDENTE · dados de anúncios públicos OLX · estimativas indicativas, não vinculativas · não somos stand nem intermediário</span>
-    <span class="mono"><a href="/precos" style="color:#5B606B;">Preços por modelo</a> · <a href="/avaliar" style="color:#5B606B;">Avaliar o meu carro</a> · Portugal 🇵🇹</span>
+    <span class="mono"><a href="/precos" style="color:#5B606B;">Preços por modelo</a> · <a href="/depreciacao" style="color:#5B606B;">Desvalorização</a> · <a href="/comparar" style="color:#5B606B;">Comparar</a> · <a href="/liquidez" style="color:#5B606B;">Tempo de venda</a> · <a href="/mercado/indice" style="color:#5B606B;">Índice de mercado</a> · <a href="/avaliar" style="color:#5B606B;">Avaliar o meu carro</a></span>
+    <span class="mono"><a href="/metodologia" style="color:#5B606B;">Metodologia</a> · <a href="/sobre" style="color:#5B606B;">Quem somos</a> · <a href="/isv" style="color:#5B606B;">Simulador ISV</a> · Portugal 🇵🇹</span>
   </div>
 </footer>
 <script>${PAGE_SCRIPT}</script>
@@ -1045,7 +1123,8 @@ export function renderLanding({ stats, featured, depositEur, depositCount, host 
 // `view` is the intent lens: "comprar" (default, buyer-first) or "revender"
 // (importer/flipper). It only RELABELS the same decision_score-ranked feed —
 // never re-sorts or filters — so we never imply a precision the ranking lacks.
-export function renderGrid({ deals, zone, sort, view, unlockedSet, depositEur, depositCount, zoneCounts, host }) {
+export function renderGrid({ deals, zone, sort, view, unlockedSet, depositEur, depositCount,
+                             zoneCounts, host, modelLinks = [], builtAt = null }) {
   const lens = view === "revender" ? "revender" : "comprar";
   const profitLabel = lens === "comprar" ? "💰 Maior poupança" : "💰 Maior margem";
   const tabLabel = s => s === "score" ? "🏆 Melhor aposta" : s === "profit" ? profitLabel : "🆕 Mais recentes";
@@ -1103,6 +1182,27 @@ export function renderGrid({ deals, zone, sort, view, unlockedSet, depositEur, d
     </a>`;
   }).join("\n");
 
+  // Model links for the models in today's feed.
+  //
+  // Every link on this page used to point at /car?olx_id=… — pages that are
+  // noindex by design because the listing disappears when the car sells. So the
+  // site's most-updated page passed nothing onward: a crawler saw a wall of
+  // dead-end links and a banner. These chips point at the stable /preco pages
+  // for the models actually on offer right now, which is both a real crawl path
+  // and the next question a visitor has ("is this a good price for a Golf?").
+  const modelChips = (modelLinks && modelLinks.length) ? `
+    <section class="section" style="padding:34px 0 0;">
+      <div class="sec-label">PREÇO DE MERCADO DOS MODELOS COM NEGÓCIOS AGORA</div>
+      <div class="mchips">${modelLinks.slice(0, 24).map(m =>
+        `<a class="mchip" href="/preco/${encodeURIComponent(m.slug)}">${escapeHtml(m.b)} ${escapeHtml(m.m)} <span class="mut">mediana ${fmtEur(m.fm)}${m.count > 1 ? ` · ${m.count} negócios` : ""}</span></a>`).join("")}</div>
+      <p style="font-size:13.5px;color:#5B606B;margin:16px 0 0;">
+        <a href="/precos" style="color:#177A47;font-weight:600;">Todos os modelos</a> ·
+        <a href="/mercado/indice" style="color:#177A47;font-weight:600;">Índice semanal do mercado</a> ·
+        <a href="/sobrevalorizados" style="color:#177A47;font-weight:600;">Onde se pede acima do valor justo</a>
+      </p>
+      ${builtAt ? `<p class="mono fc-prov" data-updated="${escapeHtml(String(builtAt).slice(0, 10))}" data-measure="live-deal-feed" data-source="OLX Portugal">Anúncios ativos recolhidos ao longo do dia · preços de referência atualizados a ${escapeHtml(String(builtAt).slice(0, 10))} · fonte: OLX Portugal</p>` : ""}
+    </section>` : "";
+
   const n = deals.length;
   const head = lens === "comprar"
     ? { h1: "Carros abaixo do preço", sub: `Portugal — ${ZONE_LABEL[zone] || zone} · ${n} ${n === 1 ? "carro" : "carros"} a valer mais do que custam` }
@@ -1124,6 +1224,7 @@ export function renderGrid({ deals, zone, sort, view, unlockedSet, depositEur, d
         </div>
       </div>
       <div class="grid">${tiles}</div>
+      ${modelChips}
     </div>
     <button type="button" class="to-top" aria-label="Voltar ao topo">↑</button>`;
   const origin = host ? `https://${host}` : "";
@@ -1766,19 +1867,70 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
     source: rec ? "listing" : "model",
     has_listing: Boolean(olxId),
   }) : "";
+  // Structured data for the site's most commercial query ("quanto vale o meu
+  // carro"). This page had none at all — it is a free tool, so WebApplication
+  // with a zero-price Offer is the accurate type, and the FAQ answers the three
+  // objections people actually arrive with. Only on the bare page: the ?q=
+  // variants are noindex, and schema on a noindex page is wasted markup.
+  const jsonLd = (origin && isBare) ? {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebApplication",
+        "name": "Avaliação de carros usados",
+        "url": `${origin}/avaliar`,
+        "applicationCategory": "FinanceApplication",
+        "operatingSystem": "Web",
+        "inLanguage": "pt-PT",
+        "isAccessibleForFree": true,
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "EUR" },
+        "provider": { "@type": "Organization", "name": "Flipper Club", "url": `${origin}/` },
+        "description": "Cola o link de um anúncio de carro usado do OLX Portugal e recebe o preço justo estimado, o desvio face ao mercado e o aviso de importação por legalizar.",
+        "featureList": [
+          "Preço justo estimado para o anúncio concreto",
+          "Diferença face ao preço pedido",
+          "Aviso de viatura importada com ISV por pagar",
+          "Preço mediano do modelo e do ano",
+        ],
+      },
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          { "@type": "ListItem", "position": 1, "name": "Início", "item": `${origin}/` },
+          { "@type": "ListItem", "position": 2, "name": "Avaliar o meu carro" },
+        ],
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          ["Quanto vale o meu carro usado em Portugal?",
+           "Cola o link do anúncio do teu carro no OLX e devolvemos o valor justo estimado para essa viatura concreta, com os seus quilómetros, ano e versão, além do preço mediano pedido pelo mesmo modelo no mercado. Se ainda não tens anúncio, escolhe o modelo e o ano para veres a mediana do mercado."],
+          ["A avaliação é grátis?",
+           "Sim. A avaliação de um anúncio e os preços por modelo são gratuitos e sem registo. Só se paga um depósito reembolsável de 5 € para desbloquear o contacto de um vendedor no mercado de negócios, e esse depósito é devolvido."],
+          ["Esta avaliação serve para vender ao meu stand ou ao seguro?",
+           "É uma estimativa independente a partir de anúncios reais e serve para saber por quanto anunciar ou quanto oferecer. Não é uma avaliação oficial para efeitos de seguro, sinistro ou fiscais, e não somos stand nem intermediário."],
+          ["De onde vêm os valores?",
+           "De anúncios ativos de carros no OLX Portugal, recolhidos diariamente. Trabalhamos com preços pedidos, com a mediana e o intervalo interquartil, e com um modelo estatístico para o valor justo. O método completo está publicado na página de metodologia."],
+        ].map(([q, a]) => ({
+          "@type": "Question", "name": q,
+          "acceptedAnswer": { "@type": "Answer", "text": a },
+        })),
+      },
+    ],
+  } : null;
   return layout({
     title: rec
       ? `${rec.t}: preço justo e avaliação`
       : "Quanto vale o meu carro? Avaliação grátis de carros usados",
     description: "Cola o link de qualquer anúncio OLX ou StandVirtual e sabe o preço justo do carro, quanto poupas ou pagas a mais, e se tem ISV por pagar. Avaliação independente e grátis.",
-    body: body + valuation, zone: "all", nav: "avaliar", depositCount, index: isBare,
+    body: body + valuation, zone: "all", nav: "avaliar", depositCount, index: isBare, jsonLd,
     host, canonical: origin ? `${origin}/avaliar` : null,
   });
 }
 
 // Freshness: ISO build stamp → PT short date ("1 jul 2026"). "" when absent.
 const PT_MON = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
-function fmtBuilt(iso) {
+export function fmtBuilt(iso) {
   const m = (typeof iso === "string") ? iso.match(/^(\d{4})-(\d{2})-(\d{2})/) : null;
   return m ? `${+m[3]} ${PT_MON[+m[2] - 1]} ${m[1]}` : "";
 }
@@ -1788,7 +1940,9 @@ function fmtBuilt(iso) {
 // (below fair), already filtered by the worker. siblings = same-brand models.
 // builtAt = models.json build stamp (freshness signal). rec.gl/gm/gh = the
 // MODEL fair-value band, present only when it cleared the build-time guards.
-export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositCount, builtAt }) {
+export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositCount, builtAt,
+                                  insights = [], yearPages = [], competitors = [], comparisons = [],
+                                  hasDepreciation = false, provenanceHtml = "", altJson = null }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
   const FM = fmtEur(rec.fm), FL = fmtEur(rec.fl), FH = fmtEur(rec.fh);
   const FRESH = fmtBuilt(builtAt);
@@ -1818,6 +1972,7 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
       </div>
       ${fuelChips ? `<div class="chips" style="margin-top:16px;">${fuelChips}</div>` : ""}
       <div class="mono" style="font-size:11.5px;color:#9A9FA8;margin-top:14px;line-height:1.5;">Preços PEDIDOS em anúncios ativos do OLX — não preço de venda fechado. Estimativa indicativa.${FRESH ? ` · Atualizado a ${FRESH}` : ""}</div>
+      ${provenanceHtml}
     </div>`;
 
   // 1b. Model fair-value band — only when it cleared the build-time guards
@@ -1853,6 +2008,20 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
       </div>
     </section>` : "";
 
+  // 1c. What these numbers mean for THIS model.
+  //
+  // Generated from the model's own figures against the corpus (seo-pages.js
+  // modelInsights), not written once and reused: the previous page had ~49%
+  // seven-gram overlap with every other model page, which is the reason a
+  // thousand-page expansion would have been partly de-indexed. A rule only
+  // speaks when this model actually differs, so the block is a different length
+  // and a different shape on every page.
+  const insightBlock = (insights && insights.length) ? `
+    <section class="section" style="padding:30px 22px 0;max-width:680px;">
+      <h2 class="panel-title" style="font-size:18px;margin:0 0 12px;">O que estes números dizem sobre o ${B} ${M}</h2>
+      <ul class="fc-insights">${insights.map(t => `<li>${t}</li>`).join("")}</ul>
+    </section>` : "";
+
   // 2. Live matching listings (conversion bridge #1)
   let bridge1;
   if (liveDeals && liveDeals.length) {
@@ -1880,8 +2049,13 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
   }
 
   // 3. Per-year table
+  // Years that cleared the year-page floor become links: this is the crawl path
+  // into the 565 model-year pages, and the one a reader wants anyway.
+  const yearHref = y => `/preco/${slug}/${y}`;
   const yrRows = (rec.yr || []).map(c => `<tr>
-      <td>${escapeHtml(String(c.y))}</td>
+      <td>${(typeof c.y === "number" && yearPages.includes(c.y))
+        ? `<a href="${yearHref(c.y)}" style="color:#177A47;font-weight:600;">${c.y}</a>`
+        : escapeHtml(String(c.y))}</td>
       <td>${c.n}</td>
       <td>${fmtEur(c.fm)}</td>
       <td class="mut">${c.gm != null ? fmtEur(c.gm) : "—"}</td>
@@ -1935,6 +2109,29 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
       </div>
     </section>`;
 
+  // 7b. Cross-brand links — the ones a buyer actually wants and the page had
+  // none of. Sibling chips only ever led to the same brand's own ladder
+  // (Golf → Passat → Polo), so a reader comparing a Golf with an Astra had to
+  // leave, and the crawler saw 243 brand-shaped islands instead of one graph.
+  const compChips = (competitors || []).slice(0, 6).map(c =>
+    `<a class="mchip" href="/preco/${encodeURIComponent(c.slug)}">${escapeHtml(c.b)} ${escapeHtml(c.m)} <span class="mut">${fmtEur(c.fm)}</span></a>`).join("");
+  const cmpChips = (comparisons || []).slice(0, 4).map(c =>
+    `<a class="mchip" href="/comparar/${c.href}">${escapeHtml(rec.m)} <span class="mut">vs</span> ${escapeHtml(c.m)}</a>`).join("");
+  const rivals = (compChips || cmpChips) ? `
+    <section class="section" style="padding:34px 22px 0;max-width:1180px;">
+      ${compChips ? `<div class="sec-label">ALTERNATIVAS NA MESMA FAIXA DE PREÇO</div><div class="mchips">${compChips}</div>` : ""}
+      ${cmpChips ? `<div class="sec-label" style="margin-top:22px;">COMPARAÇÕES DIRETAS</div><div class="mchips">${cmpChips}</div>` : ""}
+    </section>` : "";
+
+  // 7c. Depreciation, where the curve exists.
+  const depLink = hasDepreciation ? `
+    <section class="section" style="padding:26px 22px 0;max-width:680px;">
+      <div class="exclusive" style="background:#F6FBF8;border:1px solid #DDEBE1;align-items:flex-start;">
+        <span style="font-size:15px;">📉</span>
+        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">Quanto perde por ano.</b> Temos histórico suficiente para traçar a curva de desvalorização do ${B} ${M} e dizer onde a queda abranda. <a href="/depreciacao/${slug}" style="color:#177A47;font-weight:600;">Ver a curva&nbsp;→</a></span>
+      </div>
+    </section>` : "";
+
   // 8. Sibling models footer
   const sibChips = (siblings || []).slice(0, 8).map(s =>
     `<a class="mchip" href="/preco/${encodeURIComponent(s.slug)}">${escapeHtml(s.m)} <span class="mut">${fmtEur(s.fm)}</span></a>`).join("");
@@ -1949,7 +2146,7 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
   // internal links back to / and /precos (reinforcing the crawl spine).
   const crumb = `<nav class="section" aria-label="Breadcrumb" style="max-width:680px;padding:22px 22px 0;font-size:12.5px;color:#8A8F98;">`
     + `<a href="/" style="color:#8A8F98;">Início</a> › <a href="/precos" style="color:#8A8F98;">Preços</a> › <span style="color:#16181D;">${B} ${M}</span></nav>`;
-  const body = `${crumb}<div style="padding-top:14px;">${hero}</div>${gbmCard}${bridge1}${table}${bridge2}${trust}${sellerCta}${sib}`;
+  const body = `${crumb}<div style="padding-top:14px;">${hero}</div>${gbmCard}${insightBlock}${bridge1}${table}${depLink}${bridge2}${trust}${rivals}${sellerCta}${sib}`;
 
   const canonical = `https://${host}/preco/${slug}`;
   const faq = (q, a) => ({
@@ -2004,6 +2201,37 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
         "variableMeasured": hasG ? ["Preço pedido (EUR)", "Valor justo estimado (EUR)"] : "Preço pedido (EUR)",
         "dateModified": builtAt || undefined,
         "url": canonical,
+        ...(altJson ? {
+          "distribution": {
+            "@type": "DataDownload",
+            "encodingFormat": "application/json",
+            "contentUrl": altJson,
+          },
+        } : {}),
+      },
+      // AggregateOffer over the asking prices, NOT a Product.
+      //
+      // Product/Offer would assert that we sell these cars; we don't, and
+      // marking up merchandise you don't sell is what earns a manual action.
+      // AggregateOffer with lowPrice/highPrice/offerCount and no seller is the
+      // accurate description of what this page holds: the range of asking
+      // prices across N third-party listings. itemOffered names the vehicle so
+      // the offer isn't floating free of its subject.
+      {
+        "@type": "AggregateOffer",
+        "priceCurrency": "EUR",
+        "lowPrice": rec.fl, "highPrice": rec.fh, "offerCount": rec.n,
+        "url": canonical,
+        "itemOffered": {
+          "@type": "Car",
+          "name": `${rec.b} ${rec.m}`,
+          "brand": { "@type": "Brand", "name": rec.b },
+          "model": rec.m,
+          ...(rec.kmm != null ? {
+            "mileageFromOdometer": { "@type": "QuantitativeValue", "value": rec.kmm, "unitCode": "KMT" },
+          } : {}),
+          ...(Array.isArray(rec.fu) && rec.fu.length ? { "fuelType": rec.fu[0][0] } : {}),
+        },
       },
       {
         "@type": "BreadcrumbList",
@@ -2025,7 +2253,7 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
   return layout({
     title: `Quanto vale um ${rec.b} ${rec.m} usado? Preço em Portugal`,
     description: `${rec.b} ${rec.m} usado em Portugal: preço mediano ${FM} (intervalo ${FL}–${FH}), com base em ${rec.n} anúncios ativos no OLX. Preços por ano e avaliação independente grátis.`,
-    canonical, jsonLd, body, zone: "all", nav: "precos", depositCount, index: true, host,
+    canonical, jsonLd, body, zone: "all", nav: "precos", depositCount, index: true, host, altJson,
   });
 }
 
@@ -2055,6 +2283,15 @@ export function renderModelsHub({ models, depositCount, builtAt, host }) {
           <a class="btn-dark" href="/avaliar">Avaliar o TEU carro&nbsp;&nbsp;→</a>
           <a class="chip" href="/mercado">Ver mercado</a>
         </div>
+        <p style="font-size:13.5px;color:#5B606B;margin:20px 0 0;line-height:1.9;">
+          Também aqui:
+          <a href="/depreciacao" style="color:#177A47;font-weight:600;">que modelos perdem mais valor</a> ·
+          <a href="/liquidez" style="color:#177A47;font-weight:600;">quanto tempo demoram a vender</a> ·
+          <a href="/comparar" style="color:#177A47;font-weight:600;">comparações diretas</a> ·
+          <a href="/sobrevalorizados" style="color:#177A47;font-weight:600;">pedido vs. valor justo</a> ·
+          <a href="/mercado/indice" style="color:#177A47;font-weight:600;">índice semanal</a> ·
+          <a href="/metodologia" style="color:#177A47;font-weight:600;">como calculamos</a>
+        </p>
       </div>
     </section>
     <section class="section" style="padding:18px 22px 70px;max-width:1180px;">${groups}</section>`;

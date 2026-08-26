@@ -110,3 +110,12 @@ jobs:
           # Разъедутся формулы, и согласившийся покупатель даст двойную выручку.
           grep -q 'session.id}`' flipper-club/src/index.js
           grep -q 'rec.stripe_session_id' flipper-club/src/index.js
+          # Полный прогон страниц и роутера: node --check и esbuild ловят только
+          # то, что не парсится, а харнессы рендерят каждую публичную страницу и
+          # гоняют роутер через worker.fetch() - коды ответов, canonical, robots,
+          # разбираемый JSON-LD, совпадение sitemap с роутером, порт ISV против
+          # isv.py и то, что аналитика молчит без Measurement ID.
+          # Идут по коммиченному фикстуру, поэтому сбой релиза latest-data не
+          # красит ветку. Вручную по живому блобу - без аргумента.
+          node tests/worker/render_smoke.mjs tests/worker/fixtures/models.json
+          node tests/worker/route_smoke.mjs  tests/worker/fixtures/models.json

@@ -12,6 +12,11 @@ not closed-sale prices; per-year cells are gated on sample size, thin years merg
 into bands or honestly omitted (yrs_thin). Predicted/fair bands stay in
 valuations.json for the per-listing /avaliar tool — this file is asking-price only.
 
+Beyond the per-year cells, each model also carries FACET cells where the sample
+allows: ``fx`` (fuel: diesel/gasolina/GPL) and ``dt`` (district), plus a
+top-level ``districts`` rollup for the cross-model geo pages. Same gate as
+everything else - a facet with a thin sample is absent, not estimated.
+
 slugify() MUST stay byte-identical to the JS slugify() in
 flipper-club/src/templates.js (paired-comment pact, like
 valuations.py::_import_flags ↔ templates.js::importInfo). If they drift, the
@@ -33,6 +38,25 @@ from src.analytics.valuations import _i
 MIN_MODEL_N = 20
 MIN_YEAR_N = 5
 MAX_YEAR_ROWS = 25          # cap emitted year rows (most recent) to bound size
+
+# ── Facet cells (fuel, district) ─────────────────────────────────────────────
+# Higher floor than a year row: a facet page is a page, and "quanto vale um Golf
+# diesel" is only worth answering separately if the diesel sample can carry its
+# own median. 15 is where the facet median stops crossing the model median in
+# the wrong direction on the current corpus.
+MIN_FACET_N = 15
+MAX_DISTRICT_ROWS = 8       # per model, deepest districts only
+
+# Only three fuels get facets. The raw fuel_type vocabulary carries near-
+# duplicates that would slug into competing pages for the same thing
+# ("Hibrido Plug-in" vs "Plug-In", "Electrico" vs "Eletrico"), and the query
+# cluster that actually exists is diesel-vs-gasolina anyway. The full mix still
+# ships in ``fu`` for the chart; this is only about which facets get a URL.
+_FUEL_FACETS = {"diesel": "Diesel", "gasolina": "Gasolina", "gpl": "GPL"}
+
+# National floor for a district to get its own cross-model page.
+MIN_DISTRICT_N = 200
+MAX_DISTRICT_TOP_MODELS = 40
 
 # ── GBM fair-value display guards ────────────────────────────────────────────
 # The asking quantiles above always ship. The MODEL's fair-value band (gl/gm/gh)
@@ -173,6 +197,84 @@ def _year_cells(grp: pd.DataFrame) -> tuple[list[dict], int]:
     return cells[:MAX_YEAR_ROWS], yrs_thin
 
 
+def _fuel_facet_key(value) -> str | None:
+    """Canonical facet key for a raw fuel_type, or None if it gets no facet."""
+    k = slugify(str(value or ""))
+    return k if k in _FUEL_FACETS else None
+
+
+def _facet_cells(grp: pd.DataFrame, col: str, keyer, labeller,
+                 min_n: int, limit: int | None = None) -> list[dict]:
+    """Asking-price cells for one facet dimension (fuel or district).
+
+    Same shape and same honesty rules as ``_year_cells``: median WITH its
+    P25-P75, gated on sample size, and simply absent when the sample is thin —
+    never merged with an unrelated bucket to reach the floor.
+    """
+    if col not in grp.columns:
+        return []
+    keys = grp[col].map(keyer)
+    out: list[dict] = []
+    for key, sub in grp.assign(_k=keys).dropna(subset=["_k"]).groupby("_k"):
+        if len(sub) < min_n:
+            continue
+        q = _quantiles(sub["price_eur"])
+        if not q:
+            continue
+        cell = {"k": str(key), "lbl": labeller(sub[col].iloc[0]),
+                "n": int(len(sub)), "fl": q[0], "fm": q[1], "fh": q[2]}
+        kmv = pd.to_numeric(sub.get("mileage_km"), errors="coerce").dropna()
+        if len(kmv) >= min_n:
+            cell["km"] = _i(kmv.median())
+        yrs = pd.to_numeric(sub.get("year"), errors="coerce").dropna()
+        if len(yrs):
+            cell["y0"], cell["y1"] = int(yrs.min()), int(yrs.max())
+        out.append(cell)
+    out.sort(key=lambda c: -c["n"])
+    return out[:limit] if limit else out
+
+
+def _district_rollup(active: pd.DataFrame, models: dict) -> dict:
+    """Cross-model district cut: what a car costs in Porto vs Lisboa.
+
+    Separate from the per-model district cells because the query is different -
+    "carros usados Lisboa precos" is about the market, not about one model - and
+    because the sample only supports it at the national level for most places.
+    """
+    if "district" not in active.columns:
+        return {}
+    out: dict[str, dict] = {}
+    slug_of = {}
+    for slug, rec in models.items():
+        slug_of[(rec["b"], rec["m"])] = slug
+    for raw, sub in active.assign(_d=active["district"].map(slugify)).dropna(subset=["_d"]).groupby("_d"):
+        if not raw or len(sub) < MIN_DISTRICT_N:
+            continue
+        q = _quantiles(sub["price_eur"])
+        if not q:
+            continue
+        rec: dict = {"lbl": str(sub["district"].iloc[0]), "n": int(len(sub)),
+                     "fl": q[0], "fm": q[1], "fh": q[2]}
+        kmv = pd.to_numeric(sub.get("mileage_km"), errors="coerce").dropna()
+        if len(kmv):
+            rec["kmm"] = _i(kmv.median())
+        # Deepest models in this district, but only those that HAVE a page —
+        # a link to a model page we never published is a 404 in the making.
+        top = []
+        for (brand, model), g in sub.groupby(["brand", "model"]):
+            slug = slug_of.get((str(brand), str(model)))
+            if slug is None or len(g) < MIN_YEAR_N:
+                continue
+            gq = _quantiles(g["price_eur"])
+            if not gq:
+                continue
+            top.append([slug, int(len(g)), gq[1]])
+        top.sort(key=lambda t: -t[1])
+        rec["top"] = top[:MAX_DISTRICT_TOP_MODELS]
+        out[str(raw)] = rec
+    return out
+
+
 def build_model_pages(
     listings: pd.DataFrame,
     sell_speed: pd.DataFrame | None = None,
@@ -239,6 +341,17 @@ def build_model_pages(
             rec["yr"] = yr_cells
         if yrs_thin:
             rec["yt"] = int(yrs_thin)
+        # Facet cells — the Worker turns each into /preco/{slug}/{facet} and
+        # simply serves no such page while the key is absent, so shipping this
+        # ahead of the pages is safe.
+        fx = _facet_cells(grp, "fuel_type", _fuel_facet_key,
+                          lambda v: _FUEL_FACETS[_fuel_facet_key(v)], MIN_FACET_N)
+        if fx:
+            rec["fx"] = fx
+        dt = _facet_cells(grp, "district", lambda v: slugify(str(v or "")) or None,
+                          lambda v: str(v), MIN_FACET_N, limit=MAX_DISTRICT_ROWS)
+        if dt:
+            rec["dt"] = dt
         models[slug] = {k: v for k, v in rec.items() if v is not None}
         if valuator is not None:
             keep = [c for c in _GBM_COLS if c in grp.columns]
@@ -247,7 +360,11 @@ def build_model_pages(
     if valuator is not None and models:
         _apply_gbm_bands(models, page_groups, valuator)
 
-    return {"v": 1, "models": models}
+    doc = {"v": 1, "models": models}
+    districts = _district_rollup(active, models)
+    if districts:
+        doc["districts"] = districts
+    return doc
 
 
 def _apply_gbm_bands(

@@ -102,5 +102,38 @@ GA4_MEASUREMENT_ID = "G-2RSXJHJJYP"
 # bound, and the edge serving 200 under a valid CN=carsbuyer.org certificate.
 CANONICAL_HOST = "carsbuyer.org"
 
+# Who stands behind the numbers, shown on /sobre and /metodologia and emitted as
+# schema.org author/founder + Organization email.
+#
+# Deliberately empty by default. For a money topic, naming a person and a
+# reachable address is a real trust signal — but an invented address is a
+# promise the site cannot keep, and that is worse than staying anonymous. Fill
+# these in and both pages grow the block; leave them and both render the
+# brand-level version with no author and no mailto.
+SITE_AUTHOR = ""
+SITE_CONTACT_EMAIL = ""
+
+# Staged rollout of the second SEO layer (model-year, depreciation, comparison
+# and facet pages). Caps it to the N deepest-sampled models; empty = no cap.
+#
+# 565 model-year pages arriving on one crawl is a bad way to learn whether the
+# layer works: 40% indexation could be an unconvincing template or a crawl-budget
+# wall, and there is no way to tell them apart afterwards. Release in waves of
+# 100-200 URLs, check indexation and positions in Search Console for that wave,
+# then widen. Measured against the 2026-08-25 blob, N maps to new URLs like this
+# (year + depreciation + comparison pages):
+#
+#   SEO_WAVE_MODELS = "10"   ->  191    "30"  ->  410    "120" ->  662
+#                     "20"   ->  310    "60"  ->  580    ""    ->  697
+#
+# The curve is steep at the start because the deepest-sampled models are also the
+# ones with the most publishable years — 10 models already carry 171 of the 565
+# year pages. "10" is the right first wave.
+#
+# The gate is read by the router, the sitemap AND the year links on the model
+# page, so a page outside the wave is unreachable and unlinked — never a link to
+# a 404. Widening is only this number: no code deploy, no data rebuild.
+SEO_WAVE_MODELS = ""
+
 [observability]
 enabled = true

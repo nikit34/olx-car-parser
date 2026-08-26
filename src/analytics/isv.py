@@ -8,6 +8,13 @@ rates are unchanged from 2024/2025 (OE 2026 made no ISV-rate change).
 ISV = [ componente_cilindrada + componente_CO2 + (€500 partículas if diesel) ]
       × (1 − redução_por_anos_de_uso)        # EU-registered used cars
 
+The BRACKETS BELOW ARE LOCK-STEP with ISV_TABLES in
+flipper-club/src/seo-pages.js, which powers the public /isv calculator
+(paired-comment pact, like slugify <-> model_pages.slugify). Change one, change
+both: a public simulator quoting last year's tables is worse than no simulator,
+and tests/worker/render_smoke.mjs spot-checks one bracket from each table to
+catch the drift.
+
 Honesty (project rule "flag, don't fake"): returns None when we lack a mandatory
 input (CO2, engine_cc, fuel, first-registration year) or when the car is a PHEV
 (special reduced regime that needs per-car eligibility we don't have). A BEV is
