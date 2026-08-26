@@ -103,6 +103,24 @@ jobs:
 
             setAnalyticsId('');
 
+            // Первый тест самого обработчика, а не шаблонов. Признаки настройки
+            // нужны потому, что опечатку в имени секрета в панели Cloudflare
+            // иначе не отличить от рабочей настройки до первой оплаты.
+            const worker = (await import('./flipper-club/src/index.js')).default;
+            const env = { GA4_MEASUREMENT_ID: 'G-TESTONLY', GA4_API_SECRET: 'x', STRIPE_SECRET_KEY: 'sk_test_x' };
+            const verbose = await worker.fetch(new Request('https://carsbuyer.org/healthz?verbose=1'), env);
+            if (verbose.headers.get('cache-control') !== 'no-store')
+              throw new Error('health verbose must not be cacheable');
+            const flags = await verbose.json();
+            if (!(flags.ga4_tag && flags.ga4_mp_secret && flags.stripe))
+              throw new Error('health verbose lost a configuration flag');
+            const off = await (await worker.fetch(new Request('https://carsbuyer.org/healthz?verbose=1'), {})).json();
+            if (off.ga4_mp_secret || off.stripe)
+              throw new Error('health verbose reports configuration that is absent');
+            const bare = await worker.fetch(new Request('https://carsbuyer.org/healthz'), env);
+            if ((await bare.text()) !== 'ok')
+              throw new Error('bare healthz body changed - external monitors match on it');
+
             console.log('worker templates render OK');
           "
           # Клиентский purchase и серверный через Measurement Protocol обязаны

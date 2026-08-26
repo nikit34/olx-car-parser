@@ -129,7 +129,29 @@ export default {
     setAnalyticsId(env.GA4_MEASUREMENT_ID);
 
     try {
-      if (pathname === "/healthz") return new Response("ok", { status: 200 });
+      if (pathname === "/healthz") {
+        // С флагом verbose отдаём только булевы признаки настройки, без самих
+        // значений. Иначе опечатку в имени секрета или обрезанную вставку не
+        // отличить от рабочей настройки до первой оплаты, а серверный purchase
+        // в этом случае просто молчит. Тело без флага оставлено прежним: на
+        // него может смотреть внешний монитор. Ответ не кешируется - кеш здесь
+        // означал бы устаревшую правду о настройках.
+        if (url.searchParams.get("verbose") === "1") {
+          return new Response(JSON.stringify({
+            ok: true,
+            ga4_tag: Boolean((env.GA4_MEASUREMENT_ID || "").trim()),
+            ga4_mp_secret: Boolean((env.GA4_API_SECRET || "").trim()),
+            stripe: stripeConfigured(env),
+          }, null, 2), {
+            status: 200,
+            headers: {
+              "content-type": "application/json; charset=utf-8",
+              "cache-control": "no-store",
+            },
+          });
+        }
+        return new Response("ok", { status: 200 });
+      }
 
       // Scraper egress relay. Must sit here, above both the canonical-host
       // redirect and the PRODUCT_PATHS asset gate: it is neither a product
