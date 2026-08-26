@@ -21,7 +21,7 @@ import {
   setSiteIdentity, corpusStats, modelInsights, provenance,
   yearCells, yearCell, yearPageYears, depreciationOk, depreciationFit, depreciationSlugs,
   comparePairs, parseComparePath, comparePairKey, modelJson, yearJson, MIN_YEAR_PAGE_N,
-  estimateIsv, ISV_TABLES_FOR_TEST,
+  estimateIsv, ISV_TABLES_FOR_TEST, renderDistrictPage,
 } from "../../flipper-club/src/seo-pages.js";
 
 const HOST = "carsbuyer.org";
@@ -352,6 +352,24 @@ check("market index renders, current and archived", () => {
   const archive = renderMarketIndex({ snapshot: snap, history: [prev, snap], host: HOST, depositCount: 0, isArchive: true });
   assertPage(archive, { indexable: true, canonical: `https://${HOST}/mercado/indice/2026-w35`, label: "indice archive" });
   assert(archive.includes("2026-W35"), "archive page does not show the ISO week");
+});
+
+check("district pages take the right Portuguese article", () => {
+  // "em Porto" reads wrong to a Portuguese speaker; Porto takes the article.
+  // Everything else is bare "em". The article is lexical, so this is a list, and
+  // a list needs a test or it silently loses an entry.
+  const mk = (key, lbl) => renderDistrictPage({
+    key, rec: { lbl, n: 4000, fl: 4000, fm: 8000, fh: 14000, kmm: 175000, top: [] },
+    models, stats, host: HOST, depositCount: 0, builtAt,
+  });
+  const porto = mk("porto", "Porto");
+  assert(porto.includes("carros usados no Porto"), 'Porto lost its article ("em Porto")');
+  assert(!porto.includes("carros usados em Porto"), 'Porto still says "em Porto" somewhere');
+  assert(porto.includes("<title>Preços de carros usados no Porto"), "the title is what people see in the SERP");
+  for (const [key, lbl] of [["lisboa", "Lisboa"], ["braga", "Braga"], ["faro", "Faro"], ["setubal", "Setúbal"]]) {
+    const h = mk(key, lbl);
+    assert(h.includes(`carros usados em ${lbl}`), `${lbl} should be bare "em"`);
+  }
 });
 
 check("404 page is noindex, links back, and never 401s in spirit", () => {

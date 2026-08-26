@@ -1801,7 +1801,7 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
       </div>
     </section>
     <section class="section fc-wrap" style="padding-bottom:70px;">
-      <p class="fc-p"><a href="/preco/${slug}">Todos os ${B} ${M}</a>${isFuel ? "" : ` · <a href="/precos/${cell.k}">Carros usados em ${escapeHtml(cell.lbl)}</a>`} · <a href="/precos">Todos os modelos</a></p>
+      <p class="fc-p"><a href="/preco/${slug}">Todos os ${B} ${M}</a>${isFuel ? "" : ` · <a href="/precos/${cell.k}">Carros usados ${emDistrito(cell.k, escapeHtml(cell.lbl))}</a>`} · <a href="/precos">Todos os modelos</a></p>
     </section>`;
 
   const faqs = [[
@@ -1854,6 +1854,18 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
 }
 
 // ═══ /precos/{distrito} — the market in one district ═════════════════════════
+// Portuguese district names and the definite article.
+//
+// Most districts take a bare "em Lisboa" / "em Braga" / "em Faro". Porto takes
+// the article — "no Porto" — and "em Porto" reads wrong to any Portuguese
+// speaker, which on a site whose whole claim is local credibility is a worse
+// look than it is a grammar slip. An exception list rather than a rule, because
+// that is honestly what it is: the article is lexical, not derivable.
+const DISTRICT_ARTICLE = { porto: "no" };
+function emDistrito(key, label) {
+  return `${DISTRICT_ARTICLE[key] || "em"} ${label}`;
+}
+
 export function renderDistrictPage({ key, rec, models, stats, host, depositCount, builtAt }) {
   const canonical = `https://${host}/precos/${key}`;
   const L = escapeHtml(rec.lbl);
@@ -1874,8 +1886,8 @@ export function renderDistrictPage({ key, rec, models, stats, host, depositCount
   ]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">${L.toUpperCase()} · OLX PORTUGAL</span></div>
-      <h1 class="fc-h1">Preços de carros usados em ${L}</h1>
-      <p class="fc-p">Nos <b>${fmtNum(rec.n)} anúncios ativos</b> com localização em ${L}, o preço pedido mediano é <b>${fmtEur(rec.fm)}</b>${rec.kmm != null ? `, com ${fmtKm(rec.kmm)} de quilometragem mediana` : ""}.${vsNational != null ? ` Isso é <b>${Math.abs(Math.round(vsNational * 100))}% ${vsNational >= 0 ? "acima" : "abaixo"}</b> da mediana nacional (${fmtEur(stats.priceMed)}).` : ""}</p>
+      <h1 class="fc-h1">Preços de carros usados ${emDistrito(key, L)}</h1>
+      <p class="fc-p">Nos <b>${fmtNum(rec.n)} anúncios ativos</b> com localização ${emDistrito(key, L)}, o preço pedido mediano é <b>${fmtEur(rec.fm)}</b>${rec.kmm != null ? `, com ${fmtKm(rec.kmm)} de quilometragem mediana` : ""}.${vsNational != null ? ` Isso é <b>${Math.abs(Math.round(vsNational * 100))}% ${vsNational >= 0 ? "acima" : "abaixo"}</b> da mediana nacional (${fmtEur(stats.priceMed)}).` : ""}</p>
       <div class="fc-stat-row" style="margin:18px 0 6px;">
         <div class="fc-stat"><div class="k">MEDIANO AQUI</div><div class="v">${fmtEur(rec.fm)}</div><div class="s">${fmtEur(rec.fl)} – ${fmtEur(rec.fh)}</div></div>
         <div class="fc-stat"><div class="k">ANÚNCIOS</div><div class="v">${fmtNum(rec.n)}</div><div class="s">ativos agora</div></div>
@@ -1884,7 +1896,7 @@ export function renderDistrictPage({ key, rec, models, stats, host, depositCount
       ${provenance({ n: rec.n, builtAt, measure: `Preço pedido em anúncios com localização em ${rec.lbl}` })}
     </section>
     ${rows ? `<section class="section fc-wrap">
-      <h2 class="fc-h2">Modelos mais anunciados em ${L}</h2>
+      <h2 class="fc-h2">Modelos mais anunciados ${emDistrito(key, L)}</h2>
       <p class="fc-p">A última coluna é o que interessa: onde o preço local se afasta do nacional, ou há mais oferta aqui, ou o mesmo carro custa mais por causa da procura.</p>
       <div class="fc-scroll"><table class="fc-tbl">
         <thead><tr><th>Modelo</th><th>Anúncios aqui</th><th>Mediano aqui</th><th>Mediano nacional</th><th>Diferença</th></tr></thead>
@@ -1895,16 +1907,16 @@ export function renderDistrictPage({ key, rec, models, stats, host, depositCount
     </section>`;
 
   return layout({
-    title: `Preços de carros usados em ${rec.lbl}`,
-    description: `Carros usados em ${rec.lbl}: preço mediano ${fmtEur(rec.fm)} em ${fmtNum(rec.n)} anúncios ativos do OLX, e como cada modelo se compara com a mediana nacional.`,
+    title: `Preços de carros usados ${emDistrito(key, rec.lbl)}`,
+    description: `Carros usados ${emDistrito(key, rec.lbl)}: preço mediano ${fmtEur(rec.fm)} em ${fmtNum(rec.n)} anúncios ativos do OLX, e como cada modelo se compara com a mediana nacional.`,
     canonical, body, zone: "all", nav: "precos", depositCount, index: true, host,
     jsonLd: {
       "@context": "https://schema.org",
       "@graph": [
         {
           "@type": "Dataset", "url": canonical, "inLanguage": "pt-PT",
-          "name": `Preços de carros usados em ${rec.lbl}`,
-          "description": `Preço pedido mediano e intervalo interquartil em ${rec.n} anúncios ativos de carros usados com localização em ${rec.lbl}, OLX Portugal.`,
+          "name": `Preços de carros usados ${emDistrito(key, rec.lbl)}`,
+          "description": `Preço pedido mediano e intervalo interquartil em ${rec.n} anúncios ativos de carros usados com localização ${emDistrito(key, rec.lbl)}, OLX Portugal.`,
           "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
           "isAccessibleForFree": true, "dateModified": builtAt || undefined,
           "spatialCoverage": { "@type": "Place", "name": rec.lbl, "containedInPlace": { "@type": "Country", "name": "Portugal" } },
