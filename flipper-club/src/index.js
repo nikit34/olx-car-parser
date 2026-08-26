@@ -106,6 +106,20 @@ export default {
       if (pathname.startsWith("/widget/preco/") && method === "GET") {
         return handleModelWidget(request, env, url);
       }
+      // Google Search Console ownership proof for the https://carsbuyer.org/
+      // URL-prefix property. Googlebot re-checks this file periodically, so it
+      // has to stay reachable for as long as the property exists — removing it
+      // silently un-verifies the site. Sits above the asset gate for the same
+      // reason as the share card: the Basic-Auth fallthrough would answer 401.
+      if (pathname === "/google153fadf0c569abd1.html" && method === "GET") {
+        return new Response("google-site-verification: google153fadf0c569abd1.html", {
+          status: 200,
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            "cache-control": "public, max-age=3600",
+          },
+        });
+      }
       // Public social-share card (og:image / twitter:image). Served from the
       // ASSETS bucket WITHOUT the analytics Basic-Auth gate — social scrapers
       // (Facebook, Telegram, LinkedIn, Reddit) fetch it unauthenticated.
