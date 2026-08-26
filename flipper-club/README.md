@@ -18,7 +18,7 @@ both live alongside each other on the same domain and deploy together.
 - Server-rendered HTML — no build step, no framework — `src/templates.js`
 - Data comes from `hot_deals_{zone}.json` artifacts uploaded to the `latest-data`
   Release by `scrape.yml`; the Worker fetches per-zone at request time and caches
-  in KV for 5 min. A missing/broken feed renders a degraded banner (no fake data).
+  in KV for 15 min. A missing/broken feed renders a degraded banner (no fake data).
 
 ## Routes
 

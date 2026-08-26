@@ -41,7 +41,7 @@
 // never the car. The deposit unlocks one olx_id's contact link, nothing else.
 //
 // Data source: getDeals() fetches hot_deals_{zone}.json from the latest-data
-// GitHub Release and caches it in KV for 5 min. A missing/broken feed renders a
+// GitHub Release and caches it in KV for 15 min. A missing/broken feed renders a
 // degraded banner (no fake data).
 
 import {
@@ -1581,7 +1581,7 @@ async function handleAssetGated(request, env) {
 
 const HOT_DEALS_BASE =
   "https://github.com/nikit34/olx-car-parser/releases/download/latest-data";
-const DEALS_CACHE_TTL_SEC = 300;
+const DEALS_CACHE_TTL_SEC = 900;
 const DEGRADED_CACHE_TTL_SEC = 30;
 
 // Returns { deals, degraded }. `degraded: true` means we could not load the
