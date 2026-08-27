@@ -1192,14 +1192,23 @@ export function renderValuationGap({ over, under, stats, host, depositCount, bui
 // figures change under the link is not citable, so every week gets its OWN
 // permanent URL (/mercado/indice/2026-W35) that never changes again, and the
 // bare /mercado/indice always shows the latest plus the trend.
-export function renderMarketIndex({ snapshot, history, host, depositCount, isArchive = false }) {
+export function renderMarketIndex({ snapshot, history, host, depositCount, isArchive = false, currentWeek = null }) {
   const wk = snapshot.week;                 // display form, ISO: "2026-W35"
   // URL form is lower-case, because the router normalises every public path to
   // lower case and a canonical that disagreed with its own URL would 301 to
   // itself. The page still SHOWS the ISO spelling.
   const wkSlug = wk.toLowerCase();
-  const canonical = isArchive
-    ? `https://${host}/mercado/indice/${wkSlug}`
+  // The week's own address is permanent and stays what the page tells people to
+  // cite, whether or not it is the canonical at this moment.
+  const permalink = `https://${host}/mercado/indice/${wkSlug}`;
+  // While a week is still the CURRENT week, its archive page and the bare
+  // /mercado/indice are the same cut. Two self-canonical URLs over identical
+  // numbers split the signal, and Search Console showed the symptom: the hub URL
+  // listed under the archive's title. So the live cut defers to the hub and only
+  // becomes its own canonical once the week closes and the hub moves on.
+  const isLiveCut = isArchive && currentWeek != null && wk === currentWeek;
+  const canonical = (isArchive && !isLiveCut)
+    ? permalink
     : `https://${host}/mercado/indice`;
   const prev = history.filter(h => h.week < wk).sort((a, b) => a.week < b.week ? 1 : -1)[0] || null;
   const delta = (now, then, fmt) => {
@@ -1242,7 +1251,7 @@ export function renderMarketIndex({ snapshot, history, host, depositCount, isArc
     </section>` : ""}
     <section class="section fc-wrap" style="padding-bottom:70px;">
       <h2 class="fc-h2">Podes citar isto</h2>
-      <p class="fc-p">Estes números podem ser usados com atribuição a Carsbuyer e indicação da data — mudam todas as semanas, por isso a data faz parte do número. ${isArchive ? `Endereço permanente desta semana: <span class="mono fc-url">${escapeHtml(canonical)}</span>.` : ""}</p>
+      <p class="fc-p">Estes números podem ser usados com atribuição a Carsbuyer e indicação da data — mudam todas as semanas, por isso a data faz parte do número. ${isArchive ? `Endereço permanente desta semana: <span class="mono fc-url">${escapeHtml(permalink)}</span>.` : ""}</p>
       <p class="fc-p"><a href="/precos">Preços por modelo</a> · <a href="/liquidez">Tempo de venda</a> · <a href="/sobrevalorizados">Pedido vs. valor justo</a> · <a href="/metodologia">Metodologia</a></p>
     </section>`;
 

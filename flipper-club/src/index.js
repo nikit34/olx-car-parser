@@ -813,7 +813,7 @@ async function handleMarketIndex(request, env, url) {
       try { snap = await env.KV.get(`${IDX_WEEK_PREFIX}${wk}`, "json"); } catch (_) {}
       if (!snap) snap = history.find(h => h.week === wk) || null;
       if (!snap) return notFoundPage(request, env, url, setCookie);
-      return html(renderMarketIndex({ snapshot: snap, history, host: url.host, depositCount, isArchive: true }), 200, setCookie);
+      return html(renderMarketIndex({ snapshot: snap, history, host: url.host, depositCount, isArchive: true, currentWeek: week }), 200, setCookie);
     }
 
     const current = history.find(h => h.week === week) || snapshotFrom(models, builtAt, week, today);
@@ -942,7 +942,14 @@ async function handleSitemap(request, env, url) {
     try {
       const history = await env.KV.get(IDX_LIST_KEY, "json");
       if (Array.isArray(history)) {
-        for (const h of history.slice(-52)) add(`/mercado/indice/${h.week.toLowerCase()}`, "yearly", "0.3");
+        // The current week is still exactly what /mercado/indice serves, so listing
+        // it here is what created the duplicate. It joins the sitemap next week,
+        // when it has closed and become a permanent cut.
+        const liveWeek = isoWeek(new Date());
+        for (const h of history.slice(-52)) {
+          if (h.week === liveWeek) continue;
+          add(`/mercado/indice/${h.week.toLowerCase()}`, "yearly", "0.3");
+        }
       }
     } catch (_) { /* archive is optional */ }
   }
