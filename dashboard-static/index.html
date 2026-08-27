@@ -141,7 +141,17 @@
           // omit lightgbm/joblib/scikit-learn — the dashboard reads precomputed
           // parquets and never runs inference, so leaving these out saves
           // ~20 MB of WASM and several seconds of cold-start.
-          requirements: ["pandas", "plotly", "pyarrow", "numpy"],
+          // Pinned to what @stlite/browser@1.7.3 actually ships (Pyodide
+          // 0.29.3). Unpinned, the dashboard rides whatever the CDN resolves,
+          // and a pandas major changes results instead of failing: a NA string
+          // starts rendering as the literal "nan", a merge key changes unit.
+          // These versions are valid only for THIS stlite build - micropip has
+          // no wheel for any other - so bumping the stlite URL above without
+          // bumping these fails at boot with "Can't find a pure Python 3 wheel".
+          // pyarrow stays unpinned on purpose: stlite mocks it (0.0.1), pinning
+          // it sends micropip after a wheel that does not exist, and parquet
+          // reading works through the mock as it is.
+          requirements: ["pandas==2.3.3", "plotly==7.0.0", "pyarrow", "numpy==2.2.5"],
           entrypoint: "\u{1F525}_Recommendations.py",
           files,
           streamlitConfig: {
