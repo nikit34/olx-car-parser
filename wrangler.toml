@@ -135,5 +135,18 @@ SITE_CONTACT_EMAIL = "permikov134@yandex.ru"
 # a 404. Widening is only this number: no code deploy, no data rebuild.
 SEO_WAVE_MODELS = "10"
 
+# Cron. Records the weekly market cut for /mercado/indice.
+#
+# Daily, not weekly, and the handler writes only when the current ISO week has
+# no row yet. Weekly would mean one shot per week: a failed Monday run, or a
+# broken data build that morning, would cost the whole week — and a missing week
+# is never recovered, because the numbers for a week that has passed no longer
+# exist. Six retries cost a KV read each.
+#
+# 00:05 UTC: just after midnight, so a new ISO week is recorded the moment it
+# starts rather than whenever a visitor happens to arrive.
+[triggers]
+crons = ["5 0 * * *"]
+
 [observability]
 enabled = true

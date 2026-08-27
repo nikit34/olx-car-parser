@@ -1186,13 +1186,65 @@ export function renderValuationGap({ over, under, stats, host, depositCount, bui
   });
 }
 
+// ── ISO week arithmetic ──────────────────────────────────────────────────────
+//
+// One implementation, imported by index.js. Two copies of a week calculation is
+// exactly how an archive ends up with a row labelled the wrong week.
+
+/** "2026-W35" for a Date. Thursday-anchored, which is what makes the week that
+ *  contains 1 January come out right: 28 Dec 2026 and 3 Jan 2027 are both W53. */
+export function isoWeek(d) {
+  const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const day = t.getUTCDay() || 7;
+  t.setUTCDate(t.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((t - yearStart) / 86400000) + 1) / 7);
+  return `${t.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+/** The Monday of an ISO week label. ISO week 1 is the one containing 4 January. */
+export function isoWeekStart(wk) {
+  const m = /^(\d{4})-W(\d{2})$/.exec(wk || "");
+  if (!m) return null;
+  const jan4 = new Date(Date.UTC(+m[1], 0, 4));
+  const day = jan4.getUTCDay() || 7;
+  const week1Mon = new Date(jan4);
+  week1Mon.setUTCDate(jan4.getUTCDate() - day + 1);
+  const out = new Date(week1Mon);
+  out.setUTCDate(week1Mon.getUTCDate() + (+m[2] - 1) * 7);
+  return out;
+}
+
+/**
+ * Weeks between the earliest recorded one and `upTo` that the archive lacks.
+ *
+ * They are NOT backfilled, and that is deliberate. The numbers for a week that
+ * has passed no longer exist; writing today's figures under last week's label
+ * would be inventing data, which is the one thing this site is built not to do.
+ * So a gap stays a gap, the page says so, and the cron is what stops new ones.
+ */
+export function missingWeeks(history, upTo) {
+  const have = new Set((history || []).map(h => h.week));
+  if (!have.size || !upTo) return [];
+  let cur = isoWeekStart([...have].sort()[0]);
+  const end = isoWeekStart(upTo);
+  if (!cur || !end) return [];
+  const gaps = [];
+  while (cur < end) {
+    cur = new Date(cur.getTime() + 7 * 86400000);
+    const wk = isoWeek(cur);
+    if (wk !== upTo && !have.has(wk)) gaps.push(wk);
+  }
+  return gaps;
+}
+
 // ═══ /mercado/indice — the market index, with a permanent weekly archive ═════
 //
 // Journalists and forums link to a number they can cite with a date. A page whose
 // figures change under the link is not citable, so every week gets its OWN
 // permanent URL (/mercado/indice/2026-W35) that never changes again, and the
 // bare /mercado/indice always shows the latest plus the trend.
-export function renderMarketIndex({ snapshot, history, host, depositCount, isArchive = false, currentWeek = null }) {
+export function renderMarketIndex({ snapshot, history, host, depositCount, isArchive = false, currentWeek = null, gaps = [] }) {
   const wk = snapshot.week;                 // display form, ISO: "2026-W35"
   // URL form is lower-case, because the router normalises every public path to
   // lower case and a canonical that disagreed with its own URL would 301 to
@@ -1248,6 +1300,7 @@ export function renderMarketIndex({ snapshot, history, host, depositCount, isArc
         <thead><tr><th>Semana</th><th>Data</th><th>Preço mediano</th><th>Anúncios</th><th>Modelos</th><th>Dias até vender</th></tr></thead>
         <tbody>${rows}</tbody></table></div>
       <p class="fc-p" style="margin-top:12px;">O histórico começa na semana em que passámos a guardar os cortes. Cresce uma linha por semana, e nenhuma linha antiga é reescrita.</p>
+      ${gaps.length ? `<p class="fc-p" style="color:#B4551F;">Faltam ${gaps.length} semana${gaps.length === 1 ? "" : "s"} no histórico: ${gaps.map(escapeHtml).join(", ")}. Não as preenchemos, e é de propósito: os números dessas semanas já não existem, e escrever os de hoje com a data de então seria inventá-los.</p>` : ""}
     </section>` : ""}
     <section class="section fc-wrap" style="padding-bottom:70px;">
       <h2 class="fc-h2">Podes citar isto</h2>

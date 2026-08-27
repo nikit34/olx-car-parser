@@ -63,6 +63,7 @@ import {
   yearCells, yearCell, yearPageYears, depreciationOk, depreciationFit, depreciationSlugs,
   comparePairs, parseComparePath, comparePairKey, modelJson, yearJson,
   renderFacetPage, renderDistrictPage, facetCells, facetCell, facetKind, facetKeys,
+  isoWeek, missingWeeks,
   setWave, publishedYearPages, publishedDepreciation, publishedPairs, publishedFacets,
 } from "./seo-pages.js";
 
@@ -322,6 +323,27 @@ export default {
       console.error("worker error", err && err.stack || err);
       return new Response("Internal error", { status: 500 });
     }
+  },
+
+  /**
+   * Cron. Records the weekly market cut without waiting for a visitor.
+   *
+   * The snapshot used to be written on read, which quietly made the archive a
+   * function of traffic: a week nobody browsed was a week that never got a row,
+   * and a missing row is never backfilled because the numbers for a past week no
+   * longer exist. On a site whose whole pitch for these URLs is "cite this with
+   * a date", a hole in the series is the failure that matters.
+   *
+   * Runs DAILY, not weekly, and writes only when the current week is absent. So
+   * a failed Monday has six more chances, and the extra runs cost one KV read
+   * each. See [triggers] in wrangler.toml.
+   */
+  async scheduled(controller, env, ctx) {
+    const now = new Date(controller.scheduledTime || Date.now());
+    const r = await recordWeeklyIndex(env, now);
+    // Logged either way: silence here is indistinguishable from a cron that
+    // stopped firing, and that is precisely the failure we are guarding against.
+    console.log(`index cron ${r.week}: ${r.written ? "written" : "skipped (" + r.reason + ")"}`);
   },
 };
 
@@ -756,17 +778,6 @@ const IDX_WEEK_PREFIX = "idx:week:";
 const IDX_LIST_KEY = "idx:weeks";
 const IDX_MAX_WEEKS = 120;
 
-function isoWeek(d) {
-  // ISO-8601 week number. Thursday-anchored, which is what makes the "week that
-  // contains Jan 1" edge case come out right.
-  const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-  const day = t.getUTCDay() || 7;
-  t.setUTCDate(t.getUTCDate() + 4 - day);
-  const yearStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
-  const week = Math.ceil((((t - yearStart) / 86400000) + 1) / 7);
-  return `${t.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
-}
-
 function snapshotFrom(models, builtAt, week, date) {
   const stats = corpusStats(models, builtAt);
   return {
@@ -777,33 +788,55 @@ function snapshotFrom(models, builtAt, week, date) {
   };
 }
 
+/**
+ * Record this week's cut, once.
+ *
+ * Shared by the request path and the cron below, because the archive's whole
+ * value is that a week's URL keeps saying the same thing — and two code paths
+ * writing it are two chances to disagree about what "this week" means.
+ *
+ * Never overwrites an existing week. Returns the history either way, so the
+ * caller can render without a second read.
+ */
+async function recordWeeklyIndex(env, now) {
+  const mdoc = await getModels(env);
+  const models = mdoc && mdoc.models;
+  const week = isoWeek(now);
+  const today = now.toISOString().slice(0, 10);
+
+  let history = [];
+  try {
+    const listed = await env.KV.get(IDX_LIST_KEY, "json");
+    if (Array.isArray(listed)) history = listed;
+  } catch (_) { /* the archive is a nice-to-have, never a 500 */ }
+
+  // No data means no snapshot. A row of nulls is worse than a gap: the gap is
+  // visible and honest, the nulls look like a market that stopped existing.
+  if (!models) return { week, history, written: false, reason: "no-models" };
+  if (history.some(h => h.week === week)) return { week, history, written: false, reason: "already" };
+
+  const snap = snapshotFrom(models, mdoc.built_at, week, today);
+  const next = [...history, snap].sort((a, b) => a.week < b.week ? -1 : 1).slice(-IDX_MAX_WEEKS);
+  try {
+    await env.KV.put(`${IDX_WEEK_PREFIX}${week}`, JSON.stringify(snap));
+    await env.KV.put(IDX_LIST_KEY, JSON.stringify(next));
+  } catch (err) {
+    console.warn("index snapshot write failed", err && err.message);
+    return { week, history, written: false, reason: "kv-error" };
+  }
+  return { week, history: next, written: true, snapshot: snap };
+}
+
 async function handleMarketIndex(request, env, url) {
   const tail = url.pathname.slice("/mercado/indice".length).replace(/^\/+|\/+$/g, "");
   return withModels(request, env, url, async ({ models, builtAt, depositCount, setCookie }) => {
     const now = new Date();
-    const week = isoWeek(now);
-    const today = now.toISOString().slice(0, 10);
-
-    // Write this week's cut once. `add`-style guard: only the first request of
-    // the week pays, and an already-written week is never overwritten — that is
-    // the whole point of a permanent archive URL.
-    let history = [];
-    try {
-      const listed = await env.KV.get(IDX_LIST_KEY, "json");
-      if (Array.isArray(listed)) history = listed;
-    } catch (_) { /* archive is a nice-to-have, never a 500 */ }
-    if (!history.some(h => h.week === week)) {
-      const snap = snapshotFrom(models, builtAt, week, today);
-      history = [...history, snap].sort((a, b) => a.week < b.week ? -1 : 1).slice(-IDX_MAX_WEEKS);
-      try {
-        await env.KV.put(`${IDX_WEEK_PREFIX}${week}`, JSON.stringify(snap));
-        await env.KV.put(IDX_LIST_KEY, JSON.stringify(history));
-      } catch (err) { console.warn("index snapshot write failed", err && err.message); }
-    }
+    const { week, history } = await recordWeeklyIndex(env, now);
+    const gaps = missingWeeks(history, week);
 
     if (tail) {
       // An archived week. Only weeks we actually recorded exist — an invented
-      // /mercado/indice/1999-W03 is a 404, not an empty page.
+      // /mercado/indice/1999-w03 is a 404, not an empty page.
       // Normalisation has already lower-cased the path, so the URL token is
       // "2026-w35"; the stored key and the display form are ISO ("2026-W35").
       const m = /^(\d{4})-w(\d{2})$/i.exec(tail);
@@ -813,11 +846,17 @@ async function handleMarketIndex(request, env, url) {
       try { snap = await env.KV.get(`${IDX_WEEK_PREFIX}${wk}`, "json"); } catch (_) {}
       if (!snap) snap = history.find(h => h.week === wk) || null;
       if (!snap) return notFoundPage(request, env, url, setCookie);
-      return html(renderMarketIndex({ snapshot: snap, history, host: url.host, depositCount, isArchive: true, currentWeek: week }), 200, setCookie);
+      return html(renderMarketIndex({
+        snapshot: snap, history, host: url.host, depositCount,
+        isArchive: true, currentWeek: week, gaps,
+      }), 200, setCookie);
     }
 
-    const current = history.find(h => h.week === week) || snapshotFrom(models, builtAt, week, today);
-    return html(renderMarketIndex({ snapshot: current, history, host: url.host, depositCount }), 200, setCookie);
+    const current = history.find(h => h.week === week)
+      || snapshotFrom(models, builtAt, week, now.toISOString().slice(0, 10));
+    return html(renderMarketIndex({
+      snapshot: current, history, host: url.host, depositCount, currentWeek: week, gaps,
+    }), 200, setCookie);
   });
 }
 

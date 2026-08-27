@@ -12,7 +12,7 @@
 
 import { readFileSync } from "node:fs";
 import worker from "../../flipper-club/src/index.js";
-import { yearPageYears, depreciationSlugs, comparePairs } from "../../flipper-club/src/seo-pages.js";
+import { yearPageYears, depreciationSlugs, comparePairs, isoWeek, isoWeekStart, missingWeeks } from "../../flipper-club/src/seo-pages.js";
 
 const HOST = "carsbuyer.org";
 const RELEASE = "https://github.com/nikit34/olx-car-parser/releases/download/latest-data/models.json";
@@ -421,6 +421,96 @@ await check("a cookie-less render spends no KV list op", async () => {
     { headers: { cookie: "fc_uid=deadbeefdeadbeefdeadbeefdeadbeef" } }), counted);
   assert(r.status === 200, `returning visitor → ${r.status}`);
   assert(lists === 1, `returning visitor spent ${lists} list op(s), expected 1`);
+});
+
+// ── weekly index: the cron, and the honesty about gaps ──────────────────────
+
+await check("ISO week labels and their Mondays agree, including the year seam", async () => {
+  const wk = (s2) => isoWeek(new Date(s2 + "T12:00:00Z"));
+  assert(wk("2026-08-30") === "2026-W35", "Sunday still belongs to the week that started Monday");
+  assert(wk("2026-08-31") === "2026-W36", "Monday must start a new week");
+  // The week containing 1 January is the classic off-by-one; both of these are W53.
+  assert(wk("2026-12-28") === "2026-W53" && wk("2027-01-03") === "2026-W53",
+    "year seam mislabelled");
+  // Round-trip: the Monday of a label must map back to that label.
+  for (const label of ["2026-W01", "2026-W35", "2026-W53", "2027-W01"]) {
+    const mon = isoWeekStart(label);
+    assert(mon && mon.getUTCDay() === 1, `${label}: week start is not a Monday`);
+    assert(isoWeek(mon) === label, `${label} does not round-trip (got ${isoWeek(mon)})`);
+  }
+});
+
+await check("gaps are reported, never invented", async () => {
+  const hist = [{ week: "2026-W35" }, { week: "2026-W38" }];
+  assert(JSON.stringify(missingWeeks(hist, "2026-W39")) === JSON.stringify(["2026-W36", "2026-W37"]),
+    "gap detection is wrong");
+  // The current week is not a gap — it is simply not written yet.
+  assert(missingWeeks([{ week: "2026-W35" }], "2026-W36").length === 0, "current week counted as a gap");
+  assert(missingWeeks([], "2026-W36").length === 0, "an empty archive is not a hole");
+});
+
+await check("the cron writes one row per week and never rewrites one", async () => {
+  kv.clear();
+  const monday = new Date("2026-08-31T00:05:00Z");
+  const wk = isoWeek(monday);
+
+  const r1 = await worker.scheduled({ scheduledTime: monday.getTime() }, env, {});
+  const keys = () => [...kv.keys()].filter(k => k.startsWith("idx:week:"));
+  assert(keys().length === 1, `cron wrote ${keys().length} keys, expected 1`);
+  const written = kv.get(`idx:week:${wk}`);
+  assert(written, "cron did not write the current week");
+
+  // The rest of the week must be no-ops — that is what makes a daily cron safe.
+  for (let d = 1; d < 7; d++) {
+    const t = new Date(monday.getTime() + d * 86400000);
+    await worker.scheduled({ scheduledTime: t.getTime() }, env, {});
+  }
+  assert(keys().length === 1, "a later day in the same week wrote a second row");
+  assert(kv.get(`idx:week:${wk}`) === written, "the archived week was rewritten");
+
+  // Next Monday is a new week and must be recorded.
+  const nextMon = new Date(monday.getTime() + 7 * 86400000);
+  await worker.scheduled({ scheduledTime: nextMon.getTime() }, env, {});
+  assert(keys().length === 2, "a new week was not recorded");
+  assert(kv.get(`idx:week:${isoWeek(nextMon)}`), "next week's key is missing");
+});
+
+await check("a week the cron missed shows on the page as a gap", async () => {
+  kv.clear();
+  // Build the history relative to the REAL current week, because that is what
+  // the handler compares against — a fixture pinned to fixed dates would stop
+  // meaning anything the moment the calendar moved past it.
+  const nowWk = isoWeek(new Date());
+  const back = (n) => isoWeek(new Date(isoWeekStart(nowWk).getTime() - n * 7 * 86400000));
+  const twoAgo = back(2), oneAgo = back(1);
+  const row = (week) => ({ week, date: "2026-01-01", models: 10, listings: 100,
+                           priceMed: 8000, kmMed: 170000, sellMed: 29, depMed: 0.1 });
+  // twoAgo recorded, oneAgo missed, and the current week will be written on load.
+  kv.set("idx:weeks", JSON.stringify([row(twoAgo)]));
+  kv.set(`idx:week:${twoAgo}`, JSON.stringify(row(twoAgo)));
+
+  const page = await (await get("/mercado/indice")).text();
+  assert(page.includes(oneAgo), `the missing week ${oneAgo} is not named on the page`);
+  assert(/Faltam 1 semana no hist/.test(page), "the page does not admit the gap");
+  // And the hole must not have been quietly filled with today's numbers.
+  assert(!kv.has(`idx:week:${oneAgo}`), "a past week was backfilled with current data");
+  // The current week, by contrast, is written on this very request.
+  assert(kv.has(`idx:week:${nowWk}`), "the current week was not recorded");
+});
+
+await check("no data means no row, not a row of nulls", async () => {
+  kv.clear();
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const u = typeof input === "string" ? input : input.url;
+    if (u.includes("models.json")) return new Response("nope", { status: 500 });
+    return prevFetch(input, init);
+  };
+  try {
+    await worker.scheduled({ scheduledTime: Date.now() }, env, {});
+    assert([...kv.keys()].filter(k => k.startsWith("idx:week:")).length === 0,
+      "wrote a snapshot with no market data behind it");
+  } finally { globalThis.fetch = prevFetch; }
 });
 
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall route checks passed");
