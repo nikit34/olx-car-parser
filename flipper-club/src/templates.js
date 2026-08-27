@@ -2312,6 +2312,9 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
     "@graph": [
       {
         "@type": "Dataset",
+        // Те же условия, что и на /metodologia#licenca. Строкой, а не импортом
+        // из seo-pages.js: зависимость между модулями односторонняя.
+        "license": `https://${host}/metodologia#licenca`,
         "name": `Preços de ${rec.b} ${rec.m} usado em Portugal`,
         "description": `Resumo estatístico (mediana, P25–P75) de ${rec.n} anúncios ativos de ${rec.b} ${rec.m} no OLX Portugal, por ano.`,
         "creator": { "@type": "Organization", "name": "Flipper Club" },

@@ -40,6 +40,11 @@ import {
 // crossing each other out of order in the corpus.
 export const MIN_YEAR_PAGE_N = 10;
 
+// Условия повторного использования опубликованных цифр. Полный текст лежит на
+// /metodologia#licenca и продублирован в поле licence каждого .json-эндпоинта,
+// чтобы машиночитаемая и человекочитаемая формулировки не разъехались.
+const licenseUrl = (host) => `https://${host}/metodologia#licenca`;
+
 // A depreciation curve needs enough points, over enough time, that a straight
 // line through them is a description rather than an interpolation.
 const DEP_MIN_CELLS = 8;      // year cells (n>=5) feeding the fit
@@ -637,6 +642,7 @@ export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, p
     "@graph": [
       {
         "@type": "Dataset",
+        "license": licenseUrl(host),
         "name": `Preços de ${rec.b} ${rec.m} de ${year} em Portugal`,
         "description": `Mediana e intervalo interquartil dos preços pedidos em ${cell.n} anúncios ativos de ${rec.b} ${rec.m} do ano ${year} no OLX Portugal.`,
         "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
@@ -833,6 +839,7 @@ export function renderDepreciationPage({ rec, slug, fit, stats, pageYears, host,
     "@graph": [
       {
         "@type": "Dataset",
+        "license": licenseUrl(host),
         "name": `Desvalorização de ${rec.b} ${rec.m} em Portugal`,
         "description": `Preço pedido mediano de ${rec.b} ${rec.m} por ano de fabrico (${oldest.y}-${newest.y}) e taxa de desvalorização anual, a partir de ${rec.n} anúncios ativos do OLX Portugal.`,
         "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
@@ -1117,7 +1124,7 @@ export function renderLiquidityHub({ rows, stats, host, depositCount, builtAt })
       "@context": "https://schema.org",
       "@graph": [
         {
-          "@type": "Dataset", "url": canonical, "inLanguage": "pt-PT",
+          "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
           "name": "Tempo mediano até vender, por modelo (Portugal)",
           "description": "Dias medianos entre publicação e remoção de anúncios de carros usados no OLX Portugal, por modelo.",
           "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
@@ -1249,7 +1256,7 @@ export function renderMarketIndex({ snapshot, history, host, depositCount, isArc
       "@context": "https://schema.org",
       "@graph": [
         {
-          "@type": "Dataset", "url": canonical, "inLanguage": "pt-PT",
+          "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
           "name": `Índice do mercado de carros usados em Portugal — ${wk}`,
           "description": "Preço pedido mediano, número de anúncios ativos, quilometragem mediana e dias medianos até vender no mercado português de carros usados.",
           "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
@@ -1344,7 +1351,10 @@ export function renderMethodology({ stats, host, depositCount, builtAt }) {
         <li class="fc-li">Não é aconselhamento financeiro nem uma avaliação para efeitos legais ou de seguro.</li>
       </ul>
 
-      <h2 class="fc-h2">9. Correções</h2>
+      <h2 class="fc-h2" id="licenca">9. Reutilização e atribuição</h2>
+      <p class="fc-p">Os números destas páginas são estatísticas nossas, calculadas a partir de anúncios públicos do OLX Portugal. <b>Podes citá-los e reutilizá-los</b>, desde que a fonte seja atribuída ao Carsbuyer e seja indicada a data de recolha: a mediana de um modelo muda ao longo do tempo, e uma citação sem data deixa de ser verificável. Se precisares dos valores sem a marcação da página, cada modelo publica o mesmo conteúdo em JSON, bastando acrescentar <b>.json</b> ao endereço, como em <a href="/preco/opel-corsa.json">/preco/opel-corsa.json</a>.</p>
+
+      <h2 class="fc-h2">10. Correções</h2>
       <p class="fc-p">Se um número parece errado, provavelmente vale a pena olhar: a amostra pode estar contaminada por anúncios repetidos ou por uma versão mal classificada. Todas as páginas indicam o tamanho da amostra e a data de recolha, para que qualquer afirmação nossa seja verificável.</p>
       ${authorBlock()}
       ${provenance({ n: stats.listings, builtAt, measure: "Preço pedido em anúncios ativos (mediana e P25-P75)" })}
@@ -1830,6 +1840,7 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
       "@graph": [
         {
           "@type": "Dataset",
+        "license": licenseUrl(host),
           "name": `Preços de ${titlePhrase} em Portugal`,
           "description": `Mediana e intervalo interquartil dos preços pedidos em ${cell.n} anúncios ativos de ${titlePhrase} no OLX Portugal.`,
           "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
@@ -1917,7 +1928,7 @@ export function renderDistrictPage({ key, rec, models, stats, host, depositCount
       "@context": "https://schema.org",
       "@graph": [
         {
-          "@type": "Dataset", "url": canonical, "inLanguage": "pt-PT",
+          "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
           "name": `Preços de carros usados ${emDistrito(key, rec.lbl)}`,
           "description": `Preço pedido mediano e intervalo interquartil em ${rec.n} anúncios ativos de carros usados com localização ${emDistrito(key, rec.lbl)}, OLX Portugal.`,
           "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
