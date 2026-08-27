@@ -340,7 +340,7 @@ export default {
    */
   async scheduled(controller, env, ctx) {
     const now = new Date(controller.scheduledTime || Date.now());
-    const r = await recordWeeklyIndex(env, now);
+    const r = await recordWeeklyIndex(env, now, "cron");
     // Logged either way: silence here is indistinguishable from a cron that
     // stopped firing, and that is precisely the failure we are guarding against.
     console.log(`index cron ${r.week}: ${r.written ? "written" : "skipped (" + r.reason + ")"}`);
@@ -778,10 +778,15 @@ const IDX_WEEK_PREFIX = "idx:week:";
 const IDX_LIST_KEY = "idx:weeks";
 const IDX_MAX_WEEKS = 120;
 
-function snapshotFrom(models, builtAt, week, date) {
+// `src` records which path wrote the row: the cron, or a visitor's request.
+//
+// Not editorial, so it does not appear on the page — it exists so the question
+// "did the cron actually fire, or did a passing crawler write this?" has an
+// answer in the data instead of an argument from timing.
+function snapshotFrom(models, builtAt, week, date, src) {
   const stats = corpusStats(models, builtAt);
   return {
-    week, date, builtAt: builtAt || null,
+    week, date, src: src || "web", builtAt: builtAt || null,
     models: stats.models, listings: stats.listings,
     priceMed: stats.priceMed, kmMed: stats.kmMed,
     sellMed: stats.sellMed, depMed: stats.depMed,
@@ -798,7 +803,7 @@ function snapshotFrom(models, builtAt, week, date) {
  * Never overwrites an existing week. Returns the history either way, so the
  * caller can render without a second read.
  */
-async function recordWeeklyIndex(env, now) {
+async function recordWeeklyIndex(env, now, src = "web") {
   const mdoc = await getModels(env);
   const models = mdoc && mdoc.models;
   const week = isoWeek(now);
@@ -815,7 +820,7 @@ async function recordWeeklyIndex(env, now) {
   if (!models) return { week, history, written: false, reason: "no-models" };
   if (history.some(h => h.week === week)) return { week, history, written: false, reason: "already" };
 
-  const snap = snapshotFrom(models, mdoc.built_at, week, today);
+  const snap = snapshotFrom(models, mdoc.built_at, week, today, src);
   const next = [...history, snap].sort((a, b) => a.week < b.week ? -1 : 1).slice(-IDX_MAX_WEEKS);
   try {
     await env.KV.put(`${IDX_WEEK_PREFIX}${week}`, JSON.stringify(snap));
@@ -853,7 +858,7 @@ async function handleMarketIndex(request, env, url) {
     }
 
     const current = history.find(h => h.week === week)
-      || snapshotFrom(models, builtAt, week, now.toISOString().slice(0, 10));
+      || snapshotFrom(models, builtAt, week, now.toISOString().slice(0, 10), "web");
     return html(renderMarketIndex({
       snapshot: current, history, host: url.host, depositCount, currentWeek: week, gaps,
     }), 200, setCookie);

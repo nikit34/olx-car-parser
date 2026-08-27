@@ -468,6 +468,11 @@ await check("the cron writes one row per week and never rewrites one", async () 
   assert(keys().length === 1, "a later day in the same week wrote a second row");
   assert(kv.get(`idx:week:${wk}`) === written, "the archived week was rewritten");
 
+  // The row records which path wrote it. This is the whole point: on Monday the
+  // question "did the cron fire, or did a crawler happen by?" is answered by the
+  // data instead of by an argument from timing.
+  assert(JSON.parse(written).src === "cron", "a cron-written row is not marked as such");
+
   // Next Monday is a new week and must be recorded.
   const nextMon = new Date(monday.getTime() + 7 * 86400000);
   await worker.scheduled({ scheduledTime: nextMon.getTime() }, env, {});
@@ -490,6 +495,8 @@ await check("a week the cron missed shows on the page as a gap", async () => {
   kv.set(`idx:week:${twoAgo}`, JSON.stringify(row(twoAgo)));
 
   const page = await (await get("/mercado/indice")).text();
+  assert(JSON.parse(kv.get(`idx:week:${nowWk}`)).src === "web",
+    "a row written by a page request is not marked as such");
   assert(page.includes(oneAgo), `the missing week ${oneAgo} is not named on the page`);
   assert(/Faltam 1 semana no hist/.test(page), "the page does not admit the gap");
   // And the hole must not have been quietly filled with today's numbers.
