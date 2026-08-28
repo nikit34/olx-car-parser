@@ -37,6 +37,42 @@ class TestGetGeneration:
             assert result in ("Mk7", "Mk8")
 
 
+class TestNormalizedFallback:
+    def test_case_insensitive_brand(self, generations_data):
+        with patch("src.models.generations.load_generations", return_value=generations_data):
+            assert get_generation("VOLKSWAGEN", "Golf", 2015) == "Mk7"
+
+    def test_case_insensitive_model(self, generations_data):
+        with patch("src.models.generations.load_generations", return_value=generations_data):
+            assert get_generation("Volkswagen", "GOLF", 2015) == "Mk7"
+
+    def test_punctuation_and_spacing_ignored(self, generations_data):
+        with patch("src.models.generations.load_generations", return_value=generations_data):
+            assert get_generation("Mercedes-Benz", "E Class", 2017) == "W213"
+            assert get_generation("mercedes benz", "e-class", 2017) == "W213"
+
+    def test_exact_spelling_still_wins(self, generations_data):
+        with patch("src.models.generations.load_generations", return_value=generations_data):
+            assert get_generation("BMW", "3 Series", 2015) == "F30"
+
+    def test_still_none_for_unknown_model(self, generations_data):
+        with patch("src.models.generations.load_generations", return_value=generations_data):
+            assert get_generation("Volkswagen", "Amarok", 2015) is None
+
+    def test_index_rebuilds_when_table_changes(self, generations_data):
+        with patch("src.models.generations.load_generations", return_value=generations_data):
+            assert get_generation("volkswagen", "golf", 2015) == "Mk7"
+        other = {"Renault": {"Clio": [{"name": "Mk4", "year_from": 2012, "year_to": 2019}]}}
+        with patch("src.models.generations.load_generations", return_value=other):
+            assert get_generation("renault", "clio", 2015) == "Mk4"
+            assert get_generation("volkswagen", "golf", 2015) is None
+
+    def test_portuguese_spellings_resolve_on_real_config(self):
+        assert get_generation("BMW", "Série 3", 2015) is not None
+        assert get_generation("Mercedes-Benz", "Classe C", 2015) is not None
+        assert get_generation("SEAT", "Ibiza", 2015) is not None
+
+
 class TestModelAliases:
     def test_bmw_series_aliases_exist(self):
         aliases = _get_model_aliases()

@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+import unicodedata
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -11,6 +12,8 @@ _CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "config"
 _generations: dict | None = None
 _brand_aliases: dict | None = None
 _model_aliases: dict | None = None
+_norm_index_src: dict | None = None
+_norm_index: dict[str, dict[str, tuple[str, str]]] = {}
 
 
 def _load_json(path: Path) -> dict:
@@ -43,8 +46,49 @@ def _get_model_aliases() -> dict:
     return _model_aliases
 
 
+def _norm_key(value: str) -> str:
+    """Case-, accent- and punctuation-insensitive form of a brand or model name."""
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = text.encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", "", text.lower())
+
+
+def _normalized_index(data: dict) -> dict[str, dict[str, tuple[str, str]]]:
+    """Map normalized (brand, model) to the canonical spelling used in *data*.
+
+    Built once per generations dict and reused; the source dict is held by
+    reference so a patched table in tests rebuilds instead of hitting a
+    stale cache. Exact spellings already win in ``_lookup_gens``, so first
+    writer wins here and canonical names take precedence over aliases.
+    """
+    global _norm_index_src, _norm_index
+    if data is _norm_index_src:
+        return _norm_index
+
+    index: dict[str, dict[str, tuple[str, str]]] = {}
+    for brand, models in data.items():
+        bucket = index.setdefault(_norm_key(brand), {})
+        for model in models:
+            bucket.setdefault(_norm_key(model), (brand, model))
+    for brand, aliases in _get_model_aliases().items():
+        bucket = index.setdefault(_norm_key(brand), {})
+        for alias, canonical in aliases.items():
+            bucket.setdefault(_norm_key(alias), (brand, canonical))
+
+    _norm_index_src = data
+    _norm_index = index
+    return index
+
+
 def _lookup_gens(data: dict, brand: str, model: str) -> list | None:
-    """Look up generation list, trying brand aliases and model aliases."""
+    """Look up generation list, trying brand aliases and model aliases.
+
+    Falls back to a case- and accent-insensitive match when every exact
+    spelling misses. Portuguese listings write the same car as "Série 3",
+    "Classe C" or "SEAT Ibiza", and an exact-only lookup dropped the whole
+    record — ``get_generation`` returning None means the listing never
+    reaches the database at all.
+    """
     brand_aliases = _get_brand_aliases()
     model_aliases = _get_model_aliases()
 
@@ -55,6 +99,18 @@ def _lookup_gens(data: dict, brand: str, model: str) -> list | None:
         alias = model_aliases.get(b, {}).get(model)
         if alias:
             gens = data.get(b, {}).get(alias)
+            if gens:
+                return gens
+
+    hit = _normalized_index(data).get(_norm_key(brand), {}).get(_norm_key(model))
+    if hit:
+        canon_brand, canon_model = hit
+        gens = data.get(canon_brand, {}).get(canon_model)
+        if gens:
+            return gens
+        alias = model_aliases.get(canon_brand, {}).get(canon_model)
+        if alias:
+            gens = data.get(canon_brand, {}).get(alias)
             if gens:
                 return gens
     return None
