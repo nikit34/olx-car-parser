@@ -25,9 +25,9 @@ from src.storage.repository import _verify_listing_alive
 from src.models.listing import Listing
 
 
-_RETRY_MAX = 12
-_RETRY_BASE_S = 2.0
-_RETRY_MAX_WAIT_S = 60.0
+_RETRY_MAX = 3
+_RETRY_BASE_S = 1.0
+_RETRY_MAX_WAIT_S = 4.0
 # Probes are committed every N restores so killing the script mid-run
 # (rate-limit, SIGTERM, OLX going funny) doesn't lose accumulated work
 # the way the v1 "scan-then-bulk-update" design did.
@@ -50,13 +50,14 @@ def _commit_restores(session, ids: list[int], log) -> int:
             session.commit()
             return len(ids)
         except OperationalError as e:
-            if "locked" not in str(e).lower():
-                raise
+            # Gating on "locked" was SQLite's wording; PostgreSQL reports
+            # a deadlock or a dropped connection, so that gate re-raised
+            # real contention instead of retrying it.
             session.rollback()
             wait = min(_RETRY_BASE_S * (2 ** attempt), _RETRY_MAX_WAIT_S)
             log.warning(
-                "DB locked, retry %d/%d in %.1fs (%d ids)",
-                attempt + 1, _RETRY_MAX, wait, len(ids),
+                "%s, retry %d/%d in %.1fs (%d ids)",
+                type(e).__name__, attempt + 1, _RETRY_MAX, wait, len(ids),
             )
             time.sleep(wait)
     log.error("Gave up committing %d ids", len(ids))

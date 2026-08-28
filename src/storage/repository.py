@@ -1116,12 +1116,11 @@ def _seller_columns_for(seller, displayed_as: str | None) -> dict:
         }
     age_days = None
     if seller.created_at is not None:
-        # ``seller.created_at`` round-trips through SQLite as an offset-aware
-        # datetime when ``backfill_sellers`` stored it via .isoformat() —
-        # the source ``+01:00`` offset survives the string. ``_utcnow()``
-        # is naive (project convention) so direct subtraction errors with
-        # "can't subtract offset-naive and offset-aware datetimes". Coerce
-        # the stored side to naive first; the offset's wall-clock value is
+        # Rows written before the PostgreSQL move can still carry the
+        # source ``+01:00`` offset: ``backfill_sellers`` stored the value as
+        # an ISO string and SQLite kept it verbatim. ``_utcnow()`` is naive
+        # (project convention), so subtracting one from the other raises.
+        # Coerce the stored side to naive; the offset's wall-clock value is
         # close enough to UTC for an age-in-days computation.
         created_naive = seller.created_at
         if created_naive.tzinfo is not None:
@@ -1286,11 +1285,9 @@ def record_relist_events(session: Session, events_df: pd.DataFrame) -> int:
         subset=["original_olx_id", "relist_olx_id"], keep="last")
 
     inserted = 0
-    # Disable autoflush for the loop: each per-row existence ``.first()`` would
-    # otherwise flush pending INSERTs and contend for the SQLite write lock on
-    # every iteration. Under full-coverage runs the scrape worker holds that
-    # lock for minutes, which crashed this loop with "database is locked".
-    # Defer all writes to the single commit (which waits up to busy_timeout).
+    # Disable autoflush for the loop: each per-row existence ``.first()``
+    # would otherwise flush pending INSERTs on every iteration. Deferring
+    # them all to the single commit is one round-trip instead of thousands.
     session.autoflush = False
     for _, row in events_df.iterrows():
         existing = session.query(RelistEvent).filter_by(

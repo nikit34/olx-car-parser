@@ -106,8 +106,7 @@ def _select_targets(conn, limit: int | None) -> list[tuple[int, str, str]]:
 def _update_photo_count(conn, listing_id: int, photo_count: int) -> bool:
     """Single-row UPDATE under statement autocommit. True on success.
 
-    Catches the driver's "locked"/"busy" error even after the busy
-    timeout and logs it without aborting the whole run."""
+    Logs a driver-level failure without aborting the whole run."""
     try:
         conn.execute(
             sa_text(

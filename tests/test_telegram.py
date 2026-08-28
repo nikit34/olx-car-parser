@@ -1,8 +1,9 @@
 """Tests for Telegram alert formatting."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
 from src.alerts.telegram_bot import ChatUnreachable, _format_deal, _send_message
 
@@ -210,3 +211,56 @@ class TestSendMessage:
         with patch("src.alerts.telegram_bot.httpx.post",
                    return_value=self._resp(429, "rate-limited")):
             assert _send_message("tok", "chat", "msg") is False
+
+
+class TestPersistRefresh:
+    """One contended row must not cost the whole alert batch — and the retry
+    has to recognise what the live engine actually reports. The old gate
+    matched "locked", which only SQLite says."""
+
+    def _op_error(self, msg: str) -> OperationalError:
+        return OperationalError("UPDATE listings", {}, Exception(msg))
+
+    def test_retries_a_postgres_error_and_succeeds(self, monkeypatch):
+        from src.alerts import telegram_bot as tb
+        from src.storage import repository
+
+        monkeypatch.setattr(tb.time, "sleep", lambda _s: None)
+        calls = []
+
+        def _apply(session, olx_id, details):
+            calls.append(olx_id)
+            if len(calls) == 1:
+                raise self._op_error("deadlock detected")
+            return {"olx_id": olx_id, "ok": True}
+
+        monkeypatch.setattr(repository, "apply_freshness_refresh", _apply)
+        session = MagicMock()
+        res = tb._persist_refresh(session, "L1", {})
+
+        assert res == {"olx_id": "L1", "ok": True}
+        assert len(calls) == 2
+        session.rollback.assert_called_once()
+
+    def test_drops_only_the_row_that_exhausts_its_budget(self, monkeypatch):
+        from src.alerts import telegram_bot as tb
+        from src.storage import repository
+
+        monkeypatch.setattr(tb.time, "sleep", lambda _s: None)
+        monkeypatch.setattr(repository, "apply_freshness_refresh", MagicMock(
+            side_effect=self._op_error("server closed the connection unexpectedly")))
+        session = MagicMock()
+
+        assert tb._persist_refresh(session, "L1", {}) is None
+        assert session.commit.call_count == 0
+        assert session.rollback.call_count == tb._REFRESH_RETRY_MAX
+
+    def test_retry_budget_is_seconds_not_minutes(self):
+        """Sized for a row lock, not for SQLite's database-wide write lock."""
+        from src.alerts import telegram_bot as tb
+
+        worst_case = sum(
+            min(tb._REFRESH_RETRY_BASE_S * 2 ** i, tb._REFRESH_RETRY_MAX_WAIT_S)
+            for i in range(tb._REFRESH_RETRY_MAX)
+        )
+        assert worst_case <= 30

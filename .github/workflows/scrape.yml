@@ -54,9 +54,9 @@ env:
   HF_HUB_OFFLINE: "1"
   TRANSFORMERS_OFFLINE: "1"
 
-# Single-runner self-hosted setup — only one scrape can hold the SQLite DB
-# at a time anyway, so we cancel any in-flight run when a new cron fires
-# instead of letting them queue up. Without this, runs were piling up: a
+# One self-hosted runner, so scrapes serialise regardless; we cancel any
+# in-flight run when a new cron fires instead of letting them queue up.
+# Without this, runs were piling up: a
 # 6-hour scrape + 8-hour cron interval was barely making it; throw in any
 # slowdown and queue depth grew unbounded (we saw queued runs waiting 20+
 # hours).
@@ -73,8 +73,9 @@ jobs:
     timeout-minutes: 240
 
     env:
-      # Empty until the host's PostgreSQL cutover; src.storage.database then
-      # falls back to the SQLite file under the persistent data/ symlink.
+      # The scrape host's PostgreSQL. Clearing this secret is the rollback:
+      # src.storage.database then falls back to the SQLite file under the
+      # persistent data/ symlink.
       OLX_DB_URL: ${{ secrets.OLX_DB_URL }}
 
     steps:
@@ -130,8 +131,8 @@ jobs:
         # Since EasyOCR moved off the steady-state damage path this is the
         # ONLY pass that fills plates, so its cohort is now the full stream
         # of newly-damage-verified rows, not just pre-plate legacy ones.
-        # Disjoint from listings Scrape is currently writing, so the only
-        # shared resource is the SQLite write lock. --limit 500 at ~30/min
+        # Disjoint from the listings Scrape is currently writing, so on
+        # PostgreSQL the two never contend. --limit 500 at ~30/min
         # runs ~17 min (up from 200/~7 min — widened deliberately to keep
         # plate coverage growing ahead of the ~July seller/flipper re-tune
         # that decides plate_obscured's fate; its May permutation-importance
@@ -205,7 +206,7 @@ jobs:
         timeout-minutes: ${{ env.IS_DEEP == 'true' && 150 || 90 }}
         # Bump fd limit: the macOS self-hosted runner is launched with the
         # default 256 soft cap, which httpx connection pools (concurrency=5
-        # × OLX + SV keep-alive) + SQLite saturate around the 90-min mark —
+        # × OLX + SV keep-alive) saturate around the 90-min mark —
         # every new socket then EAGAINs and the step burns the rest of its
         # budget on `Resource temporarily unavailable` warnings without making
         # progress. 4096 is well under the host's `kern.maxfilesperproc=32768`.
@@ -310,21 +311,12 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        # Internal retry envelope is ~8 min (src/alerts/telegram_bot.py
-        # _REFRESH_RETRY_*), sized to outlast the scrape worker's 3-5 min
-        # market_stats lock. Step timeout must exceed that envelope with
-        # buffer for the non-retry work, otherwise Actions kills the
-        # process mid-retry (see retry 4/12 timeouts in old runs).
+        # The step is dominated by detail-page probes, not by the DB: the
+        # internal retry envelope shrank to seconds once row locks replaced
+        # SQLite's database-wide one (src/alerts/telegram_bot.py
+        # _REFRESH_RETRY_*). Kept at 10 min for the HTTP work.
         timeout-minutes: 10
         run: .venv/bin/python -m src.cli alerts
-
-      - name: Checkpoint WAL
-        # SQLite-only housekeeping; a no-op once OLX_DB_URL points at PostgreSQL.
-        if: ${{ always() && env.OLX_DB_URL == '' }}
-        timeout-minutes: 5
-        run: |
-          sqlite3 data/olx_cars.db "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null || \
-            .venv/bin/python -c "import sqlite3; sqlite3.connect('data/olx_cars.db').execute('PRAGMA wal_checkpoint(TRUNCATE)')"
 
       - name: Train price model + time-aware backtest
         # Both commands read the same DB but write disjoint files

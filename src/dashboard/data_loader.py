@@ -1,4 +1,4 @@
-"""Load data from SQLite database (local or downloaded from GitHub Releases)."""
+"""Load data from the configured database, or from precomputed release witnesses."""
 
 import json
 import os

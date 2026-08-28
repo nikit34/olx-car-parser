@@ -53,13 +53,6 @@ jobs:
           /opt/homebrew/bin/python3.14 -m venv .venv 2>/dev/null || true
           .venv/bin/pip install -q -e .
 
-      - name: Checkpoint WAL
-        if: ${{ always() && env.OLX_DB_URL == '' }}
-        timeout-minutes: 5
-        run: |
-          sqlite3 data/olx_cars.db "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null || \
-            .venv/bin/python -c "import sqlite3; sqlite3.connect('data/olx_cars.db').execute('PRAGMA wal_checkpoint(TRUNCATE)')"
-
       - name: Train price model + time-aware backtest
         id: train_model
         if: ${{ !cancelled() }}

@@ -23,13 +23,13 @@ ALERT_REFRESH_AGE_HOURS = 6
 # don't want to elevate OLX's per-IP request rate right after a long
 # scrape session.
 ALERT_REFRESH_CONCURRENCY = 4
-# Per-row commit retry budget. The scrape worker's market_stats commit
-# can hold the SQLite write lock for 3-5 min and busy_timeout is 30s, so
-# one stuck row used to roll back the whole 500+ candidate batch. The
-# 2+4+8+16+32+60×7 ≈ 8 min envelope outlasts the longest lock we've seen.
-_REFRESH_RETRY_MAX = 12
-_REFRESH_RETRY_BASE_S = 2.0
-_REFRESH_RETRY_MAX_WAIT_S = 60.0
+# Per-row commit retry budget. Sized for PostgreSQL, where a contended row
+# waits only for the other transaction's commit — not for the minutes-long
+# database-wide write lock SQLite used to hold, which is what the previous
+# 8-minute envelope was built for.
+_REFRESH_RETRY_MAX = 3
+_REFRESH_RETRY_BASE_S = 1.0
+_REFRESH_RETRY_MAX_WAIT_S = 4.0
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 CONFIG_PATH = PROJECT_ROOT / "config" / "settings.yaml"
@@ -193,6 +193,40 @@ def _send_message(bot_token: str, chat_id: str, text: str) -> bool:
         return False
 
 
+def _persist_refresh(session, olx_id: str, details) -> dict | None:
+    """Commit one refreshed listing, retrying transient database errors.
+
+    Returns the refresh result, or None when the row exhausted its budget —
+    dropping one row beats losing the whole batch. Retries every
+    ``OperationalError``: the old gate matched "locked" in the message,
+    which is SQLite's wording, so on PostgreSQL (a deadlock, a dropped
+    connection) the error escaped and killed the run.
+    """
+    from src.storage.repository import apply_freshness_refresh
+
+    for attempt in range(_REFRESH_RETRY_MAX):
+        try:
+            res = apply_freshness_refresh(session, olx_id, details)
+            session.commit()
+            return res
+        except OperationalError as e:
+            session.rollback()
+            wait = min(
+                _REFRESH_RETRY_BASE_S * (2 ** attempt),
+                _REFRESH_RETRY_MAX_WAIT_S,
+            )
+            logger.warning(
+                "Alert refresh: %s on %s, retry %d/%d in %.1fs",
+                type(e).__name__, olx_id, attempt + 1, _REFRESH_RETRY_MAX, wait,
+            )
+            time.sleep(wait)
+    logger.error(
+        "Alert refresh: gave up persisting %s after %d retries",
+        olx_id, _REFRESH_RETRY_MAX,
+    )
+    return None
+
+
 def _refresh_stale_candidates(new_signals, listings_df,
                               min_discount_pct: float):
     """Re-fetch detail pages for candidates whose price snapshot is stale.
@@ -262,39 +296,16 @@ def _refresh_stale_candidates(new_signals, listings_df,
         return new_signals, []
 
     # Persist the fresh snapshots so the next dashboard load reflects truth.
-    # Per-row commit + retry on SQLite lock: one stuck row used to roll back
-    # the whole batch (the scrape worker can hold the write lock for minutes
-    # during market_stats), so 500+ successful re-fetches were wasted on a
-    # single contended UPDATE. Each row now retries independently and a
-    # row that exhausts its budget is dropped, not poisoning the rest.
+    # Commit per row so one contended or broken UPDATE can't roll back the
+    # whole batch and waste 500+ successful re-fetches; a row that exhausts
+    # its retries is dropped rather than poisoning the rest.
     session = get_session()
     refresh_log = []
     try:
         for olx_id, details in refreshed.items():
-            for attempt in range(_REFRESH_RETRY_MAX):
-                try:
-                    res = apply_freshness_refresh(session, olx_id, details)
-                    session.commit()
-                    refresh_log.append(res)
-                    break
-                except OperationalError as e:
-                    if "locked" not in str(e).lower():
-                        raise
-                    session.rollback()
-                    wait = min(
-                        _REFRESH_RETRY_BASE_S * (2 ** attempt),
-                        _REFRESH_RETRY_MAX_WAIT_S,
-                    )
-                    logger.warning(
-                        "Alert refresh: DB locked on %s, retry %d/%d in %.1fs",
-                        olx_id, attempt + 1, _REFRESH_RETRY_MAX, wait,
-                    )
-                    time.sleep(wait)
-            else:
-                logger.error(
-                    "Alert refresh: gave up persisting %s after %d retries",
-                    olx_id, _REFRESH_RETRY_MAX,
-                )
+            res = _persist_refresh(session, olx_id, details)
+            if res is not None:
+                refresh_log.append(res)
     finally:
         session.close()
 

@@ -27,13 +27,13 @@ from src.models.listing import Listing
 
 
 _BATCH_SIZE = 200
-# Total retry budget: 2+4+8+16+32+60+60+60+60+60+60+60 ≈ 8 minutes. The
-# scrape worker's "compute_market_stats" phase can hold the write lock for
-# 3-5 minutes on the production DB; busy_timeout is 30 s so we need
-# enough retries to outlast it. _RETRY_BASE_S * 2**attempt is capped at 60.
-_RETRY_MAX = 12
-_RETRY_BASE_S = 2.0
-_RETRY_MAX_WAIT_S = 60.0
+# Retry budget for a contended batch. On PostgreSQL a writer waits for the
+# other transaction's commit, not for the minutes-long database-wide lock
+# SQLite used to hold during compute_market_stats — which is what the old
+# 8-minute budget was sized against.
+_RETRY_MAX = 3
+_RETRY_BASE_S = 1.0
+_RETRY_MAX_WAIT_S = 4.0
 
 
 def main() -> int:
@@ -104,13 +104,14 @@ def main() -> int:
                 written += len(chunk)
                 break
             except OperationalError as e:
-                if "locked" not in str(e).lower():
-                    raise
+                # Gating on "locked" was SQLite's wording; PostgreSQL reports
+                # a deadlock or a dropped connection, so that gate re-raised
+                # every real contention instead of retrying it.
                 session.rollback()
                 wait = min(_RETRY_BASE_S * (2 ** attempt), _RETRY_MAX_WAIT_S)
                 log.warning(
-                    "DB locked on batch %d, retry %d/%d in %.1fs",
-                    i, attempt + 1, _RETRY_MAX, wait,
+                    "%s on batch %d, retry %d/%d in %.1fs",
+                    type(e).__name__, i, attempt + 1, _RETRY_MAX, wait,
                 )
                 time.sleep(wait)
                 for listing, new_sev in chunk:

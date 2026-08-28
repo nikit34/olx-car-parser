@@ -284,8 +284,8 @@ def scrape(
         )
     raw_listings.extend(sv_listings)
 
-    # Collect scraped IDs now; mark_inactive runs after DB worker finishes
-    # to avoid "database is locked" from concurrent SQLite writers.
+    # Collect scraped IDs now; mark_inactive runs after the DB worker
+    # finishes so it sees the full set of what this run actually saw.
     # Group by source so an OLX outage can't sweep SV rows (and vice-versa) —
     # mark_inactive is source-scoped.
     scraped_by_source: dict[str, set[str]] = {}
@@ -825,7 +825,6 @@ def verify_photos(
             "the first re-runs damage inference, the second deliberately skips it."
         )
 
-    import sqlite3
     import time
     from src.parser.photo_damage import DamageClassifier
     from src.parser.photo_viewpoint import ExteriorFilter

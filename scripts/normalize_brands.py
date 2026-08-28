@@ -22,9 +22,9 @@ from src.models.listing import Listing
 
 
 _BATCH_SIZE = 200
-_RETRY_MAX = 12
-_RETRY_BASE_S = 2.0
-_RETRY_MAX_WAIT_S = 60.0
+_RETRY_MAX = 3
+_RETRY_BASE_S = 1.0
+_RETRY_MAX_WAIT_S = 4.0
 
 
 def main() -> int:
@@ -72,13 +72,14 @@ def main() -> int:
                 written += len(chunk)
                 break
             except OperationalError as e:
-                if "locked" not in str(e).lower():
-                    raise
+                # Gating on "locked" was SQLite's wording; PostgreSQL reports
+                # a deadlock or a dropped connection, so that gate re-raised
+                # real contention instead of retrying it.
                 session.rollback()
                 wait = min(_RETRY_BASE_S * (2 ** attempt), _RETRY_MAX_WAIT_S)
                 log.warning(
-                    "DB locked on batch %d, retry %d/%d in %.1fs",
-                    i, attempt + 1, _RETRY_MAX, wait,
+                    "%s on batch %d, retry %d/%d in %.1fs",
+                    type(e).__name__, i, attempt + 1, _RETRY_MAX, wait,
                 )
                 time.sleep(wait)
                 for listing, new in chunk:
