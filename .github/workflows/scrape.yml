@@ -94,6 +94,9 @@ jobs:
         # while production is on PostgreSQL: two divergent databases, no
         # error. Never fatal — a dirty tree there must not fail the scrape.
         continue-on-error: true
+        # The host's link to GitHub is slow enough that uploads over ~3 MiB
+        # time out; a stalled fetch must not eat the scrape's budget.
+        timeout-minutes: 5
         run: |
           cd /Users/anastasia/olx-car-parser
           git fetch --quiet origin master
