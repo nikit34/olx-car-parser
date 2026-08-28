@@ -326,6 +326,49 @@ class TestApplyFreshnessRefresh:
         assert res["price_changed"] is False
 
 
+class TestBindParamChunking:
+    """PostgreSQL rejects a statement with more than 65535 bound parameters.
+    Chunking must not change which rows a query touches — the exclusion
+    list in particular, since NOT IN over a split set is only equivalent
+    as an AND of the parts."""
+
+    def test_chunked_splits_and_preserves_every_value(self):
+        from src.storage.repository import _chunked
+
+        values = list(range(25))
+        chunks = list(_chunked(values, size=10))
+        assert [len(c) for c in chunks] == [10, 10, 5]
+        assert [v for c in chunks for v in c] == values
+
+    def test_chunked_accepts_a_generator(self):
+        from src.storage.repository import _chunked
+
+        assert list(_chunked((i for i in range(5)), size=2)) == [[0, 1], [2, 3], [4]]
+
+    def test_split_exclusion_list_deactivates_exactly_the_unseen(
+        self, db_session, sample_listing_data, monkeypatch,
+    ):
+        import src.storage.repository as repo
+
+        for i in range(6):
+            upsert_listing(db_session, {
+                **sample_listing_data, "olx_id": f"chunk-{i}",
+                "url": f"https://olx.pt/chunk-{i}", "source": "olx",
+            })
+        db_session.commit()
+
+        # Force several chunks out of a six-element set.
+        monkeypatch.setattr(repo, "_MAX_BIND_PARAMS", 2)
+        seen = {"chunk-0", "chunk-3", "chunk-5"}
+        mark_inactive(db_session, "olx", seen, verify_via_url=False)
+        db_session.commit()
+
+        still_active = {
+            l.olx_id for l in db_session.query(Listing).filter_by(is_active=True)
+        }
+        assert still_active == seen
+
+
 class TestMarkInactive:
     def test_marks_unseen_inactive(self, db_session, sample_listing_data):
         upsert_listing(db_session, {**sample_listing_data, "source": "olx"})

@@ -338,14 +338,15 @@ def revalidate_recent_sold(
                 deferred += 1
 
     if restored_ids:
-        session.query(Listing).filter(Listing.id.in_(restored_ids)).update(
-            {
-                "is_active": True,
-                "deactivated_at": None,
-                "deactivation_reason": None,
-            },
-            synchronize_session="evaluate",
-        )
+        for chunk in _chunked(restored_ids):
+            session.query(Listing).filter(Listing.id.in_(chunk)).update(
+                {
+                    "is_active": True,
+                    "deactivated_at": None,
+                    "deactivation_reason": None,
+                },
+                synchronize_session="evaluate",
+            )
 
     log.info(
         "revalidate_recent_sold(%s): restored %d, still dead %d, deferred %d",
@@ -394,24 +395,29 @@ def mark_inactive(
     else:
         source_filter = Listing.source == source
 
+    # NOT IN over a set decomposes into AND of NOT IN over its parts, so
+    # the exclusion list survives chunking unchanged. A deep sweep hands
+    # this tens of thousands of ids.
+    not_seen = [~Listing.olx_id.in_(chunk) for chunk in _chunked(active_olx_ids)]
     candidates = session.query(Listing).filter(
         Listing.is_active == True,
         source_filter,
-        ~Listing.olx_id.in_(active_olx_ids),
+        *not_seen,
     ).all()
     if not candidates:
         return 0
 
     if not verify_via_url:
         now = _utcnow()
-        ids = [c.id for c in candidates]
-        count = session.query(Listing).filter(
-            Listing.id.in_(ids),
-        ).update({
-            "is_active": False,
-            "deactivated_at": now,
-            "deactivation_reason": "sold",
-        }, synchronize_session="evaluate")
+        count = 0
+        for chunk in _chunked(c.id for c in candidates):
+            count += session.query(Listing).filter(
+                Listing.id.in_(chunk),
+            ).update({
+                "is_active": False,
+                "deactivated_at": now,
+                "deactivation_reason": "sold",
+            }, synchronize_session="evaluate")
         log.info("Marked %d %s listings as inactive (no URL verify)", count, source)
         return count
 
@@ -446,13 +452,15 @@ def mark_inactive(
         return 0
 
     now = _utcnow()
-    count = session.query(Listing).filter(
-        Listing.id.in_(confirmed_dead_ids),
-    ).update({
-        "is_active": False,
-        "deactivated_at": now,
-        "deactivation_reason": "sold",
-    }, synchronize_session="evaluate")
+    count = 0
+    for chunk in _chunked(confirmed_dead_ids):
+        count += session.query(Listing).filter(
+            Listing.id.in_(chunk),
+        ).update({
+            "is_active": False,
+            "deactivated_at": now,
+            "deactivation_reason": "sold",
+        }, synchronize_session="evaluate")
     log.info(
         "mark_inactive(%s): %d marked sold, %d still alive, %d deferred (transient)",
         source, count, alive, deferred,
@@ -798,11 +806,13 @@ def compute_market_stats(
         .join(PriceSnapshot, PriceSnapshot.listing_id == Listing.id)
         .filter(Listing.is_active == True, PriceSnapshot.price_eur.isnot(None))
     )
+    from sqlalchemy import or_, tuple_
     if changed_pairs:
-        from sqlalchemy import tuple_
-        query = query.filter(
-            tuple_(Listing.brand, Listing.model).in_(changed_pairs)
-        )
+        # A pair costs two parameters, so chunk at half the budget.
+        query = query.filter(or_(*[
+            tuple_(Listing.brand, Listing.model).in_(chunk)
+            for chunk in _chunked(changed_pairs, _MAX_BIND_PARAMS // 2)
+        ]))
 
     rows = query.all()
     log.info("Market stats: fetched %d price rows%s", len(rows),
@@ -821,9 +831,10 @@ def compute_market_stats(
     # Pre-fetch existing MarketStats for target_date (only relevant pairs)
     existing_query = session.query(MarketStats).filter_by(date=target_date)
     if changed_pairs:
-        existing_query = existing_query.filter(
-            tuple_(MarketStats.brand, MarketStats.model).in_(changed_pairs)
-        )
+        existing_query = existing_query.filter(or_(*[
+            tuple_(MarketStats.brand, MarketStats.model).in_(chunk)
+            for chunk in _chunked(changed_pairs, _MAX_BIND_PARAMS // 2)
+        ]))
     existing_map: dict[tuple, MarketStats] = {}
     for ms in existing_query.all():
         existing_map[(ms.brand, ms.model, ms.year_from, ms.year_to)] = ms
@@ -873,6 +884,21 @@ def compute_market_stats(
 # Queries for dashboard
 # ---------------------------------------------------------------------------
 
+# PostgreSQL's wire protocol caps a statement at 65535 bound parameters,
+# and an id list is one parameter per element. SQLite never complained, so
+# these queries grew unbounded: the snapshot load reached 103k ids and
+# mark_inactive's exclusion list grows with every deep sweep. 20k leaves
+# room for the rest of the statement's parameters.
+_MAX_BIND_PARAMS = 20_000
+
+
+def _chunked(values, size: int = _MAX_BIND_PARAMS):
+    """Split *values* into lists small enough for one bound statement."""
+    values = list(values)
+    for start in range(0, len(values), size):
+        yield values[start:start + size]
+
+
 def get_listings_df(session: Session) -> pd.DataFrame:
     """All listings as DataFrame.
 
@@ -884,10 +910,11 @@ def get_listings_df(session: Session) -> pd.DataFrame:
     if not q:
         return pd.DataFrame()
 
-    listing_ids = [l.id for l in q]
+    # Every listing is in *q*, so the id set is expressible as a subquery —
+    # zero bound parameters instead of one per listing.
     snap_rows = (
         session.query(PriceSnapshot)
-        .filter(PriceSnapshot.listing_id.in_(listing_ids))
+        .filter(PriceSnapshot.listing_id.in_(session.query(Listing.id)))
         .order_by(PriceSnapshot.listing_id, PriceSnapshot.scraped_at.desc())
         .all()
     )
@@ -903,8 +930,9 @@ def get_listings_df(session: Session) -> pd.DataFrame:
     seller_uuids = {l.seller_uuid for l in q if l.seller_uuid}
     if seller_uuids:
         sellers_by_uuid = {
-            s.uuid: s for s in
-            session.query(Seller).filter(Seller.uuid.in_(seller_uuids)).all()
+            s.uuid: s
+            for chunk in _chunked(seller_uuids)
+            for s in session.query(Seller).filter(Seller.uuid.in_(chunk)).all()
         }
     else:
         sellers_by_uuid = {}
