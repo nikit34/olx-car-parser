@@ -283,6 +283,12 @@ export default {
         out.headers.set("Cache-Control", "public, max-age=86400");
         return out;
       }
+      if (pathname === "/favicon.ico" && method === "GET") {
+        const res = await env.ASSETS.fetch(request);
+        const out = new Response(res.body, res);
+        out.headers.set("Cache-Control", "public, max-age=604800");
+        return out;
+      }
       // Internal assets keep the Basic-Auth gate. Everything else that is not a
       // product route is genuinely not here → real 404 (see notFoundPage).
       if (!PRODUCT_PATHS.has(pathname)) {

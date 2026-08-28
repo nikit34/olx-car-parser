@@ -1041,7 +1041,7 @@ export function layout({ title, body, zone, nav, depositCount, index = false, de
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="${robots}">
 <meta name="theme-color" content="#177A47">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚗</text></svg>">
+<link rel="icon" href="/favicon.ico" sizes="48x48 32x32 16x16">
 <title>${escapeHtml(fullTitle)}</title>
 ${head}
 ${analyticsSnippet()}
