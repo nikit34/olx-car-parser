@@ -39,7 +39,7 @@ flowchart TD
       Scrape[Scrape OLX + SV<br/>JSON APIs, raw only<br/>≤90 min cap] --> Weights[Ensure damage_classifier_v2.pt<br/>cached in data/]
       Weights --> Verify[Verify photos<br/>ResNet50 @ 0.20<br/>priority: text-flagged first]
       Verify --> Alerts[Send Telegram alerts<br/>blocking_deal_reason vetoes]
-      Alerts --> Checkpoint[SQLite WAL checkpoint]
+      Alerts --> Checkpoint[WAL checkpoint<br/>SQLite fallback only]
       Checkpoint --> Train[Train price model + backtest<br/>LightGBM 5-split CQR]
     end
 
@@ -51,7 +51,7 @@ flowchart TD
     end
 
     Cascade --> Witnesses[Build dashboard witnesses<br/>predict_prices + TreeSHAP<br/>→ data/dashboard/*.parquet]
-    Witnesses --> Upload[Upload to latest-data Release<br/>olx_cars.db, *.joblib, *.json,<br/>damage_classifier_v2.pt, dashboard parquets]
+    Witnesses --> Upload[Upload to latest-data Release<br/>*.joblib, *.json,<br/>damage_classifier_v2.pt, dashboard parquets<br/>the DB stays on the scrape host]
     Upload --> Dashboard[Cloudflare Pages rebuild<br/>fetches release at build time<br/>serves stlite same-origin]
 
     classDef gate fill:#fef3c7,stroke:#92400e,color:#78350f
@@ -76,7 +76,7 @@ so you can re-run any cron without redoing work.
 flowchart LR
     A[Raw listing<br/>title + description<br/>price, mileage, year] --> B
     B[OLX/SV detail HTML<br/>BeautifulSoup parse] --> C
-    C[(SQLite<br/>listings)]:::db
+    C[(PostgreSQL<br/>listings)]:::db
 
     C --> V[value gate<br/>GBM ranks every listing<br/>top-K undervalued only]
     V --> D
@@ -155,18 +155,20 @@ veto signal that gets cross-checked against text damage_severity in
 
 ### Inputs / outputs
 
-- **Persistent state** lives on the scrape host as `data/olx_cars.db`
-  (SQLite, ~90 MB at steady state). The host runs the GitHub Actions
-  self-hosted runner and is the only thing that writes.
+- **Persistent state** lives on the scrape host in PostgreSQL (database
+  `olx_cars`, ~370 MB at steady state). Every entry point picks its engine
+  from `OLX_DB_URL` and falls back to a local `data/olx_cars.db` SQLite file
+  when it is unset. The host runs the GitHub Actions self-hosted runner and
+  is the only thing that writes.
 - **Per-listing photo signal**: stored as JSON keys `photo_damage_p`,
   `photo_damage_flagged`, and `photo_damages` *inside* the existing
   `llm_extras` column — no schema migration.
 - **Photo cache**: `/tmp/photo_verify/cache/{olx_id}/{i}.jpg` — survives
   for the cron runtime, not persisted across runs.
-- **Release artifacts**: `latest-data` carries the DB, the price model
-  bundle, training metrics, the damage classifier weights, and the
-  dashboard witness parquets. Cloudflare Pages reads the dashboard
-  parquets at build time and ships them same-origin; the DB / model /
+- **Release artifacts**: `latest-data` carries the price model bundle,
+  training metrics, the damage classifier weights, and the dashboard
+  witness parquets — never the database itself. Cloudflare Pages reads the
+  dashboard parquets at build time and ships them same-origin; the model /
   weights are server-side artifacts the next scrape uses.
 
 ## Layout

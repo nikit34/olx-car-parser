@@ -18,6 +18,7 @@ from rich.table import Table
 _LOCK_PATH = Path(__file__).resolve().parent.parent / "data" / "scrape.lock"
 
 from src.parser.scraper import OlxScraper, StandVirtualScraper, ScraperConfig, SV_BASE_URL
+from src.storage.jsonsql import json_field
 from src.storage.database import get_session, init_db
 from src.models.generations import get_generation, infer_model_from_title
 from src.storage.repository import (
@@ -439,7 +440,6 @@ def enrich_cloud(
     key, when every provider's budget is spent, or when nothing clears the
     gate.
     """
-    from sqlalchemy import func as sa_func
     from src.models.listing import Listing
     from src.parser.cloud_enrichment import (
         get_llm_config, available_providers, cloud_corrections,
@@ -474,7 +474,7 @@ def enrich_cloud(
     # Exclude listings already cloud-enriched (marker stored in llm_extras).
     already = {
         oid for (oid,) in session.query(Listing.olx_id).filter(
-            sa_func.json_extract(Listing.llm_extras, "$._or_enriched").isnot(None)
+            json_field(Listing.llm_extras, "_or_enriched").isnot(None)
         ).all()
     }
 
@@ -597,7 +597,6 @@ def verify_deals(
     to check.
     """
     import tempfile
-    from sqlalchemy import func as sa_func
     from src.models.listing import Listing
     from src.parser.cloud_enrichment import BudgetLedger, get_llm_config, get_api_key
     from src.parser.photo_verdict import (
@@ -657,7 +656,7 @@ def verify_deals(
     if not recheck:
         already = {
             oid for (oid,) in session.query(Listing.olx_id).filter(
-                sa_func.json_extract(Listing.llm_extras, "$.vlm_damage").isnot(None)
+                json_field(Listing.llm_extras, "vlm_damage").isnot(None)
             ).all()
         }
     queue = [o for o in shown["olx_id"].tolist() if o not in already][: max(budget, 0) or None]
@@ -836,7 +835,7 @@ def verify_photos(
     init_db()
     session = get_session()
     from src.models.listing import Listing
-    from sqlalchemy import and_, or_, func as sa_func
+    from sqlalchemy import and_, or_
 
     cache_dir.mkdir(parents=True, exist_ok=True)
     if backfill_plates:
@@ -874,24 +873,24 @@ def verify_photos(
     # multi-photo decision and clears the marker.
     from sqlalchemy import or_
     if upgrade_legacy:
-        legacy_marker = sa_func.json_extract(
-            Listing.llm_extras, "$.photo_damage_flag_source",
+        legacy_marker = json_field(
+            Listing.llm_extras, "photo_damage_flag_source",
         ) == "legacy_max_rule_backfill"
         selection_filter = legacy_marker
     elif backfill_plates:
         # One-shot plate retro-fit: pick rows already verified for damage
         # (so we don't re-process listings still in the steady-state
         # damage queue) but missing the plate fields entirely.
-        has_damage = sa_func.json_extract(
-            Listing.llm_extras, "$.photo_damage_p",
+        has_damage = json_field(
+            Listing.llm_extras, "photo_damage_p",
         ).isnot(None)
-        needs_plate = sa_func.json_extract(
-            Listing.llm_extras, "$.plate_readable",
+        needs_plate = json_field(
+            Listing.llm_extras, "plate_readable",
         ).is_(None)
         selection_filter = and_(has_damage, needs_plate)
     else:
-        needs_photo = sa_func.json_extract(
-            Listing.llm_extras, "$.photo_damage_p",
+        needs_photo = json_field(
+            Listing.llm_extras, "photo_damage_p",
         ).is_(None)
         selection_filter = needs_photo
     # Priority order:
@@ -902,8 +901,8 @@ def verify_photos(
     # On the production DB (2698 pending) this floats ~120 high-signal
     # rows to the front, so a single cron's --limit budget pays maximal
     # alert-quality dividend before grinding through clean dealer photos.
-    text_sev_ge2_order = sa_func.json_extract(
-        Listing.llm_extras, "$.damage_severity",
+    text_sev_ge2_order = json_field(
+        Listing.llm_extras, "damage_severity", numeric=True,
     ) >= 2
     q = (
         session.query(Listing)
@@ -923,8 +922,8 @@ def verify_photos(
         )
     )
     if only_text_flagged:
-        text_sev_ge2 = sa_func.json_extract(
-            Listing.llm_extras, "$.damage_severity",
+        text_sev_ge2 = json_field(
+            Listing.llm_extras, "damage_severity", numeric=True,
         ) >= 2
         q = q.filter(text_sev_ge2)
     if limit is not None and limit > 0:

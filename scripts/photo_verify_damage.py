@@ -17,13 +17,17 @@ Usage:
 
 import argparse
 import json
-import sqlite3
 import sys
 import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+from sqlalchemy import text as sa_text  # noqa: E402
+
+from src.storage.database import open_conn  # noqa: E402
+from src.storage.jsonsql import json_sql  # noqa: E402
 
 from src.parser.photo_fetch import fetch_photos, download_photo  # noqa: E402, F401
 
@@ -58,18 +62,18 @@ def main():
     clf = DamageClassifier(args.weights, threshold=args.threshold)
     print(f"Classes: {clf.classes}, imgsz: {clf.imgsz}, device: {clf.device}\n")
 
-    conn = sqlite3.connect(str(args.db))
-    conn.row_factory = sqlite3.Row
-    limit_clause = f"LIMIT {args.limit}" if args.limit else ""
-    rows = conn.execute(f"""
+    conn = open_conn(str(args.db))
+    severity = json_sql(conn.engine, "llm_extras", "damage_severity", numeric=True)
+    limit_clause = f"LIMIT {int(args.limit)}" if args.limit else ""
+    rows = conn.execute(sa_text(f"""
         SELECT olx_id, url, title, llm_extras
         FROM listings
-        WHERE is_active = 1
-          AND json_extract(llm_extras, '$.damage_severity') >= 2
+        WHERE is_active = TRUE
+          AND {severity} >= 2
           AND (url LIKE '%standvirtual%' OR url LIKE '%olx.pt%')
-        ORDER BY json_extract(llm_extras, '$.damage_severity') DESC, RANDOM()
+        ORDER BY {severity} DESC, random()
         {limit_clause}
-    """).fetchall()
+    """)).fetchall()
     print(f"Candidates: {len(rows)}\n")
 
     args.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -80,9 +84,9 @@ def main():
     t0 = time.monotonic()
 
     for i, r in enumerate(rows, 1):
-        olx_id = r["olx_id"]
-        text_sev = json.loads(r["llm_extras"]).get("damage_severity")
-        photo_urls = fetch_photos(r["url"])
+        olx_id = r.olx_id
+        text_sev = json.loads(r.llm_extras).get("damage_severity")
+        photo_urls = fetch_photos(r.url)
         listing_dir = args.cache_dir / olx_id
         photo_paths = []
         for j, url in enumerate(photo_urls, 1):
@@ -104,8 +108,8 @@ def main():
 
         rec = {
             "olx_id": olx_id,
-            "url": r["url"],
-            "title": r["title"],
+            "url": r.url,
+            "title": r.title,
             "text_damage_severity": text_sev,
             "n_photos": len(photo_paths),
             "max_p_damaged": round(max_p, 3),

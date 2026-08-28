@@ -72,6 +72,11 @@ jobs:
     # day; anything beyond that is stuck.
     timeout-minutes: 240
 
+    env:
+      # Empty until the host's PostgreSQL cutover; src.storage.database then
+      # falls back to the SQLite file under the persistent data/ symlink.
+      OLX_DB_URL: ${{ secrets.OLX_DB_URL }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -299,7 +304,8 @@ jobs:
         run: .venv/bin/python -m src.cli alerts
 
       - name: Checkpoint WAL
-        if: always()
+        # SQLite-only housekeeping; a no-op once OLX_DB_URL points at PostgreSQL.
+        if: ${{ always() && env.OLX_DB_URL == '' }}
         timeout-minutes: 5
         run: |
           sqlite3 data/olx_cars.db "PRAGMA wal_checkpoint(TRUNCATE);" 2>/dev/null || \
@@ -511,7 +517,7 @@ jobs:
           .venv/bin/python scripts/build_hot_deals.py
           ls -lh data/hot_deals/
 
-      - name: Upload DB + model to GitHub Releases
+      - name: Upload model + witnesses to GitHub Releases
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -528,9 +534,8 @@ jobs:
           gh release view latest-data 2>/dev/null || \
             gh release create latest-data \
               --title "Latest Data" \
-              --notes "Auto-updated database + price model from scraper" \
+              --notes "Auto-updated price model + dashboard witnesses from scraper" \
               --latest=false
-          gh release upload latest-data data/olx_cars.db --clobber
           if [ "$TRAIN_RC" = "0" ]; then
             [ -f data/price_model.joblib ]     && gh release upload latest-data data/price_model.joblib     --clobber || true
             [ -f data/price_metrics.json ]     && gh release upload latest-data data/price_metrics.json     --clobber || true
@@ -558,10 +563,6 @@ jobs:
           else
             echo "::warning::Skipping hazard upload — train-hazard rc=${HAZ_RC:-<unset>}"
           fi
-          # detect_relists writes directly to the SQLite DB
-          # (relist_events table); no separate file to upload — it
-          # rides the data/olx_cars.db release alongside everything else.
-
           # Dashboard witnesses — only re-publish if build_dashboard_data
           # succeeded. CF Pages serves the stlite bundle from a separate
           # static deploy and fetches these parquets at browser mount time;

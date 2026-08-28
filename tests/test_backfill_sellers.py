@@ -10,9 +10,10 @@ real network or the global module-level engine cache in
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from sqlalchemy import text as sa_text
 from unittest.mock import MagicMock
 
 import pytest
@@ -38,11 +39,11 @@ def _reset_module_engine_cache():
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> sqlite3.Connection:
+def db(tmp_path: Path):
     """A fresh DB at the on-disk path the script expects, with the v3
     schema applied (so ``sellers`` exists and ``listings`` has the
-    seller_* columns). Tests open their own raw connection on top —
-    matches the script's own access pattern."""
+    seller_* columns). Yields the same autocommitting engine connection
+    the script itself opens."""
     _reset_module_engine_cache()
     db_file = tmp_path / "olx_cars.db"
 
@@ -57,7 +58,7 @@ def db(tmp_path: Path) -> sqlite3.Connection:
     from src.storage.database import init_db
     init_db(str(db_file))
 
-    conn = sqlite3.connect(str(db_file), timeout=30, isolation_level=None)
+    conn = backfill_mod._open_db()
     yield conn
     conn.close()
 
@@ -65,10 +66,14 @@ def db(tmp_path: Path) -> sqlite3.Connection:
 def _insert_listing(conn, olx_id: str, profile_url: str | None,
                     seller_uuid: str | None = None) -> None:
     conn.execute(
-        "INSERT INTO listings (olx_id, url, brand, model, "
-        "seller_profile_url, seller_uuid) VALUES (?, ?, ?, ?, ?, ?)",
-        (olx_id, f"https://olx.pt/{olx_id}", "VW", "Golf",
-         profile_url, seller_uuid),
+        sa_text(
+            "INSERT INTO listings (olx_id, url, brand, model, "
+            "seller_profile_url, seller_uuid) VALUES "
+            "(:olx_id, :url, :brand, :model, :profile_url, :seller_uuid)"
+        ),
+        {"olx_id": olx_id, "url": f"https://olx.pt/{olx_id}", "brand": "VW",
+         "model": "Golf", "profile_url": profile_url,
+         "seller_uuid": seller_uuid},
     )
 
 
@@ -105,11 +110,13 @@ class TestSelectTargets:
         # under a 14-day TTL.
         url = "https://www.olx.pt/ads/user/abc/"
         recent = (datetime.now(timezone.utc).replace(tzinfo=None)
-                  - timedelta(days=1)).isoformat(sep=" ")
+                  - timedelta(days=1))
         db.execute(
-            "INSERT INTO sellers (uuid, profile_url, profile_fetched_at) "
-            "VALUES (?, ?, ?)",
-            ("u-abc", url, recent),
+            sa_text(
+                "INSERT INTO sellers (uuid, profile_url, profile_fetched_at) "
+                "VALUES (:uuid, :url, :fetched_at)"
+            ),
+            {"uuid": "u-abc", "url": url, "fetched_at": recent},
         )
         _insert_listing(db, "L1", url, seller_uuid="u-abc")
         targets = _select_targets(db, ttl_days=14, limit=None)
@@ -119,11 +126,13 @@ class TestSelectTargets:
         # Same as above but seller fetched 30 days ago — must refresh.
         url = "https://www.olx.pt/ads/user/abc/"
         stale = (datetime.now(timezone.utc).replace(tzinfo=None)
-                 - timedelta(days=30)).isoformat(sep=" ")
+                 - timedelta(days=30))
         db.execute(
-            "INSERT INTO sellers (uuid, profile_url, profile_fetched_at) "
-            "VALUES (?, ?, ?)",
-            ("u-abc", url, stale),
+            sa_text(
+                "INSERT INTO sellers (uuid, profile_url, profile_fetched_at) "
+                "VALUES (:uuid, :url, :fetched_at)"
+            ),
+            {"uuid": "u-abc", "url": url, "fetched_at": stale},
         )
         _insert_listing(db, "L1", url, seller_uuid="u-abc")
         targets = _select_targets(db, ttl_days=14, limit=None)
@@ -171,14 +180,16 @@ class TestUpsertAndLink:
     def test_inserts_seller_with_derived_counts(self, db):
         _upsert_seller(db, _profile())
         row = db.execute(
-            "SELECT uuid, name, is_business, total_ads, "
+            sa_text(
+                "SELECT uuid, name, is_business, total_ads, "
             "cars_count, commercial_count, motos_count, non_auto_count, "
             "tools_industrial_count "
             "FROM sellers"
+            )
         ).fetchone()
         assert row[0] == "u-1"
         assert row[1] == "Rui"
-        assert row[2] == 0  # is_business stored as 0/1 in SQLite
+        assert not row[2]
         assert row[3] == 8
         assert row[4] == 5  # cars
         assert row[5] == 1  # commercial
@@ -194,11 +205,13 @@ class TestUpsertAndLink:
             position_lon=-8.144,
         ))
         row = db.execute(
-            "SELECT social_account_type, has_user_photo, "
+            sa_text(
+                "SELECT social_account_type, has_user_photo, "
             "position_lat, position_lon FROM sellers"
+            )
         ).fetchone()
         assert row[0] == "facebook"
-        assert row[1] == 0
+        assert not row[1]
         assert row[2] == pytest.approx(41.46008)
         assert row[3] == pytest.approx(-8.144)
 
@@ -206,9 +219,9 @@ class TestUpsertAndLink:
         _upsert_seller(db, _profile(facets={362: 1, 378: 1}))
         # Re-fetch with different counts (seller listed two more cars)
         _upsert_seller(db, _profile(facets={362: 3, 378: 3}))
-        rows = db.execute("SELECT cars_count, total_ads FROM sellers").fetchall()
+        rows = db.execute(sa_text("SELECT cars_count, total_ads FROM sellers")).fetchall()
         assert len(rows) == 1
-        assert rows[0] == (3, 8)  # total_ads always 8 in helper; cars updated
+        assert tuple(rows[0]) == (3, 8)  # total_ads always 8 in helper; cars updated
 
     def test_link_listings_sets_seller_uuid_for_matching_url(self, db):
         url = "https://www.olx.pt/ads/user/abc/"
@@ -218,9 +231,11 @@ class TestUpsertAndLink:
         n = _link_listings(db, url, "u-1")
         assert n == 2
         rows = db.execute(
-            "SELECT olx_id, seller_uuid FROM listings ORDER BY olx_id"
+            sa_text(
+                "SELECT olx_id, seller_uuid FROM listings ORDER BY olx_id"
+            )
         ).fetchall()
-        assert rows == [("L1", "u-1"), ("L2", "u-1"), ("L3", None)]
+        assert [tuple(r) for r in rows] == [("L1", "u-1"), ("L2", "u-1"), ("L3", None)]
 
     def test_link_listings_does_not_clobber_existing_uuid(self, db):
         url = "https://www.olx.pt/ads/user/abc/"
@@ -229,9 +244,11 @@ class TestUpsertAndLink:
         n = _link_listings(db, url, "u-new")
         assert n == 1  # only L2 was unlinked
         rows = db.execute(
-            "SELECT olx_id, seller_uuid FROM listings ORDER BY olx_id"
+            sa_text(
+                "SELECT olx_id, seller_uuid FROM listings ORDER BY olx_id"
+            )
         ).fetchall()
-        assert rows == [("L1", "u-old"), ("L2", "u-new")]
+        assert [tuple(r) for r in rows] == [("L1", "u-old"), ("L2", "u-new")]
 
 
 # ---------------------------------------------------------------------------
@@ -258,9 +275,9 @@ class TestProcessOne:
         status, linked = _process_one(db, scraper, url, dry_run=True)
         assert status == "ok"
         assert linked == 0
-        assert db.execute("SELECT COUNT(*) FROM sellers").fetchone()[0] == 0
+        assert db.execute(sa_text("SELECT COUNT(*) FROM sellers")).fetchone()[0] == 0
         assert db.execute(
-            "SELECT seller_uuid FROM listings WHERE olx_id='L1'"
+            sa_text("SELECT seller_uuid FROM listings WHERE olx_id='L1'")
         ).fetchone()[0] is None
 
     def test_fetch_returning_none_reports_fetch_err(self, db):

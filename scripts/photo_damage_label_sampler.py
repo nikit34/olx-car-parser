@@ -25,7 +25,6 @@ Usage:
 
 import argparse
 import json
-import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -34,6 +33,11 @@ import httpx
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+from sqlalchemy import text as sa_text  # noqa: E402
+
+from src.storage.database import open_conn  # noqa: E402
+from src.storage.jsonsql import json_sql  # noqa: E402
 
 from src.parser.photo_fetch import fetch_standvirtual_advert  # noqa: E402
 
@@ -51,36 +55,37 @@ def fetch_photos(url: str) -> tuple[list[str], dict]:
 
 def stratified_sample(db_path: Path, counts: dict[int | None, int],
                       exclude_olx_ids: set[str] | None = None) -> list[dict]:
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
+    conn = open_conn(str(db_path))
+    severity = json_sql(conn.engine, "llm_extras", "damage_severity", numeric=True)
     out = []
-    excl = exclude_olx_ids or set()
+    excl = sorted(exclude_olx_ids or set())
     excl_clause = ""
+    params: dict = {}
     if excl:
-        placeholders = ",".join("?" * len(excl))
+        placeholders = ",".join(f":excl_{i}" for i in range(len(excl)))
         excl_clause = f" AND olx_id NOT IN ({placeholders})"
+        params = {f"excl_{i}": v for i, v in enumerate(excl)}
     for sev, n in counts.items():
         if n <= 0:
             continue
         if sev is None:
-            where = "json_extract(llm_extras, '$.damage_severity') IS NULL"
+            where = f"{severity} IS NULL"
         else:
-            where = f"json_extract(llm_extras, '$.damage_severity') = {sev}"
-        params = list(excl)
-        rows = conn.execute(f"""
+            where = f"{severity} = {int(sev)}"
+        rows = conn.execute(sa_text(f"""
             SELECT olx_id, url, title, description, llm_extras
             FROM listings
             WHERE {where}
               AND llm_extras IS NOT NULL
               AND url LIKE '%standvirtual%'
               AND length(coalesce(description, '')) >= 30
-              AND is_active = 1
+              AND is_active = TRUE
               {excl_clause}
-            ORDER BY RANDOM()
-            LIMIT {n}
-        """, params).fetchall()
+            ORDER BY random()
+            LIMIT {int(n)}
+        """), params).fetchall()
         for r in rows:
-            d = dict(r)
+            d = dict(r._mapping)
             d["text_severity"] = sev
             d["llm_extras"] = json.loads(d["llm_extras"]) if d["llm_extras"] else {}
             out.append(d)

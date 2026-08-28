@@ -37,11 +37,11 @@ What it does
 
 Concurrency / DB locking
 ~~~~~~~~~~~~~~~~~~~~~~~~
-Same recipe as ``backfill_olx_photo_count``: a single raw
-``sqlite3.Connection`` with ``timeout=30s`` and ``isolation_level=None``,
-so each statement runs in its own transaction and waits politely for
-the live scrape worker's market-stats commit (which can hold the write
-lock for 3-5 minutes).
+Runs on the shared engine from ``src.storage.database`` with statement
+autocommit, so each write lands on its own instead of holding a
+transaction open across HTTP fetches. On PostgreSQL readers never block;
+on SQLite the engine's ``busy_timeout`` makes a blocked write wait out
+the live scrape worker's market-stats commit rather than crash.
 
 Resumable
 ~~~~~~~~~
@@ -53,7 +53,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -61,6 +60,10 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
+from sqlalchemy import DateTime, bindparam, text as sa_text  # noqa: E402
+from sqlalchemy.exc import DBAPIError, OperationalError  # noqa: E402
+
+from src.storage.database import get_engine  # noqa: E402
 from src.parser.olx_categories import categorise_facets  # noqa: E402
 from src.parser.scraper import OlxScraper, ScraperConfig  # noqa: E402
 from src.parser.seller_profile import SellerProfile  # noqa: E402
@@ -70,19 +73,23 @@ DB_PATH = _REPO_ROOT / "data" / "olx_cars.db"
 logger = logging.getLogger("backfill_sellers")
 
 
-def _open_db(timeout_s: float = 30.0) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH), timeout=timeout_s, isolation_level=None)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    return conn
+def _open_db():
+    """A statement-autocommitting connection on the configured engine.
+
+    Engine setup (WAL + busy_timeout on SQLite, pooling on PostgreSQL)
+    lives in ``src.storage.database``; this script only needs each write
+    to land on its own instead of sitting in an open transaction.
+    """
+    engine = get_engine(str(DB_PATH))
+    return engine.connect().execution_options(isolation_level="AUTOCOMMIT")
 
 
-def _utcnow_str() -> str:
-    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat(sep=" ")
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _select_targets(
-    conn: sqlite3.Connection,
+    conn,
     ttl_days: int,
     limit: int | None,
 ) -> list[str]:
@@ -105,10 +112,7 @@ def _select_targets(
     need it most, and the resumable selector drains the remainder on
     later crons instead of starving the same tail every time.
     """
-    cutoff = (
-        datetime.now(timezone.utc).replace(tzinfo=None)
-        - timedelta(days=ttl_days)
-    ).isoformat(sep=" ")
+    cutoff = _utcnow() - timedelta(days=ttl_days)
     sql = """
         SELECT l.seller_profile_url
         FROM listings l
@@ -117,18 +121,19 @@ def _select_targets(
           AND (
             l.seller_uuid IS NULL
             OR s.profile_fetched_at IS NULL
-            OR s.profile_fetched_at < ?
+            OR s.profile_fetched_at < :cutoff
           )
         GROUP BY l.seller_profile_url
-        ORDER BY MIN(COALESCE(s.profile_fetched_at, '')) ASC
+        ORDER BY MIN(s.profile_fetched_at) ASC NULLS FIRST
     """
     if limit is not None:
         sql += f" LIMIT {int(limit)}"
-    return [row[0] for row in conn.execute(sql, (cutoff,)).fetchall()]
+    stmt = sa_text(sql).bindparams(bindparam("cutoff", type_=DateTime()))
+    return [row[0] for row in conn.execute(stmt, {"cutoff": cutoff}).fetchall()]
 
 
 def _upsert_seller(
-    conn: sqlite3.Connection,
+    conn,
     profile: SellerProfile,
 ) -> None:
     """Insert or update a sellers row keyed by uuid.
@@ -140,18 +145,18 @@ def _upsert_seller(
     facets_list = [{"id": k, "count": v} for k, v in profile.facets.items()]
     derived = categorise_facets(facets_list, categories_list=profile.categories_list)
     facets_json = json.dumps(profile.facets, ensure_ascii=False)
-    now = _utcnow_str()
+    now = _utcnow()
     fields = {
         "uuid": profile.uuid,
         "short_id": profile.short_id,
         "shop_slug": profile.shop_slug,
         "profile_url": profile.profile_url,
         "name": profile.name,
-        "is_business": int(profile.is_business) if profile.is_business is not None else None,
+        "is_business": profile.is_business,
         "business_type": profile.business_type,
-        "created_at": profile.created_at.isoformat(sep=" ") if profile.created_at else None,
-        "last_seen_at": profile.last_seen_at.isoformat(sep=" ") if profile.last_seen_at else None,
-        "last_login_at": profile.last_login_at.isoformat(sep=" ") if profile.last_login_at else None,
+        "created_at": profile.created_at,
+        "last_seen_at": profile.last_seen_at,
+        "last_login_at": profile.last_login_at,
         "total_ads": profile.total_ads,
         "ads_by_category": facets_json,
         "cars_count": derived["cars"],
@@ -169,22 +174,25 @@ def _upsert_seller(
         "pets_hobby_count": derived["pets_hobby"],
         "services_jobs_count": derived["services_jobs"],
         "social_account_type": profile.social_account_type,
-        "has_user_photo": int(profile.has_user_photo) if profile.has_user_photo is not None else None,
+        "has_user_photo": profile.has_user_photo,
         "position_lat": profile.position_lat,
         "position_lon": profile.position_lon,
         "profile_fetched_at": now,
     }
     cols = ", ".join(fields.keys())
-    placeholders = ", ".join("?" for _ in fields)
+    placeholders = ", ".join(f":{k}" for k in fields)
     updates = ", ".join(f"{k}=excluded.{k}" for k in fields if k != "uuid")
-    conn.execute(
+    stmt = sa_text(
         f"INSERT INTO sellers ({cols}) VALUES ({placeholders}) "
-        f"ON CONFLICT(uuid) DO UPDATE SET {updates}",
-        tuple(fields.values()),
-    )
+        f"ON CONFLICT (uuid) DO UPDATE SET {updates}"
+    ).bindparams(*(
+        bindparam(k, type_=DateTime()) for k in
+        ("created_at", "last_seen_at", "last_login_at", "profile_fetched_at")
+    ))
+    conn.execute(stmt, fields)
 
 
-def _link_listings(conn: sqlite3.Connection, profile_url: str, uuid: str) -> int:
+def _link_listings(conn, profile_url: str, uuid: str) -> int:
     """Set seller_uuid on every listing that points at *profile_url*.
 
     A seller can have multiple listings; one fetch resolves all of
@@ -193,16 +201,18 @@ def _link_listings(conn: sqlite3.Connection, profile_url: str, uuid: str) -> int
     happened to change format (private → business shop subdomain),
     which the dedicated refresh path is meant to handle, not this one.
     """
-    cursor = conn.execute(
-        "UPDATE listings SET seller_uuid = ? "
-        "WHERE seller_profile_url = ? AND seller_uuid IS NULL",
-        (uuid, profile_url),
+    result = conn.execute(
+        sa_text(
+            "UPDATE listings SET seller_uuid = :uuid "
+            "WHERE seller_profile_url = :profile_url AND seller_uuid IS NULL"
+        ),
+        {"uuid": uuid, "profile_url": profile_url},
     )
-    return cursor.rowcount or 0
+    return result.rowcount or 0
 
 
 def _process_one(
-    conn: sqlite3.Connection,
+    conn,
     scraper: OlxScraper,
     url: str,
     dry_run: bool,
@@ -229,7 +239,7 @@ def _process_one(
     try:
         _upsert_seller(conn, profile)
         linked = _link_listings(conn, url, profile.uuid)
-    except sqlite3.OperationalError as exc:
+    except (OperationalError, DBAPIError) as exc:
         logger.warning("write blocked for %s: %s", url, exc)
         return "write_err", 0
     return "ok", linked
