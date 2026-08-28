@@ -316,7 +316,7 @@ jobs:
         # only loses one dashboard panel.
         id: train_model
         if: ${{ !cancelled() }}
-        timeout-minutes: 35
+        timeout-minutes: 55
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
