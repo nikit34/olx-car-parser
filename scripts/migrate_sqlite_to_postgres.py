@@ -33,15 +33,15 @@ import src.models.seller  # noqa: F401,E402
 
 logger = logging.getLogger("migrate_sqlite_to_postgres")
 
-_COPY_ORDER = (
-    "listings",
-    "price_snapshots",
-    "market_stats",
-    "unmatched_listings",
-    "sellers",
-    "portfolio_deals",
-    "relist_events",
-)
+def _ordered_tables(wanted: set[str]) -> list:
+    """Tables in foreign-key order — parents before children.
+
+    ``sorted_tables`` derives that from the FK graph, so adding a relation
+    later can't leave a hand-written order silently wrong: SQLite accepts
+    any order (it does not enforce foreign keys by default), PostgreSQL
+    rejects the child row whose parent has not arrived yet.
+    """
+    return [t for t in Base.metadata.sorted_tables if t.name in wanted]
 
 
 def _check_llm_extras_json(src_engine, sample: int = 5) -> list[str]:
@@ -117,8 +117,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="Empty the target tables before copying.")
     parser.add_argument("--ignore-invalid-json", action="store_true",
                         help="Migrate even if some llm_extras rows aren't JSON objects.")
-    parser.add_argument("--tables", default=",".join(_COPY_ORDER),
-                        help="Comma-separated subset of tables to copy.")
+    parser.add_argument("--tables", default="",
+                        help="Comma-separated subset of tables (default: all).")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -144,8 +144,8 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("Creating schema on %s", dst_engine.url.render_as_string(hide_password=True))
     Base.metadata.create_all(dst_engine)
 
-    wanted = [t.strip() for t in args.tables.split(",") if t.strip()]
-    tables = [Base.metadata.tables[name] for name in _COPY_ORDER if name in wanted]
+    wanted = {t.strip() for t in args.tables.split(",") if t.strip()}
+    tables = _ordered_tables(wanted or set(Base.metadata.tables))
 
     if args.truncate:
         with dst_engine.begin() as dst:
