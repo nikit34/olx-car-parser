@@ -73,6 +73,23 @@ class TestNormalizedFallback:
         assert get_generation("SEAT", "Ibiza", 2015) is not None
 
 
+class TestReferenceTableCoverage:
+    def test_pre_2008_ibiza_resolves(self):
+        assert get_generation("Seat", "Ibiza", 1995) is not None
+
+    def test_pre_2006_civic_resolves(self):
+        assert get_generation("Honda", "Civic", 1998) is not None
+
+    def test_classic_defender_resolves(self):
+        assert get_generation("Land Rover", "Defender", 1998) is not None
+
+    def test_skoda_spellings_agree(self):
+        with_hacek = get_generation("Škoda", "Fabia", 2003)
+        without = get_generation("Skoda", "Fabia", 2003)
+        assert with_hacek is not None
+        assert with_hacek == without
+
+
 class TestModelAliases:
     def test_bmw_series_aliases_exist(self):
         aliases = _get_model_aliases()

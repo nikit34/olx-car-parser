@@ -1764,6 +1764,41 @@
     ],
     "Civic": [
       {
+        "name": "Gen1",
+        "year_from": 1972,
+        "year_to": 1979
+      },
+      {
+        "name": "Gen2",
+        "year_from": 1979,
+        "year_to": 1983
+      },
+      {
+        "name": "Gen3",
+        "year_from": 1983,
+        "year_to": 1987
+      },
+      {
+        "name": "Gen4",
+        "year_from": 1987,
+        "year_to": 1991
+      },
+      {
+        "name": "Gen5",
+        "year_from": 1991,
+        "year_to": 1995
+      },
+      {
+        "name": "Gen6",
+        "year_from": 1995,
+        "year_to": 2000
+      },
+      {
+        "name": "Gen7",
+        "year_from": 2000,
+        "year_to": 2006
+      },
+      {
         "name": "FK",
         "year_from": 2006,
         "year_to": 2012
@@ -2141,6 +2176,16 @@
     ],
     "Grand Cherokee": [
       {
+        "name": "ZJ",
+        "year_from": 1992,
+        "year_to": 1998
+      },
+      {
+        "name": "WJ",
+        "year_from": 1998,
+        "year_to": 2004
+      },
+      {
         "name": "WK",
         "year_from": 2004,
         "year_to": 2010
@@ -2384,6 +2429,11 @@
       }
     ],
     "Defender": [
+      {
+        "name": "L316",
+        "year_from": 1983,
+        "year_to": 2016
+      },
       {
         "name": "L663",
         "year_from": 2020,
@@ -2660,6 +2710,11 @@
       }
     ],
     "B-Class": [
+      {
+        "name": "W245",
+        "year_from": 2005,
+        "year_to": 2011
+      },
       {
         "name": "W246",
         "year_from": 2011,
@@ -3070,6 +3125,11 @@
     ],
     "Space Star": [
       {
+        "name": "I",
+        "year_from": 1998,
+        "year_to": 2005
+      },
+      {
         "name": "Mk1",
         "year_from": 2012,
         "year_to": 2026
@@ -3100,6 +3160,16 @@
       }
     ],
     "Pajero": [
+      {
+        "name": "Gen1",
+        "year_from": 1982,
+        "year_to": 1991
+      },
+      {
+        "name": "V20",
+        "year_from": 1991,
+        "year_to": 2000
+      },
       {
         "name": "V60",
         "year_from": 2000,
@@ -3192,6 +3262,16 @@
       }
     ],
     "Micra": [
+      {
+        "name": "K10",
+        "year_from": 1983,
+        "year_to": 1992
+      },
+      {
+        "name": "K11",
+        "year_from": 1992,
+        "year_to": 2002
+      },
       {
         "name": "K12",
         "year_from": 2002,
@@ -3308,6 +3388,11 @@
     ],
     "Almera": [
       {
+        "name": "N15",
+        "year_from": 1995,
+        "year_to": 2000
+      },
+      {
         "name": "N16",
         "year_from": 2000,
         "year_to": 2006
@@ -3351,6 +3436,16 @@
     ],
     "Primera": [
       {
+        "name": "P10",
+        "year_from": 1990,
+        "year_to": 1995
+      },
+      {
+        "name": "P11",
+        "year_from": 1995,
+        "year_to": 2002
+      },
+      {
         "name": "P12",
         "year_from": 2002,
         "year_to": 2008
@@ -3392,6 +3487,11 @@
     ],
     "Corsa": [
       {
+        "name": "A",
+        "year_from": 1982,
+        "year_to": 1993
+      },
+      {
         "name": "B",
         "year_from": 1993,
         "year_to": 2000
@@ -3431,6 +3531,16 @@
     ],
     "Frontera": [
       {
+        "name": "A",
+        "year_from": 1992,
+        "year_to": 1998
+      },
+      {
+        "name": "B",
+        "year_from": 1998,
+        "year_to": 2004
+      },
+      {
         "name": "2024",
         "year_from": 2024,
         "year_to": 2026
@@ -3454,6 +3564,11 @@
       }
     ],
     "Zafira": [
+      {
+        "name": "A",
+        "year_from": 1999,
+        "year_to": 2005
+      },
       {
         "name": "B",
         "year_from": 2005,
@@ -3887,6 +4002,11 @@
         "name": "Gen1",
         "year_from": 1961,
         "year_to": 1992
+      },
+      {
+        "name": "E-Tech",
+        "year_from": 2024,
+        "year_to": 2026
       }
     ],
     "5": [
@@ -3899,6 +4019,11 @@
         "name": "Supercinq",
         "year_from": 1984,
         "year_to": 1996
+      },
+      {
+        "name": "E-Tech",
+        "year_from": 2024,
+        "year_to": 2026
       }
     ],
     "Captur": [
@@ -4041,6 +4166,11 @@
     ],
     "Laguna": [
       {
+        "name": "I",
+        "year_from": 1994,
+        "year_to": 2001
+      },
+      {
         "name": "II",
         "year_from": 2001,
         "year_to": 2007
@@ -4079,6 +4209,21 @@
   "Seat": {
     "Ibiza": [
       {
+        "name": "Mk1",
+        "year_from": 1984,
+        "year_to": 1993
+      },
+      {
+        "name": "Mk2",
+        "year_from": 1993,
+        "year_to": 2002
+      },
+      {
+        "name": "Mk3",
+        "year_from": 2002,
+        "year_to": 2008
+      },
+      {
         "name": "Mk4",
         "year_from": 2008,
         "year_to": 2017
@@ -4090,6 +4235,11 @@
       }
     ],
     "Leon": [
+      {
+        "name": "Mk1",
+        "year_from": 1999,
+        "year_to": 2005
+      },
       {
         "name": "Mk2",
         "year_from": 2005,
@@ -4127,6 +4277,16 @@
     ],
     "Toledo": [
       {
+        "name": "Mk1",
+        "year_from": 1991,
+        "year_to": 1998
+      },
+      {
+        "name": "Mk2",
+        "year_from": 1998,
+        "year_to": 2004
+      },
+      {
         "name": "Mk3",
         "year_from": 2004,
         "year_to": 2009
@@ -4145,6 +4305,11 @@
       }
     ],
     "Cordoba": [
+      {
+        "name": "Mk1",
+        "year_from": 1993,
+        "year_to": 2002
+      },
       {
         "name": "Mk2",
         "year_from": 2002,
@@ -4480,6 +4645,11 @@
     ],
     "Yaris": [
       {
+        "name": "XP10",
+        "year_from": 1999,
+        "year_to": 2005
+      },
+      {
         "name": "XP90",
         "year_from": 2005,
         "year_to": 2011
@@ -4508,6 +4678,36 @@
       }
     ],
     "Corolla": [
+      {
+        "name": "E70",
+        "year_from": 1979,
+        "year_to": 1983
+      },
+      {
+        "name": "E80",
+        "year_from": 1983,
+        "year_to": 1987
+      },
+      {
+        "name": "E90",
+        "year_from": 1987,
+        "year_to": 1992
+      },
+      {
+        "name": "E100",
+        "year_from": 1992,
+        "year_to": 1997
+      },
+      {
+        "name": "E110",
+        "year_from": 1997,
+        "year_to": 2002
+      },
+      {
+        "name": "E120",
+        "year_from": 2002,
+        "year_to": 2006
+      },
       {
         "name": "E140",
         "year_from": 2006,
@@ -4671,6 +4871,11 @@
   },
   "Volkswagen": {
     "Bora": [
+      {
+        "name": "A4",
+        "year_from": 1998,
+        "year_to": 2001
+      },
       {
         "name": "China",
         "year_from": 2001,
@@ -5030,6 +5235,11 @@
   "Volvo": {
     "S60": [
       {
+        "name": "P2",
+        "year_from": 2000,
+        "year_to": 2010
+      },
+      {
         "name": "Mk2",
         "year_from": 2010,
         "year_to": 2018
@@ -5041,6 +5251,11 @@
       }
     ],
     "V40": [
+      {
+        "name": "Mk1",
+        "year_from": 1995,
+        "year_to": 2004
+      },
       {
         "name": "V",
         "year_from": 2012,
@@ -5113,6 +5328,16 @@
     ],
     "V70": [
       {
+        "name": "Mk1",
+        "year_from": 1996,
+        "year_to": 2000
+      },
+      {
+        "name": "Mk2",
+        "year_from": 2000,
+        "year_to": 2007
+      },
+      {
         "name": "V70 III",
         "year_from": 2007,
         "year_to": 2016
@@ -5141,6 +5366,11 @@
     ],
     "S40": [
       {
+        "name": "Mk1",
+        "year_from": 1995,
+        "year_to": 2004
+      },
+      {
         "name": "Mk2",
         "year_from": 2004,
         "year_to": 2012
@@ -5154,7 +5384,7 @@
       }
     ]
   },
-  "Škoda": {
+  "Skoda": {
     "Fabia": [
       {
         "name": "Mk1",
@@ -5177,76 +5407,12 @@
         "year_to": 2026
       }
     ],
-    "Felicia": [
-      {
-        "name": "1959–1964",
-        "year_from": 1959,
-        "year_to": 1964
-      }
-    ],
-    "Kamiq": [
-      {
-        "name": "China",
-        "year_from": 2018,
-        "year_to": 2026
-      }
-    ],
     "Octavia": [
       {
         "name": "1959",
         "year_from": 1959,
         "year_to": 1971
-      }
-    ],
-    "Rapid": [
-      {
-        "name": "India",
-        "year_from": 2011,
-        "year_to": 2021
       },
-      {
-        "name": "2012",
-        "year_from": 2012,
-        "year_to": 2019
-      }
-    ],
-    "Superb": [
-      {
-        "name": "Mk1",
-        "year_from": 2001,
-        "year_to": 2008
-      },
-      {
-        "name": "Mk2",
-        "year_from": 2008,
-        "year_to": 2015
-      },
-      {
-        "name": "Mk3",
-        "year_from": 2015,
-        "year_to": 2024
-      }
-    ]
-  },
-  "Skoda": {
-    "Fabia": [
-      {
-        "name": "Mk2",
-        "year_from": 2007,
-        "year_to": 2014
-      },
-      {
-        "name": "Mk3",
-        "year_from": 2014,
-        "year_to": 2021
-      },
-      {
-        "name": "Mk4",
-        "year_from": 2021,
-        "year_to": 2026
-      }
-    ],
-    "Octavia": [
       {
         "name": "Mk2",
         "year_from": 2004,
@@ -5264,6 +5430,11 @@
       }
     ],
     "Superb": [
+      {
+        "name": "Mk1",
+        "year_from": 2001,
+        "year_to": 2008
+      },
       {
         "name": "Mk2",
         "year_from": 2008,
@@ -5322,7 +5493,17 @@
     ],
     "Rapid": [
       {
+        "name": "India",
+        "year_from": 2011,
+        "year_to": 2021
+      },
+      {
         "name": "Mk1",
+        "year_from": 2012,
+        "year_to": 2019
+      },
+      {
+        "name": "2012",
         "year_from": 2012,
         "year_to": 2019
       }
@@ -5336,6 +5517,11 @@
     ],
     "Kamiq": [
       {
+        "name": "China",
+        "year_from": 2018,
+        "year_to": 2026
+      },
+      {
         "name": "Mk1",
         "year_from": 2019,
         "year_to": 2026
@@ -5346,6 +5532,13 @@
         "name": "Mk1",
         "year_from": 2020,
         "year_to": 2026
+      }
+    ],
+    "Felicia": [
+      {
+        "name": "1959–1964",
+        "year_from": 1959,
+        "year_to": 1964
       }
     ]
   },
