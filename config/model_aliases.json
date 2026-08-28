@@ -262,7 +262,11 @@
     "X5 xDrive": "X5",
     "X6 xDrive": "X6",
     "M3 Touring": "M3",
-    "M3 Competition": "M3"
+    "M3 Competition": "M3",
+    "225xe Active Tourer": "2 Series Active Tourer",
+    "218d Active Tourer": "2 Series Active Tourer",
+    "216d Active Tourer": "2 Series Active Tourer",
+    "220d Active Tourer": "2 Series Active Tourer"
   },
   "Mercedes-Benz": {
     "180": "C-Class",
@@ -348,7 +352,13 @@
     "GLE 450": "GLE-Class",
     "GLS 400": "GLS",
     "GLS 450": "GLS",
-    "GLS 500": "GLS"
+    "GLS 500": "GLS",
+    "CLK 200": "CLK-Class",
+    "CLK 220": "CLK-Class",
+    "CLK 270": "CLK-Class",
+    "SLK 200": "SLK-Class",
+    "SLK 230": "SLK-Class",
+    "SLK 250": "SLK-Class"
   },
   "Audi": {
     "A1 Sportback": "A1",
@@ -370,14 +380,18 @@
     "A5 Limousine": "A5",
     "A7 Sportback": "A7",
     "Q3 Sportback": "Q3",
-    "S5 Sportback": "S5"
+    "S5 Sportback": "S5",
+    "A3 Cabrio": "A3"
   },
   "Opel": {
     "Astra Sports Tourer": "Astra",
     "Astra Caravan": "Astra",
     "Astra GTC": "Astra",
     "Corsa-e": "Corsa",
-    "Insignia Sports Tourer": "Insignia"
+    "Insignia Sports Tourer": "Insignia",
+    "Vectra Caravan": "Vectra",
+    "Zafira Tourer": "Zafira",
+    "Crossland": "Crossland X"
   },
   "Renault": {
     "Clio Sport Tourer": "Clio",
@@ -396,7 +410,11 @@
     "Clio Break": "Clio",
     "Clio Sport": "Clio",
     "Clio RS": "Clio",
-    "Modus": "Modus"
+    "Modus": "Modus",
+    "Mégane Scénic": "Scénic",
+    "Megane Scenic": "Scénic",
+    "Mégane Cabrio": "Mégane",
+    "Megane Cabrio": "Mégane"
   },
   "Peugeot": {
     "e-208": "208",
@@ -412,7 +430,11 @@
     "Partner Tepee": "Partner",
     "307 Break": "307",
     "207 Break": "207",
-    "405 Break": "405"
+    "405 Break": "405",
+    "206 CC": "206",
+    "207 CC": "207",
+    "306 Cabrio": "306",
+    "406 Coupé": "406"
   },
   "Volkswagen": {
     "Golf Variant": "Golf",
@@ -425,7 +447,10 @@
     "Tiguan Allspace": "Tiguan",
     "Caddy Maxi": "Caddy",
     "Multivan": "Transporter",
-    "EOS": "Eos"
+    "EOS": "Eos",
+    "Golf Cabriolet": "Golf",
+    "New Beetle": "Beetle",
+    "Carocha": "Beetle"
   },
   "VW": {
     "Golf": "Golf"
@@ -450,14 +475,17 @@
     "Berlingo Multispace": "Berlingo",
     "Picasso": "C4",
     "C3 Aircross": "C3",
-    "C3 Picasso": "C3"
+    "C3 Picasso": "C3",
+    "Grand C4 Spacetourer": "C4 Spacetourer"
   },
   "Porsche": {
     "Panamera Sport Turismo": "Panamera",
     "718 Boxster": "Boxster",
     "911 (Todos)": "911",
     "Cayenne Coupé": "Cayenne",
-    "Cayenne Coupe": "Cayenne"
+    "Cayenne Coupe": "Cayenne",
+    "Taycan Cross Turismo": "Taycan",
+    "Taycan Sport Turismo": "Taycan"
   },
   "Volvo": {
     "XC 90": "XC90",
@@ -497,7 +525,8 @@
     "Forfour": "ForFour",
     "City Coupé": "ForTwo",
     "City Coupe": "ForTwo",
-    "Smart Roadster": "ForTwo"
+    "Smart Roadster": "ForTwo",
+    "City Cabrio": "ForTwo"
   },
   "Ford": {
     "Focus SW": "Focus",
@@ -509,7 +538,9 @@
     "Galaxy Titanium": "Galaxy",
     "S-Max": "S-MAX",
     "C-Max": "C-MAX",
-    "B-Max": "B-MAX"
+    "B-Max": "B-MAX",
+    "Focus C-Max": "C-Max",
+    "Grand C-Max": "C-Max"
   },
   "Fiat": {
     "500C": "500",
@@ -558,7 +589,8 @@
   },
   "Honda": {
     "Civic Tourer": "Civic",
-    "Jazz Hybrid": "Jazz"
+    "Jazz Hybrid": "Jazz",
+    "Civic Aerodeck": "Civic"
   },
   "Mazda": {
     "Mazda6": "6",
@@ -589,10 +621,18 @@
     "Aveo Hatchback": "Aveo"
   },
   "Alfa Romeo": {
-    "Mito": "MiTo"
+    "Mito": "MiTo",
+    "159 Sportwagon": "159",
+    "147 5 Portas": "147",
+    "156 Sportwagon": "156"
   },
   "Dacia": {
     "Sandero Stepway": "Sandero",
     "Logan MCV": "Logan"
+  },
+  "Nissan": {
+    "Qashqai +2": "Qashqai",
+    "Pick Up": "Navara",
+    "Pick-Up": "Navara"
   }
 }

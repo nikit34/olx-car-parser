@@ -90,6 +90,22 @@ class TestReferenceTableCoverage:
         assert with_hacek == without
 
 
+class TestBodyVariantAliases:
+    def test_body_suffix_resolves_to_base_model(self):
+        assert get_generation("Peugeot", "206 CC", 2002) is not None
+        assert get_generation("Nissan", "Qashqai +2", 2011) is not None
+        assert get_generation("Opel", "Vectra Caravan", 2004) is not None
+
+    def test_portuguese_beetle_name_resolves(self):
+        assert get_generation("Volkswagen", "Carocha", 2003) is not None
+
+    def test_newly_added_models_resolve(self):
+        assert get_generation("Hyundai", "Getz", 2004) is not None
+        assert get_generation("Peugeot", "306", 1999) is not None
+        assert get_generation("Alfa Romeo", "156", 2002) is not None
+        assert get_generation("Mercedes-Benz", "190", 1990) is not None
+
+
 class TestModelAliases:
     def test_bmw_series_aliases_exist(self):
         aliases = _get_model_aliases()

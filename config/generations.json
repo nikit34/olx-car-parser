@@ -79,6 +79,13 @@
         "year_from": 2005,
         "year_to": 2010
       }
+    ],
+    "156": [
+      {
+        "name": "932",
+        "year_from": 1997,
+        "year_to": 2007
+      }
     ]
   },
   "Audi": {
@@ -2116,6 +2123,35 @@
         "year_from": 2021,
         "year_to": 2026
       }
+    ],
+    "Getz": [
+      {
+        "name": "TB",
+        "year_from": 2002,
+        "year_to": 2011
+      }
+    ],
+    "Accent": [
+      {
+        "name": "X3",
+        "year_from": 1994,
+        "year_to": 2000
+      },
+      {
+        "name": "LC",
+        "year_from": 2000,
+        "year_to": 2006
+      },
+      {
+        "name": "MC",
+        "year_from": 2006,
+        "year_to": 2011
+      },
+      {
+        "name": "RB",
+        "year_from": 2011,
+        "year_to": 2017
+      }
     ]
   },
   "Jaguar": {
@@ -2476,6 +2512,13 @@
         "year_from": 2009,
         "year_to": 2017
       }
+    ],
+    "XCeed": [
+      {
+        "name": "CD",
+        "year_from": 2019,
+        "year_to": 2026
+      }
     ]
   },
   "Land Rover": {
@@ -2773,6 +2816,28 @@
         "name": "CW",
         "year_from": 2010,
         "year_to": 2018
+      }
+    ],
+    "323": [
+      {
+        "name": "BF",
+        "year_from": 1985,
+        "year_to": 1989
+      },
+      {
+        "name": "BG",
+        "year_from": 1989,
+        "year_to": 1994
+      },
+      {
+        "name": "BA",
+        "year_from": 1994,
+        "year_to": 1998
+      },
+      {
+        "name": "BJ",
+        "year_from": 1998,
+        "year_to": 2003
       }
     ]
   },
@@ -3132,6 +3197,13 @@
         "year_from": 2014,
         "year_to": 2026
       }
+    ],
+    "190": [
+      {
+        "name": "W201",
+        "year_from": 1982,
+        "year_to": 1993
+      }
     ]
   },
   "Mini": {
@@ -3361,6 +3433,23 @@
         "name": "Mk1",
         "year_from": 2009,
         "year_to": 2018
+      }
+    ],
+    "Pajero Sport": [
+      {
+        "name": "Mk1",
+        "year_from": 1996,
+        "year_to": 2008
+      },
+      {
+        "name": "Mk2",
+        "year_from": 2008,
+        "year_to": 2015
+      },
+      {
+        "name": "Mk3",
+        "year_from": 2015,
+        "year_to": 2026
       }
     ]
   },
@@ -3805,6 +3894,52 @@
         "year_from": 2019,
         "year_to": 2026
       }
+    ],
+    "Combo": [
+      {
+        "name": "Mk1",
+        "year_from": 1993,
+        "year_to": 2001
+      },
+      {
+        "name": "Mk2",
+        "year_from": 2001,
+        "year_to": 2011
+      },
+      {
+        "name": "Mk3",
+        "year_from": 2011,
+        "year_to": 2018
+      },
+      {
+        "name": "Mk4",
+        "year_from": 2018,
+        "year_to": 2026
+      }
+    ],
+    "Agila": [
+      {
+        "name": "Mk1",
+        "year_from": 2000,
+        "year_to": 2008
+      },
+      {
+        "name": "Mk2",
+        "year_from": 2008,
+        "year_to": 2015
+      }
+    ],
+    "Crossland X": [
+      {
+        "name": "Mk1",
+        "year_from": 2017,
+        "year_to": 2020
+      },
+      {
+        "name": "Mk1 FL",
+        "year_from": 2020,
+        "year_to": 2026
+      }
     ]
   },
   "Peugeot": {
@@ -4018,6 +4153,27 @@
         "name": "Mk1",
         "year_from": 2005,
         "year_to": 2009
+      }
+    ],
+    "306": [
+      {
+        "name": "Mk1",
+        "year_from": 1993,
+        "year_to": 2002
+      }
+    ],
+    "406": [
+      {
+        "name": "Mk1",
+        "year_from": 1995,
+        "year_to": 2004
+      }
+    ],
+    "RCZ": [
+      {
+        "name": "Mk1",
+        "year_from": 2009,
+        "year_to": 2015
       }
     ]
   },
@@ -4349,6 +4505,23 @@
         "year_from": 2015,
         "year_to": 2022
       }
+    ],
+    "Kangoo": [
+      {
+        "name": "Mk1",
+        "year_from": 1997,
+        "year_to": 2007
+      },
+      {
+        "name": "Mk2",
+        "year_from": 2007,
+        "year_to": 2021
+      },
+      {
+        "name": "Mk3",
+        "year_from": 2021,
+        "year_to": 2026
+      }
     ]
   },
   "Seat": {
@@ -4518,6 +4691,13 @@
         "name": "W453",
         "year_from": 2014,
         "year_to": 2021
+      }
+    ],
+    "Roadster": [
+      {
+        "name": "452",
+        "year_from": 2003,
+        "year_to": 2006
       }
     ]
   },
@@ -5057,6 +5237,13 @@
         "year_from": 2020,
         "year_to": 2026
       }
+    ],
+    "iQ": [
+      {
+        "name": "AJ10",
+        "year_from": 2008,
+        "year_to": 2015
+      }
     ]
   },
   "Volkswagen": {
@@ -5419,6 +5606,13 @@
         "name": "Mk2",
         "year_from": 2022,
         "year_to": 2026
+      }
+    ],
+    "Lupo": [
+      {
+        "name": "6X",
+        "year_from": 1998,
+        "year_to": 2005
       }
     ]
   },
