@@ -1046,6 +1046,21 @@
     ],
     "Leon": [
       {
+        "name": "Mk1",
+        "year_from": 1999,
+        "year_to": 2005
+      },
+      {
+        "name": "Mk2",
+        "year_from": 2005,
+        "year_to": 2012
+      },
+      {
+        "name": "Mk3",
+        "year_from": 2012,
+        "year_to": 2020
+      },
+      {
         "name": "Mk4",
         "year_from": 2020,
         "year_to": 2026
@@ -1251,6 +1266,11 @@
       }
     ],
     "Bravo": [
+      {
+        "name": "182",
+        "year_from": 1995,
+        "year_to": 2002
+      },
       {
         "name": "198",
         "year_from": 2007,
@@ -1528,6 +1548,11 @@
     ],
     "Puma": [
       {
+        "name": "Coupé",
+        "year_from": 1997,
+        "year_to": 2002
+      },
+      {
         "name": "Mk2",
         "year_from": 2019,
         "year_to": 2026
@@ -1621,6 +1646,11 @@
     ],
     "Galaxy": [
       {
+        "name": "Mk1",
+        "year_from": 1995,
+        "year_to": 2006
+      },
+      {
         "name": "Mk2",
         "year_from": 2006,
         "year_to": 2015
@@ -1639,6 +1669,16 @@
       }
     ],
     "Transit": [
+      {
+        "name": "Mk5",
+        "year_from": 1994,
+        "year_to": 2000
+      },
+      {
+        "name": "Mk6",
+        "year_from": 2000,
+        "year_to": 2006
+      },
       {
         "name": "Mk7",
         "year_from": 2006,
@@ -1711,6 +1751,21 @@
   "Honda": {
     "Accord": [
       {
+        "name": "Gen4",
+        "year_from": 1990,
+        "year_to": 1993
+      },
+      {
+        "name": "Gen5",
+        "year_from": 1993,
+        "year_to": 1998
+      },
+      {
+        "name": "Gen6",
+        "year_from": 1998,
+        "year_to": 2003
+      },
+      {
         "name": "CL",
         "year_from": 2003,
         "year_to": 2008
@@ -1734,6 +1789,16 @@
       }
     ],
     "CR-V": [
+      {
+        "name": "RD1",
+        "year_from": 1995,
+        "year_to": 2001
+      },
+      {
+        "name": "RD4",
+        "year_from": 2001,
+        "year_to": 2006
+      },
       {
         "name": "RD",
         "year_from": 2006,
@@ -1832,6 +1897,11 @@
       }
     ],
     "HR-V": [
+      {
+        "name": "GH",
+        "year_from": 1998,
+        "year_to": 2006
+      },
       {
         "name": "RU",
         "year_from": 2015,
@@ -2138,6 +2208,16 @@
         "year_to": 1983
       },
       {
+        "name": "XJ",
+        "year_from": 1984,
+        "year_to": 2001
+      },
+      {
+        "name": "KJ",
+        "year_from": 2001,
+        "year_to": 2008
+      },
+      {
         "name": "KL",
         "year_from": 2013,
         "year_to": 2023
@@ -2290,6 +2370,11 @@
       }
     ],
     "Sportage": [
+      {
+        "name": "Mk1",
+        "year_from": 1993,
+        "year_to": 2004
+      },
       {
         "name": "China",
         "year_from": 2005,
@@ -2663,6 +2748,11 @@
     ],
     "2": [
       {
+        "name": "DY",
+        "year_from": 2002,
+        "year_to": 2007
+      },
+      {
         "name": "DE",
         "year_from": 2007,
         "year_to": 2014
@@ -2786,6 +2876,11 @@
     ],
     "CLK-Class": [
       {
+        "name": "C208",
+        "year_from": 1997,
+        "year_to": 2002
+      },
+      {
         "name": "C209",
         "year_from": 2001,
         "year_to": 2026
@@ -2804,6 +2899,11 @@
       }
     ],
     "E-Class": [
+      {
+        "name": "W124",
+        "year_from": 1985,
+        "year_to": 1995
+      },
       {
         "name": "W210",
         "year_from": 1995,
@@ -2915,6 +3015,16 @@
       }
     ],
     "SL-Class": [
+      {
+        "name": "R107",
+        "year_from": 1971,
+        "year_to": 1989
+      },
+      {
+        "name": "R129",
+        "year_from": 1989,
+        "year_to": 2001
+      },
       {
         "name": "R230",
         "year_from": 2000,
@@ -3137,6 +3247,11 @@
     ],
     "L200": [
       {
+        "name": "Gen2",
+        "year_from": 1986,
+        "year_to": 1996
+      },
+      {
         "name": "Mk3",
         "year_from": 1996,
         "year_to": 2006
@@ -3201,6 +3316,26 @@
       }
     ],
     "Lancer": [
+      {
+        "name": "Gen5",
+        "year_from": 1988,
+        "year_to": 1992
+      },
+      {
+        "name": "Gen6",
+        "year_from": 1992,
+        "year_to": 1996
+      },
+      {
+        "name": "Gen7",
+        "year_from": 1996,
+        "year_to": 2001
+      },
+      {
+        "name": "Gen8",
+        "year_from": 2001,
+        "year_to": 2007
+      },
       {
         "name": "CY",
         "year_from": 2007,
@@ -3412,6 +3547,11 @@
     ],
     "Patrol": [
       {
+        "name": "Y60",
+        "year_from": 1987,
+        "year_to": 1997
+      },
+      {
         "name": "Y61",
         "year_from": 1997,
         "year_to": 2010
@@ -3423,6 +3563,11 @@
       }
     ],
     "Navara": [
+      {
+        "name": "D22",
+        "year_from": 1997,
+        "year_to": 2005
+      },
       {
         "name": "D40",
         "year_from": 2005,
@@ -4517,6 +4662,16 @@
     ],
     "Vitara": [
       {
+        "name": "Mk1",
+        "year_from": 1988,
+        "year_to": 1998
+      },
+      {
+        "name": "Grand Vitara",
+        "year_from": 1998,
+        "year_to": 2006
+      },
+      {
         "name": "LY",
         "year_from": 2015,
         "year_to": 2026
@@ -4760,6 +4915,16 @@
     ],
     "RAV4": [
       {
+        "name": "XA10",
+        "year_from": 1994,
+        "year_to": 2000
+      },
+      {
+        "name": "XA20",
+        "year_from": 2000,
+        "year_to": 2005
+      },
+      {
         "name": "XA30",
         "year_from": 2005,
         "year_to": 2012
@@ -4777,6 +4942,16 @@
     ],
     "Hilux": [
       {
+        "name": "Gen5",
+        "year_from": 1988,
+        "year_to": 1997
+      },
+      {
+        "name": "Gen6",
+        "year_from": 1997,
+        "year_to": 2004
+      },
+      {
         "name": "AN10",
         "year_from": 2004,
         "year_to": 2015
@@ -4788,6 +4963,21 @@
       }
     ],
     "Land Cruiser": [
+      {
+        "name": "J70",
+        "year_from": 1984,
+        "year_to": 1990
+      },
+      {
+        "name": "J80",
+        "year_from": 1990,
+        "year_to": 1998
+      },
+      {
+        "name": "J100",
+        "year_from": 1998,
+        "year_to": 2002
+      },
       {
         "name": "J120",
         "year_from": 2002,
@@ -5412,6 +5602,11 @@
         "name": "1959",
         "year_from": 1959,
         "year_to": 1971
+      },
+      {
+        "name": "Mk1",
+        "year_from": 1996,
+        "year_to": 2004
       },
       {
         "name": "Mk2",
