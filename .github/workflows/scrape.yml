@@ -85,6 +85,21 @@ jobs:
           rm -rf data
           ln -s /Users/anastasia/olx-car-parser/data data
 
+      - name: Fast-forward the host's persistent clone
+        # CI runs from actions/checkout in _work/, so ~/olx-car-parser only
+        # ever moved when a human ran the post-push-host-sync runbook — it
+        # had drifted a day behind. Manual ops and Streamlit run from there,
+        # and stale code predating OLX_DB_URL would open the SQLite file
+        # while production is on PostgreSQL: two divergent databases, no
+        # error. Never fatal — a dirty tree there must not fail the scrape.
+        continue-on-error: true
+        run: |
+          cd /Users/anastasia/olx-car-parser
+          git fetch --quiet origin master
+          git merge --ff-only origin/master \
+            || echo "::warning::persistent clone not fast-forwardable — run post-push-host-sync by hand"
+          git log --oneline -1
+
       - name: Set up Python venv
         run: |
           /opt/homebrew/bin/python3.14 -m venv .venv 2>/dev/null || true
