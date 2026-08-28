@@ -22,6 +22,10 @@ jobs:
   sweep:
     runs-on: [self-hosted, olx-scraper]
     timeout-minutes: 45
+
+    env:
+      OLX_DB_URL: ${{ secrets.OLX_DB_URL }}
+
     steps:
       - uses: actions/checkout@v4
 

@@ -31,16 +31,14 @@ the scrape host's persistent clone (see ``post-push-host-sync``).
 
 Concurrency
 ~~~~~~~~~~~
-The live scrape worker holds the SQLite write lock 3-5 minutes during
-its market_stats commit. SQLAlchemy's connection-pool / autoflush
-behaviour made it hard to honour ``PRAGMA busy_timeout`` reliably —
-the v1 of this script crashed on autoflush mid-batch even after
-disabling autoflush, because commit pulled a fresh pooled connection
-without the PRAGMA applied. The current implementation drops SQLAlchemy
-for writes entirely and uses a single raw ``sqlite3.Connection`` with
-``timeout=30.0`` (Python's wrapper around busy_timeout) and per-row
-``COMMIT``. Per-row commits keep pending-write windows ~milliseconds
-long, so a colliding scraper write will at worst delay one update.
+This script never opens an ORM session: it holds one connection from
+``src.storage.database`` in statement-autocommit mode, so each row lands
+in its own transaction and the pending-write window stays milliseconds
+long. On PostgreSQL readers never block a writer at all; on SQLite the
+engine applies ``PRAGMA busy_timeout`` on every pooled connection, so a
+write colliding with the scrape worker's 3-5 minute market_stats commit
+waits instead of crashing (the v1 of this script died on exactly that,
+because commit pulled a fresh pooled connection without the PRAGMA).
 
 What it does
 ------------
@@ -60,7 +58,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -68,6 +65,10 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT))
 
+from sqlalchemy import DateTime, bindparam, text as sa_text  # noqa: E402
+from sqlalchemy.exc import DBAPIError, OperationalError  # noqa: E402
+
+from src.storage.database import get_engine  # noqa: E402
 from src.parser.scraper import OlxScraper, ScraperConfig  # noqa: E402
 
 DB_PATH = _REPO_ROOT / "data" / "olx_cars.db"
@@ -75,64 +76,64 @@ DB_PATH = _REPO_ROOT / "data" / "olx_cars.db"
 logger = logging.getLogger("backfill_olx_photo_count")
 
 
-def _open_db(timeout_s: float = 30.0) -> sqlite3.Connection:
-    """Open a single raw connection with busy_timeout honoured.
+def _open_db():
+    """One statement-autocommitting connection on the configured engine.
 
-    ``sqlite3.connect(timeout=…)`` is the Python wrapper that calls
-    ``sqlite3_busy_timeout`` under the hood, so a write blocked by the
-    live scrape worker waits up to ``timeout_s`` before raising. Using
-    one long-lived connection avoids the SQLAlchemy pool-cycling that
-    silently dropped the PRAGMA on the v1 path.
+    Engine setup (WAL + busy_timeout on SQLite, pooling on PostgreSQL)
+    lives in ``src.storage.database``; a blocked write there waits out the
+    live scrape worker instead of raising immediately.
     """
-    conn = sqlite3.connect(str(DB_PATH), timeout=timeout_s, isolation_level=None)
-    # WAL mode = readers don't block writers; we still serialise *with*
-    # the live scraper, but we don't compete with dashboard read traffic.
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    return conn
+    engine = get_engine(str(DB_PATH))
+    return engine.connect().execution_options(isolation_level="AUTOCOMMIT")
 
 
-def _select_targets(conn: sqlite3.Connection, limit: int | None) -> list[tuple[int, str, str]]:
+def _now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _select_targets(conn, limit: int | None) -> list[tuple[int, str, str]]:
     """Return (id, olx_id, url) for active OLX listings missing photo_count."""
     sql = (
         "SELECT id, olx_id, url FROM listings "
-        "WHERE source='olx' AND is_active=1 AND photo_count IS NULL "
+        "WHERE source='olx' AND is_active = TRUE AND photo_count IS NULL "
         "ORDER BY id"
     )
     if limit is not None:
         sql += f" LIMIT {int(limit)}"
-    return conn.execute(sql).fetchall()
+    return [tuple(row) for row in conn.execute(sa_text(sql)).fetchall()]
 
 
-def _update_photo_count(conn: sqlite3.Connection, listing_id: int, photo_count: int) -> bool:
-    """Single-row UPDATE with implicit transaction. Returns True on success.
+def _update_photo_count(conn, listing_id: int, photo_count: int) -> bool:
+    """Single-row UPDATE under statement autocommit. True on success.
 
-    ``isolation_level=None`` means each statement is its own transaction;
-    no need for an explicit commit() call. busy_timeout from connect()
-    handles contention. Catches OperationalError ("locked"/"busy") even
-    after the timeout and logs without aborting the whole run."""
-    now = datetime.now(timezone.utc).isoformat(sep=" ")
+    Catches the driver's "locked"/"busy" error even after the busy
+    timeout and logs it without aborting the whole run."""
     try:
         conn.execute(
-            "UPDATE listings SET photo_count=?, last_seen_at=? WHERE id=?",
-            (photo_count, now, listing_id),
+            sa_text(
+                "UPDATE listings SET photo_count=:photo_count, "
+                "last_seen_at=:now WHERE id=:listing_id"
+            ).bindparams(bindparam("now", type_=DateTime())),
+            {"photo_count": photo_count, "now": _now(), "listing_id": listing_id},
         )
         return True
-    except sqlite3.OperationalError as exc:
+    except (OperationalError, DBAPIError) as exc:
         logger.warning("UPDATE locked for id=%d: %s", listing_id, exc)
         return False
 
 
-def _mark_expired(conn: sqlite3.Connection, listing_id: int) -> bool:
-    now = datetime.now(timezone.utc).isoformat(sep=" ")
+def _mark_expired(conn, listing_id: int) -> bool:
     try:
         conn.execute(
-            "UPDATE listings SET is_active=0, deactivation_reason='expired', "
-            "deactivated_at=? WHERE id=? AND is_active=1",
-            (now, listing_id),
+            sa_text(
+                "UPDATE listings SET is_active = FALSE, "
+                "deactivation_reason='expired', deactivated_at=:now "
+                "WHERE id=:listing_id AND is_active = TRUE"
+            ).bindparams(bindparam("now", type_=DateTime())),
+            {"now": _now(), "listing_id": listing_id},
         )
         return True
-    except sqlite3.OperationalError as exc:
+    except (OperationalError, DBAPIError) as exc:
         logger.warning("UPDATE-expired locked for id=%d: %s", listing_id, exc)
         return False
 

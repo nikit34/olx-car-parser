@@ -45,13 +45,17 @@ from __future__ import annotations
 
 import argparse
 import json
-import sqlite3
 import sys
 import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+from sqlalchemy import text as sa_text  # noqa: E402
+
+from src.storage.database import open_conn  # noqa: E402
+from src.storage.jsonsql import json_sql  # noqa: E402
 
 # Bucket edges — left-inclusive, right-exclusive except the final ">=0.90".
 BUCKETS: tuple[tuple[str, float, float], ...] = (
@@ -81,37 +85,37 @@ def stratified_sample(
     Returns a list of {olx_id, url, listing_max_p} sorted by bucket so
     downstream loops can checkpoint per-bucket if needed.
     """
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
+    conn = open_conn(str(db_path))
+    damage_p = json_sql(conn.engine, "llm_extras", "photo_damage_p", numeric=True)
     out: list[dict] = []
     excl_clause = ""
-    params_excl: list[str] = []
+    params: dict = {}
     if exclude_ids:
-        placeholders = ",".join("?" * len(exclude_ids))
+        excluded = sorted(exclude_ids)
+        placeholders = ",".join(f":excl_{i}" for i in range(len(excluded)))
         excl_clause = f" AND olx_id NOT IN ({placeholders})"
-        params_excl = sorted(exclude_ids)
+        params = {f"excl_{i}": v for i, v in enumerate(excluded)}
     for label, lo, hi in BUCKETS:
         rows = conn.execute(
-            f"""
-            SELECT olx_id, url,
-                   CAST(json_extract(llm_extras, '$.photo_damage_p') AS REAL) AS max_p
+            sa_text(f"""
+            SELECT olx_id, url, {damage_p} AS max_p
             FROM listings
-            WHERE is_active = 1
+            WHERE is_active = TRUE
               AND llm_extras IS NOT NULL
-              AND CAST(json_extract(llm_extras, '$.photo_damage_p') AS REAL) >= ?
-              AND CAST(json_extract(llm_extras, '$.photo_damage_p') AS REAL) <  ?
+              AND {damage_p} >= :lo
+              AND {damage_p} <  :hi
               AND (url LIKE '%standvirtual%' OR url LIKE '%olx.pt%')
               {excl_clause}
-            ORDER BY RANDOM()
-            LIMIT ?
-            """,
-            [lo, hi, *params_excl, per_bucket],
+            ORDER BY random()
+            LIMIT :per_bucket
+            """),
+            {"lo": lo, "hi": hi, "per_bucket": per_bucket, **params},
         ).fetchall()
         for r in rows:
             out.append({
-                "olx_id": r["olx_id"],
-                "url": r["url"],
-                "listing_max_p": float(r["max_p"]),
+                "olx_id": r.olx_id,
+                "url": r.url,
+                "listing_max_p": float(r.max_p),
                 "score_bucket": label,
             })
     conn.close()

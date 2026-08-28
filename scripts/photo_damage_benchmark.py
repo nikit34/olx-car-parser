@@ -27,7 +27,6 @@ Usage:
 import argparse
 import json
 import re
-import sqlite3
 import sys
 import time
 from collections import defaultdict
@@ -37,6 +36,11 @@ import httpx
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+from sqlalchemy import text as sa_text  # noqa: E402
+
+from src.storage.database import open_conn  # noqa: E402
+from src.storage.jsonsql import json_sql  # noqa: E402
 
 # Re-use the prompt set from the triage POC so the two scripts stay in
 # sync. If we ever fork prompts, fork them here too.
@@ -54,29 +58,29 @@ def stratified_sample(db_path: Path, counts: dict[int | None, int],
     drawn at random so the same script run on the same DB picks different
     ones — set --seed for reproducible runs.
     """
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
+    conn = open_conn(str(db_path))
+    severity = json_sql(conn.engine, "llm_extras", "damage_severity", numeric=True)
     out = []
     for sev, n in counts.items():
         if n <= 0:
             continue
         if sev is None:
-            where = "json_extract(llm_extras, '$.damage_severity') IS NULL"
+            where = f"{severity} IS NULL"
         else:
-            where = f"json_extract(llm_extras, '$.damage_severity') = {sev}"
-        rows = conn.execute(f"""
+            where = f"{severity} = {int(sev)}"
+        rows = conn.execute(sa_text(f"""
             SELECT olx_id, url, title, description, llm_extras
             FROM listings
             WHERE {where}
               AND llm_extras IS NOT NULL
               AND url LIKE '%standvirtual%'   -- POC parses standvirtual __NEXT_DATA__
-              AND length(coalesce(description, '')) >= {min_text_len}
-              AND is_active = 1
-            ORDER BY RANDOM()
-            LIMIT {n}
-        """).fetchall()
+              AND length(coalesce(description, '')) >= {int(min_text_len)}
+              AND is_active = TRUE
+            ORDER BY random()
+            LIMIT {int(n)}
+        """)).fetchall()
         for r in rows:
-            r = dict(r)
+            r = dict(r._mapping)
             r["text_severity"] = sev
             r["llm_extras"] = json.loads(r["llm_extras"]) if r["llm_extras"] else {}
             out.append(r)
@@ -290,7 +294,7 @@ def aggregate(results: list[dict], have_vlm: bool):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", type=Path, required=True,
-                    help="Path to olx_cars.db (typically rsync from runner)")
+                    help="SQLite file to sample from; omit to use OLX_DB_URL")
     ap.add_argument("--n-per-bucket", default="2,3,3,2",
                     help="Comma-separated n for sev=0,1,2,3 (default 2,3,3,2)")
     ap.add_argument("--vlm", action="store_true",
@@ -299,16 +303,16 @@ def main():
     ap.add_argument("--cache-dir", default="/tmp/olx_photo_poc")
     ap.add_argument("--results-dir", default="/tmp/photo_bench")
     ap.add_argument("--seed", type=int, default=None,
-                    help="If set, seeds SQLite RANDOM() for reproducible sampling")
+                    help="Reserved: reproducible sampling is not wired up yet")
     args = ap.parse_args()
 
     counts_list = [int(x) for x in args.n_per_bucket.split(",")]
     counts = {i: counts_list[i] for i in range(min(len(counts_list), 4))}
 
     if args.seed is not None:
-        # SQLite uses C rand() for RANDOM(); easiest reproducible-sample
-        # path is just to seed Python's random and use python-side ORDER BY.
-        # Skipping for POC — sampling 10 listings is fast to redo.
+        # Both engines pick their own PRNG for ORDER BY random(); the
+        # reproducible path would be python-side sampling. Skipping for
+        # POC — sampling 10 listings is fast to redo.
         pass
 
     print(f"Sampling from {args.db}…")

@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect
 from sqlalchemy.orm import sessionmaker
 
 from sqlalchemy import text
@@ -23,12 +23,37 @@ def get_db_path() -> str:
     return str(project_root / "data" / "olx_cars.db")
 
 
+def resolve_db_url(db_path: str | None = None) -> str:
+    """Pick the engine URL for this process.
+
+    ``OLX_DB_URL`` (e.g. ``postgresql+psycopg://olx@localhost/olx_cars``) is
+    the production setting. A caller that passes an explicit path still wins
+    when that path is not the legacy default — that keeps ``--db /tmp/copy.db``
+    honest instead of silently reading production.
+    """
+    if db_path and "://" in db_path:
+        return db_path
+    if db_path and os.path.abspath(db_path) != os.path.abspath(get_db_path()):
+        return f"sqlite:///{db_path}"
+    env_url = os.environ.get("OLX_DB_URL", "").strip()
+    if env_url:
+        return env_url
+    return f"sqlite:///{db_path or get_db_path()}"
+
+
 def get_engine(db_path: str | None = None):
     global _engine
     if _engine is None:
-        path = db_path or get_db_path()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        _engine = create_engine(f"sqlite:///{path}", echo=False)
+        url = resolve_db_url(db_path)
+        if url.startswith("sqlite:///"):
+            path = url[len("sqlite:///"):]
+            if path and path != ":memory:":
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+            _engine = create_engine(url, echo=False)
+        else:
+            _engine = create_engine(url, echo=False, pool_pre_ping=True)
+            return _engine
+
         # Enable WAL mode — allows reads while writing (no lock conflicts)
         @event.listens_for(_engine, "connect")
         def _set_sqlite_pragmas(dbapi_conn, connection_record):
@@ -54,6 +79,13 @@ def get_engine(db_path: str | None = None):
     return _engine
 
 
+def open_conn(db_path: str | None = None):
+    """Statement-autocommitting connection for scripts that hand-write SQL."""
+    return get_engine(db_path).connect().execution_options(
+        isolation_level="AUTOCOMMIT"
+    )
+
+
 def get_session():
     global _Session
     if _Session is None:
@@ -62,8 +94,7 @@ def get_session():
 
 
 def _get_table_columns(conn, table_name: str) -> set[str]:
-    rows = conn.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
-    return {row[1] for row in rows}
+    return {col["name"] for col in inspect(conn).get_columns(table_name)}
 
 
 _SCHEMA_VERSION = 6  # bump when _migrate_columns or _dead_json_keys changes
@@ -73,6 +104,10 @@ def _read_schema_version(conn) -> int:
     conn.execute(text(
         "CREATE TABLE IF NOT EXISTS _schema_meta (version INTEGER NOT NULL)"
     ))
+    # pysqlite autocommits DDL; PostgreSQL does not, and the later
+    # ``_write_schema_version`` runs on a fresh connection — without this
+    # commit the table it writes to was never created.
+    conn.commit()
     row = conn.execute(text("SELECT version FROM _schema_meta LIMIT 1")).fetchone()
     return int(row[0]) if row else 0
 
@@ -80,6 +115,16 @@ def _read_schema_version(conn) -> int:
 def _write_schema_version(conn, version: int):
     conn.execute(text("DELETE FROM _schema_meta"))
     conn.execute(text("INSERT INTO _schema_meta (version) VALUES (:v)"), {"v": version})
+
+
+_PG_TYPE_OVERRIDES = {"DATETIME": "TIMESTAMP"}
+
+
+def _portable_type(engine, col_type: str) -> str:
+    if engine.dialect.name == "sqlite":
+        return col_type
+    head, _, tail = col_type.partition(" ")
+    return f"{_PG_TYPE_OVERRIDES.get(head.upper(), head)} {tail}".strip()
 
 
 def init_db(db_path: str | None = None):
@@ -189,9 +234,15 @@ def init_db(db_path: str | None = None):
         ("ix_listings_last_scraped_at", "listings", "last_scraped_at"),
     ]
     with engine.connect() as conn:
+        existing_listing_columns = _get_table_columns(conn, "listings")
         for col_name, col_type in _migrate_columns:
+            if col_name in existing_listing_columns:
+                continue
             try:
-                conn.execute(text(f"ALTER TABLE listings ADD COLUMN {col_name} {col_type}"))
+                conn.execute(text(
+                    f"ALTER TABLE listings ADD COLUMN {col_name} "
+                    f"{_portable_type(engine, col_type)}"
+                ))
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -203,15 +254,27 @@ def init_db(db_path: str | None = None):
                 conn.commit()
             except Exception:
                 conn.rollback()
+        existing_unmatched_columns = _get_table_columns(conn, "unmatched_listings")
         for col_name, col_type in _migrate_unmatched_columns:
+            if col_name in existing_unmatched_columns:
+                continue
             try:
-                conn.execute(text(f"ALTER TABLE unmatched_listings ADD COLUMN {col_name} {col_type}"))
+                conn.execute(text(
+                    f"ALTER TABLE unmatched_listings ADD COLUMN {col_name} "
+                    f"{_portable_type(engine, col_type)}"
+                ))
                 conn.commit()
             except Exception:
                 conn.rollback()
+        existing_seller_columns = _get_table_columns(conn, "sellers")
         for col_name, col_type in _migrate_seller_columns:
+            if col_name in existing_seller_columns:
+                continue
             try:
-                conn.execute(text(f"ALTER TABLE sellers ADD COLUMN {col_name} {col_type}"))
+                conn.execute(text(
+                    f"ALTER TABLE sellers ADD COLUMN {col_name} "
+                    f"{_portable_type(engine, col_type)}"
+                ))
                 conn.commit()
             except Exception:
                 conn.rollback()

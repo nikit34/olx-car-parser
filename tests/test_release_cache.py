@@ -1,10 +1,10 @@
 """Tests for the dashboard's GitHub-release asset cache.
 
-The cache lives at ``data/olx_cars.db`` (plus model/metrics siblings) and
-is gated by a TTL marker. The 2026-05-03 bug had the TTL keyed on the
-DB's own mtime, so a 60 KB stub written within the TTL window silently
-shadowed the real release for two hours. These tests pin the marker-
-based replacement.
+The cache holds the model/metrics artefacts and is gated by a TTL marker.
+The 2026-05-03 bug had the TTL keyed on the DB's own mtime, so a 60 KB
+stub written within the TTL window silently shadowed the real release for
+two hours. These tests pin the marker-based replacement, plus the rule
+that the SQLite DB is no longer a release asset at all.
 """
 from __future__ import annotations
 
@@ -35,7 +35,6 @@ def patched_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(
         dl, "_RELEASE_ASSETS",
         (
-            ("olx_cars.db", db),
             ("price_model.joblib", model),
             ("price_metrics.json", metrics),
             ("price_importance.json", importance),
@@ -131,7 +130,7 @@ class TestReleaseCacheTTL:
              patch.object(dl, "_asset_url_if_newer") as mock_newer, \
              patch.object(dl, "_download_asset") as mock_dl:
             mock_list.return_value = {
-                "olx_cars.db": {"updated_at": "2026-05-03T00:00:00Z", "url": "x"},
+                "price_model.joblib": {"updated_at": "2026-05-03T00:00:00Z", "url": "x"},
             }
             mock_newer.return_value = None  # nothing actually needs downloading
             dl._ensure_release_assets()
@@ -151,19 +150,18 @@ class TestReleaseCacheTTL:
 
 
 class TestCDNFallback:
-    """Public CDN download path — fires when the GitHub API listing
-    fails (rate limit, network) or returns no usable assets, AND the
-    local DB is missing or a stub. Exercises the 2026-05-03 incident
-    where a 60 KB stub fooled the 'DB exists' check and prevented the
-    CDN fallback from running."""
+    """Public CDN download path — fires whenever the GitHub API listing
+    fails (rate limit, network) or returns no usable assets. It is no
+    longer gated on the local DB: the DB is not a release asset, so the
+    only thing the fallback can recover is the model/metrics set."""
 
     def test_cdn_called_when_api_returns_none_and_no_db(self, patched_paths):
         dl = patched_paths["dl"]
         with patch.object(dl, "_list_release_assets", return_value=None), \
              patch.object(dl, "_download_asset") as mock_dl:
             dl._ensure_release_assets()
-        # 4 assets, all routed through CDN URL
-        assert mock_dl.call_count == 4
+        # 3 assets, all routed through CDN URL
+        assert mock_dl.call_count == 3
         first_url = mock_dl.call_args_list[0].args[0]
         assert "github.com/nikit34/olx-car-parser/releases/download/latest-data" in first_url
 
@@ -176,17 +174,18 @@ class TestCDNFallback:
         with patch.object(dl, "_list_release_assets", return_value=None), \
              patch.object(dl, "_download_asset") as mock_dl:
             dl._ensure_release_assets()
-        assert mock_dl.call_count == 4
+        assert mock_dl.call_count == 3
 
-    def test_cdn_skipped_when_local_db_is_real(self, patched_paths):
-        """If the local DB looks legit (>1 MB), API failure is fine —
-        we serve the cache, no need to re-download."""
+    def test_cdn_fires_for_artifacts_even_with_real_local_db(self, patched_paths):
+        """A healthy local DB says nothing about the model/metrics — those
+        still come from the release, so an API failure must fall through to
+        the CDN for them."""
         dl = patched_paths["dl"]
         _write_real_db(patched_paths["db"])
         with patch.object(dl, "_list_release_assets", return_value=None), \
-             patch.object(dl, "_download_asset") as mock_dl:
+             patch.object(dl, "_download_asset", return_value=True) as mock_dl:
             ok = dl._ensure_release_assets()
-        mock_dl.assert_not_called()
+        assert mock_dl.call_count == 3
         assert ok is True
 
     def test_cdn_called_when_api_returns_empty_assets_dict(self, patched_paths):
@@ -197,7 +196,7 @@ class TestCDNFallback:
         with patch.object(dl, "_list_release_assets", return_value={}), \
              patch.object(dl, "_download_asset") as mock_dl:
             dl._ensure_release_assets()
-        assert mock_dl.call_count == 4
+        assert mock_dl.call_count == 3
 
     def test_successful_cdn_clears_prior_api_error(self, patched_paths):
         """User-facing UX: if the API failed but the CDN recovered,
@@ -210,8 +209,27 @@ class TestCDNFallback:
             return True
 
         # Pre-populate the error as if a prior API call had failed.
+        _write_real_db(patched_paths["db"])
         dl._LAST_RELEASE_ERROR = "GitHub API returned HTTP 403 (rate-limited)"
         with patch.object(dl, "_list_release_assets", return_value=None), \
              patch.object(dl, "_download_asset", side_effect=_fake_dl):
             dl._ensure_release_assets()
         assert dl.get_last_release_error() is None
+
+
+class TestDBNotPublished:
+    """The DB is no longer uploaded to the release (2026-08-28): it is
+    370 MB, republished 6x/day, and nothing in production reads it."""
+
+    def test_db_is_not_a_release_asset(self):
+        from src.dashboard import data_loader as dl
+
+        assert "olx_cars.db" not in {name for name, _ in dl._RELEASE_ASSETS}
+
+    def test_missing_local_db_explains_itself(self, patched_paths):
+        dl = patched_paths["dl"]
+        with patch.object(dl, "_list_release_assets", return_value={}), \
+             patch.object(dl, "_download_asset", return_value=True):
+            ok = dl._ensure_release_assets()
+        assert ok is False
+        assert "scrape host" in (dl.get_last_release_error() or "")

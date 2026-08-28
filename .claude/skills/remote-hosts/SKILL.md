@@ -29,13 +29,13 @@ The project runs on two LAN machines, not on this dev Mac. This skill is the map
 
 - **OS / hw**: macOS, 8 GB RAM (M1 Air).
 - **Role**:
-  - Cron scraper (every run writes to `~/olx-car-parser/data/olx_cars.db`).
+  - Cron scraper (every run writes to the local PostgreSQL database `olx_cars`).
   - GitHub Actions self-hosted runner — executes `.github/workflows/scrape.yml`.
   - Streamlit dashboard.
 - **No local model server.** Ollama was uninstalled 2026-08-23 (app, symlink,
   launchd agents and the 5.3 GB model store). `curl localhost:11434` fails by
   design — that is not a bug to fix.
-- **Owns**: `olx_cars.db` (the only authoritative copy — see the `release-db` skill).
+- **Owns**: the `olx_cars` PostgreSQL database (the only authoritative copy — see the `release-db` skill).
 - **SSH**:
   ```bash
   sshpass -p 1234 ssh -o StrictHostKeyChecking=no anastasia@192.168.1.77
@@ -104,7 +104,7 @@ SSH to the resolved IP and update this skill's "Hosts" section if the address ha
 # Scrape host: SSH liveness + DB freshness
 # NB: there is NO scraped_at column — freshness = MAX(last_seen_at) or the .db mtime.
 sshpass -p 1234 ssh anastasia@192.168.1.77 \
-  "sqlite3 ~/olx-car-parser/data/olx_cars.db 'SELECT MAX(last_seen_at) FROM listings;'"
+  "psql -d olx_cars -c 'SELECT MAX(last_seen_at) FROM listings;'"
 
 # LLM providers are cloud now — check them from the host, not the LAN:
 ssh anastasia@192.168.1.77 \

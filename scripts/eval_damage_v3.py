@@ -30,7 +30,6 @@ from __future__ import annotations
 import argparse
 import base64
 import json
-import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -40,6 +39,10 @@ import httpx
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from sqlalchemy import text as sa_text  # noqa: E402
+
+from src.storage.database import open_conn  # noqa: E402
+from src.storage.jsonsql import json_sql  # noqa: E402
 from scripts.photo_damage_poc import VLM_SYSTEM  # noqa: E402
 
 OLLAMA_URL = "http://localhost:11434"
@@ -48,28 +51,28 @@ DEFAULT_MODEL = "qwen2.5vl:3b"
 
 def sample_flagged_listings(db_path: Path, n: int,
                             exclude: set[str]) -> list[dict]:
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
+    conn = open_conn(str(db_path))
+    damage_p = json_sql(conn.engine, "llm_extras", "photo_damage_p", numeric=True)
     excl_clause = ""
-    params: list = []
+    params: dict = {}
     if exclude:
-        placeholders = ",".join("?" * len(exclude))
+        excluded = sorted(exclude)
+        placeholders = ",".join(f":excl_{i}" for i in range(len(excluded)))
         excl_clause = f" AND olx_id NOT IN ({placeholders})"
-        params = sorted(exclude)
-    rows = conn.execute(f"""
-        SELECT olx_id, url,
-               CAST(json_extract(llm_extras, '$.photo_damage_p') AS REAL) AS max_p
+        params = {f"excl_{i}": v for i, v in enumerate(excluded)}
+    rows = conn.execute(sa_text(f"""
+        SELECT olx_id, url, {damage_p} AS max_p
         FROM listings
-        WHERE is_active = 1
+        WHERE is_active = TRUE
           AND llm_extras IS NOT NULL
-          AND CAST(json_extract(llm_extras, '$.photo_damage_p') AS REAL) >= 0.20
+          AND {damage_p} >= 0.20
           AND (url LIKE '%standvirtual%' OR url LIKE '%olx.pt%')
           {excl_clause}
-        ORDER BY RANDOM()
-        LIMIT ?
-    """, [*params, n]).fetchall()
+        ORDER BY random()
+        LIMIT :n
+    """), {"n": n, **params}).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    return [dict(r._mapping) for r in rows]
 
 
 def vlm_label_listing(photo_paths: list[Path], *, client: httpx.Client,

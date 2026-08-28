@@ -217,16 +217,28 @@ def _download_asset(url: str, dest: Path) -> bool:
 # leaving the dashboard pointing at an empty DB. (2026-05-03 fix.)
 _RELEASE_CHECK_MARKER = PROJECT_ROOT / "data" / ".last_release_check"
 
-# Production DB is ~90 MB. Anything under 1 MB is a stub (test init,
-# half-written file from a partial download, sqlite empty schema). We
-# use this to gate "is the local cache trustworthy" decisions — without
-# it, a 60 KB stub fooled both ``_ensure_release_assets`` (treated as
-# present, skipped CDN fallback) and the empty-state UI (loaded zero
-# listings, looked like "no data yet" instead of "broken cache").
+# Production DB is ~370 MB. Anything under 1 MB is a stub (test init,
+# half-written file from an interrupted copy, sqlite empty schema). We
+# use this to gate "is the local DB trustworthy" decisions — without it a
+# 60 KB stub fooled the empty-state UI (loaded zero listings, looked like
+# "no data yet" instead of "broken cache").
 _DB_VALID_MIN_BYTES = 1_000_000
 
 
+def _configured_engine_is_remote() -> bool:
+    """True when the data lives in PostgreSQL rather than a local file.
+
+    ``OLX_DB_URL`` is set on the scrape host; there is no file to size-check
+    then, and reachability is the session's problem, not this gate's.
+    """
+    from src.storage.database import resolve_db_url
+
+    return not resolve_db_url().startswith("sqlite:///")
+
+
 def _looks_like_real_db() -> bool:
+    if _configured_engine_is_remote():
+        return True
     return DB_PATH.exists() and DB_PATH.stat().st_size >= _DB_VALID_MIN_BYTES
 
 
@@ -267,9 +279,10 @@ def reboot_dashboard():
     st.rerun()
 
 
-# Model + metrics live alongside the DB in the data release — shipped by CI
-# (see .github/workflows/scrape.yml `train-model` step). The dashboard never
-# trains locally; it just consumes what the pipeline produced.
+# Model + metrics are shipped to the data release by CI (see
+# .github/workflows/scrape.yml `train-model` step). The dashboard never
+# trains locally; it just consumes what the pipeline produced. The SQLite DB
+# is NOT in the release — it lives only on the scrape host.
 _MODEL_PATH = PROJECT_ROOT / "data" / "price_model.joblib"
 _METRICS_PATH = PROJECT_ROOT / "data" / "price_metrics.json"
 _IMPORTANCE_PATH = PROJECT_ROOT / "data" / "price_importance.json"
@@ -277,7 +290,6 @@ _GROUPED_IMPORTANCE_PATH = PROJECT_ROOT / "data" / "price_grouped_importance.jso
 _SHAP_IMPORTANCE_PATH = PROJECT_ROOT / "data" / "price_shap_importance.json"
 
 _RELEASE_ASSETS: tuple[tuple[str, Path], ...] = (
-    ("olx_cars.db", DB_PATH),
     ("price_model.joblib", _MODEL_PATH),
     ("price_metrics.json", _METRICS_PATH),
     ("price_importance.json", _IMPORTANCE_PATH),
@@ -287,22 +299,26 @@ _RELEASE_ASSETS: tuple[tuple[str, Path], ...] = (
 
 
 def _ensure_release_assets() -> bool:
-    """Sync DB + model + metrics from the latest-data release (once per TTL).
+    """Sync model + metrics from the latest-data release (once per TTL).
 
-    Returns True if the local DB exists after the attempt (model/metrics are
-    best-effort — dashboard falls back to "no predictions" if they're missing).
+    The SQLite DB is not published to the release (it stays on the scrape
+    host), so this only refreshes the derived artefacts and reports whether
+    a usable local DB happens to be present — callers fall back to the
+    parquet witness path when it isn't.
     """
     import time
 
+    global _LAST_RELEASE_ERROR
+
     # TTL gate is keyed on the marker we write after a successful API
-    # sync — never on the DB's own mtime. A half-written stub or local
-    # ``init_db`` would otherwise let the TTL silently shadow the real
-    # release for two hours.
+    # sync — never on a synced file's mtime. A half-written artefact
+    # would otherwise let the TTL silently shadow the real release for
+    # two hours.
     if (
         _RELEASE_CHECK_MARKER.exists()
         and (time.time() - _RELEASE_CHECK_MARKER.stat().st_mtime) <= _CHECK_INTERVAL_SECONDS
     ):
-        return DB_PATH.exists()
+        return _looks_like_real_db()
 
     repo = os.environ.get("GITHUB_REPOSITORY", "nikit34/olx-car-parser")
     if not repo:
@@ -319,33 +335,26 @@ def _ensure_release_assets() -> bool:
                 _download_asset(url, dest)
         _RELEASE_CHECK_MARKER.parent.mkdir(parents=True, exist_ok=True)
         _RELEASE_CHECK_MARKER.touch()
-        if _looks_like_real_db():
-            return True
-        # API succeeded but our local DB is still suspicious (stub from
-        # an earlier failed run, partial download, missing asset). Drop
-        # through to the CDN path before giving up.
-
-    # API failed / returned empty / left us with a stub DB. Fall through
-    # to the public CDN URL — it has no API rate limit and works for
-    # public release assets. We download unconditionally because we
-    # lost the ability to compare remote.updated_at vs local.mtime;
-    # on cold-starts the local file is missing or stub anyway, so this
-    # is the correct behaviour. Marker is NOT stamped
-    # so the next call retries the API in case the rate-limit window
-    # cleared (which would let us recover the mtime short-circuit).
-    if not _looks_like_real_db():
-        global _LAST_RELEASE_ERROR
+    else:
+        # API failed / returned empty. Fall through to the public CDN URL —
+        # it has no API rate limit and works for public release assets. We
+        # download unconditionally because we lost the ability to compare
+        # remote.updated_at vs local.mtime. Marker is NOT stamped so the
+        # next call retries the API in case the rate-limit window cleared
+        # (which would let us recover the mtime short-circuit).
+        recovered = True
         for name, dest in _RELEASE_ASSETS:
-            _download_asset(_public_download_url(repo, name), dest)
-        if _looks_like_real_db():
-            # CDN download succeeded — clear any earlier API error so the
-            # empty-state banner doesn't persist on a now-working dashboard.
+            recovered = _download_asset(_public_download_url(repo, name), dest) and recovered
+        if recovered:
             _LAST_RELEASE_ERROR = None
-        elif not _LAST_RELEASE_ERROR:
-            _LAST_RELEASE_ERROR = (
-                "CDN fallback download did not produce a valid DB "
-                f"(local size: {DB_PATH.stat().st_size if DB_PATH.exists() else 0} bytes)"
-            )
+
+    if not _looks_like_real_db() and not _LAST_RELEASE_ERROR:
+        _LAST_RELEASE_ERROR = (
+            "No database configured — set OLX_DB_URL to the scrape host's "
+            "PostgreSQL, or put a snapshot at data/olx_cars.db; the DB is "
+            "not published to the latest-data release "
+            "(see .claude/skills/release-db)"
+        )
     return _looks_like_real_db()
 
 
@@ -355,7 +364,7 @@ def _ensure_db() -> bool:
 
 
 def load_from_db() -> tuple[pd.DataFrame, pd.DataFrame] | None:
-    """Try loading real data from SQLite. Returns (listings_df, history_df) or None."""
+    """Try loading real data from the configured DB. (listings_df, history_df) or None."""
     if not _ensure_db():
         return None
 
@@ -363,7 +372,7 @@ def load_from_db() -> tuple[pd.DataFrame, pd.DataFrame] | None:
         from src.storage.database import init_db, get_session
         from src.storage.repository import get_listings_df, get_price_history_df
 
-        init_db(str(DB_PATH))
+        init_db()
         session = get_session()
 
         listings = get_listings_df(session)
@@ -1421,7 +1430,7 @@ def load_unmatched() -> pd.DataFrame:
     try:
         from src.storage.database import init_db, get_session
         from src.storage.repository import get_unmatched_df
-        init_db(str(DB_PATH))
+        init_db()
         session = get_session()
         return get_unmatched_df(session)
     except Exception as e:
@@ -1436,7 +1445,7 @@ def load_portfolio() -> pd.DataFrame:
     try:
         from src.storage.database import init_db, get_session
         from src.storage.repository import get_portfolio_df
-        init_db(str(DB_PATH))
+        init_db()
         session = get_session()
         return get_portfolio_df(session)
     except Exception as e:

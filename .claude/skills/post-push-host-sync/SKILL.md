@@ -1,11 +1,15 @@
 ---
 name: post-push-host-sync
-description: Post-push runbook — after `git push` to origin/master, sync the persistent clone on the scrape host (~/olx-car-parser), restart any services whose config changed, and verify HEAD matches what was just pushed. Always run this after a successful push; the persistent clone does NOT auto-pull (only GitHub Actions runs use `actions/checkout` in `_work/`, which doesn't update `~/olx-car-parser`). Skipping this step is how Streamlit / manual-ops drift 24+ commits behind origin.
+description: Post-push runbook — sync the persistent clone on the scrape host (~/olx-car-parser), restart any services whose config changed, and verify HEAD matches origin/master. Since 2026-08-28 the scrape workflow fast-forwards that clone itself on every run, so this is now the fallback for when that step warns (dirty tree, diverged branch) or when a push must reach the host before the next scrape — e.g. before manual ops. The clone still never pulls on its own.
 ---
 
 # post-push-host-sync
 
-After every successful `git push origin master`, run this. The scrape host's persistent clone at `~/olx-car-parser` is what backs the Streamlit dashboard, ad-hoc SSH operations, manual `enrich-cloud` / `-m smoke` runs, and any non-CI execution. It does not auto-pull, so it silently drifts behind master.
+The scrape host's persistent clone at `~/olx-car-parser` is what backs the Streamlit dashboard, ad-hoc SSH operations, manual `enrich-cloud` / `-m smoke` runs, and any non-CI execution — and, via the `data/` symlink, it holds the models and parquets CI reads.
+
+Since 2026-08-28 `scrape.yml` fast-forwards it at the start of every run, so it no longer drifts on its own. Run this by hand when you can't wait for the next scrape (manual ops right after a push), or when that step logged `persistent clone not fast-forwardable` — it never forces, so a dirty or diverged tree there stays for a human to resolve.
+
+Why it matters more since the PostgreSQL cutover: code older than `resolve_db_url` opens `data/olx_cars.db` directly, so a stale clone would write to the retired SQLite file while production runs on PostgreSQL — two databases, no error.
 
 The Windows box has no project clone and, since 2026-08-23, runs nothing for this project at all — skip it.
 
