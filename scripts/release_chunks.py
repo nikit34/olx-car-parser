@@ -82,32 +82,6 @@ def _assets(refresh: bool = False) -> dict[str, str]:
     return _ASSETS
 
 
-def ensure_release(retries: int = UPLOAD_RETRIES) -> bool:
-    """Have the release ready to receive assets, existing or freshly made.
-
-    The check is retried because one flaky read used to send the job down
-    the create branch, where GitHub answers 422 for a tag that is already
-    there — and that killed the whole upload step, so nothing was
-    published at all. A tag that exists is the desired state, whichever
-    call reports it.
-    """
-    for attempt in range(retries):
-        if _gh("release", "view", TAG, "--repo", REPO).returncode == 0:
-            return True
-        if attempt + 1 < retries:
-            time.sleep(2 ** attempt)
-    result = _gh("release", "create", TAG, "--repo", REPO, "--title", RELEASE_TITLE,
-                 "--notes", RELEASE_NOTES, "--latest=false")
-    if result.returncode == 0:
-        return True
-    said = f"{result.stderr}\n{result.stdout}".lower()
-    if "already exists" in said or "already_exists" in said:
-        return True
-    print(f"::error::{TAG} release is unreachable and cannot be created: "
-          f"{result.stderr.strip() or result.stdout.strip() or '?'}", file=sys.stderr)
-    return False
-
-
 def _put(path: Path) -> bool:
     for attempt in range(UPLOAD_RETRIES):
         result = _gh("release", "upload", TAG, str(path), "--repo", REPO, "--clobber")
@@ -269,19 +243,25 @@ def should_chunk(path: Path) -> bool:
     return path.suffix in CHUNKABLE_SUFFIXES and path.stat().st_size > WHOLE_LIMIT
 
 
-def ensure_release() -> None:
+def ensure_release(retries: int = UPLOAD_RETRIES) -> None:
     """Create the release if it is absent, tolerating a racing creator.
 
     ``gh release view`` failing does not mean the release is gone — a
     blipped API call reads the same way, and the ``create`` that followed
-    then returned 422 and killed the publish step on 2026-08-29.
+    then returned 422 and killed the publish step on 2026-08-29. So the
+    read is retried before believing it, a tag that already exists counts
+    as the wanted state, and anything else is a warning: the uploads
+    below report the real damage, and a check has nothing to fail on.
     """
-    if _gh("release", "view", TAG, "--repo", REPO).returncode == 0:
-        return
-    result = _gh("release", "create", TAG, "--repo", REPO, "--title", "Latest Data",
-                 "--notes", "Auto-updated dashboard witnesses from scraper",
-                 "--latest=false")
-    if result.returncode != 0 and "already_exists" not in result.stderr:
+    for attempt in range(retries):
+        if _gh("release", "view", TAG, "--repo", REPO).returncode == 0:
+            return
+        if attempt + 1 < retries:
+            time.sleep(2 ** attempt)
+    result = _gh("release", "create", TAG, "--repo", REPO, "--title", RELEASE_TITLE,
+                 "--notes", RELEASE_NOTES, "--latest=false")
+    said = f"{result.stderr}\n{result.stdout}".lower()
+    if result.returncode != 0 and "already exists" not in said and "already_exists" not in said:
         print(f"::warning::could not ensure the release exists: "
               f"{result.stderr.strip().splitlines()[-1] if result.stderr.strip() else '?'}")
 
@@ -315,8 +295,6 @@ def main(argv: list[str] | None = None) -> int:
     pub = sub.add_parser("publish")
     pub.add_argument("paths", nargs="+", type=Path)
 
-    sub.add_parser("ensure")
-
     down = sub.add_parser("fetch")
     down.add_argument("name")
     down.add_argument("--out", type=Path, required=True)
@@ -329,9 +307,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "publish":
         return 1 if publish(args.paths) else 0
-
-    if args.cmd == "ensure":
-        return 0 if ensure_release() else 1
 
     blob = fetch(args.name, args.base_url)
     if blob is None:

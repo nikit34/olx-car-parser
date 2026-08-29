@@ -553,8 +553,6 @@ jobs:
           ANOM_RC: ${{ steps.train_aux_models.outputs.anomaly_rc }}
           HAZ_RC: ${{ steps.train_aux_models.outputs.hazard_rc }}
         run: |
-          .venv/bin/python -m scripts.release_chunks ensure
-
           assets=()
           if [ "$TRAIN_RC" = "0" ]; then
             assets+=(data/price_metrics.json data/price_importance.json

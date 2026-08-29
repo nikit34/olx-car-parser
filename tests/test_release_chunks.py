@@ -268,9 +268,8 @@ class TestReplaceInPlace:
 
 
 class TestEnsureRelease:
-    """A tag that is already there is the wanted state. Reading it wrong
-    once used to end in ``create``, whose 422 killed the upload step and
-    left the release untouched for that whole run."""
+    """A blipped ``release view`` used to route into ``release create``,
+    which answered 422 and killed the whole publish step."""
 
     @pytest.fixture(autouse=True)
     def _nosleep(self, monkeypatch):
@@ -291,29 +290,31 @@ class TestEnsureRelease:
         monkeypatch.setattr(release_chunks, "_gh", _fake)
         return calls
 
-    def test_an_existing_release_is_never_recreated(self, monkeypatch):
+    def test_no_create_when_the_release_is_there(self, monkeypatch):
         calls = self._gh(monkeypatch, view_codes=[0])
-        assert release_chunks.ensure_release() is True
-        assert not any(a[:2] == ("release", "create") for a in calls)
+        release_chunks.ensure_release()
+        assert [a[1] for a in calls] == ["view"]
 
     def test_a_flaky_read_is_retried_before_creating(self, monkeypatch):
         calls = self._gh(monkeypatch, view_codes=[1, 0])
-        assert release_chunks.ensure_release() is True
+        release_chunks.ensure_release()
         assert not any(a[:2] == ("release", "create") for a in calls)
 
     def test_a_missing_release_is_created(self, monkeypatch):
         calls = self._gh(monkeypatch, view_codes=[1, 1, 1])
-        assert release_chunks.ensure_release() is True
+        release_chunks.ensure_release()
         assert any(a[:2] == ("release", "create") for a in calls)
 
-    def test_a_tag_that_already_exists_is_success_not_failure(self, monkeypatch):
+    def test_already_exists_is_not_an_error(self, monkeypatch, capsys):
         self._gh(monkeypatch, view_codes=[1, 1, 1],
                  create=(1, "HTTP 422: Validation Failed\nRelease.tag_name already exists"))
-        assert release_chunks.ensure_release() is True
+        release_chunks.ensure_release()
+        assert "::warning::" not in capsys.readouterr().out
 
-    def test_a_real_failure_still_fails(self, monkeypatch):
-        self._gh(monkeypatch, view_codes=[1, 1, 1], create=(1, "HTTP 401: Bad credentials"))
-        assert release_chunks.ensure_release() is False
+    def test_a_real_creation_failure_warns(self, monkeypatch, capsys):
+        self._gh(monkeypatch, view_codes=[1, 1, 1], create=(1, "HTTP 403: forbidden"))
+        release_chunks.ensure_release()
+        assert "::warning::" in capsys.readouterr().out
 
 
 class TestPublish:
@@ -331,34 +332,3 @@ class TestPublish:
         monkeypatch.setattr(release_chunks, "ensure_release", lambda: None)
         monkeypatch.setattr(release_chunks, "_upload", lambda p: True)
         assert release_chunks.publish([tmp_path / "nope.json"]) == 0
-
-
-class TestEnsureRelease:
-    """A blipped ``release view`` used to route into ``release create``,
-    which answered 422 and killed the whole publish step."""
-
-    def test_no_create_when_the_release_is_there(self, monkeypatch):
-        calls = []
-        monkeypatch.setattr(release_chunks, "_gh", lambda *a: (
-            calls.append(a[1]),
-            type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})())[1])
-
-        release_chunks.ensure_release()
-        assert calls == ["view"]
-
-    def test_already_exists_is_not_an_error(self, monkeypatch, capsys):
-        def _gh(*args):
-            if args[1] == "view":
-                return type("R", (), {"returncode": 1, "stdout": "", "stderr": ""})()
-            return type("R", (), {"returncode": 1, "stdout": "",
-                                  "stderr": "HTTP 422: already_exists"})()
-
-        monkeypatch.setattr(release_chunks, "_gh", _gh)
-        release_chunks.ensure_release()
-        assert "::warning::" not in capsys.readouterr().out
-
-    def test_a_real_creation_failure_warns(self, monkeypatch, capsys):
-        monkeypatch.setattr(release_chunks, "_gh", lambda *a: type(
-            "R", (), {"returncode": 1, "stdout": "", "stderr": "HTTP 403: forbidden"})())
-        release_chunks.ensure_release()
-        assert "::warning::" in capsys.readouterr().out
