@@ -27,6 +27,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 SRC = ROOT / "src"
 DASHBOARD = SRC / "dashboard"
 DEPLOY_DIR = ROOT / "dashboard-static"           # CF Pages output directory
@@ -181,28 +183,23 @@ def _materialise_witnesses_from_release() -> int:
     that release-assets.githubusercontent.com (the redirect target) hits
     on cross-origin browser fetches.
     """
-    from urllib.error import HTTPError, URLError
-    from urllib.request import Request, urlopen
+    from scripts.release_chunks import fetch as fetch_asset
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     fetched = 0
     for name in WITNESS_FILES:
-        url = f"{RELEASE_BASE}/{name}"
         dst = DATA_DIR / name
-        req = Request(url, headers={"User-Agent": "olx-stlite-build"})
-        try:
-            with urlopen(req, timeout=60) as r:
-                dst.write_bytes(r.read())
-        except (HTTPError, URLError) as exc:
+        blob = fetch_asset(name, RELEASE_BASE)
+        if blob is None:
             # Missing witnesses degrade gracefully — dashboard shows
             # empty-state with the release error in the sidebar — but
             # we still want to know the build dropped one.
             print(
-                f"::warning::fetch {name} from release failed: "
-                f"{type(exc).__name__}: {exc}",
+                f"::warning::fetch {name} from release failed",
                 file=sys.stderr,
             )
             continue
+        dst.write_bytes(blob)
         fetched += 1
     return fetched
 

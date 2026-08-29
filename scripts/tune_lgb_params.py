@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -54,13 +53,13 @@ def _norm_fuel(s: str) -> str:
 def load_sold(data_path: str | None) -> pd.DataFrame:
     path = Path(data_path) if data_path else _CACHE
     if not path.exists():
+        from scripts.release_chunks import fetch as fetch_asset
+
         path.parent.mkdir(parents=True, exist_ok=True)
-        repo = subprocess.run(["gh", "repo", "view", "--json", "nameWithOwner",
-                               "--jq", ".nameWithOwner"], capture_output=True, text=True,
-                              check=True).stdout.strip()
-        subprocess.run(["gh", "release", "download", "latest-data", "--repo", repo,
-                        "--pattern", "listings.parquet", "--dir", str(path.parent),
-                        "--clobber"], check=True)
+        blob = fetch_asset("listings.parquet")
+        if blob is None:
+            raise SystemExit("could not fetch listings.parquet from the release")
+        path.write_bytes(blob)
     df = pd.read_parquet(path)
     df = df[df["deactivation_reason"].astype(str).str.lower() == "sold"].copy()
     df = df.dropna(subset=["price_eur", "year", "mileage_km"])

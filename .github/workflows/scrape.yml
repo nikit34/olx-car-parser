@@ -597,7 +597,16 @@ jobs:
           # build flaked.
           if [ -d data/dashboard ] && [ -f data/dashboard/manifest.json ]; then
             for f in data/dashboard/*.parquet data/dashboard/*.json; do
-              publish "$f"
+              size=$(stat -f %z "$f")
+              if [ "$size" -gt 3000000 ]; then
+                attempted=$((attempted+1))
+                .venv/bin/python -m scripts.release_chunks upload "$f" || {
+                  failed=$((failed+1))
+                  echo "::warning::chunked upload failed: $f ($(du -h "$f" | cut -f1))"
+                }
+              else
+                publish "$f"
+              fi
             done
           else
             echo "::warning::Skipping dashboard witness upload — data/dashboard/manifest.json missing"

@@ -179,7 +179,14 @@ jobs:
           fi
           if [ -d data/dashboard ] && [ -f data/dashboard/manifest.json ]; then
             for f in data/dashboard/*.parquet data/dashboard/*.json; do
-              [ -f "$f" ] && gh release upload latest-data "$f" --clobber || true
+              [ -f "$f" ] || continue
+              if [ "$(stat -f %z "$f")" -gt 3000000 ]; then
+                .venv/bin/python -m scripts.release_chunks upload "$f" \
+                  || echo "::warning::chunked upload failed: $f"
+              else
+                gh release upload latest-data "$f" --clobber \
+                  || echo "::warning::upload failed: $f"
+              fi
             done
             echo "Uploaded dashboard witnesses ($(ls data/dashboard | wc -l | tr -d ' ') files)"
           else

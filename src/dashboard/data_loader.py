@@ -1515,6 +1515,41 @@ def _fetch_bytes(url: str) -> bytes | None:
         return None
 
 
+def _fetch_witness_bytes(filename: str) -> bytes | None:
+    """Fetch a witness from the release, whole or in parts.
+
+    Assets past a few megabytes are uploaded split, because the scrape
+    host's link is cut before a larger one finishes; the manifest names
+    the parts and the digest they must add up to. Deliberately not shared
+    with ``scripts/release_chunks.py``: this module is bundled into the
+    browser dashboard and must not import from ``scripts``.
+    """
+    import hashlib
+
+    raw = _fetch_bytes(_dashboard_release_url(filename))
+    if raw is not None:
+        return raw
+
+    meta_raw = _fetch_bytes(_dashboard_release_url(f"{filename}.chunks.json"))
+    if meta_raw is None:
+        return None
+    meta = json.loads(meta_raw.decode("utf-8"))
+
+    blob = bytearray()
+    for index in range(meta["parts"]):
+        part = _fetch_bytes(
+            _dashboard_release_url(f"{filename}.{meta['digest']}.p{index:02d}"))
+        if part is None:
+            return None
+        blob.extend(part)
+
+    if len(blob) != meta["size"] or hashlib.sha256(blob).hexdigest() != meta["sha256"]:
+        global _LAST_RELEASE_ERROR
+        _LAST_RELEASE_ERROR = f"{filename}: reassembled copy does not match its manifest"
+        return None
+    return bytes(blob)
+
+
 def _load_witness(filename: str, kind: str):
     """Fetch a witness — prefer local (built by ``build_dashboard_data.py``),
     else fall back to release CDN.
@@ -1530,7 +1565,7 @@ def _load_witness(filename: str, kind: str):
             return pd.read_parquet(local)
         return json.loads(local.read_text(encoding="utf-8"))
 
-    raw = _fetch_bytes(_dashboard_release_url(filename))
+    raw = _fetch_witness_bytes(filename)
     if raw is None:
         return None
     if kind == "parquet":
