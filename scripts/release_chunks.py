@@ -269,8 +269,26 @@ def should_chunk(path: Path) -> bool:
     return path.suffix in CHUNKABLE_SUFFIXES and path.stat().st_size > WHOLE_LIMIT
 
 
+def ensure_release() -> None:
+    """Create the release if it is absent, tolerating a racing creator.
+
+    ``gh release view`` failing does not mean the release is gone — a
+    blipped API call reads the same way, and the ``create`` that followed
+    then returned 422 and killed the publish step on 2026-08-29.
+    """
+    if _gh("release", "view", TAG, "--repo", REPO).returncode == 0:
+        return
+    result = _gh("release", "create", TAG, "--repo", REPO, "--title", "Latest Data",
+                 "--notes", "Auto-updated dashboard witnesses from scraper",
+                 "--latest=false")
+    if result.returncode != 0 and "already_exists" not in result.stderr:
+        print(f"::warning::could not ensure the release exists: "
+              f"{result.stderr.strip().splitlines()[-1] if result.stderr.strip() else '?'}")
+
+
 def publish(paths: list[Path]) -> int:
     """Upload each path the way it needs, whole or split. Returns failures."""
+    ensure_release()
     failed = 0
     for path in paths:
         if not path.exists():

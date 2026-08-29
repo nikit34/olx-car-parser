@@ -318,6 +318,7 @@ class TestEnsureRelease:
 
 class TestPublish:
     def test_counts_failures_without_raising(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(release_chunks, "ensure_release", lambda: None)
         a = tmp_path / "a.json"
         a.write_bytes(b"{}")
         b = tmp_path / "b.json"
@@ -327,5 +328,37 @@ class TestPublish:
         assert release_chunks.publish([a, b]) == 1
 
     def test_skips_paths_that_do_not_exist(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(release_chunks, "ensure_release", lambda: None)
         monkeypatch.setattr(release_chunks, "_upload", lambda p: True)
         assert release_chunks.publish([tmp_path / "nope.json"]) == 0
+
+
+class TestEnsureRelease:
+    """A blipped ``release view`` used to route into ``release create``,
+    which answered 422 and killed the whole publish step."""
+
+    def test_no_create_when_the_release_is_there(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(release_chunks, "_gh", lambda *a: (
+            calls.append(a[1]),
+            type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})())[1])
+
+        release_chunks.ensure_release()
+        assert calls == ["view"]
+
+    def test_already_exists_is_not_an_error(self, monkeypatch, capsys):
+        def _gh(*args):
+            if args[1] == "view":
+                return type("R", (), {"returncode": 1, "stdout": "", "stderr": ""})()
+            return type("R", (), {"returncode": 1, "stdout": "",
+                                  "stderr": "HTTP 422: already_exists"})()
+
+        monkeypatch.setattr(release_chunks, "_gh", _gh)
+        release_chunks.ensure_release()
+        assert "::warning::" not in capsys.readouterr().out
+
+    def test_a_real_creation_failure_warns(self, monkeypatch, capsys):
+        monkeypatch.setattr(release_chunks, "_gh", lambda *a: type(
+            "R", (), {"returncode": 1, "stdout": "", "stderr": "HTTP 403: forbidden"})())
+        release_chunks.ensure_release()
+        assert "::warning::" in capsys.readouterr().out
