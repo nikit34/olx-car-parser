@@ -15,8 +15,10 @@ Time-aware diagnostic (slow, retrains per fold):
                           tomorrow's listings versus today's CV (which mixes
                           time-adjacent rows across folds).
 
-Backtest results are persisted to ``data/price_backtest.json`` so the dashboard
-can render them without re-running the 30-minute training loop.
+Backtest results are persisted to ``data/price_backtest.json`` and uploaded to
+the ``latest-data`` release as an analysis artefact. Nothing renders them today:
+no dashboard or worker code reads the file, so treat it as a record to open by
+hand, not as a panel someone is watching.
 """
 
 from __future__ import annotations

@@ -11,7 +11,11 @@ sales); the time-aware split is the honest read. This tool always shows both.
 Data: pulls sold listings from the `latest-data` GitHub Release snapshot
 (see the release-db skill — no local DB on the dev Mac). It reuses the prod
 feature pipeline (price_model._prepare_X / _model_for_quantile) so a swept
-constant flows through exactly as in prod. It is a RELATIVE-delta tool:
+constant flows through exactly as in prod - including the sold-target
+adjustment and the sample weights, so a constant that only bites through those
+is visible here. Constants that move the target scale itself (_SOLD_TIERS) are
+refused: every metric shifts with them, so the sweep cannot rank values - derive
+those from observed relist price deltas instead. It is a RELATIVE-delta tool:
 absolute MAPE differs from prod CV (no turnover features, fixed n_estimators),
 but ΔMAPE vs the current value is what matters.
 
@@ -107,7 +111,10 @@ def evaluate(df: pd.DataFrame, folds, full: bool, spec_dropout: float = 0.0) -> 
     features. 0.0 → legacy behaviour (no augmentation). cat_maps are fit on the
     FULL train fold (no category loss) then the fitting matrix is built from the
     augmented copy — exactly as train_price_model does."""
-    y = np.log1p(np.maximum(df["price_eur"].values.astype(float), 0))
+    sold_mult, sold_w = pm._build_sold_target_adjustment(df)
+    y_price = df["price_eur"].values.astype(float) * sold_mult
+    y = np.log1p(np.maximum(y_price, 0))
+    weights = pm._compute_sample_weights(y_price) * sold_w
     n = len(df)
     quants = pm._QUANTILES if full else {"median": 0.5}
     oof = {q: np.full(n, np.nan) for q in quants}
@@ -126,10 +133,15 @@ def evaluate(df: pd.DataFrame, folds, full: bool, spec_dropout: float = 0.0) -> 
         x_te, _ = pm._prepare_X(te_df, cmaps)
         for name, alpha in quants.items():
             model = pm._model_for_quantile(name, alpha, _N_EST)   # uses pm._LGB_PARAMS + monotone
-            model.fit(x_tr, y[tr], categorical_feature=cat_idx)
+            model.fit(
+                x_tr, y[tr], sample_weight=weights[tr],
+                categorical_feature=cat_idx,
+            )
             oof[name][te] = model.predict(x_te)
         tested[te] = True
-    return {"oof": oof, "tested": tested, "y": y, "price": df["price_eur"].values.astype(float)}
+    return {"oof": oof, "tested": tested, "y": y,
+            "price": df["price_eur"].values.astype(float),
+            "target": y_price}
 
 
 def _mape(res, mask):
@@ -144,8 +156,17 @@ def _coverage(res, mask):
     return float(np.mean((pr[m] >= lo[m]) & (pr[m] <= hi[m])) * 100)
 
 
+_TARGET_SCALE_CONSTS = ("_SOLD_TIERS", "_SOLD_MAX_DAYS")
+
+
 def _set_const(path: str, raw: str):
     """Patch pm.<const> (scalar) or pm.<DICT>.<key>; return (restore_fn, parsed)."""
+    if path.split(".", 1)[0] in _TARGET_SCALE_CONSTS:
+        sys.exit(
+            f"{path} moves the training target itself, so every metric here "
+            "shifts with it and the sweep cannot rank values. Derive it from "
+            "observed relist price deltas instead (see relist.find_relists)."
+        )
     val: object
     for cast in (int, float):
         try:
@@ -261,6 +282,12 @@ def main() -> None:
     args = ap.parse_args()
     if not args.all and not (args.const and args.values):
         ap.error("give either --all, or both --const and --values")
+    if args.const and args.const.split(".", 1)[0] in _TARGET_SCALE_CONSTS:
+        ap.error(
+            f"{args.const} moves the training target itself, so every metric "
+            "here shifts with it and the sweep cannot rank values. Derive it "
+            "from observed relist price deltas instead (relist.find_relists)."
+        )
 
     df = load_sold(args.data)
     fuel = df["fuel_norm"].values

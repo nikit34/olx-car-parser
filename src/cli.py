@@ -1540,7 +1540,8 @@ def eval_model(
             save_backtest(bt)
             console.print(
                 "[green]Backtest saved to data/price_backtest.json — "
-                "dashboard will pick it up.[/green]"
+                "uploaded to the latest-data release; nothing renders it "
+                "yet.[/green]"
             )
 
 
