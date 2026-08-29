@@ -31,6 +31,8 @@ TAG = "latest-data"
 REPO = "nikit34/olx-car-parser"
 CHUNK_BYTES = 1_500_000
 UPLOAD_RETRIES = 3
+WHOLE_LIMIT = 3_000_000
+CHUNKABLE_SUFFIXES = (".parquet",)
 BASE_URL = f"https://github.com/{REPO}/releases/download/{TAG}"
 
 
@@ -156,12 +158,44 @@ def fetch(name: str, base_url: str = BASE_URL) -> bytes | None:
     return bytes(blob)
 
 
+def should_chunk(path: Path) -> bool:
+    """Whether *path* travels split.
+
+    Only formats read by chunk-aware code qualify. The flipper Worker
+    fetches its JSON straight from the release on every request, so a
+    split copy would 404 for it — chunking valuations.json took the site
+    down on 2026-08-29.
+    """
+    return path.suffix in CHUNKABLE_SUFFIXES and path.stat().st_size > WHOLE_LIMIT
+
+
+def publish(paths: list[Path]) -> int:
+    """Upload each path the way it needs, whole or split. Returns failures."""
+    failed = 0
+    for path in paths:
+        if not path.exists():
+            continue
+        if should_chunk(path):
+            ok = upload(path)
+        else:
+            ok = _upload(path)
+        if not ok:
+            failed += 1
+            print(f"::warning::upload failed: {path.name} "
+                  f"({path.stat().st_size} bytes)")
+    print(f"uploads: {len(paths) - failed}/{len(paths)} succeeded")
+    return failed
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     up = sub.add_parser("upload")
     up.add_argument("paths", nargs="+", type=Path)
+
+    pub = sub.add_parser("publish")
+    pub.add_argument("paths", nargs="+", type=Path)
 
     down = sub.add_parser("fetch")
     down.add_argument("name")
@@ -172,6 +206,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "upload":
         return 0 if all(upload(p) for p in args.paths if p.exists()) else 1
+
+    if args.cmd == "publish":
+        return 1 if publish(args.paths) else 0
 
     blob = fetch(args.name, args.base_url)
     if blob is None:

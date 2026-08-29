@@ -143,3 +143,41 @@ class TestFetch:
         self._serve(monkeypatch, assets)
 
         assert release_chunks.fetch("listings.parquet") is None
+
+
+class TestShouldChunk:
+    """Only formats a chunk-aware reader consumes may travel split. The
+    flipper Worker fetches its JSON from the release on every request, so
+    a split valuations.json 404s for it — that took the site down."""
+
+    def _sized(self, tmp_path, name: str, size: int):
+        path = tmp_path / name
+        path.write_bytes(b"x" * size)
+        return path
+
+    def test_large_parquet_is_chunked(self, tmp_path):
+        assert release_chunks.should_chunk(
+            self._sized(tmp_path, "listings.parquet", 5_000_000)) is True
+
+    def test_large_json_is_not(self, tmp_path):
+        assert release_chunks.should_chunk(
+            self._sized(tmp_path, "valuations.json", 5_000_000)) is False
+
+    def test_small_parquet_is_not(self, tmp_path):
+        assert release_chunks.should_chunk(
+            self._sized(tmp_path, "turnover.parquet", 1000)) is False
+
+
+class TestPublish:
+    def test_counts_failures_without_raising(self, tmp_path, monkeypatch):
+        a = tmp_path / "a.json"
+        a.write_bytes(b"{}")
+        b = tmp_path / "b.json"
+        b.write_bytes(b"{}")
+        monkeypatch.setattr(release_chunks, "_upload", lambda p: p.name != "b.json")
+
+        assert release_chunks.publish([a, b]) == 1
+
+    def test_skips_paths_that_do_not_exist(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(release_chunks, "_upload", lambda p: True)
+        assert release_chunks.publish([tmp_path / "nope.json"]) == 0

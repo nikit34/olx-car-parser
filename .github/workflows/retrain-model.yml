@@ -35,7 +35,7 @@ concurrency:
 jobs:
   retrain:
     runs-on: [self-hosted, olx-scraper]
-    timeout-minutes: 90
+    timeout-minutes: 150
 
     env:
       OLX_DB_URL: ${{ secrets.OLX_DB_URL }}
@@ -56,7 +56,7 @@ jobs:
       - name: Train price model + time-aware backtest
         id: train_model
         if: ${{ !cancelled() }}
-        timeout-minutes: 35
+        timeout-minutes: 75
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
@@ -159,45 +159,32 @@ jobs:
             gh release create latest-data --title "Latest Data" \
               --notes "Auto-updated price model + dashboard witnesses from scraper" --latest=false
           if [ "$TRAIN_RC" = "0" ]; then
-            [ -f data/price_metrics.json ]            && gh release upload latest-data data/price_metrics.json            --clobber || true
-            [ -f data/price_importance.json ]         && gh release upload latest-data data/price_importance.json         --clobber || true
-            [ -f data/price_grouped_importance.json ] && gh release upload latest-data data/price_grouped_importance.json --clobber || true
-            [ -f data/price_shap_importance.json ]    && gh release upload latest-data data/price_shap_importance.json    --clobber || true
-            [ -f data/price_backtest.json ]           && gh release upload latest-data data/price_backtest.json           --clobber || true
+            .venv/bin/python -m scripts.release_chunks publish \
+              data/price_metrics.json data/price_importance.json \
+              data/price_grouped_importance.json data/price_shap_importance.json \
+              data/price_backtest.json || true
           else
             echo "::warning::Skipping model upload — train-model rc=${TRAIN_RC:-<unset>} (preserves last-known-good)"
           fi
           if [ "$ANOM_RC" = "0" ]; then
-            [ -f data/anomaly_metrics.json ] && gh release upload latest-data data/anomaly_metrics.json --clobber || true
+            .venv/bin/python -m scripts.release_chunks publish data/anomaly_metrics.json || true
           else
             echo "::warning::Skipping anomaly upload — train-anomaly rc=${ANOM_RC:-<unset>}"
           fi
           if [ "$HAZ_RC" = "0" ]; then
-            [ -f data/hazard_metrics.json ] && gh release upload latest-data data/hazard_metrics.json --clobber || true
+            .venv/bin/python -m scripts.release_chunks publish data/hazard_metrics.json || true
           else
             echo "::warning::Skipping hazard upload — train-hazard rc=${HAZ_RC:-<unset>}"
           fi
           if [ -d data/dashboard ] && [ -f data/dashboard/manifest.json ]; then
-            for f in data/dashboard/*.parquet data/dashboard/*.json; do
-              [ -f "$f" ] || continue
-              if [ "$(stat -f %z "$f")" -gt 3000000 ]; then
-                .venv/bin/python -m scripts.release_chunks upload "$f" \
-                  || echo "::warning::chunked upload failed: $f"
-              else
-                gh release upload latest-data "$f" --clobber \
-                  || echo "::warning::upload failed: $f"
-              fi
-            done
-            echo "Uploaded dashboard witnesses ($(ls data/dashboard | wc -l | tr -d ' ') files)"
-          else
-            echo "::warning::Skipping dashboard witness upload — data/dashboard/manifest.json missing"
+            .venv/bin/python -m scripts.release_chunks publish \
+              data/dashboard/*.parquet data/dashboard/*.json \
+              || echo "::warning::some witnesses did not reach the release"
           fi
           if [ -d data/hot_deals ]; then
-            uploaded=0
-            for f in data/hot_deals/hot_deals_*.json; do
-              [ -f "$f" ] && gh release upload latest-data "$f" --clobber && uploaded=$((uploaded+1))
-            done
-            echo "Uploaded $uploaded hot_deals JSONs"
+            .venv/bin/python -m scripts.release_chunks publish \
+              data/hot_deals/hot_deals_*.json \
+              || echo "::warning::some hot_deals did not reach the release"
           else
             echo "::warning::Skipping hot_deals upload — data/hot_deals/ missing"
           fi
