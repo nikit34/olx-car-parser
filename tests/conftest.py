@@ -7,15 +7,21 @@
 # ``tests/test_cli_verify_photos.py`` still install local shims because they
 # explicitly exercise the heavy classifier path.
 
+import os
+import uuid
 from contextlib import contextmanager
 from unittest.mock import patch, MagicMock
 
 import pytest
 import pandas as pd
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
 from src.models.listing import Base
+import src.models.portfolio  # noqa: F401 — register with Base
+import src.models.relist  # noqa: F401 — register with Base
+import src.models.seller  # noqa: F401 — register with Base
 
 
 @contextmanager
@@ -67,21 +73,93 @@ def patched_gb_model():
     return _patched_gb_model
 
 
-@pytest.fixture
-def db_session():
-    """In-memory SQLite session, rolled back after each test."""
-    engine = create_engine("sqlite:///:memory:")
+# Tests run against a real PostgreSQL because production does: the
+# parameter-limit and foreign-key-order failures that reached production on
+# 2026-08-28 were both invisible on SQLite, which enforces neither.
+_DEFAULT_TEST_DB_URL = "postgresql+psycopg://postgres:postgres@localhost:5432/olx_test"
+TEST_DB_URL = os.environ.get("TEST_DB_URL") or _DEFAULT_TEST_DB_URL
+_TEST_DB_URL_IS_EXPLICIT = bool(os.environ.get("TEST_DB_URL"))
 
-    @event.listens_for(engine, "connect")
-    def _set_wal(dbapi_conn, _):
-        dbapi_conn.cursor().execute("PRAGMA journal_mode=WAL")
 
+@pytest.fixture(scope="session")
+def _test_engine():
+    engine = create_engine(TEST_DB_URL, pool_pre_ping=True)
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except OperationalError as exc:
+        # An explicit TEST_DB_URL means someone expects that database — CI
+        # sets it, and a skip there would be a green build that tested
+        # nothing. Only the local-dev default is allowed to skip.
+        if _TEST_DB_URL_IS_EXPLICIT:
+            raise RuntimeError(f"TEST_DB_URL is set but unreachable: {exc}") from exc
+        pytest.skip(f"no PostgreSQL at {TEST_DB_URL}: {exc}")
+    Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
-    session = Session()
-    yield session
-    session.rollback()
-    session.close()
+    yield engine
+    engine.dispose()
+
+
+def reset_module_engine_cache():
+    """``database.py`` caches one global engine; clear it so a test can
+    point at its own schema without inheriting the previous one."""
+    import src.storage.database as db_mod
+
+    db_mod._engine = None
+    db_mod._Session = None
+
+
+@pytest.fixture
+def fresh_schema(_test_engine):
+    """A throwaway PostgreSQL schema plus the URL that resolves inside it.
+
+    For tests that need to build a database from nothing — schema
+    migrations, CLI end-to-end runs — without disturbing the shared
+    fixture schema the rest of the suite works in.
+    """
+    name = f"t_{uuid.uuid4().hex[:12]}"
+    with _test_engine.connect() as conn:
+        conn.execution_options(isolation_level="AUTOCOMMIT").execute(
+            text(f'CREATE SCHEMA "{name}"'))
+    sep = "&" if "?" in TEST_DB_URL else "?"
+    url = f"{TEST_DB_URL}{sep}options=-csearch_path%3D{name}"
+    reset_module_engine_cache()
+    try:
+        yield url
+    finally:
+        reset_module_engine_cache()
+        with _test_engine.connect() as conn:
+            conn = conn.execution_options(isolation_level="AUTOCOMMIT")
+            # A CLI entry point under test leaves its session open, and an
+            # idle-in-transaction backend holds locks that make DROP SCHEMA
+            # wait forever. Tests are serial, so nothing else is mid-query.
+            conn.execute(text(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                "WHERE datname = current_database() "
+                "  AND pid <> pg_backend_pid() "
+                "  AND state = 'idle in transaction'"
+            ))
+            conn.execute(text(f'DROP SCHEMA "{name}" CASCADE'))
+
+
+@pytest.fixture
+def db_session(_test_engine):
+    """A session inside a transaction that is rolled back after each test.
+
+    The schema is built once per session; each test runs in its own
+    transaction on a dedicated connection, so a test's ``commit()`` lands in
+    a SAVEPOINT and vanishes on rollback. That keeps tests isolated without
+    recreating seven tables per test.
+    """
+    connection = _test_engine.connect()
+    transaction = connection.begin()
+    session = sessionmaker(bind=connection, join_transaction_mode="create_savepoint")()
+    try:
+        yield session
+    finally:
+        session.close()
+        transaction.rollback()
+        connection.close()
 
 
 @pytest.fixture

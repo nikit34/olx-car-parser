@@ -35,7 +35,6 @@ Run on the host (DB locks: don't co-run with verify-photos)::
 
     /Users/anastasia/actions-runner/_work/olx-car-parser/olx-car-parser/.venv/bin/python \\
         scripts/mine_damage_fps.py \\
-        --db /Users/anastasia/olx-car-parser/data/olx_cars.db \\
         --weights /Users/anastasia/olx-car-parser/data/damage_classifier_v2.pt \\
         --out-dir /tmp/v3_data \\
         --max-listings 200
@@ -76,7 +75,7 @@ def bucket_for(p: float) -> str:
 
 
 def stratified_sample(
-    db_path: Path,
+    db_url: str | None,
     per_bucket: int,
     exclude_ids: set[str],
 ) -> list[dict]:
@@ -85,8 +84,8 @@ def stratified_sample(
     Returns a list of {olx_id, url, listing_max_p} sorted by bucket so
     downstream loops can checkpoint per-bucket if needed.
     """
-    conn = open_conn(str(db_path))
-    damage_p = json_sql(conn.engine, "llm_extras", "photo_damage_p", numeric=True)
+    conn = open_conn(db_url)
+    damage_p = json_sql("llm_extras", "photo_damage_p", numeric=True)
     out: list[dict] = []
     excl_clause = ""
     params: dict = {}
@@ -189,8 +188,8 @@ def mine_listing(
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--db", type=Path, required=True,
-                    help="Path to olx_cars.db on the host")
+    ap.add_argument("--db", default=None,
+                    help="Engine URL; omit to use OLX_DB_URL.")
     ap.add_argument("--weights", type=Path, required=True,
                     help="Path to damage_classifier_v2.pt")
     ap.add_argument("--out-dir", type=Path, default=Path("/tmp/v3_data"),

@@ -53,10 +53,10 @@ def fetch_photos(url: str) -> tuple[list[str], dict]:
         return [], ad
 
 
-def stratified_sample(db_path: Path, counts: dict[int | None, int],
+def stratified_sample(db_url: str | None, counts: dict[int | None, int],
                       exclude_olx_ids: set[str] | None = None) -> list[dict]:
-    conn = open_conn(str(db_path))
-    severity = json_sql(conn.engine, "llm_extras", "damage_severity", numeric=True)
+    conn = open_conn(db_url)
+    severity = json_sql("llm_extras", "damage_severity", numeric=True)
     out = []
     excl = sorted(exclude_olx_ids or set())
     excl_clause = ""
@@ -95,7 +95,8 @@ def stratified_sample(db_path: Path, counts: dict[int | None, int],
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", type=Path, required=True)
+    ap.add_argument("--db", default=None,
+                    help="Engine URL; omit to use OLX_DB_URL.")
     ap.add_argument("--n-per-bucket", default="5,8,8,5,4",
                     help="Counts for sev=0,1,2,3,null (default 5,8,8,5,4 = 30)")
     ap.add_argument("--out-dir", type=Path, default=Path("/tmp/photo_label"))

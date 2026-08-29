@@ -32,35 +32,29 @@ from src.parser.seller_profile import SellerProfile
 # ---------------------------------------------------------------------------
 
 
-def _reset_module_engine_cache():
-    import src.storage.database as db_mod
-    db_mod._engine = None
-    db_mod._Session = None
-
-
 @pytest.fixture
-def db(tmp_path: Path):
-    """A fresh DB at the on-disk path the script expects, with the v3
-    schema applied (so ``sellers`` exists and ``listings`` has the
-    seller_* columns). Yields the same autocommitting engine connection
-    the script itself opens."""
-    _reset_module_engine_cache()
-    db_file = tmp_path / "olx_cars.db"
-
-    # Point both the script's DB_PATH constant and database.get_db_path()
-    # at the temp file so init_db() builds schema there and the script's
-    # _open_db() targets the same file.
-    import scripts.backfill_sellers as backfill_mod
-    backfill_mod.DB_PATH = db_file
-    import src.storage.database as db_mod
-    db_mod.get_db_path = lambda: str(db_file)
+def db(fresh_schema, monkeypatch):
+    """A schema with the full DDL applied, plus the same autocommitting
+    connection the script itself opens."""
+    monkeypatch.setenv("OLX_DB_URL", fresh_schema)
 
     from src.storage.database import init_db
-    init_db(str(db_file))
+    init_db(fresh_schema)
 
+    import scripts.backfill_sellers as backfill_mod
     conn = backfill_mod._open_db()
     yield conn
     conn.close()
+
+
+def _insert_seller(conn, uuid: str) -> None:
+    """A listings row may only point at a seller that exists — the database
+    enforces that foreign key."""
+    conn.execute(
+        sa_text("INSERT INTO sellers (uuid, profile_url) "
+                "VALUES (:uuid, :url)"),
+        {"uuid": uuid, "url": f"https://www.olx.pt/ads/user/{uuid}/"},
+    )
 
 
 def _insert_listing(conn, olx_id: str, profile_url: str | None,
@@ -228,6 +222,7 @@ class TestUpsertAndLink:
         _insert_listing(db, "L1", url)
         _insert_listing(db, "L2", url)
         _insert_listing(db, "L3", "https://www.olx.pt/ads/user/other/")
+        _insert_seller(db, "u-1")
         n = _link_listings(db, url, "u-1")
         assert n == 2
         rows = db.execute(
@@ -239,6 +234,8 @@ class TestUpsertAndLink:
 
     def test_link_listings_does_not_clobber_existing_uuid(self, db):
         url = "https://www.olx.pt/ads/user/abc/"
+        _insert_seller(db, "u-old")
+        _insert_seller(db, "u-new")
         _insert_listing(db, "L1", url, seller_uuid="u-old")
         _insert_listing(db, "L2", url)
         n = _link_listings(db, url, "u-new")

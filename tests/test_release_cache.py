@@ -18,16 +18,15 @@ import pytest
 @pytest.fixture
 def patched_paths(tmp_path, monkeypatch):
     """Redirect all release-cache paths into a tmp dir so tests can't
-    touch the dev machine's real ``data/olx_cars.db``."""
+    touch the dev machine's real artefacts."""
     from src.dashboard import data_loader as dl
 
-    db = tmp_path / "olx_cars.db"
+    monkeypatch.setenv("OLX_DB_URL", "postgresql+psycopg://olx@localhost/olx_cars")
     marker = tmp_path / ".last_release_check"
     model = tmp_path / "price_model.joblib"
     metrics = tmp_path / "price_metrics.json"
     importance = tmp_path / "price_importance.json"
 
-    monkeypatch.setattr(dl, "DB_PATH", db)
     monkeypatch.setattr(dl, "_RELEASE_CHECK_MARKER", marker)
     monkeypatch.setattr(dl, "_MODEL_PATH", model)
     monkeypatch.setattr(dl, "_METRICS_PATH", metrics)
@@ -41,46 +40,17 @@ def patched_paths(tmp_path, monkeypatch):
         ),
     )
     monkeypatch.setattr(dl, "_LAST_RELEASE_ERROR", None, raising=False)
-    return {"dl": dl, "db": db, "marker": marker}
+    return {"dl": dl, "marker": marker}
 
 
-def _write_real_db(path):
-    """Write a 1.1 MB blob — passes the ``_looks_like_real_db`` gate."""
-    path.write_bytes(b"\x00" * 1_100_000)
 
-
-def _write_stub(path):
-    """Write a 60 KB blob — fails ``_looks_like_real_db``, mimicking the
-    actual stub that triggered the 2026-05-02 incident."""
-    path.write_bytes(b"\x00" * 60_000)
 
 
 class TestReleaseCacheTTL:
-    def test_stub_db_does_not_shadow_real_release(self, patched_paths):
-        """The bug we're pinning: a tiny stub DB with a recent mtime must
-        NOT block the API check. Pre-fix, this scenario silently returned
-        True for two hours and left the dashboard pointing at an empty DB.
-        """
-        dl = patched_paths["dl"]
-        db = patched_paths["db"]
-        marker = patched_paths["marker"]
-
-        # Set up: stub DB exists with a current mtime, NO marker file.
-        db.write_bytes(b"\x00" * 1024)
-        assert not marker.exists()
-
-        with patch.object(dl, "_list_release_assets") as mock_list, \
-             patch.object(dl, "_download_asset") as mock_dl:
-            mock_list.return_value = {}  # no assets, but the call DID happen
-            dl._ensure_release_assets()
-
-        mock_list.assert_called_once()  # TTL did NOT skip the API call
-
     def test_marker_within_ttl_skips_api(self, patched_paths):
         """Happy path: marker exists and is fresh → no API call."""
         dl = patched_paths["dl"]
         marker = patched_paths["marker"]
-        patched_paths["db"].write_bytes(b"\x00" * 100)
         marker.touch()  # fresh
 
         with patch.object(dl, "_list_release_assets") as mock_list:
@@ -92,7 +62,6 @@ class TestReleaseCacheTTL:
         """Marker older than TTL → API gets called even if DB exists."""
         dl = patched_paths["dl"]
         marker = patched_paths["marker"]
-        patched_paths["db"].write_bytes(b"\x00" * 100)
         marker.touch()
         # Push marker mtime 3 hours into the past (TTL is 2 h).
         old = time.time() - 3 * 3600
@@ -123,7 +92,6 @@ class TestReleaseCacheTTL:
         """A successful API sync writes the marker so the next call
         within the TTL window short-circuits."""
         dl = patched_paths["dl"]
-        db = patched_paths["db"]
         marker = patched_paths["marker"]
 
         with patch.object(dl, "_list_release_assets") as mock_list, \
@@ -165,29 +133,6 @@ class TestCDNFallback:
         first_url = mock_dl.call_args_list[0].args[0]
         assert "github.com/nikit34/olx-car-parser/releases/download/latest-data" in first_url
 
-    def test_cdn_called_when_local_db_is_a_stub(self, patched_paths):
-        """The 60 KB stub case: API failed, but the dashboard had a
-        prior failed-download remnant on disk. Pre-fix this skipped
-        CDN download because ``DB_PATH.exists()`` returned True."""
-        dl = patched_paths["dl"]
-        _write_stub(patched_paths["db"])
-        with patch.object(dl, "_list_release_assets", return_value=None), \
-             patch.object(dl, "_download_asset") as mock_dl:
-            dl._ensure_release_assets()
-        assert mock_dl.call_count == 3
-
-    def test_cdn_fires_for_artifacts_even_with_real_local_db(self, patched_paths):
-        """A healthy local DB says nothing about the model/metrics — those
-        still come from the release, so an API failure must fall through to
-        the CDN for them."""
-        dl = patched_paths["dl"]
-        _write_real_db(patched_paths["db"])
-        with patch.object(dl, "_list_release_assets", return_value=None), \
-             patch.object(dl, "_download_asset", return_value=True) as mock_dl:
-            ok = dl._ensure_release_assets()
-        assert mock_dl.call_count == 3
-        assert ok is True
-
     def test_cdn_called_when_api_returns_empty_assets_dict(self, patched_paths):
         """Edge case: release exists but has no assets attached. Old
         ``if assets:`` falsy-empty-dict check skipped both the asset
@@ -205,11 +150,10 @@ class TestCDNFallback:
         dl = patched_paths["dl"]
 
         def _fake_dl(url, dest):
-            _write_real_db(dest)
+            dest.write_bytes(b"artifact")
             return True
 
         # Pre-populate the error as if a prior API call had failed.
-        _write_real_db(patched_paths["db"])
         dl._LAST_RELEASE_ERROR = "GitHub API returned HTTP 403 (rate-limited)"
         with patch.object(dl, "_list_release_assets", return_value=None), \
              patch.object(dl, "_download_asset", side_effect=_fake_dl):
@@ -218,18 +162,19 @@ class TestCDNFallback:
 
 
 class TestDBNotPublished:
-    """The DB is no longer uploaded to the release (2026-08-28): it is
-    370 MB, republished 6x/day, and nothing in production reads it."""
+    """The database is not a release asset (2026-08-28): it was 370 MB,
+    republished 6x/day, and nothing in production read it."""
 
     def test_db_is_not_a_release_asset(self):
         from src.dashboard import data_loader as dl
 
         assert "olx_cars.db" not in {name for name, _ in dl._RELEASE_ASSETS}
 
-    def test_missing_local_db_explains_itself(self, patched_paths):
+    def test_unconfigured_engine_explains_itself(self, patched_paths, monkeypatch):
         dl = patched_paths["dl"]
+        monkeypatch.delenv("OLX_DB_URL", raising=False)
         with patch.object(dl, "_list_release_assets", return_value={}), \
              patch.object(dl, "_download_asset", return_value=True):
             ok = dl._ensure_release_assets()
         assert ok is False
-        assert "scrape host" in (dl.get_last_release_error() or "")
+        assert "OLX_DB_URL" in (dl.get_last_release_error() or "")

@@ -18,7 +18,6 @@ the same sample, so we don't shrink the catch.
 Run on the host::
 
     .venv/bin/python scripts/eval_damage_v3.py \\
-        --db /Users/anastasia/olx-car-parser/data/olx_cars.db \\
         --v2 /Users/anastasia/olx-car-parser/data/damage_classifier_v2.pt \\
         --v3 /Users/anastasia/olx-car-parser/data/damage_classifier_v3_alpha.pt \\
         --n-listings 30 \\
@@ -49,10 +48,10 @@ OLLAMA_URL = "http://localhost:11434"
 DEFAULT_MODEL = "qwen2.5vl:3b"
 
 
-def sample_flagged_listings(db_path: Path, n: int,
+def sample_flagged_listings(db_url: str | None, n: int,
                             exclude: set[str]) -> list[dict]:
-    conn = open_conn(str(db_path))
-    damage_p = json_sql(conn.engine, "llm_extras", "photo_damage_p", numeric=True)
+    conn = open_conn(db_url)
+    damage_p = json_sql("llm_extras", "photo_damage_p", numeric=True)
     excl_clause = ""
     params: dict = {}
     if exclude:
@@ -130,7 +129,8 @@ def score(predictions: list[bool], truth: list[bool]) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--db", type=Path, required=True)
+    ap.add_argument("--db", default=None,
+                    help="Engine URL; omit to use OLX_DB_URL.")
     ap.add_argument("--v2", type=Path, required=True)
     ap.add_argument("--v3", type=Path, required=True)
     ap.add_argument("--n-listings", type=int, default=30)

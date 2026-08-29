@@ -349,7 +349,7 @@ def test_rank_deal_olx_ids_missing_column(monkeypatch):
 # CLI end-to-end — budget accrual + exclude-marker across two runs
 # ---------------------------------------------------------------------------
 
-def test_enrich_cloud_cli_e2e(tmp_path, monkeypatch):
+def test_enrich_cloud_cli_e2e(tmp_path, monkeypatch, fresh_schema):
     """Two runs: the first enriches and spends, the second finds nothing to do."""
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
@@ -357,8 +357,7 @@ def test_enrich_cloud_cli_e2e(tmp_path, monkeypatch):
     from src.cli import app
     from src.models.listing import Listing
 
-    db = tmp_path / "t.db"
-    engine = create_engine(f"sqlite:///{db}")
+    engine = create_engine(fresh_schema)
     Listing.metadata.create_all(engine)
     TS = sessionmaker(bind=engine)
     seed = TS()
@@ -410,6 +409,11 @@ def test_enrich_cloud_cli_e2e(tmp_path, monkeypatch):
     r2 = runner.invoke(app, ["enrich-cloud"])
     assert r2.exit_code == 0, r2.output
     assert json.loads(budget_file.read_text())["providers"] == {"gemini": 2}
+
+    # The CLI does not close the session it is handed, and an
+    # idle-in-transaction backend would block the schema teardown.
+    TS.close_all()
+    engine.dispose()
 
 
 def test_enrich_cloud_cli_noop_without_any_key(tmp_path, monkeypatch):

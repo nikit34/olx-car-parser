@@ -11,7 +11,6 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-DB_PATH = PROJECT_ROOT / "data" / "olx_cars.db"
 
 # Read-time mileage sanity ceiling — mirrors the write-time cap in
 # :func:`src.parser.llm_enrichment.correct_listing_data`. Any odometer above
@@ -209,37 +208,20 @@ def _download_asset(url: str, dest: Path) -> bool:
 
 
 # Marker file we touch after every successful release-asset sync. The TTL
-# gate reads this — NOT the DB's mtime — so a half-written stub or a local
-# init that happens to land within the TTL window can't shadow the real
-# release. A stale 60 KB ``data/olx_cars.db`` from a prior failed run
-# was the live example: its recent mtime made ``_ensure_release_assets``
-# treat it as fresh for two hours and silently bypass the GitHub API,
-# leaving the dashboard pointing at an empty DB. (2026-05-03 fix.)
+# gate reads this rather than any synced file's mtime, so a half-written
+# artefact can't shadow the real release for the whole window.
 _RELEASE_CHECK_MARKER = PROJECT_ROOT / "data" / ".last_release_check"
 
-# Production DB is ~370 MB. Anything under 1 MB is a stub (test init,
-# half-written file from an interrupted copy, sqlite empty schema). We
-# use this to gate "is the local DB trustworthy" decisions — without it a
-# 60 KB stub fooled the empty-state UI (loaded zero listings, looked like
-# "no data yet" instead of "broken cache").
-_DB_VALID_MIN_BYTES = 1_000_000
 
+def _database_is_configured() -> bool:
+    """Whether an engine URL exists at all — reachability is the caller's."""
+    from src.storage.database import DatabaseNotConfigured, resolve_db_url
 
-def _configured_engine_is_remote() -> bool:
-    """True when the data lives in PostgreSQL rather than a local file.
-
-    ``OLX_DB_URL`` is set on the scrape host; there is no file to size-check
-    then, and reachability is the session's problem, not this gate's.
-    """
-    from src.storage.database import resolve_db_url
-
-    return not resolve_db_url().startswith("sqlite:///")
-
-
-def _looks_like_real_db() -> bool:
-    if _configured_engine_is_remote():
+    try:
+        resolve_db_url()
         return True
-    return DB_PATH.exists() and DB_PATH.stat().st_size >= _DB_VALID_MIN_BYTES
+    except DatabaseNotConfigured:
+        return False
 
 
 def _force_next_check():
@@ -281,7 +263,7 @@ def reboot_dashboard():
 
 # Model + metrics are shipped to the data release by CI (see
 # .github/workflows/scrape.yml `train-model` step). The dashboard never
-# trains locally; it just consumes what the pipeline produced. The SQLite DB
+# trains locally; it just consumes what the pipeline produced. The database
 # is NOT in the release — it lives only on the scrape host.
 _MODEL_PATH = PROJECT_ROOT / "data" / "price_model.joblib"
 _METRICS_PATH = PROJECT_ROOT / "data" / "price_metrics.json"
@@ -301,10 +283,9 @@ _RELEASE_ASSETS: tuple[tuple[str, Path], ...] = (
 def _ensure_release_assets() -> bool:
     """Sync model + metrics from the latest-data release (once per TTL).
 
-    The SQLite DB is not published to the release (it stays on the scrape
-    host), so this only refreshes the derived artefacts and reports whether
-    a usable local DB happens to be present — callers fall back to the
-    parquet witness path when it isn't.
+    The database itself is never published, so this only refreshes the
+    derived artefacts and reports whether an engine is configured at all —
+    callers fall back to the parquet witness path when it isn't.
     """
     import time
 
@@ -318,11 +299,11 @@ def _ensure_release_assets() -> bool:
         _RELEASE_CHECK_MARKER.exists()
         and (time.time() - _RELEASE_CHECK_MARKER.stat().st_mtime) <= _CHECK_INTERVAL_SECONDS
     ):
-        return _looks_like_real_db()
+        return _database_is_configured()
 
     repo = os.environ.get("GITHUB_REPOSITORY", "nikit34/olx-car-parser")
     if not repo:
-        return _looks_like_real_db()
+        return _database_is_configured()
 
     assets = _list_release_assets(repo)
     if assets:
@@ -348,18 +329,16 @@ def _ensure_release_assets() -> bool:
         if recovered:
             _LAST_RELEASE_ERROR = None
 
-    if not _looks_like_real_db() and not _LAST_RELEASE_ERROR:
+    if not _database_is_configured() and not _LAST_RELEASE_ERROR:
         _LAST_RELEASE_ERROR = (
             "No database configured — set OLX_DB_URL to the scrape host's "
-            "PostgreSQL, or put a snapshot at data/olx_cars.db; the DB is "
-            "not published to the latest-data release "
-            "(see .claude/skills/release-db)"
+            "PostgreSQL (see .claude/skills/release-db)"
         )
-    return _looks_like_real_db()
+    return _database_is_configured()
 
 
 def _ensure_db() -> bool:
-    """Back-compat alias — sync all release assets, report DB status."""
+    """Sync all release assets, report whether a database is configured."""
     return _ensure_release_assets()
 
 
@@ -1463,7 +1442,7 @@ def load_portfolio() -> pd.DataFrame:
 # inference in Pyodide, so load_all() fetches those parquets instead of
 # computing them.
 #
-# The legacy SQLite + compute_signals stack remains in this file for
+# The database + compute_signals stack remains in this file for
 # server-side callers (CLI, alerts/telegram_bot, tests) — only load_all
 # has been switched to the parquet path.
 # ---------------------------------------------------------------------------
@@ -1585,7 +1564,7 @@ def _contributions_long_to_dict(long_df: pd.DataFrame) -> dict[str, dict]:
 def load_snapshots(since_days: int) -> pd.DataFrame:
     """Per-listing price snapshots filtered to ``since_days``.
 
-    Replaces the SQLite-backed ``get_price_snapshots_df`` for browser use.
+    Replaces the database-backed ``get_price_snapshots_df`` for browser use.
     The full 365-day snapshot parquet ships in the release; we filter in
     pandas to avoid shipping multiple windowed files.
     """
@@ -1620,7 +1599,7 @@ def load_all():
     Returns the same 12-tuple shape ``load_all`` has always returned, so
     page code (``_recommendations_page``, ``pages/2_*``, ``pages/3_*``)
     keeps working without changes. The heavy ML inference that the old
-    SQLite-backed path ran on every cold start now lives in
+    database-backed path ran on every cold start now lives in
     ``scripts/build_dashboard_data.py`` and runs once per CI cycle.
     """
     import time as _time

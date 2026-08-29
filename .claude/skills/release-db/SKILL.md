@@ -1,6 +1,6 @@
 ---
 name: release-db
-description: Where the listings database lives. The authoritative copy is on the remote scrape host (anastasia@192.168.1.77) and is NOT published anywhere else — the GitHub Release `latest-data` carries only derived artefacts (models, metrics, dashboard parquets). Engine selection goes through `OLX_DB_URL`; the host runs PostgreSQL, everything else falls back to a local SQLite file. For any training, evaluation, dashboards, backtests, date-range queries, or one-off analysis, point `OLX_DB_URL` at the host or query it over SSH. Never assume `data/olx_cars.db` exists locally; never train/eval against a stale local snapshot.
+description: Where the listings database lives. The authoritative copy is on the remote scrape host (anastasia@192.168.1.77) and is NOT published anywhere else — the GitHub Release `latest-data` carries only derived artefacts (models, metrics, dashboard parquets). Engine selection goes through `OLX_DB_URL` and has no fallback — unset raises `DatabaseNotConfigured`. For any training, evaluation, dashboards, backtests, date-range queries, or one-off analysis, point `OLX_DB_URL` at the host or query it over SSH. There is no local database file any more; never train/eval against a stale snapshot.
 ---
 
 # release-db
@@ -11,12 +11,11 @@ This repo runs a 24/7 scraper on a remote Mac. The database it writes is the onl
 
 Every entry point resolves its engine through `src.storage.database.resolve_db_url`:
 
-1. an explicit non-default path (`--db /tmp/copy.db`) → that SQLite file;
-2. else `OLX_DB_URL` → whatever it names (the host's PostgreSQL);
-3. else `data/olx_cars.db` → the legacy SQLite file.
+1. an explicit URL argument (`--db postgresql+psycopg://…`) → that database;
+2. else `OLX_DB_URL` → the host's PostgreSQL.
 
-So a script keeps working unchanged on either engine, and passing an explicit
-path never silently reads production.
+There is no third option: unset means `DatabaseNotConfigured`, not a quietly
+different database. `--db` takes a URL, never a file path.
 
 ## Where the DB lives
 
@@ -70,53 +69,16 @@ Owned by `.github/workflows/scrape.yml`, step "Upload model + witnesses to GitHu
 
 ## If you find a `data/olx_cars.db` on this machine
 
-It shouldn't be there. Delete it (`rm data/olx_cars.db data/olx_cars.db-wal data/olx_cars.db-shm 2>/dev/null`). It's gitignored, so nothing is lost. If a script needs data, set `OLX_DB_URL` or take a dump per above.
+Nothing reads it any more — no code path opens a file. Delete it (`rm data/olx_cars.db data/olx_cars.db-wal data/olx_cars.db-shm 2>/dev/null`); it's gitignored, so nothing is lost. If a script needs data, set `OLX_DB_URL` or take a dump per above.
 
-## Migrating a SQLite file into PostgreSQL
+## Running the tests
 
-`scripts/migrate_sqlite_to_postgres.py` copies through SQLAlchemy's typed
-metadata, so SQLite's stringly-typed timestamps and 0/1 booleans land as real
-`timestamp` / `boolean` values, then fast-forwards the identity sequences:
+They need PostgreSQL too, for the same reason production does — SQLite enforced neither foreign keys nor a parameter ceiling, and both cost a scrape on 2026-08-28. `TEST_DB_URL` points at it (CI runs a `postgres:17` service); with it unset the suite falls back to `postgresql+psycopg://postgres:postgres@localhost:5432/olx_test` and skips if nothing answers. Set explicitly, an unreachable database is an error, never a skip.
 
-```bash
-.venv/bin/python -m scripts.migrate_sqlite_to_postgres \
-  --sqlite data/olx_cars.db \
-  --target "postgresql+psycopg://olx@localhost/olx_cars" --truncate
-```
+## History
 
-It prints per-table source→target counts and exits non-zero on any mismatch.
-Stop the scraper first — rows written mid-copy are not picked up.
-
-## Host cutover (SQLite → PostgreSQL), one time
-
-Nothing below has run yet on `.77`; until `OLX_DB_URL` is set there the host
-keeps using the SQLite file and every step of the pipeline behaves as before.
-
-```bash
-# on the host
-brew install postgresql@17
-brew services start postgresql@17
-createuser -s olx 2>/dev/null; createdb -O olx olx_cars
-
-# stop the scrape cron first (a run mid-copy loses its rows)
-cd ~/olx-car-parser && git pull && .venv/bin/pip install -q -e .
-.venv/bin/python -m scripts.migrate_sqlite_to_postgres \
-  --sqlite data/olx_cars.db \
-  --target "postgresql+psycopg://olx@localhost/olx_cars" --truncate
-```
-
-The script refuses to finish quietly: it prints source→target counts per table
-and exits 1 on any mismatch. When it matches:
-
-1. Add repository secret `OLX_DB_URL` = `postgresql+psycopg://olx@localhost/olx_cars`
-   — the workflows already read it (`scrape.yml`, `retrain-model.yml`,
-   `sensitivity.yml`), and the WAL-checkpoint steps switch themselves off once
-   it is non-empty.
-2. Export the same value in the host's Streamlit / manual-ops shell.
-3. Run one scrape and check it wrote: `psql -d olx_cars -c "SELECT MAX(last_scraped_at), COUNT(*) FROM listings;"`.
-4. Keep `data/olx_cars.db` untouched for a week as the rollback — clearing
-   `OLX_DB_URL` puts everything back on it.
-
-Allow remote reads (dev machine, `psql "$OLX_DB_URL"`) by adding the LAN to
-`pg_hba.conf` + `listen_addresses` only if you want them; the pipeline itself
-is local to the host.
+The database was SQLite until 2026-08-28, when it moved to PostgreSQL 17 on
+the host (`olx_cars`, role `olx`). The one-way migration tool lived at
+`scripts/migrate_sqlite_to_postgres.py` and was deleted afterwards — keeping a
+script whose `--truncate` targets production is a footgun. `git log` has it if
+a rollback ever needs it, along with the retired `data/olx_cars.db`.

@@ -34,11 +34,8 @@ Concurrency
 This script never opens an ORM session: it holds one connection from
 ``src.storage.database`` in statement-autocommit mode, so each row lands
 in its own transaction and the pending-write window stays milliseconds
-long. On PostgreSQL readers never block a writer at all; on SQLite the
-engine applies ``PRAGMA busy_timeout`` on every pooled connection, so a
-write colliding with the scrape worker's 3-5 minute market_stats commit
-waits instead of crashing (the v1 of this script died on exactly that,
-because commit pulled a fresh pooled connection without the PRAGMA).
+long. Readers never block a writer, and a row contended by the scrape
+worker waits only for that transaction's commit.
 
 What it does
 ------------
@@ -71,19 +68,16 @@ from sqlalchemy.exc import DBAPIError, OperationalError  # noqa: E402
 from src.storage.database import get_engine  # noqa: E402
 from src.parser.scraper import OlxScraper, ScraperConfig  # noqa: E402
 
-DB_PATH = _REPO_ROOT / "data" / "olx_cars.db"
-
 logger = logging.getLogger("backfill_olx_photo_count")
 
 
 def _open_db():
     """One statement-autocommitting connection on the configured engine.
 
-    Engine setup (WAL + busy_timeout on SQLite, pooling on PostgreSQL)
-    lives in ``src.storage.database``; a blocked write there waits out the
-    live scrape worker instead of raising immediately.
+    Pooling lives in ``src.storage.database``; a row contended by the
+    live scrape worker waits for its commit, not for a database-wide lock.
     """
-    engine = get_engine(str(DB_PATH))
+    engine = get_engine()
     return engine.connect().execution_options(isolation_level="AUTOCOMMIT")
 
 

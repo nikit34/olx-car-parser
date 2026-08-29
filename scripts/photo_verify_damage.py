@@ -11,7 +11,6 @@ Decision logic (production threshold = 0.20 per-photo, max-aggregate at listing)
 
 Usage:
   python scripts/photo_verify_damage.py \\
-      --db data/olx_cars.db \\
       --limit 30   # for first dry run
 """
 
@@ -43,7 +42,8 @@ def decide(text_sev: int, max_p: float, n_photos: int, threshold: float) -> tupl
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", type=Path, required=True)
+    ap.add_argument("--db", default=None,
+                    help="Engine URL; omit to use OLX_DB_URL.")
     ap.add_argument("--weights", type=Path,
                     default=PROJECT_ROOT / "damage_classifier_v2.pt")
     ap.add_argument("--threshold", type=float, default=0.20,
@@ -62,8 +62,8 @@ def main():
     clf = DamageClassifier(args.weights, threshold=args.threshold)
     print(f"Classes: {clf.classes}, imgsz: {clf.imgsz}, device: {clf.device}\n")
 
-    conn = open_conn(str(args.db))
-    severity = json_sql(conn.engine, "llm_extras", "damage_severity", numeric=True)
+    conn = open_conn(args.db)
+    severity = json_sql("llm_extras", "damage_severity", numeric=True)
     limit_clause = f"LIMIT {int(args.limit)}" if args.limit else ""
     rows = conn.execute(sa_text(f"""
         SELECT olx_id, url, title, llm_extras

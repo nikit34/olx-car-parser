@@ -2,9 +2,8 @@
 
 import json
 import os
-from pathlib import Path
 
-from sqlalchemy import create_engine, event, inspect
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 
 from sqlalchemy import text
@@ -18,70 +17,39 @@ _engine = None
 _Session = None
 
 
-def get_db_path() -> str:
-    project_root = Path(__file__).resolve().parent.parent.parent
-    return str(project_root / "data" / "olx_cars.db")
+class DatabaseNotConfigured(RuntimeError):
+    """Raised when no engine URL is available."""
 
 
-def resolve_db_url(db_path: str | None = None) -> str:
-    """Pick the engine URL for this process.
+def resolve_db_url(db_url: str | None = None) -> str:
+    """The engine URL for this process.
 
-    ``OLX_DB_URL`` (e.g. ``postgresql+psycopg://olx@localhost/olx_cars``) is
-    the production setting. A caller that passes an explicit path still wins
-    when that path is not the legacy default — that keeps ``--db /tmp/copy.db``
-    honest instead of silently reading production.
+    An explicit URL wins — that is how tests and one-off tooling point at
+    their own database. Otherwise ``OLX_DB_URL`` (the scrape host's
+    PostgreSQL) is required: there is no local-file fallback to drift onto.
     """
-    if db_path and "://" in db_path:
-        return db_path
-    if db_path and os.path.abspath(db_path) != os.path.abspath(get_db_path()):
-        return f"sqlite:///{db_path}"
+    if db_url:
+        return db_url
     env_url = os.environ.get("OLX_DB_URL", "").strip()
-    if env_url:
-        return env_url
-    return f"sqlite:///{db_path or get_db_path()}"
+    if not env_url:
+        raise DatabaseNotConfigured(
+            "OLX_DB_URL is not set. Point it at the scrape host's PostgreSQL, "
+            "e.g. postgresql+psycopg://olx@localhost/olx_cars"
+        )
+    return env_url
 
 
-def get_engine(db_path: str | None = None):
+def get_engine(db_url: str | None = None):
     global _engine
     if _engine is None:
-        url = resolve_db_url(db_path)
-        if url.startswith("sqlite:///"):
-            path = url[len("sqlite:///"):]
-            if path and path != ":memory:":
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-            _engine = create_engine(url, echo=False)
-        else:
-            _engine = create_engine(url, echo=False, pool_pre_ping=True)
-            return _engine
-
-        # Enable WAL mode — allows reads while writing (no lock conflicts)
-        @event.listens_for(_engine, "connect")
-        def _set_sqlite_pragmas(dbapi_conn, connection_record):
-            cursor = dbapi_conn.cursor()
-            # WAL + a relaxed fsync policy — durable enough for a scraper
-            # (worst case we lose the last ~second on kernel panic, which we
-            # recover from the next run anyway).
-            cursor.execute("PRAGMA journal_mode=WAL")
-            cursor.execute("PRAGMA synchronous=NORMAL")
-            # 5 min: a writer waits out the lock instead of crashing. The
-            # scrape worker holds the write lock for minutes during the
-            # market_stats commit (longer under full coverage), and batch jobs
-            # like detect_relists used to die instantly on the old 30 s.
-            cursor.execute("PRAGMA busy_timeout=300000")
-            # 64 MB page cache — keeps the hot working set (active listings,
-            # indexes, recent snapshots) in memory instead of paging from disk.
-            cursor.execute("PRAGMA cache_size=-65536")
-            # ORDER BY / GROUP BY / CREATE INDEX scratch space stays in RAM.
-            cursor.execute("PRAGMA temp_store=MEMORY")
-            # 256 MB memory-mapped reads — saves a syscall per page on SELECTs.
-            cursor.execute("PRAGMA mmap_size=268435456")
-            cursor.close()
+        _engine = create_engine(resolve_db_url(db_url), echo=False,
+                                pool_pre_ping=True)
     return _engine
 
 
-def open_conn(db_path: str | None = None):
+def open_conn(db_url: str | None = None):
     """Statement-autocommitting connection for scripts that hand-write SQL."""
-    return get_engine(db_path).connect().execution_options(
+    return get_engine(db_url).connect().execution_options(
         isolation_level="AUTOCOMMIT"
     )
 
@@ -104,9 +72,9 @@ def _read_schema_version(conn) -> int:
     conn.execute(text(
         "CREATE TABLE IF NOT EXISTS _schema_meta (version INTEGER NOT NULL)"
     ))
-    # pysqlite autocommits DDL; PostgreSQL does not, and the later
-    # ``_write_schema_version`` runs on a fresh connection — without this
-    # commit the table it writes to was never created.
+    # PostgreSQL does not autocommit DDL and ``_write_schema_version`` runs
+    # on a fresh connection — without this commit the table it writes to
+    # was never created.
     conn.commit()
     row = conn.execute(text("SELECT version FROM _schema_meta LIMIT 1")).fetchone()
     return int(row[0]) if row else 0
@@ -117,18 +85,8 @@ def _write_schema_version(conn, version: int):
     conn.execute(text("INSERT INTO _schema_meta (version) VALUES (:v)"), {"v": version})
 
 
-_PG_TYPE_OVERRIDES = {"DATETIME": "TIMESTAMP"}
-
-
-def _portable_type(engine, col_type: str) -> str:
-    if engine.dialect.name == "sqlite":
-        return col_type
-    head, _, tail = col_type.partition(" ")
-    return f"{_PG_TYPE_OVERRIDES.get(head.upper(), head)} {tail}".strip()
-
-
-def init_db(db_path: str | None = None):
-    engine = get_engine(db_path)
+def init_db(db_url: str | None = None):
+    engine = get_engine(db_url)
     Base.metadata.create_all(engine)
 
     # Schema migrations are idempotent but expensive on large DBs (full
@@ -153,7 +111,7 @@ def init_db(db_path: str | None = None):
         ("source", "TEXT DEFAULT 'olx'"),
         ("duplicate_of", "TEXT"),
         ("right_hand_drive", "BOOLEAN"),
-        ("deactivated_at", "DATETIME"),
+        ("deactivated_at", "TIMESTAMP"),
         ("deactivation_reason", "TEXT"),
         ("urgency", "TEXT"),
         ("warranty", "BOOLEAN"),
@@ -185,7 +143,7 @@ def init_db(db_path: str | None = None):
         # posted date). NULL on existing rows until the next scrape re-sees
         # them (~all within one deep run); lets us measure real scrape
         # freshness/coverage instead of misreading posted-date as staleness.
-        ("last_scraped_at", "DATETIME"),
+        ("last_scraped_at", "TIMESTAMP"),
     ]
     _migrate_unmatched_columns = [
         ("source", "TEXT DEFAULT 'olx'"),
@@ -241,7 +199,7 @@ def init_db(db_path: str | None = None):
             try:
                 conn.execute(text(
                     f"ALTER TABLE listings ADD COLUMN {col_name} "
-                    f"{_portable_type(engine, col_type)}"
+                    f"{col_type}"
                 ))
                 conn.commit()
             except Exception:
@@ -261,7 +219,7 @@ def init_db(db_path: str | None = None):
             try:
                 conn.execute(text(
                     f"ALTER TABLE unmatched_listings ADD COLUMN {col_name} "
-                    f"{_portable_type(engine, col_type)}"
+                    f"{col_type}"
                 ))
                 conn.commit()
             except Exception:
@@ -273,7 +231,7 @@ def init_db(db_path: str | None = None):
             try:
                 conn.execute(text(
                     f"ALTER TABLE sellers ADD COLUMN {col_name} "
-                    f"{_portable_type(engine, col_type)}"
+                    f"{col_type}"
                 ))
                 conn.commit()
             except Exception:

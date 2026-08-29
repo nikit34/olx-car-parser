@@ -3,7 +3,7 @@ sample of listings from the live DB.
 
 For N listings stratified by text-side ``damage_severity`` (sev 0-3, plus
 optional sev=null) we:
-  1. Pull URL + text-LLM truth from the runner's DB (``--db``).
+  1. Pull URL + text-LLM truth from the database.
   2. Fetch ALL photos.
   3. Score every photo via CLIP zero-shot (~30 ms/photo).
   4. Score every photo via qwen2.5vl:3b VLM (~12 s/photo). Optional
@@ -21,7 +21,7 @@ Output:
 
 Usage:
   python scripts/photo_damage_benchmark.py --n-per-bucket 2,3,3,2 \\
-      --db /path/to/olx_cars.db --vlm
+      --vlm
 """
 
 import argparse
@@ -50,7 +50,7 @@ from scripts.photo_damage_clip_triage import (
 )
 
 
-def stratified_sample(db_path: Path, counts: dict[int | None, int],
+def stratified_sample(db_url: str | None, counts: dict[int | None, int],
                       min_text_len: int = 50) -> list[dict]:
     """Return N×len(counts) listings, sampled per damage_severity bucket.
 
@@ -58,8 +58,8 @@ def stratified_sample(db_path: Path, counts: dict[int | None, int],
     drawn at random so the same script run on the same DB picks different
     ones — set --seed for reproducible runs.
     """
-    conn = open_conn(str(db_path))
-    severity = json_sql(conn.engine, "llm_extras", "damage_severity", numeric=True)
+    conn = open_conn(db_url)
+    severity = json_sql("llm_extras", "damage_severity", numeric=True)
     out = []
     for sev, n in counts.items():
         if n <= 0:
@@ -293,8 +293,8 @@ def aggregate(results: list[dict], have_vlm: bool):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", type=Path, required=True,
-                    help="SQLite file to sample from; omit to use OLX_DB_URL")
+    ap.add_argument("--db", default=None,
+                    help="Engine URL; omit to use OLX_DB_URL")
     ap.add_argument("--n-per-bucket", default="2,3,3,2",
                     help="Comma-separated n for sev=0,1,2,3 (default 2,3,3,2)")
     ap.add_argument("--vlm", action="store_true",

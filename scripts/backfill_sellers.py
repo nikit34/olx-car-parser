@@ -39,9 +39,8 @@ Concurrency / DB locking
 ~~~~~~~~~~~~~~~~~~~~~~~~
 Runs on the shared engine from ``src.storage.database`` with statement
 autocommit, so each write lands on its own instead of holding a
-transaction open across HTTP fetches. On PostgreSQL readers never block;
-on SQLite the engine's ``busy_timeout`` makes a blocked write wait out
-the live scrape worker's market-stats commit rather than crash.
+transaction open across HTTP fetches. Readers never block, and a row the
+live scrape worker is touching waits only for its commit.
 
 Resumable
 ~~~~~~~~~
@@ -68,19 +67,17 @@ from src.parser.olx_categories import categorise_facets  # noqa: E402
 from src.parser.scraper import OlxScraper, ScraperConfig  # noqa: E402
 from src.parser.seller_profile import SellerProfile  # noqa: E402
 
-DB_PATH = _REPO_ROOT / "data" / "olx_cars.db"
-
 logger = logging.getLogger("backfill_sellers")
 
 
 def _open_db():
     """A statement-autocommitting connection on the configured engine.
 
-    Engine setup (WAL + busy_timeout on SQLite, pooling on PostgreSQL)
-    lives in ``src.storage.database``; this script only needs each write
-    to land on its own instead of sitting in an open transaction.
+    Pooling lives in ``src.storage.database``; this script only needs
+    each write to land on its own instead of sitting in an open
+    transaction.
     """
-    engine = get_engine(str(DB_PATH))
+    engine = get_engine()
     return engine.connect().execution_options(isolation_level="AUTOCOMMIT")
 
 
@@ -223,7 +220,7 @@ def _process_one(
       * ``ok``       — row upserted, listings linked
       * ``skip``     — page fetched but profile blob missing/malformed
       * ``fetch_err``— HTTP fetch returned None (404 / network)
-      * ``write_err``— DB write blocked beyond busy_timeout
+      * ``write_err``— DB write failed after its retries
     """
     try:
         profile = scraper.scrape_seller_profile(url)

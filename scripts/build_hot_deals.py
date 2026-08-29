@@ -269,7 +269,7 @@ def _format_deal(row: dict, photo_urls: list[str]) -> dict:
     }
 
 
-def _build_signals(db_path: Path) -> pd.DataFrame:
+def _build_signals(db_url: str | None) -> pd.DataFrame:
     """Run the production pipeline end-to-end and return a (signals ⋈ listings)
     DataFrame with every column the worker cards need."""
     from src.storage.database import init_db, get_session
@@ -279,8 +279,8 @@ def _build_signals(db_path: Path) -> pd.DataFrame:
     from src.dashboard.data_loader import compute_signals
     from src.parser.llm_enrichment import merge_real_mileage
 
-    print(f"[hot_deals] init DB {db_path}", flush=True)
-    init_db(str(db_path))
+    print("[hot_deals] init DB", flush=True)
+    init_db(db_url)
     session = get_session()
 
     t0 = time.perf_counter()
@@ -416,7 +416,8 @@ def _pick_zone_deals(signals: pd.DataFrame, zone: str, districts: list[str] | No
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--db", type=Path, default=REPO_ROOT / "data" / "olx_cars.db")
+    ap.add_argument("--db", default=None,
+                    help="Engine URL (default: OLX_DB_URL)")
     ap.add_argument("--out-dir", type=Path, default=REPO_ROOT / "data" / "hot_deals")
     ap.add_argument("--top-n", type=int, default=TOP_N_PER_ZONE,
                     help="per-zone deal cap; 0 = no cap (default)")
@@ -429,8 +430,6 @@ def main() -> None:
                     help="polite sleep between OLX HTTP calls")
     args = ap.parse_args()
 
-    if not args.db.exists():
-        raise SystemExit(f"DB not found: {args.db}")
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     signals = _build_signals(args.db)

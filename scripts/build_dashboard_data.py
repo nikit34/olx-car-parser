@@ -4,7 +4,7 @@
 The browser-side dashboard (stlite on Cloudflare Pages) can't run the
 LightGBM / sklearn inference pipeline that ``src.dashboard.data_loader.load_all``
 fires on every cold start. This script runs that pipeline ONCE in CI
-against the local SQLite, then serialises every artifact the dashboard
+against the database, then serialises every artifact the dashboard
 needs into ``data/dashboard/`` as parquet / JSON.
 
 Outputs (uploaded to the ``latest-data`` GitHub Release by scrape-ci):
@@ -26,7 +26,7 @@ Outputs (uploaded to the ``latest-data`` GitHub Release by scrape-ci):
 
 Use:
     python scripts/build_dashboard_data.py
-    python scripts/build_dashboard_data.py --db data/olx_cars.db --out data/dashboard
+    python scripts/build_dashboard_data.py --out data/dashboard
 """
 from __future__ import annotations
 
@@ -79,7 +79,7 @@ def _contributions_to_long(
     return pd.DataFrame(rows)
 
 
-def _build(db_path: Path, out_dir: Path) -> dict:
+def _build(db_url: str | None, out_dir: Path) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
     # One build timestamp reused by the manifest AND models.json (the public
     # "preços atualizados em …" freshness signal the Worker renders).
@@ -101,8 +101,8 @@ def _build(db_path: Path, out_dir: Path) -> dict:
     from src.analytics.price_model import load_model, value_configs
     from src.dashboard.data_loader import compute_signals
 
-    print(f"[build] loading DB {db_path}", flush=True)
-    init_db(str(db_path))
+    print("[build] loading DB", flush=True)
+    init_db(db_url)
     session = get_session()
 
     t0 = time.perf_counter()
@@ -325,9 +325,8 @@ def _build(db_path: Path, out_dir: Path) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument(
-        "--db", type=Path,
-        default=REPO_ROOT / "data" / "olx_cars.db",
-        help="SQLite database path (default: data/olx_cars.db)",
+        "--db", default=None,
+        help="Engine URL (default: OLX_DB_URL)",
     )
     ap.add_argument(
         "--out", type=Path,
@@ -335,8 +334,6 @@ def main() -> None:
         help="Output directory for parquet/json artifacts (default: data/dashboard)",
     )
     args = ap.parse_args()
-    if not args.db.exists():
-        raise SystemExit(f"DB not found: {args.db}")
     _build(args.db, args.out)
 
 
