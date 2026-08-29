@@ -107,6 +107,14 @@ def _db_worker(db_queue: Queue, result: dict):
         }
 
         generation = get_generation(raw.brand, raw.model or "", raw.year)
+        if generation is None and raw.brand and raw.title:
+            inferred = infer_model_from_title(raw.brand, raw.title)
+            if inferred and inferred != raw.model:
+                retry = get_generation(raw.brand, inferred, raw.year)
+                if retry:
+                    raw.model = inferred
+                    data["model"] = inferred
+                    generation = retry
         if generation:
             data["generation"] = generation
             listing = upsert_listing(session, data)
