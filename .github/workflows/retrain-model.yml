@@ -189,6 +189,14 @@ jobs:
             echo "::warning::Skipping hot_deals upload — data/hot_deals/ missing"
           fi
 
+      - name: Audit the release
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+          PYTHONPATH: ${{ github.workspace }}
+        run: .venv/bin/python -m scripts.audit_release --heal
+
       - name: Trigger Cloudflare rebuild (refresh /analytics witnesses)
         if: ${{ !cancelled() && steps.build_dashboard.outcome == 'success' }}
         env:

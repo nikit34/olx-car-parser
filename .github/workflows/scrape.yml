@@ -593,6 +593,14 @@ jobs:
           .venv/bin/python -m scripts.release_chunks publish "${assets[@]}" \
             || echo "::warning::some assets did not reach the release"
 
+      - name: Audit the release
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+          PYTHONPATH: ${{ github.workspace }}
+        run: .venv/bin/python -m scripts.audit_release --heal
+
       - name: Trigger Cloudflare rebuild (refresh /analytics witnesses)
         # The flipper-club hot_deals feed (/) fetches its JSON from the release
         # at *request* time, so the uploads above are live within ~5 min. The

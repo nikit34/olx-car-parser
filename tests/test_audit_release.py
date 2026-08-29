@@ -1,0 +1,71 @@
+"""Noticing that the release has rotted.
+
+Assets disappear silently: ``--clobber`` deletes before it writes, so an
+interrupted upload leaves nothing. Five artefacts had gone missing before
+anyone looked, so the check has to be the thing that looks.
+"""
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from scripts import audit_release
+
+
+@pytest.fixture
+def complete(monkeypatch):
+    assets = set(audit_release.expected())
+    monkeypatch.setattr(audit_release, "release_assets", lambda: assets)
+    monkeypatch.setattr(audit_release, "incomplete_chunk_sets", lambda a: {})
+    return assets
+
+
+class TestDetection:
+    def test_complete_release_passes(self, complete):
+        assert audit_release.main([]) == 0
+
+    def test_a_missing_asset_fails(self, complete, monkeypatch):
+        assets = complete - {"models.json"}
+        monkeypatch.setattr(audit_release, "release_assets", lambda: assets)
+        monkeypatch.setattr(audit_release, "local_copy", lambda n: None)
+        assert audit_release.main([]) == 1
+
+    def test_a_chunked_asset_counts_as_present(self, monkeypatch):
+        """listings.parquet only ever exists as parts plus a manifest."""
+        assets = {audit_release.manifest_name("listings.parquet")}
+        assert audit_release.satisfied("listings.parquet", assets) is True
+
+    def test_parts_missing_under_a_present_manifest_is_caught(self, monkeypatch):
+        """A manifest with no parts behind it reads as a whole file to a
+        naive check, and would ship a broken witness."""
+        meta = json.dumps({"name": "listings.parquet", "digest": "abcd1234",
+                           "size": 10, "sha256": "x", "parts": 3}).encode()
+        monkeypatch.setattr(audit_release, "_get", lambda url, quiet=False: meta)
+        broken = audit_release.incomplete_chunk_sets(
+            {"listings.parquet.chunks.json", "listings.parquet.abcd1234.p00"})
+        assert broken == {"listings.parquet": "2 of 3 parts missing"}
+
+
+class TestHealing:
+    def test_republishes_from_the_local_copy(self, complete, monkeypatch, tmp_path):
+        assets = complete - {"models.json"}
+        state = {"assets": assets}
+        monkeypatch.setattr(audit_release, "release_assets", lambda: state["assets"])
+        local = tmp_path / "models.json"
+        local.write_text("{}")
+        monkeypatch.setattr(audit_release, "local_copy",
+                            lambda n: local if n == "models.json" else None)
+
+        def _publish(paths):
+            state["assets"] = state["assets"] | {p.name for p in paths}
+            return 0
+
+        monkeypatch.setattr(audit_release, "publish", _publish)
+        assert audit_release.main(["--heal"]) == 0
+
+    def test_still_fails_when_there_is_nothing_to_restore_from(self, complete, monkeypatch):
+        monkeypatch.setattr(audit_release, "release_assets",
+                            lambda: complete - {"models.json"})
+        monkeypatch.setattr(audit_release, "local_copy", lambda n: None)
+        assert audit_release.main(["--heal"]) == 1
