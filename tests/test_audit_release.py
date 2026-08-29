@@ -13,10 +13,15 @@ import pytest
 from scripts import audit_release
 
 
+def _fresh(names):
+    now = audit_release.datetime.now(audit_release.timezone.utc)
+    return {name: now for name in names}
+
+
 @pytest.fixture
 def complete(monkeypatch):
     assets = set(audit_release.expected())
-    monkeypatch.setattr(audit_release, "release_assets", lambda: assets)
+    monkeypatch.setattr(audit_release, "asset_times", lambda: _fresh(assets))
     monkeypatch.setattr(audit_release, "incomplete_chunk_sets", lambda a: {})
     return assets
 
@@ -27,7 +32,7 @@ class TestDetection:
 
     def test_a_missing_asset_fails(self, complete, monkeypatch):
         assets = complete - {"models.json"}
-        monkeypatch.setattr(audit_release, "release_assets", lambda: assets)
+        monkeypatch.setattr(audit_release, "asset_times", lambda: _fresh(assets))
         monkeypatch.setattr(audit_release, "local_copy", lambda n: None)
         assert audit_release.main([]) == 1
 
@@ -51,7 +56,8 @@ class TestHealing:
     def test_republishes_from_the_local_copy(self, complete, monkeypatch, tmp_path):
         assets = complete - {"models.json"}
         state = {"assets": assets}
-        monkeypatch.setattr(audit_release, "release_assets", lambda: state["assets"])
+        monkeypatch.setattr(audit_release, "asset_times",
+                            lambda: _fresh(state["assets"]))
         local = tmp_path / "models.json"
         local.write_text("{}")
         monkeypatch.setattr(audit_release, "local_copy",
@@ -65,7 +71,33 @@ class TestHealing:
         assert audit_release.main(["--heal"]) == 0
 
     def test_still_fails_when_there_is_nothing_to_restore_from(self, complete, monkeypatch):
-        monkeypatch.setattr(audit_release, "release_assets",
-                            lambda: complete - {"models.json"})
+        monkeypatch.setattr(audit_release, "asset_times",
+                            lambda: _fresh(complete - {"models.json"}))
         monkeypatch.setattr(audit_release, "local_copy", lambda n: None)
         assert audit_release.main(["--heal"]) == 1
+
+
+class TestFreshness:
+    """Presence is not freshness: a witness the pipeline stopped refreshing
+    passes a name check while the dashboard serves last week's market."""
+
+    def _times(self, ages_h: dict[str, int]):
+        now = audit_release.datetime.now(audit_release.timezone.utc)
+        return {name: now - audit_release.timedelta(hours=h)
+                for name, h in ages_h.items()}
+
+    def test_recent_assets_are_not_flagged(self):
+        assert audit_release.stale_assets(self._times({"models.json": 2})) == {}
+
+    def test_an_old_asset_is_flagged_with_its_age(self):
+        stale = audit_release.stale_assets(self._times({"models.json": 50}))
+        assert stale == {"models.json": 50}
+
+    def test_a_chunked_asset_is_judged_by_its_newest_piece(self):
+        """Parts carry the timestamps; the name itself never appears."""
+        times = self._times({"listings.parquet.abcd1234.p00": 90,
+                             "listings.parquet.chunks.json": 3})
+        assert "listings.parquet" not in audit_release.stale_assets(times)
+
+    def test_absent_assets_are_left_to_the_missing_check(self):
+        assert "models.json" not in audit_release.stale_assets(self._times({}))

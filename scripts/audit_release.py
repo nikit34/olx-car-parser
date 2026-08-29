@@ -18,6 +18,7 @@ import argparse
 import json
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -45,19 +46,48 @@ MODEL_ARTIFACTS = (
     "price_backtest.json",
 )
 SEARCH_DIRS = ("data/dashboard", "data/hot_deals", "data")
+STALE_AFTER_HOURS = 36
 
 
 def expected() -> set[str]:
     return set(WITNESS_FILES) | set(WORKER_ASSETS) | set(MODEL_ARTIFACTS)
 
 
-def release_assets() -> set[str]:
+def asset_times() -> dict[str, datetime]:
     result = subprocess.run(
-        ["gh", "api", f"repos/{REPO}/releases/tags/{TAG}", "--jq", "[.assets[].name]"],
-        capture_output=True, text=True)
+        ["gh", "api", f"repos/{REPO}/releases/tags/{TAG}", "--jq",
+         "[.assets[] | {name, updated_at}]"], capture_output=True, text=True)
     if result.returncode != 0:
         raise SystemExit(f"cannot read the release: {result.stderr.strip()}")
-    return set(json.loads(result.stdout))
+    return {
+        row["name"]: datetime.fromisoformat(row["updated_at"].replace("Z", "+00:00"))
+        for row in json.loads(result.stdout)
+    }
+
+
+def release_assets() -> set[str]:
+    return set(asset_times())
+
+
+def stale_assets(times: dict[str, datetime]) -> dict[str, int]:
+    """Expected assets whose newest piece is older than the threshold.
+
+    Presence is not freshness: a witness the pipeline stopped refreshing
+    still passes a name check while the dashboard quietly serves last
+    week's market.
+    """
+    now = datetime.now(timezone.utc)
+    cutoff = timedelta(hours=STALE_AFTER_HOURS)
+    stale: dict[str, int] = {}
+    for name in expected():
+        pieces = [t for asset, t in times.items()
+                  if asset == name or asset.startswith(f"{name}.")]
+        if not pieces:
+            continue
+        age = now - max(pieces)
+        if age > cutoff:
+            stale[name] = int(age.total_seconds() // 3600)
+    return stale
 
 
 def incomplete_chunk_sets(assets: set[str]) -> dict[str, str]:
@@ -97,9 +127,13 @@ def main(argv: list[str] | None = None) -> int:
                         help="Re-publish missing assets from the host's copies.")
     args = parser.parse_args(argv)
 
-    assets = release_assets()
+    times = asset_times()
+    assets = set(times)
     missing = sorted(n for n in expected() if not satisfied(n, assets))
     broken = incomplete_chunk_sets(assets)
+
+    for name, hours in sorted(stale_assets(times).items()):
+        print(f"::warning::{name} has not been refreshed for {hours}h")
 
     if not missing and not broken:
         print(f"release complete: {len(expected())} expected assets present")

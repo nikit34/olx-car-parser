@@ -7,7 +7,11 @@ on:
     # listings invisible to that window only get last_seen_at + price refresh
     # via the daily deep sweep. Without the split, a listing that sinks past
     # page 30 the day it's posted never has its price re-checked.
-    - cron: "0 0,8,12,16,20 * * *"
+    # Off-hour minute for the shallow runs too: on 2026-08-29 three of the
+    # five xx:00 crons were dropped outright (04:37 deep, 08:00, 16:00) and
+    # the two that fired were 40 min and 2 h41 late. The deep sweep was moved
+    # off the hour in May for the same reason and has fared better.
+    - cron: "23 0,8,12,16,20 * * *"
     # Off-hour minute (xx:37) instead of 04:00 — GitHub silently drops
     # scheduled runs at the top of the hour during peak load (we saw
     # the deep sweep skipped 9 days in a row, May 2 → May 11, while
