@@ -75,6 +75,30 @@ Nothing reads it any more — no code path opens a file. Delete it (`rm data/olx
 
 They need PostgreSQL too, for the same reason production does — SQLite enforced neither foreign keys nor a parameter ceiling, and both cost a scrape on 2026-08-28. `TEST_DB_URL` points at it (CI runs a `postgres:17` service); with it unset the suite falls back to `postgresql+psycopg://postgres:postgres@localhost:5432/olx_test` and skips if nothing answers. Set explicitly, an unreachable database is an error, never a skip.
 
+## Backups
+
+One replica, on the Windows box: `permi@192.168.1.69`, `C:/olx-backup/olx_cars.dump`
+(~76 MB compressed). `scripts/backup_db.sh` dumps with `pg_dump -Fc`, ships the
+file under a `.incoming` name, compares the byte count, and only then renames it
+over the previous copy — so a truncated transfer never destroys the good one. It
+refuses to ship anything under 20 MB.
+
+Scheduled by `com.olx.backup-db` (LaunchAgent on the host, 06:20 local, log at
+`data/backup_db.log`). Each success stamps `data/.last_backup`; the scrape
+workflow warns when that stamp is older than 36 h, because nothing else would
+notice the job dying.
+
+Restore drill — run it, don't assume it:
+
+```bash
+scp permi@192.168.1.69:C:/olx-backup/olx_cars.dump /tmp/
+createdb -O olx olx_restore_test
+pg_restore --no-owner --no-privileges -d olx_restore_test /tmp/olx_cars.dump
+```
+
+Verified 2026-08-29: restored copy matched production row-for-row across all
+seven tables.
+
 ## History
 
 The database was SQLite until 2026-08-28, when it moved to PostgreSQL 17 on

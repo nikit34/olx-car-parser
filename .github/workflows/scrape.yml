@@ -104,6 +104,18 @@ jobs:
             || echo "::warning::persistent clone not fast-forwardable — run post-push-host-sync by hand"
           git log --oneline -1
 
+      - name: Check the database backup is fresh
+        continue-on-error: true
+        run: |
+          marker=/Users/anastasia/olx-car-parser/data/.last_backup
+          if [ ! -f "$marker" ]; then
+            echo "::warning::no backup marker — scripts/backup_db.sh has never succeeded"
+          else
+            age_h=$(( ( $(date +%s) - $(stat -f %m "$marker") ) / 3600 ))
+            echo "last backup: $(cat "$marker") (${age_h}h ago)"
+            [ "$age_h" -lt 36 ] || echo "::warning::database backup is ${age_h}h old"
+          fi
+
       - name: Set up Python venv
         run: |
           /opt/homebrew/bin/python3.14 -m venv .venv 2>/dev/null || true
