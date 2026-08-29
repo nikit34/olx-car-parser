@@ -302,16 +302,48 @@ def build_model_pages(
     if active.empty:
         return {"v": 1, "models": models}
 
+    # Brand and model arrive free-texted, so one car reaches us under several
+    # spellings: "SEAT"/"Seat", "MiTo"/"Mito", "C-MAX"/"C-Max", "Mégane"/"Megane".
+    # They all slugify to ONE page address. Grouping on the raw pair therefore
+    # produced two groups competing for the same slug, and the loop below kept
+    # whichever came first and dropped the other outright — publishing a median
+    # over part of the sample with nothing on the page to say so. Today the
+    # MIN_MODEL_N gate hides it (the minority spelling rarely clears 20 active
+    # listings), which is luck, not a guarantee: Alfa Romeo sits at 13 vs 59.
+    # Collapse the variants first, so everything downstream sees one pair per
+    # slug and the sample is whole.
+    _slug_key = (active["brand"].astype(str) + "-" + active["model"].astype(str)).map(slugify)
+    _canon: dict[str, tuple[str, str]] = {}
+    for _s, _g in active.assign(__s=_slug_key).groupby("__s"):
+        if not _s:
+            continue
+        # The spelling most sellers actually use wins the display label.
+        _b, _m = _g.groupby([_g["brand"].astype(str), _g["model"].astype(str)]).size().idxmax()
+        _canon[_s] = (str(_b), str(_m))
+    if _canon:
+        _pairs = [_canon.get(k, (b, m)) for k, b, m
+                  in zip(_slug_key, active["brand"].astype(str), active["model"].astype(str))]
+        active["brand"] = [p[0] for p in _pairs]
+        active["model"] = [p[1] for p in _pairs]
+
     sell_lookup: dict[tuple, tuple[int, int]] = {}
     if sell_speed is not None and not sell_speed.empty:
-        sell_lookup = {(r.brand, r.model): (int(r.sell_days), int(r.sell_n))
-                       for r in sell_speed.itertuples()}
+        # Keys come from the pre-collapse frame, so map them through the same
+        # canon; when both spellings carried stats the deeper sample wins.
+        for r in sell_speed.itertuples():
+            _b, _m = str(r.brand), str(r.model)
+            _key = _canon.get(slugify(f"{_b}-{_m}"), (_b, _m))
+            _prev = sell_lookup.get(_key)
+            if _prev is None or int(r.sell_n) > _prev[1]:
+                sell_lookup[_key] = (int(r.sell_days), int(r.sell_n))
 
     for (brand, model), grp in active.groupby(["brand", "model"]):
         if len(grp) < MIN_MODEL_N:
             continue
         slug = slugify(f"{brand}-{model}")
-        if not slug or slug in models:   # zero collisions verified; skip dup defensively
+        # Collapsing above makes one group per slug, so this can no longer drop
+        # a real sample; it stays as a guard against an empty slug.
+        if not slug or slug in models:
             continue
         q = _quantiles(grp["price_eur"])
         if not q:

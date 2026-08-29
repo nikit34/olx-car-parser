@@ -164,10 +164,31 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
     portfolio = get_portfolio_df(session)
     unmatched = get_unmatched_df(session)
 
+    # The filter dropdowns are built from whatever spellings the sellers used, so
+    # "SEAT" and "Seat" arrived as two separate brands with two partial model
+    # lists — picking either one analysed half the sample. Canonicalise the brand
+    # and fold model spellings that differ only by case or accent ("MiTo"/"Mito",
+    # "C-MAX"/"C-Max"), keeping the spelling that appears most often.
+    from src.analytics.model_pages import slugify as _slugify
+    from src.parser.brand_normalize import normalize_brand as _norm_brand
+
     brands_models: dict[str, list[str]] = {}
-    pairs = listings[["brand", "model"]].drop_duplicates()
-    for brand, grp in pairs.groupby("brand", sort=False):
-        brands_models[str(brand)] = grp["model"].dropna().astype(str).tolist()
+    _pairs = listings[["brand", "model"]].dropna()
+    if not _pairs.empty:
+        _pairs = _pairs.assign(
+            _b=_pairs["brand"].astype(str).map(_norm_brand),
+            _m=_pairs["model"].astype(str),
+        )
+        _counts = _pairs.groupby(["_b", "_m"]).size()
+        _best: dict[tuple[str, str], tuple[int, str]] = {}
+        for (_b, _m), _n in _counts.items():
+            _key = (_b, _slugify(_m))
+            if _key[1] and (_key not in _best or _n > _best[_key][0]):
+                _best[_key] = (int(_n), _m)
+        for (_b, _), (_, _m) in sorted(_best.items()):
+            brands_models.setdefault(_b, []).append(_m)
+        for _b in brands_models:
+            brands_models[_b] = sorted(set(brands_models[_b]))
 
     contributions_df = _contributions_to_long(contributions)
 
