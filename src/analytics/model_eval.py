@@ -34,7 +34,11 @@ from src.analytics.price_model import (
     _LGB_PARAMS,
     _MIN_N_ESTIMATORS,
     _QUANTILES,
+    _SPEC_DROPOUT_FRAC,
+    _SPEC_DROPOUT_SEED,
     CATEGORICAL_FEATURES,
+    _apply_spec_dropout,
+    _build_sold_target_adjustment,
     _filter_training_data,
     _prepare_X,
 )
@@ -371,13 +375,21 @@ def time_backtest(
         if len(train) < 100 or len(test) < 50:
             continue
 
-        X_train, cat_maps = _prepare_X(train)
-        y_train_price = train["price_eur"].astype(float).values
+        sold_mult, sold_w = _build_sold_target_adjustment(train)
+        y_train_price = train["price_eur"].astype(float).values * sold_mult
         y_train_log = np.log1p(np.maximum(y_train_price, 0))
+        _, cat_maps = _prepare_X(train)
+        train_fit = _apply_spec_dropout(
+            train, _SPEC_DROPOUT_FRAC,
+            np.random.default_rng(_SPEC_DROPOUT_SEED + fold),
+        )
+        X_train, _ = _prepare_X(train_fit, cat_maps)
         X_test, _ = _prepare_X(test, cat_maps)
         y_test = test["price_eur"].astype(float).values
+        test_mult, _ = _build_sold_target_adjustment(test)
+        y_test_target = y_test * test_mult
         from src.analytics.price_model import _compute_sample_weights
-        sample_weight = _compute_sample_weights(y_train_price)
+        sample_weight = _compute_sample_weights(y_train_price) * sold_w
 
         from src.analytics.price_model import _model_for_quantile
         log_preds: dict[str, np.ndarray] = {}
@@ -409,6 +421,22 @@ def time_backtest(
         mape = float(np.mean(np.abs((y_test - median) / np.maximum(y_test, 1)) * 100))
         coverage = float(np.mean((y_test >= low) & (y_test <= high)))
         bias_pct = float(np.mean((y_test - median) / np.maximum(y_test, 1) * 100))
+        sold_test = test_mult != 1.0
+        n_test_sold = int(sold_test.sum())
+        if n_test_sold:
+            yt = y_test_target[sold_test]
+            md = median[sold_test]
+            mape_target = float(
+                np.mean(np.abs((yt - md) / np.maximum(yt, 1)) * 100)
+            )
+            bias_target = float(
+                np.mean((yt - md) / np.maximum(yt, 1) * 100)
+            )
+            coverage_target = float(
+                np.mean((yt >= low[sold_test]) & (yt <= high[sold_test]))
+            )
+        else:
+            mape_target = bias_target = coverage_target = float("nan")
 
         rows.append({
             "fold": fold,
@@ -421,6 +449,16 @@ def time_backtest(
             "mape": round(mape, 1),
             "bias_pct": round(bias_pct, 2),
             "coverage_80": round(coverage, 3),
+            "n_test_sold": n_test_sold,
+            "mape_vs_target": (
+                None if n_test_sold == 0 else round(mape_target, 1)
+            ),
+            "bias_vs_target_pct": (
+                None if n_test_sold == 0 else round(bias_target, 2)
+            ),
+            "coverage_80_vs_target": (
+                None if n_test_sold == 0 else round(coverage_target, 3)
+            ),
         })
     return pd.DataFrame(rows)
 
