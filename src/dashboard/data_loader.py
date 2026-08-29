@@ -261,10 +261,11 @@ def reboot_dashboard():
     st.rerun()
 
 
-# Model + metrics are shipped to the data release by CI (see
+# Metrics are shipped to the data release by CI (see
 # .github/workflows/scrape.yml `train-model` step). The dashboard never
-# trains locally; it just consumes what the pipeline produced. The database
-# is NOT in the release — it lives only on the scrape host.
+# trains locally; it just consumes what the pipeline produced. Neither the
+# database nor the model bundles are in the release — they live only on the
+# scrape host, which is also the only thing that reads them.
 _MODEL_PATH = PROJECT_ROOT / "data" / "price_model.joblib"
 _METRICS_PATH = PROJECT_ROOT / "data" / "price_metrics.json"
 _IMPORTANCE_PATH = PROJECT_ROOT / "data" / "price_importance.json"
@@ -272,7 +273,6 @@ _GROUPED_IMPORTANCE_PATH = PROJECT_ROOT / "data" / "price_grouped_importance.jso
 _SHAP_IMPORTANCE_PATH = PROJECT_ROOT / "data" / "price_shap_importance.json"
 
 _RELEASE_ASSETS: tuple[tuple[str, Path], ...] = (
-    ("price_model.joblib", _MODEL_PATH),
     ("price_metrics.json", _METRICS_PATH),
     ("price_importance.json", _IMPORTANCE_PATH),
     ("price_grouped_importance.json", _GROUPED_IMPORTANCE_PATH),

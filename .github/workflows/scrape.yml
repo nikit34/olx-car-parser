@@ -539,7 +539,7 @@ jobs:
           .venv/bin/python scripts/build_hot_deals.py
           ls -lh data/hot_deals/
 
-      - name: Upload model + witnesses to GitHub Releases
+      - name: Upload metrics + witnesses to GitHub Releases
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -553,38 +553,43 @@ jobs:
           ANOM_RC: ${{ steps.train_aux_models.outputs.anomaly_rc }}
           HAZ_RC: ${{ steps.train_aux_models.outputs.hazard_rc }}
         run: |
+          failed=0
+          attempted=0
+          publish() {
+            [ -f "$1" ] || return 0
+            attempted=$((attempted+1))
+            if ! gh release upload latest-data "$1" --clobber; then
+              failed=$((failed+1))
+              echo "::warning::upload failed: $1 ($(du -h "$1" | cut -f1))"
+            fi
+          }
+
           gh release view latest-data 2>/dev/null || \
             gh release create latest-data \
               --title "Latest Data" \
-              --notes "Auto-updated price model + dashboard witnesses from scraper" \
+              --notes "Auto-updated dashboard witnesses from scraper" \
               --latest=false
+
           if [ "$TRAIN_RC" = "0" ]; then
-            [ -f data/price_model.joblib ]     && gh release upload latest-data data/price_model.joblib     --clobber || true
-            [ -f data/price_metrics.json ]     && gh release upload latest-data data/price_metrics.json     --clobber || true
-            [ -f data/price_importance.json ]          && gh release upload latest-data data/price_importance.json          --clobber || true
-            [ -f data/price_grouped_importance.json ]  && gh release upload latest-data data/price_grouped_importance.json  --clobber || true
-            [ -f data/price_shap_importance.json ]     && gh release upload latest-data data/price_shap_importance.json     --clobber || true
-            [ -f data/price_backtest.json ]            && gh release upload latest-data data/price_backtest.json            --clobber || true
+            publish data/price_metrics.json
+            publish data/price_importance.json
+            publish data/price_grouped_importance.json
+            publish data/price_shap_importance.json
+            publish data/price_backtest.json
           else
-            echo "::warning::Skipping model upload — train-model rc=${TRAIN_RC:-<unset>} (preserves last-known-good artifact in release)"
+            echo "::warning::Skipping model metrics — train-model rc=${TRAIN_RC:-<unset>}"
           fi
-          # Auxiliary models (anomaly + hazard). Each gated on its own rc
-          # so a failed anomaly run doesn't block hazard upload and vice
-          # versa. Same preserve-last-known-good policy: skip the upload
-          # if its rc is non-zero. Their metrics histories live in
-          # separate JSON files alongside the bundles.
           if [ "$ANOM_RC" = "0" ]; then
-            [ -f data/anomaly_model.joblib ]   && gh release upload latest-data data/anomaly_model.joblib   --clobber || true
-            [ -f data/anomaly_metrics.json ]   && gh release upload latest-data data/anomaly_metrics.json   --clobber || true
+            publish data/anomaly_metrics.json
           else
-            echo "::warning::Skipping anomaly upload — train-anomaly rc=${ANOM_RC:-<unset>}"
+            echo "::warning::Skipping anomaly metrics — train-anomaly rc=${ANOM_RC:-<unset>}"
           fi
           if [ "$HAZ_RC" = "0" ]; then
-            [ -f data/hazard_model.joblib ]    && gh release upload latest-data data/hazard_model.joblib    --clobber || true
-            [ -f data/hazard_metrics.json ]    && gh release upload latest-data data/hazard_metrics.json    --clobber || true
+            publish data/hazard_metrics.json
           else
-            echo "::warning::Skipping hazard upload — train-hazard rc=${HAZ_RC:-<unset>}"
+            echo "::warning::Skipping hazard metrics — train-hazard rc=${HAZ_RC:-<unset>}"
           fi
+
           # Dashboard witnesses — only re-publish if build_dashboard_data
           # succeeded. CF Pages serves the stlite bundle from a separate
           # static deploy and fetches these parquets at browser mount time;
@@ -592,9 +597,8 @@ jobs:
           # build flaked.
           if [ -d data/dashboard ] && [ -f data/dashboard/manifest.json ]; then
             for f in data/dashboard/*.parquet data/dashboard/*.json; do
-              [ -f "$f" ] && gh release upload latest-data "$f" --clobber || true
+              publish "$f"
             done
-            echo "Uploaded dashboard witnesses ($(ls data/dashboard | wc -l | tr -d ' ') files)"
           else
             echo "::warning::Skipping dashboard witness upload — data/dashboard/manifest.json missing"
           fi
@@ -602,13 +606,16 @@ jobs:
           # Hot-deals JSONs for the flipper-club Worker. Each zone is a tiny
           # (~30 deals) artifact; the Worker fetches at request time.
           if [ -d data/hot_deals ]; then
-            uploaded=0
             for f in data/hot_deals/hot_deals_*.json; do
-              [ -f "$f" ] && gh release upload latest-data "$f" --clobber && uploaded=$((uploaded+1))
+              publish "$f"
             done
-            echo "Uploaded $uploaded hot_deals JSONs"
           else
             echo "::warning::Skipping hot_deals upload — data/hot_deals/ missing"
+          fi
+
+          echo "uploads: $((attempted-failed))/$attempted succeeded"
+          if [ "$failed" -gt 0 ]; then
+            echo "::warning::$failed of $attempted uploads failed — the release is now partial"
           fi
 
       - name: Trigger Cloudflare rebuild (refresh /analytics witnesses)
