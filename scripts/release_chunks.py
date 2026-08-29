@@ -11,6 +11,10 @@ upload cannot be mixed with the previous generation's parts: the manifest
 naming the digest is written last and is the commit point. Stale parts are
 deleted only after the new manifest is in place.
 
+Replacing an asset that already exists goes through a staging name, because
+``gh release upload --clobber`` deletes the live one before it starts
+sending and on this link that leaves the name missing for minutes.
+
     python -m scripts.release_chunks upload data/dashboard/listings.parquet
     python -m scripts.release_chunks fetch listings.parquet --out /tmp/l.parquet
 """
@@ -20,6 +24,7 @@ import argparse
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -33,7 +38,11 @@ CHUNK_BYTES = 1_500_000
 UPLOAD_RETRIES = 3
 WHOLE_LIMIT = 3_000_000
 CHUNKABLE_SUFFIXES = (".parquet",)
+STAGING_SUFFIX = ".uploading"
 BASE_URL = f"https://github.com/{REPO}/releases/download/{TAG}"
+
+_ASSETS: dict[str, str] = {}
+_ASSETS_READ = False
 
 
 def manifest_name(name: str) -> str:
@@ -54,7 +63,24 @@ def _gh(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["gh", *args], capture_output=True, text=True)
 
 
-def _upload(path: Path) -> bool:
+def _assets(refresh: bool = False) -> dict[str, str]:
+    """Asset name to API URL for everything currently in the release."""
+    global _ASSETS_READ
+    if _ASSETS_READ and not refresh:
+        return _ASSETS
+    result = _gh("release", "view", TAG, "--repo", REPO, "--json", "assets",
+                 "--jq", '.assets[] | .name + "\t" + .apiUrl')
+    _ASSETS.clear()
+    if result.returncode == 0:
+        for line in result.stdout.splitlines():
+            name, _, api_url = line.partition("\t")
+            if name.strip() and api_url.strip():
+                _ASSETS[name.strip()] = api_url.strip()
+    _ASSETS_READ = True
+    return _ASSETS
+
+
+def _put(path: Path) -> bool:
     for attempt in range(UPLOAD_RETRIES):
         result = _gh("release", "upload", TAG, str(path), "--repo", REPO, "--clobber")
         if result.returncode == 0:
@@ -66,12 +92,58 @@ def _upload(path: Path) -> bool:
     return False
 
 
+def _rename(api_url: str, name: str) -> bool:
+    for attempt in range(UPLOAD_RETRIES):
+        result = _gh("api", "--method", "PATCH", api_url, "-f", f"name={name}", "--silent")
+        if result.returncode == 0:
+            return True
+        time.sleep(2 ** attempt)
+    return False
+
+
+def _delete(name: str) -> None:
+    _gh("release", "delete-asset", TAG, name, "--repo", REPO, "--yes")
+    _ASSETS.pop(name, None)
+
+
+def _upload(path: Path) -> bool:
+    """Land *path* under its own name, leaving no gap where it is missing.
+
+    A name nothing serves yet is uploaded straight. Replacing a live one
+    sends the new bytes under a staging name first, so the only moment the
+    real name is absent is the rename between the two, not the whole
+    upload: the Worker reads several of these assets on every request and
+    answers 503 while one is gone.
+    """
+    name = path.name
+    if name not in _assets():
+        return _put(path)
+    with tempfile.TemporaryDirectory() as tmp:
+        staged = Path(tmp) / (name + STAGING_SUFFIX)
+        shutil.copyfile(path, staged)
+        if not _put(staged):
+            _delete(staged.name)
+            return False
+        api_url = _assets(refresh=True).get(staged.name)
+        if api_url is None:
+            print(f"  {name}: the staged copy never appeared in the release",
+                  file=sys.stderr)
+            return False
+        _delete(name)
+        if _rename(api_url, name):
+            _ASSETS.pop(staged.name, None)
+            _ASSETS[name] = api_url
+            return True
+        print(f"  {name}: rename failed, uploading under the real name instead",
+              file=sys.stderr)
+        landed = _put(path)
+        _delete(staged.name)
+        _assets(refresh=True)
+        return landed
+
+
 def _release_asset_names() -> set[str]:
-    result = _gh("release", "view", TAG, "--repo", REPO, "--json", "assets",
-                 "--jq", ".assets[].name")
-    if result.returncode != 0:
-        return set()
-    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+    return set(_assets(refresh=True))
 
 
 def upload(path: Path) -> bool:
@@ -112,7 +184,7 @@ def upload(path: Path) -> bool:
     if name in assets:
         stale.add(name)
     for asset in sorted(stale):
-        _gh("release", "delete-asset", TAG, asset, "--repo", REPO, "--yes")
+        _delete(asset)
     if stale:
         print(f"{name}: removed {len(stale)} stale parts")
     return True

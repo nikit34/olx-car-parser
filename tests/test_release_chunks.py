@@ -168,6 +168,105 @@ class TestShouldChunk:
             self._sized(tmp_path, "turnover.parquet", 1000)) is False
 
 
+class FakeGh:
+    """A release that answers like ``gh`` does, and remembers the order."""
+
+    def __init__(self, assets=(), fail=()):
+        self.assets = {name: f"https://api.github.com/assets/{name}" for name in assets}
+        self.fail = tuple(fail)
+        self.calls = []
+
+    @staticmethod
+    def _result(code: int, out: str = ""):
+        return type("R", (), {"returncode": code, "stdout": out, "stderr": ""})()
+
+    def __call__(self, *args):
+        self.calls.append(args)
+        head = args[:2]
+        if head == ("release", "view"):
+            return self._result(0, "\n".join(f"{n}\t{u}" for n, u in self.assets.items()))
+        if head == ("release", "upload"):
+            name = args[3].rsplit("/", 1)[-1]
+            if "upload" in self.fail:
+                return self._result(1)
+            self.assets[name] = f"https://api.github.com/assets/{name}"
+            return self._result(0)
+        if head == ("release", "delete-asset"):
+            self.assets.pop(args[3], None)
+            return self._result(0)
+        if args[0] == "api":
+            if "rename" in self.fail:
+                return self._result(1)
+            api_url = next(a for a in args if a.startswith("http"))
+            new = next(a for a in args if a.startswith("name=")).split("=", 1)[1]
+            old = next(n for n, u in self.assets.items() if u == api_url)
+            self.assets[new] = self.assets.pop(old)
+            return self._result(0)
+        return self._result(0)
+
+    def kinds(self):
+        return [a[1] if a[0] == "release" else a[0] for a in self.calls]
+
+
+class TestReplaceInPlace:
+    """The Worker fetches these assets on every request, so the window in
+    which a name is missing is a window of 503s on the live site."""
+
+    @pytest.fixture(autouse=True)
+    def _clean(self, monkeypatch):
+        monkeypatch.setattr(release_chunks, "_ASSETS_READ", False)
+        monkeypatch.setattr(release_chunks, "_ASSETS", {})
+        monkeypatch.setattr(release_chunks.time, "sleep", lambda _s: None)
+
+    @pytest.fixture
+    def asset(self, tmp_path):
+        path = tmp_path / "models.json"
+        path.write_bytes(b'{"models":{}}')
+        return path
+
+    def test_a_new_name_goes_straight_up(self, asset, monkeypatch):
+        gh = FakeGh()
+        monkeypatch.setattr(release_chunks, "_gh", gh)
+
+        assert release_chunks._upload(asset) is True
+        assert "models.json" in gh.assets
+        assert [k for k in gh.kinds() if k in ("upload", "delete-asset")] == ["upload"]
+
+    def test_the_live_asset_dies_only_after_the_new_bytes_landed(self, asset, monkeypatch):
+        gh = FakeGh(assets=["models.json"])
+        monkeypatch.setattr(release_chunks, "_gh", gh)
+
+        assert release_chunks._upload(asset) is True
+        kinds = gh.kinds()
+        assert kinds.index("upload") < kinds.index("delete-asset") < kinds.index("api")
+        assert set(gh.assets) == {"models.json"}
+        uploaded = [a[3].rsplit("/", 1)[-1] for a in gh.calls if a[:2] == ("release", "upload")]
+        assert uploaded == ["models.json" + release_chunks.STAGING_SUFFIX]
+
+    def test_a_failed_upload_leaves_the_live_asset_alone(self, asset, monkeypatch):
+        gh = FakeGh(assets=["models.json"], fail=["upload"])
+        monkeypatch.setattr(release_chunks, "_gh", gh)
+
+        assert release_chunks._upload(asset) is False
+        assert set(gh.assets) == {"models.json"}
+
+    def test_a_failed_rename_still_ends_with_the_asset_in_place(self, asset, monkeypatch):
+        gh = FakeGh(assets=["models.json"], fail=["rename"])
+        monkeypatch.setattr(release_chunks, "_gh", gh)
+
+        assert release_chunks._upload(asset) is True
+        assert set(gh.assets) == {"models.json"}
+
+    def test_the_staging_name_is_not_something_a_reader_asks_for(self, asset, monkeypatch):
+        gh = FakeGh(assets=["models.json"])
+        monkeypatch.setattr(release_chunks, "_gh", gh)
+        release_chunks._upload(asset)
+
+        assert not any(n.endswith(release_chunks.STAGING_SUFFIX) for n in gh.assets)
+        assert release_chunks.manifest_name("models.json") != (
+            "models.json" + release_chunks.STAGING_SUFFIX)
+
+
 class TestPublish:
     def test_counts_failures_without_raising(self, tmp_path, monkeypatch):
         a = tmp_path / "a.json"
