@@ -649,7 +649,7 @@ class TestSoldTargetAdjustment:
         assert (mult == 1.0).all()
         assert (w == 1.0).all()
 
-    def test_quick_sold_gets_small_discount_high_weight(self):
+    def test_quick_sold_keeps_its_last_ask(self):
         from datetime import datetime, timezone, timedelta
         from src.analytics.price_model import _build_sold_target_adjustment
         first = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -658,11 +658,10 @@ class TestSoldTargetAdjustment:
             first_seen_at=first, deactivated_at=first + timedelta(days=5),
         )])
         mult, w = _build_sold_target_adjustment(df)
-        # 5 days → first tier (≤14): 0.96 multiplier, 0.90 weight
-        assert mult[0] == pytest.approx(0.96)
-        assert w[0] == pytest.approx(0.90)
+        assert mult[0] == pytest.approx(1.00)
+        assert w[0] == pytest.approx(1.0)
 
-    def test_slow_sold_gets_bigger_discount_lower_weight(self):
+    def test_slow_sold_gets_bigger_discount(self):
         from datetime import datetime, timezone, timedelta
         from src.analytics.price_model import _build_sold_target_adjustment
         first = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -671,9 +670,20 @@ class TestSoldTargetAdjustment:
             first_seen_at=first, deactivated_at=first + timedelta(days=200),
         )])
         mult, w = _build_sold_target_adjustment(df)
-        # 200 days → 4th tier (≤365): 0.88 multiplier, 0.30 weight
         assert mult[0] == pytest.approx(0.88)
-        assert w[0] == pytest.approx(0.30)
+        assert w[0] == pytest.approx(1.0)
+
+    def test_sold_rows_are_not_downweighted_by_age(self):
+        from datetime import datetime, timezone, timedelta
+        from src.analytics.price_model import _build_sold_target_adjustment
+        first = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        df = pd.DataFrame([
+            self._row(is_active=False, deactivation_reason="sold",
+                      first_seen_at=first, deactivated_at=first + timedelta(days=d))
+            for d in (5, 40, 150, 300)
+        ])
+        _, w = _build_sold_target_adjustment(df)
+        assert (w == 1.0).all()
 
     def test_bogus_dates_get_zero_weight(self):
         """Pre-fix DB had rows with 2915-day "sold" lifespans (parser

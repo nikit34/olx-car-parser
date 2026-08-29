@@ -348,12 +348,21 @@ def _model_for_quantile(
 # corpus (median price_change_pct on sold listings = -4.8 %).
 _SOLD_TIERS = (
     # (max_days_inclusive, price_multiplier, sample_weight)
-    (14,  0.96, 0.90),
-    (60,  0.94, 0.70),
-    (180, 0.91, 0.50),
-    (365, 0.88, 0.30),
+    (14,  1.00, 1.0),
+    (60,  0.94, 1.0),
+    (180, 0.91, 1.0),
+    (365, 0.88, 1.0),
 )
 _SOLD_MAX_DAYS = 365  # rows beyond this are parser noise (e.g. 2915-day "sold")
+
+
+def _sold_row_mask(df: pd.DataFrame) -> np.ndarray:
+    """Rows the sold-target adjustment applies to."""
+    if "is_active" not in df.columns or "deactivation_reason" not in df.columns:
+        return np.zeros(len(df), dtype=bool)
+    return (~df["is_active"].astype(bool).values) & (
+        df["deactivation_reason"].astype(str).values == "sold"
+    )
 
 
 def _build_sold_target_adjustment(
@@ -372,12 +381,7 @@ def _build_sold_target_adjustment(
     multiplier = np.ones(n, dtype=float)
     weight = np.ones(n, dtype=float)
 
-    if "is_active" not in df.columns or "deactivation_reason" not in df.columns:
-        return multiplier, weight
-
-    is_active = df["is_active"].astype(bool).values
-    reason = df["deactivation_reason"].astype(str).values
-    sold_mask = (~is_active) & (reason == "sold")
+    sold_mask = _sold_row_mask(df)
     if not sold_mask.any():
         return multiplier, weight
 
@@ -1379,7 +1383,7 @@ def train_price_model(
     ) = _cv_metrics(df)
     metrics["filter_stats"] = filter_stats
 
-    n_sold = int((sold_w != 1.0).sum())
+    n_sold = int(_sold_row_mask(df).sum())
     n_dropped_sold = int((sold_w == 0.0).sum())
     metrics["sold_inclusion"] = {
         "total_rows": len(df),
