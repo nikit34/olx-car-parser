@@ -39,6 +39,8 @@ UPLOAD_RETRIES = 3
 WHOLE_LIMIT = 3_000_000
 CHUNKABLE_SUFFIXES = (".parquet",)
 STAGING_SUFFIX = ".uploading"
+RELEASE_TITLE = "Latest Data"
+RELEASE_NOTES = "Auto-updated dashboard witnesses from scraper"
 BASE_URL = f"https://github.com/{REPO}/releases/download/{TAG}"
 
 _ASSETS: dict[str, str] = {}
@@ -78,6 +80,32 @@ def _assets(refresh: bool = False) -> dict[str, str]:
                 _ASSETS[name.strip()] = api_url.strip()
     _ASSETS_READ = True
     return _ASSETS
+
+
+def ensure_release(retries: int = UPLOAD_RETRIES) -> bool:
+    """Have the release ready to receive assets, existing or freshly made.
+
+    The check is retried because one flaky read used to send the job down
+    the create branch, where GitHub answers 422 for a tag that is already
+    there — and that killed the whole upload step, so nothing was
+    published at all. A tag that exists is the desired state, whichever
+    call reports it.
+    """
+    for attempt in range(retries):
+        if _gh("release", "view", TAG, "--repo", REPO).returncode == 0:
+            return True
+        if attempt + 1 < retries:
+            time.sleep(2 ** attempt)
+    result = _gh("release", "create", TAG, "--repo", REPO, "--title", RELEASE_TITLE,
+                 "--notes", RELEASE_NOTES, "--latest=false")
+    if result.returncode == 0:
+        return True
+    said = f"{result.stderr}\n{result.stdout}".lower()
+    if "already exists" in said or "already_exists" in said:
+        return True
+    print(f"::error::{TAG} release is unreachable and cannot be created: "
+          f"{result.stderr.strip() or result.stdout.strip() or '?'}", file=sys.stderr)
+    return False
 
 
 def _put(path: Path) -> bool:
@@ -269,6 +297,8 @@ def main(argv: list[str] | None = None) -> int:
     pub = sub.add_parser("publish")
     pub.add_argument("paths", nargs="+", type=Path)
 
+    sub.add_parser("ensure")
+
     down = sub.add_parser("fetch")
     down.add_argument("name")
     down.add_argument("--out", type=Path, required=True)
@@ -281,6 +311,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "publish":
         return 1 if publish(args.paths) else 0
+
+    if args.cmd == "ensure":
+        return 0 if ensure_release() else 1
 
     blob = fetch(args.name, args.base_url)
     if blob is None:

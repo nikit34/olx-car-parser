@@ -267,6 +267,55 @@ class TestReplaceInPlace:
             "models.json" + release_chunks.STAGING_SUFFIX)
 
 
+class TestEnsureRelease:
+    """A tag that is already there is the wanted state. Reading it wrong
+    once used to end in ``create``, whose 422 killed the upload step and
+    left the release untouched for that whole run."""
+
+    @pytest.fixture(autouse=True)
+    def _nosleep(self, monkeypatch):
+        monkeypatch.setattr(release_chunks.time, "sleep", lambda _s: None)
+
+    def _gh(self, monkeypatch, view_codes, create=(0, "")):
+        codes = list(view_codes)
+        calls = []
+
+        def _fake(*args):
+            calls.append(args)
+            if args[:2] == ("release", "view"):
+                code = codes.pop(0) if codes else 1
+                return type("R", (), {"returncode": code, "stdout": "", "stderr": ""})()
+            return type("R", (), {"returncode": create[0], "stdout": "",
+                                  "stderr": create[1]})()
+
+        monkeypatch.setattr(release_chunks, "_gh", _fake)
+        return calls
+
+    def test_an_existing_release_is_never_recreated(self, monkeypatch):
+        calls = self._gh(monkeypatch, view_codes=[0])
+        assert release_chunks.ensure_release() is True
+        assert not any(a[:2] == ("release", "create") for a in calls)
+
+    def test_a_flaky_read_is_retried_before_creating(self, monkeypatch):
+        calls = self._gh(monkeypatch, view_codes=[1, 0])
+        assert release_chunks.ensure_release() is True
+        assert not any(a[:2] == ("release", "create") for a in calls)
+
+    def test_a_missing_release_is_created(self, monkeypatch):
+        calls = self._gh(monkeypatch, view_codes=[1, 1, 1])
+        assert release_chunks.ensure_release() is True
+        assert any(a[:2] == ("release", "create") for a in calls)
+
+    def test_a_tag_that_already_exists_is_success_not_failure(self, monkeypatch):
+        self._gh(monkeypatch, view_codes=[1, 1, 1],
+                 create=(1, "HTTP 422: Validation Failed\nRelease.tag_name already exists"))
+        assert release_chunks.ensure_release() is True
+
+    def test_a_real_failure_still_fails(self, monkeypatch):
+        self._gh(monkeypatch, view_codes=[1, 1, 1], create=(1, "HTTP 401: Bad credentials"))
+        assert release_chunks.ensure_release() is False
+
+
 class TestPublish:
     def test_counts_failures_without_raising(self, tmp_path, monkeypatch):
         a = tmp_path / "a.json"

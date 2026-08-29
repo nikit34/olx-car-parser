@@ -155,9 +155,7 @@ jobs:
           ANOM_RC: ${{ steps.train_aux_models.outputs.anomaly_rc }}
           HAZ_RC: ${{ steps.train_aux_models.outputs.hazard_rc }}
         run: |
-          gh release view latest-data 2>/dev/null || \
-            gh release create latest-data --title "Latest Data" \
-              --notes "Auto-updated price model + dashboard witnesses from scraper" --latest=false
+          .venv/bin/python -m scripts.release_chunks ensure
           if [ "$TRAIN_RC" = "0" ]; then
             .venv/bin/python -m scripts.release_chunks publish \
               data/price_metrics.json data/price_importance.json \
