@@ -1,0 +1,34 @@
+name: Upload channel probe
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: olx-upload-probe
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: [self-hosted, olx-scraper]
+    timeout-minutes: 20
+    steps:
+      - name: Make payloads
+        run: |
+          mkdir -p /tmp/probe && cd /tmp/probe
+          head -c $((3*1048576))  /dev/urandom > p3.bin
+          head -c $((12*1048576)) /dev/urandom > p12.bin
+          ls -l
+
+      - name: Time actions/upload-artifact
+        run: date -u +%s > /tmp/probe/t0
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: upload-probe
+          path: /tmp/probe/*.bin
+          retention-days: 1
+
+      - name: Report
+        run: |
+          echo "artifact upload took $(( $(date -u +%s) - $(cat /tmp/probe/t0) ))s for 15 MiB"
+          rm -rf /tmp/probe
