@@ -190,9 +190,25 @@ await check("the second-layer hubs and pages answer", async () => {
   }
 });
 
+await check("the depreciation curve has a JSON twin", async () => {
+  const depSlug = depreciationSlugs(models)[0];
+  const r = await get(`/depreciacao/${depSlug}.json`);
+  assert(r.status === 200, `/depreciacao/${depSlug}.json → ${r.status}`);
+  assert((r.headers.get("content-type") || "").includes("application/json"), "JSON twin is not served as JSON");
+  const j = JSON.parse(await r.text());
+  assert(j.slug === depSlug, "JSON twin is about another model");
+  assert(j.annual_depreciation_rate > 0, "JSON twin has no rate");
+  assert(Array.isArray(j.cost_of_one_year_of_age) && j.cost_of_one_year_of_age.length > 0,
+    "JSON twin has no euro ladder");
+  assert(j.rate_bend || j.rate_bend_note, "JSON twin is silent about the bend test");
+  const html = await (await get(`/depreciacao/${depSlug}`)).text();
+  assert(html.includes(`/depreciacao/${depSlug}.json`), "the page never points at its own JSON");
+});
+
 await check("generated pages outside the published set 404", async () => {
   const notDep = slugs.find(s => !depreciationSlugs(models).includes(s));
   assert((await get(`/depreciacao/${notDep}`)).status === 404, "served a depreciation page with no curve");
+  assert((await get(`/depreciacao/${notDep}.json`)).status === 404, "served JSON for a curve we do not publish");
   assert((await get("/comparar/volkswagen-golf-vs-volkswagen-golf")).status === 404, "served a self-comparison");
   assert((await get("/mercado/indice/1999-w03")).status === 404, "served an index week we never recorded");
   assert((await get("/mercado/indice/lixo")).status === 404, "served a malformed index week");

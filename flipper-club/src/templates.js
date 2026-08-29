@@ -699,6 +699,10 @@ body:has(.fc-consent:not([hidden])){padding-bottom:88px;}
 @media (max-width:560px){.fc-chart .c-ax{font-size:15px;}}
 @media (max-width:400px){.fc-chart .c-ax{font-size:21px;}}
 .fc-chart .c-grid{stroke:#E8E6E1;stroke-width:1;}
+.fc-chart .c-mark{stroke:#9A6B12;stroke-width:1.4;stroke-dasharray:4 3;}
+.fc-chart .c-marklab{font-family:var(--mono);font-size:10px;fill:#9A6B12;}
+@media (max-width:560px){.fc-chart .c-marklab{font-size:14px;}}
+@media (max-width:400px){.fc-chart .c-marklab{font-size:19px;}}
 .fc-wrap{max-width:760px;padding:24px 22px 0;}
 .fc-wide{max-width:1180px;padding:24px 22px 0;}
 .fc-h1{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:30px;letter-spacing:-0.02em;margin:0 0 10px;line-height:1.12;}
@@ -2247,7 +2251,7 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
     <section class="section" style="padding:26px 22px 0;max-width:680px;">
       <div class="exclusive" style="background:#F6FBF8;border:1px solid #DDEBE1;align-items:flex-start;">
         <span style="font-size:15px;">📉</span>
-        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">Quanto perde por ano.</b> Temos histórico suficiente para traçar a curva de desvalorização do ${B} ${M} e dizer onde a queda abranda. <a href="/depreciacao/${slug}" style="color:#177A47;font-weight:600;">Ver a curva&nbsp;→</a></span>
+        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">Quanto perde por ano.</b> Temos histórico suficiente para traçar a curva de desvalorização do ${B} ${M} e dizer quanto custa, em euros, cada ano de matrícula. <a href="/depreciacao/${slug}" style="color:#177A47;font-weight:600;">Ver a curva&nbsp;→</a></span>
       </div>
     </section>` : "";
 

@@ -62,6 +62,7 @@ import {
   setSiteIdentity, corpusStats, modelInsights, provenance,
   yearCells, yearCell, yearPageYears, depreciationOk, depreciationFit, depreciationSlugs,
   comparePairs, parseComparePath, comparePairKey, modelJson, yearJson,
+  depreciationAge, depreciationJson,
   renderFacetPage, renderDistrictPage, facetCells, facetCell, facetKind, facetKeys,
   isoWeek, missingWeeks,
   setWave, publishedYearPages, publishedDepreciation, publishedPairs, publishedFacets,
@@ -674,17 +675,24 @@ async function withModels(request, env, url, fn) {
               stats: corpusStats(models, mdoc.built_at) });
 }
 
-// /depreciacao/{slug}
+// /depreciacao/{slug} and /depreciacao/{slug}.json
 async function handleDepreciation(request, env, url) {
   let slug;
   try {
     slug = decodeURIComponent(url.pathname.slice("/depreciacao/".length)).replace(/\/+$/, "").toLowerCase();
   } catch (_) { return notFoundPage(request, env, url); }
+  const wantsJson = slug.endsWith(".json");
+  if (wantsJson) slug = slug.slice(0, -".json".length);
   return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, stats }) => {
     const rec = models[slug];
     if (!rec || !publishedDepreciation(models, slug, rec, builtAt)) return notFoundPage(request, env, url, setCookie);
+    const fit = depreciationFit(rec);
+    if (wantsJson) {
+      return jsonResponse(depreciationJson(rec, slug, fit, depreciationAge(rec, fit, builtAt),
+                                           { host: url.host, builtAt }));
+    }
     return html(renderDepreciationPage({
-      rec, slug, fit: depreciationFit(rec), stats,
+      rec, slug, fit, stats,
       pageYears: publishedYearPages(models, slug, rec, builtAt),
       host: url.host, depositCount, builtAt,
     }), 200, setCookie);
@@ -695,8 +703,9 @@ async function handleDepreciation(request, env, url) {
 async function handleDepreciationHub(request, env, url) {
   return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, stats }) => {
     const rows = depreciationSlugs(models).filter(slug => publishedDepreciation(models, slug, models[slug], builtAt)).map(slug => {
-      const r = models[slug], f = depreciationFit(r);
-      return { slug, b: r.b, m: r.m, n: r.n, rate: f.rate, span: f.span };
+      const r = models[slug], f = depreciationFit(r), av = depreciationAge(r, f, builtAt);
+      return { slug, b: r.b, m: r.m, n: r.n, rate: f.rate, span: f.span,
+               half: av && av.halfLife, cheapAge: av && av.cheapFrom ? av.cheapFrom.age : null };
     }).sort((a, b) => b.rate - a.rate);
     return html(renderDepreciationHub({ rows, stats, host: url.host, depositCount, builtAt }), 200, setCookie);
   });
@@ -1145,7 +1154,7 @@ async function handleLlmsTxt(request, env, url) {
     `- \`${base}/preco/{slug}/{combustivel}\` — o mesmo modelo só em diesel, gasolina ou GPL`,
     `- \`${base}/preco/{slug}/{distrito}\` — o mesmo modelo num distrito`,
     `- \`${base}/precos/{distrito}\` — o mercado de um distrito`,
-    `- \`${base}/depreciacao/{slug}\` — curva de desvalorização (existe onde há histórico suficiente)`,
+    `- \`${base}/depreciacao/{slug}\` — curva de desvalorização, custo de cada ano de idade e onde a queda abranda (existe onde há histórico suficiente)`,
     `- \`${base}/comparar/{slug-a}-vs-{slug-b}\` — comparação entre dois modelos`,
     `- \`${base}/mercado/indice/{AAAA}-W{SS}\` — corte semanal permanente do mercado`,
     "",
@@ -1158,6 +1167,7 @@ async function handleLlmsTxt(request, env, url) {
     "",
     `- \`${base}/preco/{slug}.json\``,
     `- \`${base}/preco/{slug}/{ano}.json\``,
+    `- \`${base}/depreciacao/{slug}.json\` — taxa anual, meia-vida do valor, custo de um ano de idade por idade, e se a taxa quebra em alguma idade`,
     "",
     "Um endereço que não exista devolve 404 — não há páginas geradas para",
     "combinações sem amostra suficiente.",

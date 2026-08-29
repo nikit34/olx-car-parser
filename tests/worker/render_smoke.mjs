@@ -21,6 +21,7 @@ import {
   setSiteIdentity, corpusStats, modelInsights, provenance,
   yearCells, yearCell, yearPageYears, depreciationOk, depreciationFit, depreciationSlugs,
   comparePairs, parseComparePath, comparePairKey, modelJson, yearJson, MIN_YEAR_PAGE_N,
+  depreciationAge, depreciationJson,
   estimateIsv, ISV_TABLES_FOR_TEST, renderDistrictPage,
 } from "../../flipper-club/src/seo-pages.js";
 
@@ -241,6 +242,60 @@ check("every depreciation page renders without throwing", () => {
     });
     assertPage(html, { indexable: true, canonical: `https://${HOST}/depreciacao/${s}`, label: `depreciacao/${s}` });
     assert(html.includes("<svg"), `${s}: depreciation page has no chart`);
+    assert(html.includes("Quanto custa um ano de idade"), `${s}: no euro ladder`);
+    assert(html.includes("Há um ponto de inflexão?"), `${s}: does not answer the inflection question`);
+  }
+});
+
+check("the age view is inside its own measured range and monotone", () => {
+  for (const s of depSlugs) {
+    const rec = models[s], fit = depreciationFit(rec);
+    const av = depreciationAge(rec, fit, builtAt);
+    assert(av, `${s}: no age view`);
+    assert(av.minAge >= 0 && av.maxAge > av.minAge, `${s}: bad age range ${av.minAge}-${av.maxAge}`);
+    assert(av.at(av.minAge - 1) === null && av.at(av.maxAge + 1) === null,
+      `${s}: quotes a cost outside the measured ages`);
+    let prev = Infinity;
+    for (let a = av.minAge; a <= av.maxAge; a++) {
+      const c = av.at(a);
+      assert(c >= 0 && c <= prev, `${s}: cost of a year of age is not falling at ${a}`);
+      prev = c;
+    }
+    assert(av.halfLife > 1 && av.halfLife < 40, `${s}: implausible half-life ${av.halfLife}`);
+    if (av.cheapFrom) {
+      assert(av.cheapFrom.age >= av.minAge && av.cheapFrom.age <= av.maxAge,
+        `${s}: the sub-500 age is outside the measured range`);
+      assert(av.cheapFrom.cost <= 500, `${s}: sub-500 age costs ${av.cheapFrom.cost}`);
+      assert(av.at(av.cheapFrom.age - 1) === null || av.at(av.cheapFrom.age - 1) > 500,
+        `${s}: the sub-500 age is not the first one`);
+    }
+    if (av.bend) {
+      assert(av.bend.published, `${s}: published a bend that failed its own guard`);
+      assert(av.bend.F >= 10, `${s}: bend published at F=${av.bend.F}`);
+      assert(Math.abs(av.bend.early - av.bend.late) >= 0.03, `${s}: bend published on a 0pp difference`);
+      assert(av.bend.age >= 4 && av.bend.age <= 15, `${s}: bend outside the tested window`);
+    }
+  }
+  const bends = depSlugs.filter(s => {
+    const rec = models[s], f = depreciationFit(rec);
+    return (depreciationAge(rec, f, builtAt) || {}).bend;
+  }).length;
+  assert(bends <= depSlugs.length * 0.5,
+    `${bends}/${depSlugs.length} models publish a bend — the guard is not holding`);
+});
+
+check("the depreciation JSON twin carries the citable numbers", () => {
+  for (const s of depSlugs.slice(0, 12)) {
+    const rec = models[s], fit = depreciationFit(rec);
+    const j = depreciationJson(rec, s, fit, depreciationAge(rec, fit, builtAt), { host: HOST, builtAt });
+    const round = JSON.parse(JSON.stringify(j));
+    assert(!/null,\s*"annual_depreciation_rate"/.test(JSON.stringify(round)), `${s}: rate missing`);
+    assert(round.annual_depreciation_rate > 0 && round.annual_depreciation_rate < 0.3, `${s}: bad rate`);
+    assert(round.sample_size > 0 && round.collected_until, `${s}: no provenance in the JSON`);
+    assert(round.half_life_years > 1, `${s}: no half-life`);
+    assert(round.cost_of_one_year_of_age.length >= 8, `${s}: euro ladder too short`);
+    assert(round.rate_bend || round.rate_bend_note, `${s}: silent about the bend test`);
+    assert(!JSON.stringify(round).includes("NaN"), `${s}: NaN leaked into the JSON`);
   }
 });
 
@@ -257,8 +312,9 @@ check("every comparison page renders without throwing", () => {
 
 check("hubs render", () => {
   const depRows = depSlugs.map(s => {
-    const r = models[s], f = depreciationFit(r);
-    return { slug: s, b: r.b, m: r.m, n: r.n, rate: f.rate, span: f.span };
+    const r = models[s], f = depreciationFit(r), av = depreciationAge(r, f, builtAt);
+    return { slug: s, b: r.b, m: r.m, n: r.n, rate: f.rate, span: f.span,
+             half: av && av.halfLife, cheapAge: av && av.cheapFrom ? av.cheapFrom.age : null };
   }).sort((x, y) => y.rate - x.rate);
   assertPage(renderDepreciationHub({ rows: depRows, stats, host: HOST, depositCount: 0, builtAt }),
     { indexable: true, canonical: `https://${HOST}/depreciacao`, label: "depreciacao hub" });
