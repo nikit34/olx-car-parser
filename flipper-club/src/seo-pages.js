@@ -755,6 +755,22 @@ export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, d
           ? `<li>Descer para ${link} poupa cerca de <b>${save}%</b> (mediana ${fmtEur(older.fm)})${km}.</li>`
           : `<li>Descer para ${link} baixa a mediana em <b>${save}%</b> (${fmtEur(older.fm)})${km}, mas as faixas dos dois anos sobrepõem-se (${older.y}: ${rng(older)}; ${year}: ${rng(cell)}): há exemplares de ${older.y} a pedir mais do que boa parte dos de ${year}.</li>`);
     }
+    // The honest answer to the heading. Two adjacent cells cannot carry a
+    // one-year step on most models (their P25-P75 overlap), but the model's own
+    // curve can: it is the same question measured over the whole series instead
+    // of over two samples of ~20 cars. Published on the same terms as the
+    // depreciation page itself — 8+ year cells, 8+ years of span, R2 >= 0.55 —
+    // so a page never cites a rate the site would not publish on its own.
+    const fit = depreciationOk(rec) ? depreciationFit(rec) : null;
+    if (fit) {
+      const r = Math.round(fit.rate * 100);
+      const series = `${fit.cells.length} anos com amostra, de ${fit.oldest.y} a ${fit.newest.y}`;
+      const href = `<a href="/depreciacao/${slug}">ritmo medido em toda a série</a>`;
+      const gapNewer = newer ? yearGap(cell, newer) : null;
+      bits.push(gapNewer && !gapNewer.separated
+        ? `<li>Ao ${href} do ${B} ${M} (${series}), um ano de idade vale cerca de <b>${r}%</b>. É a melhor resposta que os dados dão à pergunta acima: entre dois anos concretos a diferença de preço fica dominada por quem pôs o carro à venda, e só a curva inteira mede o ano.</li>`
+        : `<li>Ao ${href} do ${B} ${M} (${series}), um ano de idade vale cerca de <b>${r}%</b>${gapNewer ? `, contra os ${Math.round(gapNewer.pct * 100)}% entre ${year} e ${newer.y}` : ""}.</li>`);
+    }
     if (share != null) {
       bits.push(`<li>O ano ${year} representa <b>${share}%</b> de todos os ${B} ${M} à venda agora (${cell.n} de ${rec.n} anúncios)${share >= 15 ? " — é dos anos com mais escolha" : share <= 5 ? " — há pouca oferta, por isso conta com menos margem para escolher" : ""}.</li>`);
     }
@@ -835,6 +851,7 @@ export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, d
     `Qual é a quilometragem típica de um ${rec.b} ${rec.m} de ${year}?`,
     `A quilometragem mediana dos ${rec.b} ${rec.m} de ${year} à venda é ${fmtKm(cell.km)}. Um exemplar bastante abaixo desse valor justifica um preço acima da mediana do ano, e vice-versa.`,
   ]);
+  const depFit = depreciationOk(rec) ? depreciationFit(rec) : null;
   if (neighbours.newer) {
     const nb = neighbours.newer, g = yearGap(cell, nb);
     const d = Math.round(g.pct * 100);
@@ -842,7 +859,7 @@ export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, d
       `Compensa comprar um ${rec.b} ${rec.m} de ${nb.y} em vez de ${year}?`,
       g.separated
         ? `Um ${rec.b} ${rec.m} de ${nb.y} pede em mediana ${fmtEur(nb.fm)}, ou seja ${d >= 0 ? "+" : ""}${d}% face aos ${FM} de ${year}. A diferença compensa se a quilometragem e o estado acompanharem; caso contrário estás a pagar pelo ano na matrícula.`
-        : `Os ${rec.b} ${rec.m} de ${nb.y} pedem em mediana ${fmtEur(nb.fm)} e os de ${year} ${FM}, mas as faixas de preço sobrepõem-se (${year}: ${fmtEur(cell.fl)} a ${fmtEur(cell.fh)}; ${nb.y}: ${fmtEur(nb.fl)} a ${fmtEur(nb.fh)}), com ${cell.n} e ${nb.n} anúncios ativos. Entre estes dois anos a diferença de preço vem sobretudo de que carros estão à venda em cada um, por isso a escolha decide-se no exemplar concreto (quilómetros, versão, estado) e não no ano.`,
+        : `Os ${rec.b} ${rec.m} de ${nb.y} pedem em mediana ${fmtEur(nb.fm)} e os de ${year} ${FM}, mas as faixas de preço sobrepõem-se (${year}: ${fmtEur(cell.fl)} a ${fmtEur(cell.fh)}; ${nb.y}: ${fmtEur(nb.fl)} a ${fmtEur(nb.fh)}), com ${cell.n} e ${nb.n} anúncios ativos. Entre estes dois anos a diferença de preço vem sobretudo de que carros estão à venda em cada um, por isso a escolha decide-se no exemplar concreto (quilómetros, versão, estado) e não no ano.${depFit ? ` Medido em toda a série do modelo (${depFit.cells.length} anos com amostra), um ano de idade vale cerca de ${Math.round(depFit.rate * 100)}%.` : ""}`,
     ]);
   }
   if (hasG) faqs.push([

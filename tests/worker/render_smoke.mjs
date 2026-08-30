@@ -260,6 +260,12 @@ check("a one-year step is only claimed where the two price ranges separate", () 
       assert(!step.test(html),
         `${s2}/${y}: states a ${pct}% one-year step while P25-P75 overlap ${Math.round(g.overlap * 100)}%`);
       assert(html.includes("sobrepõem-se"), `${s2}/${y}: overlap withheld the step but never says so`);
+      // Withholding the two-cell claim must not leave the heading unanswered:
+      // where the model's own curve is publishable, the page cites its rate.
+      if (depreciationOk(rec)) {
+        assert(html.includes("ritmo medido em toda a série"),
+          `${s2}/${y}: step withheld and the model's measured rate never offered`);
+      }
       withheld++;
     }
   }
