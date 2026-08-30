@@ -681,7 +681,7 @@ async function withModels(request, env, url, fn) {
       message: "Os dados de mercado estão a ser preparados. Volta dentro de instantes.",
     }), 503, setCookie);
   }
-  return fn({ models, builtAt: mdoc.built_at, depositCount, setCookie,
+  return fn({ models, builtAt: mdoc.built_at, depositCount, setCookie, mq: mdoc.mq || null,
               stats: corpusStats(models, mdoc.built_at) });
 }
 
@@ -772,12 +772,12 @@ async function handleValuationGap(request, env, url) {
 
 // /metodologia, /sobre, /isv
 async function handleMethodology(request, env, url) {
-  return withModels(request, env, url, ({ builtAt, depositCount, setCookie, stats }) =>
-    html(renderMethodology({ stats, host: url.host, depositCount, builtAt }), 200, setCookie));
+  return withModels(request, env, url, ({ builtAt, depositCount, setCookie, stats, mq }) =>
+    html(renderMethodology({ stats, mq, host: url.host, depositCount, builtAt }), 200, setCookie));
 }
 async function handleAbout(request, env, url) {
-  return withModels(request, env, url, ({ builtAt, depositCount, setCookie, stats }) =>
-    html(renderAbout({ stats, host: url.host, depositCount, builtAt }), 200, setCookie));
+  return withModels(request, env, url, ({ builtAt, depositCount, setCookie, stats, mq }) =>
+    html(renderAbout({ stats, mq, host: url.host, depositCount, builtAt }), 200, setCookie));
 }
 async function handleIsv(request, env, url) {
   return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie }) => {

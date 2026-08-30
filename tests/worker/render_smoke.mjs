@@ -416,6 +416,26 @@ check("trust pages render, and stay honest with no identity configured", () => {
   setSiteIdentity({});
 });
 
+check("model quality is rendered when measured, and absent when not", () => {
+  const mq = { mae: 1665, mape: 25.7, r2: 0.915, cov: 0.809, n: 79532, folds: 5, ts: "2026-08-30" };
+  const meth = renderMethodology({ stats, mq, host: HOST, depositCount: 0, builtAt });
+  assertPage(meth, { indexable: true, canonical: `https://${HOST}/metodologia`, label: "metodologia+mq" });
+  assert(meth.includes("25,7%"), "measured MAPE not rendered on /metodologia");
+  assert(meth.includes("81%"), "measured band coverage not rendered on /metodologia");
+  assert(/79\D?532/.test(meth), "sample size behind the measurement not rendered");
+  const about = renderAbout({ stats, mq, host: HOST, depositCount: 0, builtAt });
+  assert(about.includes("25,7%") && about.includes("81%"), "measured error not carried to /sobre");
+
+  for (const empty of [null, undefined, {}, { mae: 1665 }]) {
+    for (const [label, page] of [["metodologia", renderMethodology({ stats, mq: empty, host: HOST, depositCount: 0, builtAt })],
+                                 ["sobre", renderAbout({ stats, mq: empty, host: HOST, depositCount: 0, builtAt })]]) {
+      assertPage(page, { indexable: true, canonical: `https://${HOST}/${label}`, label: `${label}-no-mq` });
+      assert(!/undefined|NaN/.test(page), `${label} leaked a placeholder with no measurement`);
+      assert(!/erra em média <b>/.test(page), `${label} claimed an error rate it was not given`);
+    }
+  }
+});
+
 check("the ISV estimate matches src/analytics/isv.py", () => {
   // Fixed cases computed with compute_isv(as_of_year=2026). If a bracket in
   // either implementation drifts, one of these moves.

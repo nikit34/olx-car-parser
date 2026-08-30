@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -40,6 +41,28 @@ import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
+
+
+def _model_quality(metrics: dict | None) -> dict | None:
+    if not metrics:
+        return None
+    out: dict = {}
+    for src, dst, nd in (("mae", "mae", 0), ("mape", "mape", 1), ("r2", "r2", 3),
+                         ("coverage_80_calibrated", "cov", 3)):
+        v = metrics.get(src)
+        if v is None or not math.isfinite(float(v)):
+            continue
+        out[dst] = round(float(v), nd) if nd else int(round(float(v)))
+    n = metrics.get("n_samples")
+    if n:
+        out["n"] = int(n)
+    folds = metrics.get("cv_folds")
+    if folds:
+        out["folds"] = int(folds)
+    ts = metrics.get("timestamp")
+    if ts:
+        out["ts"] = str(ts)[:10]
+    return out if {"mae", "mape", "cov"} <= set(out) else None
 
 
 def _to_parquet(df: pd.DataFrame, path: Path) -> int:
@@ -294,6 +317,9 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
         print("[build]   model pages: no fresh price model — shipping asking-only", flush=True)
     model_pages = build_model_pages(listings, sell_speed, valuator=_valuator)
     model_pages["built_at"] = built_at   # freshness signal the Worker renders ("atualizado em")
+    _mq = _model_quality(_mt if _loaded is not None else None)
+    if _mq:
+        model_pages["mq"] = _mq
     _n_models = len(model_pages.get("models", {}))
     _n_gbm = sum(1 for r in model_pages.get("models", {}).values() if "gm" in r)
     models_path = out_dir / "models.json"

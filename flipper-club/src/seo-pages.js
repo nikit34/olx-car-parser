@@ -1612,12 +1612,32 @@ function authorBlock() {
     </div>`;
 }
 
+function modelQualityBlock(mq) {
+  if (!mq || mq.mae == null || mq.mape == null || mq.cov == null) {
+    return `<p class="fc-p">A medição do último treino do modelo ainda não chegou a esta página. Até chegar, o que garante as estimativas são os filtros da secção seguinte, e não um número de erro que não te mostrámos.</p>`;
+  }
+  const dec = (v, n) => v.toFixed(n).replace(".", ",");
+  const rows = [
+    [`Erro médio, em euros`, fmtEur(mq.mae),
+      `A diferença média entre a estimativa e o preço pedido, em valor absoluto.`],
+    [`Erro médio, em percentagem`, `${dec(mq.mape, 1)}%`,
+      `Puxado para cima pelos carros baratos: 700 € de diferença num carro de 2 000 € são 35%. É uma das razões para não publicarmos estimativa abaixo dos 5 000 €.`],
+    ...(mq.r2 != null ? [[`Variação explicada (R²)`, dec(mq.r2, 3),
+      `Quanto da diferença de preço entre carros o modelo consegue explicar. 1,000 seria acertar sempre.`]] : []),
+    [`Banda de 80%: acerto real`, `${Math.round(mq.cov * 100)}%`,
+      `Em cada 100 carros, a banda publicada contém o preço real em ${Math.round(mq.cov * 100)}. Uma banda de 80% que apanhasse 95% seria larga de mais para dizer alguma coisa.`],
+  ];
+  return `<ul class="fc-ul">${rows.map(([k, v, why]) =>
+    `<li class="fc-li"><b>${k}: <span class="mono">${v}</span></b> — ${why}</li>`).join("")}</ul>
+    <p class="mono" style="color:#5B606B;font-size:13px;margin-top:-4px;">Medido em ${mq.n ? fmtNum(mq.n) + " anúncios" : "todos os anúncios com preço"}${mq.folds ? `, em ${mq.folds} partes` : ""}${mq.ts ? ` · treino de ${escapeHtml(mq.ts)}` : ""}</p>`;
+}
+
 // ═══ /metodologia ════════════════════════════════════════════════════════════
 //
 // Every number on this site is an estimate, and the honest move is to publish
 // where it comes from and where it stops working — including the thresholds that
 // make us DROP a figure rather than show a weak one.
-export function renderMethodology({ stats, host, depositCount, builtAt }) {
+export function renderMethodology({ stats, mq, host, depositCount, builtAt }) {
   const canonical = `https://${host}/metodologia`;
   const body = crumbs([{ name: "Início", href: "/" }, { name: "Metodologia" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
@@ -1643,8 +1663,19 @@ export function renderMethodology({ stats, host, depositCount, builtAt }) {
         <li class="fc-li"><b>Uma quebra na taxa só é publicada se for medida</b> — ver abaixo.</li>
       </ul>
 
-      <h2 class="fc-h2">5. O "valor justo estimado"</h2>
-      <p class="fc-p">Além dos preços pedidos, treinamos um modelo estatístico (gradient boosting) que estima o valor de um carro a partir de ano, quilometragem, motorização, versão, distrito e outras características. Nas páginas de modelo, esse valor é a <b>mediana das estimativas dos anúncios reais</b> daquele modelo — não a estimativa de um carro-tipo inventado.</p>
+<h2 class="fc-h2" id="modelo">5. O "valor justo estimado"</h2>
+      <p class="fc-p">Além dos preços pedidos, treinamos um modelo estatístico — <i>gradient boosting</i>, uma soma de muitas árvores de decisão em que cada uma corrige o erro das anteriores — sobre todos os anúncios com preço que recolhemos, incluindo os que já saíram do mercado. Lê marca, modelo, ano, quilometragem, cilindrada, potência, combustível, caixa, geração, versão, nível de equipamento, segmento e distrito, e devolve um valor com uma banda à volta, nunca um número seco. Nas páginas de modelo, esse valor é a <b>mediana das estimativas dos anúncios reais</b> daquele modelo — não a estimativa de um carro-tipo inventado.</p>
+
+      <h3 class="fc-h3">O que lhe impomos à força</h3>
+      <p class="fc-p">Duas regras não são aprendidas, são obrigatórias no valor que publicamos: <b>mais um ano de idade nunca o aumenta</b> e <b>mais quilómetros nunca o aumentam</b>, tudo o resto igual. Sem elas, um ano com poucos anúncios produz saltos que o mercado não tem. E o modelo aprende sobre o <b>logaritmo</b> do preço, para que o erro conte em percentagem: enganar-se em 1 000 € num carro de 3 000 € não é o mesmo que enganar-se em 1 000 € num de 30 000 €.</p>
+
+      <h3 class="fc-h3">Quanto erra — medido, não afirmado</h3>
+      <p class="fc-p">O erro é medido por <b>validação cruzada em cinco partes</b>: o modelo é treinado em quatro quintos dos anúncios e avaliado no quinto que não viu, cinco vezes seguidas. Publicar uma estimativa sem dizer quanto ela erra é publicar meia verdade, por isso aqui está a última medição:</p>
+      ${modelQualityBlock(mq)}
+
+      <h3 class="fc-h3">O que o modelo não vê</h3>
+      <p class="fc-p">Um anúncio não diz o estado da embraiagem, o histórico de manutenção, se houve batida, como estão os pneus, nem se o ISV de um importado já foi pago. Nada disso entra no modelo, porque não existe nos dados. <b>Dois carros com a mesma ficha recebem a mesma estimativa, mesmo que um precise de caixa nova.</b> Daí a estimativa ser um ponto de partida para negociar e para saber onde olhar — nunca a avaliação de uma viatura concreta.</p>
+
       <p class="fc-p">Não o publicamos sempre. A estimativa é <b>retirada</b> quando:</p>
       <ul class="fc-ul">
         <li class="fc-li">o preço fica abaixo de <b>5 000 €</b> — no fundo do mercado o modelo sobrestima sistematicamente;</li>
@@ -1702,7 +1733,7 @@ export function renderMethodology({ stats, host, depositCount, builtAt }) {
 }
 
 // ═══ /sobre ══════════════════════════════════════════════════════════════════
-export function renderAbout({ stats, host, depositCount, builtAt }) {
+export function renderAbout({ stats, mq, host, depositCount, builtAt }) {
   const canonical = `https://${host}/sobre`;
   const body = crumbs([{ name: "Início", href: "/" }, { name: "Quem somos" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
@@ -1724,8 +1755,11 @@ export function renderAbout({ stats, host, depositCount, builtAt }) {
         <li class="fc-li">Um <a href="/mercado/indice">índice semanal do mercado</a>, com registo permanente de cada semana.</li>
       </ul>
 
-      <h2 class="fc-h2">Erramos?</h2>
-      <p class="fc-p">Sim, e por isso publicamos o <a href="/metodologia">método completo</a>, o tamanho de cada amostra e a data de recolha em todas as páginas. Quando um número não é fiável, retiramo-lo em vez de o disfarçar — há modelos onde verás preços pedidos e nenhuma estimativa de valor justo, e isso é intencional.</p>
+<h2 class="fc-h2">Erramos?</h2>
+      <p class="fc-p">Sim, e dizemos quanto. ${mq && mq.mape != null && mq.cov != null
+        ? `Na última medição, a estimativa de valor justo erra em média <b>${mq.mape.toFixed(1).replace(".", ",")}%</b> em anúncios que o modelo não viu no treino, e a banda de 80% que publicamos contém o preço real em <b>${Math.round(mq.cov * 100)}%</b> dos casos. Como isso é medido está na <a href="/metodologia#modelo">metodologia</a>.`
+        : `Como medimos o erro da estimativa, e o que ele deu, está na <a href="/metodologia#modelo">metodologia</a>.`}</p>
+      <p class="fc-p">Publicamos também o <a href="/metodologia">método completo</a>, o tamanho de cada amostra e a data de recolha em todas as páginas. Quando um número não é fiável, retiramo-lo em vez de o disfarçar — há modelos onde verás preços pedidos e nenhuma estimativa de valor justo, e isso é intencional.</p>
 
       <h2 class="fc-h2">Podes usar os nossos números</h2>
       <p class="fc-p">Com atribuição ao Carsbuyer e a data — os valores mudam todos os dias. Cada página de modelo tem uma <b>versão em JSON</b> ligada no cabeçalho, e há um <a href="/llms.txt">llms.txt</a> com a estrutura completa para quem lê o site com ferramentas automáticas.</p>
