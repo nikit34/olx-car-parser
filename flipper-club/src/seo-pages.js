@@ -205,6 +205,7 @@ export function depreciationSlugs(models) {
 }
 
 const COST_FLOOR_EUR = 500;
+const CHEAP_MAX_AGE = 15;
 const BEND_MIN_AGE = 4;
 const BEND_MAX_AGE = 15;
 const BEND_MIN_SIDE = 4;
@@ -281,18 +282,22 @@ export function depreciationAge(rec, fit, builtAt) {
   const minAge = pts[0].age, maxAge = pts[pts.length - 1].age;
   const at = age => (age >= minAge && age <= maxAge) ? Math.round(cost(age)) : null;
   const cand = depreciationBend(pts);
+  const capAge = Math.min(Math.floor(maxAge), CHEAP_MAX_AGE);
   let cheapFrom = null;
-  for (let a = Math.ceil(minAge); a <= Math.floor(maxAge); a++) {
+  for (let a = Math.ceil(minAge); a <= capAge; a++) {
     if (Math.round(cost(a)) <= COST_FLOOR_EUR) {
       cheapFrom = { age: a, cost: Math.round(cost(a)), price: Math.round(price(a)) };
       break;
     }
   }
   return {
-    ref, pts, minAge, maxAge, rate, price, cost, at, cheapFrom,
+    ref, pts, minAge, maxAge, rate, price, cost, at, cheapFrom, capAge,
     costFloor: COST_FLOOR_EUR,
     halfLife: rate > 0 && rate < 1 ? Math.log(2) / -Math.log(1 - rate) : null,
     oldestCost: Math.round(cost(maxAge)),
+    capCost: Math.round(cost(capAge)),
+    base: { age: Math.ceil(minAge), year: ref - Math.ceil(minAge),
+            price: Math.round(price(Math.ceil(minAge))) },
     bend: cand && cand.published ? cand : null,
     bendCandidate: cand,
   };
@@ -968,8 +973,10 @@ export function renderDepreciationPage({ rec, slug, fit, stats, pageYears, host,
   const newest = fit.newest, oldest = fit.oldest;
   const ratePct = Math.round(fit.rate * 100);
   const keep = yrs => Math.round(Math.pow(1 - fit.rate, yrs) * 100);
-  const loseEur = yrs => Math.round(newest.fm * (1 - Math.pow(1 - fit.rate, yrs)));
   const av = depreciationAge(rec, fit, builtAt);
+  const base = av ? av.base.price : newest.fm;
+  const baseYear = av ? av.base.year : newest.y;
+  const loseEur = yrs => Math.round(base * (1 - Math.pow(1 - fit.rate, yrs)));
   const dec = x => x.toFixed(1).replace(".", ",");
 
   const mkt = stats.depMed;
@@ -1012,7 +1019,7 @@ export function renderDepreciationPage({ rec, slug, fit, stats, pageYears, host,
 
   const cheapPara = !av ? "" : (av.cheapFrom
     ? `<p class="fc-p">Onde isso deixa de doer dá para datar: a partir dos <b>${av.cheapFrom.age} anos</b> — matrículas de ${av.ref - av.cheapFrom.age} e mais antigas, à volta de ${fmtEur(av.cheapFrom.price)} — cada ano de idade a mais custa menos de ${fmtEur(av.costFloor)}. É menos do que um jogo de pneus ou uma correia de distribuição, ou seja: a partir daí a matrícula pesa menos no orçamento do que o estado em que o carro está, e é por aí que a escolha se decide.</p>`
-    : `<p class="fc-p">E ainda não deixou de doer: mesmo no exemplar mais velho com amostra (${av.ref - Math.floor(av.maxAge)}, ${Math.floor(av.maxAge)} anos) cada ano de idade vale cerca de ${fmtEur(av.oldestCost)}. Neste modelo o ano de matrícula continua a mandar no preço em toda a série medida.</p>`);
+    : `<p class="fc-p">Aqui isso não chega a acontecer dentro do que alguém procura: aos ${av.capAge} anos um ano de idade ainda vale cerca de ${fmtEur(av.capCost)}, e só muito mais tarde desceria abaixo de ${fmtEur(av.costFloor)}. Neste modelo a matrícula manda no preço em toda a gama que se compra — esticar o orçamento por um ano mais recente continua a custar dinheiro a sério.</p>`);
 
   const body = crumbs([
     { name: "Início", href: "/" }, { name: "Desvalorização", href: "/depreciacao" },
@@ -1025,17 +1032,18 @@ export function renderDepreciationPage({ rec, slug, fit, stats, pageYears, host,
         <p class="lede" style="font-size:16px;margin:0 0 18px;">Medido nos preços pedidos de <b>${rec.n} anúncios ativos</b> entre ${oldest.y} e ${newest.y}, um ${B} ${M} perde cerca de <b>${ratePct}% por cada ano de idade</b>${av && av.halfLife ? `, ou seja metade do valor a cada <b>${dec(av.halfLife)} anos</b>` : ""}. ${vsMarket}</p>
         <div class="fc-stat-row">
           <div class="fc-stat"><div class="k">POR ANO</div><div class="v">${ratePct}%</div><div class="s">-${fmtEur(loseEur(1))} por ano de idade</div></div>
-          <div class="fc-stat"><div class="k">AOS 3 ANOS</div><div class="v">${keep(3)}%</div><div class="s">-${fmtEur(loseEur(3))} sobre ${fmtEur(newest.fm)}</div></div>
+          <div class="fc-stat"><div class="k">AOS 3 ANOS</div><div class="v">${keep(3)}%</div><div class="s">-${fmtEur(loseEur(3))} sobre ${fmtEur(base)}</div></div>
           <div class="fc-stat"><div class="k">AOS 5 ANOS</div><div class="v">${keep(5)}%</div><div class="s">-${fmtEur(loseEur(5))}</div></div>
           <div class="fc-stat"><div class="k">AOS 8 ANOS</div><div class="v">${keep(8)}%</div><div class="s">-${fmtEur(loseEur(8))}</div></div>
         </div>
-        ${provenance({ n: rec.n, builtAt, measure: `Preço pedido mediano por ano de fabrico, ${oldest.y}-${newest.y}`, extra: `Ajuste log-linear, R²=${fit.r2.toFixed(2)}` })}
+        ${provenance({ n: rec.n, builtAt, measure: `Preço pedido mediano por ano de fabrico, ${oldest.y}-${newest.y}`, extra: `Ajuste log-linear, R²=${fit.r2.toFixed(2)}; valores em euros sobre ${fmtEur(base)}, o que a curva dá a um exemplar de ${baseYear}` })}
       </div>
     </div>
     <section class="section fc-wrap">
       <h2 class="fc-h2">A curva</h2>
       ${av ? depreciationChart(av) : priceChart(cs)}
       <p class="fc-p" style="margin-top:10px;">Cada ponto é a mediana dos preços pedidos nessa idade; a linha é o ajuste log-linear que gera a percentagem acima${av && (av.cheapFrom || av.bend) ? ", e as marcas verticais são as idades sobre as quais esta página faz uma afirmação" : ""}. A queda é uma percentagem do que resta, por isso é grande em euros nos primeiros anos e pequena no fim — mesmo quando a percentagem não muda.</p>
+      <p class="fc-p">Uma ressalva que a curva não mostra: entre ${oldest.y} e ${newest.y} o ${B} ${M} mudou de geração mais do que uma vez, e um exemplar de cada ponta não é o mesmo carro com mais uns anos. Parte da queda é desgaste e idade, parte é um modelo diferente com outro equipamento — a série mede o que o mercado pede por cada ano de matrícula, não o envelhecimento de um carro concreto.</p>
     </section>
     ${ladder ? `
     <section class="section fc-wrap">
@@ -1074,7 +1082,7 @@ export function renderDepreciationPage({ rec, slug, fit, stats, pageYears, host,
     [`Quanto se desvaloriza um ${rec.b} ${rec.m} por ano?`,
      `Cerca de ${ratePct}% do valor restante por cada ano de idade, medido nos preços pedidos de ${rec.n} anúncios ativos de ${rec.b} ${rec.m} entre ${oldest.y} e ${newest.y} no OLX Portugal. A percentagem é constante, mas em euros a perda é muito maior nos primeiros anos.`],
     [`Quanto vale um ${rec.b} ${rec.m} ao fim de 5 anos?`,
-     `Ao ritmo medido, um ${rec.b} ${rec.m} mantém cerca de ${keep(5)}% do valor ao fim de 5 anos. Sobre a mediana de ${fmtEur(newest.fm)} pedida pelos exemplares de ${newest.y}, isso são cerca de ${fmtEur(loseEur(5))} perdidos.`],
+     `Ao ritmo medido, um ${rec.b} ${rec.m} mantém cerca de ${keep(5)}% do valor ao fim de 5 anos. Sobre os ${fmtEur(base)} que a curva dá a um exemplar de ${baseYear}, isso são cerca de ${fmtEur(loseEur(5))} perdidos.`],
   ];
   if (av && av.halfLife) faqs.push([
     `Em quantos anos um ${rec.b} ${rec.m} perde metade do valor?`,
@@ -1083,7 +1091,7 @@ export function renderDepreciationPage({ rec, slug, fit, stats, pageYears, host,
     `A partir de que idade um ${rec.b} ${rec.m} deixa de perder valor?`,
     bend && bend.dir === "slows"
       ? `A queda abranda aos ${bend.age} anos: até lá são cerca de ${Math.round(bend.early * 100)}% ao ano, depois ${Math.round(bend.late * 100)}%.${av.cheapFrom ? ` Em euros, a partir dos ${av.cheapFrom.age} anos cada ano de idade custa menos de ${fmtEur(av.costFloor)}.` : ""}`
-      : `Nunca deixa de perder, mas deixa de doer. Em percentagem a queda mantém-se em cerca de ${ratePct}% ao ano em toda a série medida — não há idade a partir da qual a percentagem trave.${av.cheapFrom ? ` Em euros é outra história: a partir dos ${av.cheapFrom.age} anos (matrículas de ${av.ref - av.cheapFrom.age} e mais antigas) cada ano de idade custa menos de ${fmtEur(av.costFloor)}, e aí o estado do carro pesa mais do que o ano.` : ""}`]);
+      : `Nunca deixa de perder, mas deixa de doer. Em percentagem a queda mantém-se em cerca de ${ratePct}% ao ano em toda a série medida — não há idade a partir da qual a percentagem trave.${av.cheapFrom ? ` Em euros é outra história: a partir dos ${av.cheapFrom.age} anos (matrículas de ${av.ref - av.cheapFrom.age} e mais antigas) cada ano de idade custa menos de ${fmtEur(av.costFloor)}, e aí o estado do carro pesa mais do que o ano.` : ` Em euros a perda encolhe, mas devagar: aos ${av.capAge} anos um ano de idade ainda custa cerca de ${fmtEur(av.capCost)}.`}`]);
   if (mkt) faqs.push([
     `O ${rec.b} ${rec.m} desvaloriza mais do que a média?`,
     `A mediana do mercado português de usados que medimos é ${Math.round(mkt * 100)}% por ano de idade. O ${rec.b} ${rec.m} está nos ${ratePct}%, ou seja ${fit.rate > mkt ? "acima" : fit.rate < mkt ? "abaixo" : "em linha com"} a média.`]);
@@ -1150,7 +1158,7 @@ export function renderDepreciationHub({ rows, stats, host, depositCount, builtAt
       <div class="fc-scroll"><table class="fc-tbl">
         <thead><tr><th>Modelo</th><th>Por ano</th><th>Valor aos 5 anos</th><th>Metade do valor</th><th>Um ano custa &lt;500 €</th><th>Anúncios</th><th>Histórico</th></tr></thead>
         <tbody>${tr}</tbody></table></div>
-      <p class="fc-prov mono">"Metade do valor" é o tempo que o modelo leva a valer metade, ao ritmo medido. "Um ano custa &lt;500 €" é a idade a partir da qual mais um ano de matrícula vale menos de 500 € na curva ajustada — daí para a frente o estado do carro pesa mais do que o ano.</p>
+      <p class="fc-prov mono">"Metade do valor" é o tempo que o modelo leva a valer metade, ao ritmo medido. "Um ano custa &lt;500 €" é a idade a partir da qual mais um ano de matrícula vale menos de 500 € na curva ajustada; um travessão significa que isso não acontece antes dos ${CHEAP_MAX_AGE} anos, ou seja a matrícula manda no preço em toda a gama que se compra. As curvas atravessam gerações: parte da queda é modelo diferente, não idade.</p>
       ${provenance({ n: stats.listings, builtAt, measure: "Preço pedido mediano por ano de fabrico, ajuste log-linear" })}
       <p class="fc-p" style="margin-top:18px;"><a href="/precos">Todos os modelos</a> · <a href="/liquidez">Quanto tempo demoram a vender</a> · <a href="/metodologia">Como calculamos</a></p>
     </section>
@@ -2085,13 +2093,22 @@ export function depreciationJson(rec, slug, fit, av, { host, builtAt }) {
     model_year_range: { from: fit.oldest.y, to: fit.newest.y },
     half_life_years: av && av.halfLife ? Math.round(av.halfLife * 10) / 10 : null,
     retained_value: { after_1y: keep(1), after_3y: keep(3), after_5y: keep(5), after_8y: keep(8) },
+    retained_value_base: av
+      ? { model_year: av.base.year, age: av.base.age, fitted_price_eur: av.base.price }
+      : null,
     cost_of_one_year_of_age: av
       ? av.pts.map(p => ({ age: p.age, model_year: p.y, cost_eur: av.at(p.age) }))
       : [],
     age_from_which_a_year_costs_under: av && av.cheapFrom
       ? { threshold_eur: av.costFloor, age: av.cheapFrom.age,
-          model_year: av.ref - av.cheapFrom.age, fitted_price_eur: av.cheapFrom.price }
+          model_year: av.ref - av.cheapFrom.age, fitted_price_eur: av.cheapFrom.price,
+          max_age_considered: av.capAge }
       : null,
+    caveats: [
+      "A série é um corte transversal de anos de fabrico diferentes hoje, não o mesmo carro seguido ao longo do tempo.",
+      "Entre o ano mais antigo e o mais recente o modelo mudou de geração, por isso parte da diferença de preço é equipamento e não idade.",
+      "Os valores em euros saem da curva ajustada; as medianas observadas por ano estão em by_year.",
+    ],
     rate_bend: av && av.bend
       ? { age: av.bend.age, rate_before: r3(av.bend.early), rate_after: r3(av.bend.late),
           f_statistic: Math.round(av.bend.F * 10) / 10,

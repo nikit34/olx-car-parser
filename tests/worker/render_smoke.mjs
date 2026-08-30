@@ -314,6 +314,32 @@ check("every depreciation page renders without throwing", () => {
     assert(html.includes("<svg"), `${s}: depreciation page has no chart`);
     assert(html.includes("Quanto custa um ano de idade"), `${s}: no euro ladder`);
     assert(html.includes("Há um ponto de inflexão?"), `${s}: does not answer the inflection question`);
+    assert(html.includes("mudou de geração"), `${s}: does not say the series crosses generations`);
+  }
+});
+
+check("the euro figures rest on the fit, not on the thinnest cell", () => {
+  for (const s of depSlugs) {
+    const rec = models[s], fit = depreciationFit(rec);
+    const av = depreciationAge(rec, fit, builtAt);
+    assert(av.base.age === Math.ceil(av.minAge), `${s}: base is not the youngest measured age`);
+    const cells = yearCells(rec, 5);
+    const newest = cells[0];
+    const spread = Math.abs(av.base.price - newest.fm) / newest.fm;
+    assert(spread < 0.6, `${s}: the fitted base is ${Math.round(spread * 100)}% away from the newest median`);
+    assert(av.base.price > 0 && isFinite(av.base.price), `${s}: no base price`);
+  }
+});
+
+check("a knee nobody would shop at is not published as advice", () => {
+  for (const s of depSlugs) {
+    const rec = models[s], fit = depreciationFit(rec);
+    const av = depreciationAge(rec, fit, builtAt);
+    if (!av.cheapFrom) {
+      assert(av.capCost > 0, `${s}: no cost quoted at the cap instead`);
+      continue;
+    }
+    assert(av.cheapFrom.age <= 15, `${s}: quotes a sub-500 age of ${av.cheapFrom.age}`);
   }
 });
 
@@ -333,8 +359,8 @@ check("the age view is inside its own measured range and monotone", () => {
     }
     assert(av.halfLife > 1 && av.halfLife < 40, `${s}: implausible half-life ${av.halfLife}`);
     if (av.cheapFrom) {
-      assert(av.cheapFrom.age >= av.minAge && av.cheapFrom.age <= av.maxAge,
-        `${s}: the sub-500 age is outside the measured range`);
+      assert(av.cheapFrom.age >= av.minAge && av.cheapFrom.age <= av.capAge,
+        `${s}: the sub-500 age is outside the range a buyer shops in`);
       assert(av.cheapFrom.cost <= 500, `${s}: sub-500 age costs ${av.cheapFrom.cost}`);
       assert(av.at(av.cheapFrom.age - 1) === null || av.at(av.cheapFrom.age - 1) > 500,
         `${s}: the sub-500 age is not the first one`);
