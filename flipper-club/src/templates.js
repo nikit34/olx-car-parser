@@ -2047,6 +2047,7 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
                                   insights = [], yearPages = [], competitors = [],
                                   competitorKind = "price", comparisons = [],
                                   facets = [], hasDepreciation = false, duels = [],
+                                  hasLiquidity = false,
                                   provenanceHtml = "", altJson = null }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
   const FM = fmtEur(rec.fm), FL = fmtEur(rec.fl), FH = fmtEur(rec.fh);
@@ -2213,8 +2214,11 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
     </section>`;
 
   // 5/6. Sell-speed + trust box
-  const sellLine = rec.sd != null
-    ? `<p style="font-size:14px;color:#3A3F47;margin:0 0 14px;">Carros deste modelo vendem, em mediana, em <b>~${rec.sd} dias</b> no OLX (amostra de ${rec.sn} vendas).</p>` : "";
+  const lqRec = (rec.lq && rec.lq.s30 != null) ? rec.lq : null;
+  const sellLine = lqRec
+    ? `<p style="font-size:14px;color:#3A3F47;margin:0 0 14px;"><b>${Math.round(lqRec.s30 * 100)} em cada 100</b> anúncios deste modelo saem do OLX no primeiro mês${lqRec.md != null ? `, com uma mediana de <b>${lqRec.md} dias</b>` : ""} (${fmtNum(lqRec.n)} anúncios acompanhados).</p>`
+    : rec.sd != null
+      ? `<p style="font-size:14px;color:#3A3F47;margin:0 0 14px;">Carros deste modelo vendem, em mediana, em <b>~${rec.sd} dias</b> no OLX (amostra de ${rec.sn} vendas).</p>` : "";
   const trust = `
     <section class="section" style="padding:30px 22px 0;max-width:680px;">
       ${sellLine}
@@ -2261,6 +2265,14 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
       </div>
     </section>` : "";
 
+  const liqLink = hasLiquidity ? `
+    <section class="section" style="padding:26px 22px 0;max-width:680px;">
+      <div class="exclusive" style="background:#F6FBF8;border:1px solid #DDEBE1;align-items:flex-start;">
+        <span style="font-size:15px;">⏱️</span>
+        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">Quanto tempo demora a vender.</b> Acompanhámos anúncios de ${B} ${M} suficientes para dizer quantos saem no primeiro mês, e como isso muda com o preço a que os pões. <a href="/liquidez/${slug}" style="color:#177A47;font-weight:600;">Ver o tempo de venda&nbsp;→</a></span>
+      </div>
+    </section>` : "";
+
   const DUEL_COPY = {
     fuel: { icon: "⛽", head: "Diesel ou gasolina?", what: "os dois combustíveis", which: "qual dos dois" },
     gear: { icon: "⚙️", head: "Caixa manual ou automática?", what: "as duas caixas", which: "qual das duas" },
@@ -2291,7 +2303,7 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
   // internal links back to / and /precos (reinforcing the crawl spine).
   const crumb = `<nav class="section" aria-label="Breadcrumb" style="max-width:680px;padding:22px 22px 0;font-size:12.5px;color:#8A8F98;">`
     + `<a href="/" style="color:#8A8F98;">Início</a> › <a href="/precos" style="color:#8A8F98;">Preços</a> › <span style="color:#16181D;">${B} ${M}</span></nav>`;
-  const body = `${crumb}<div style="padding-top:14px;">${hero}</div>${gbmCard}${insightBlock}${bridge1}${table}${facetBlock}${duelLink}${depLink}${bridge2}${trust}${rivals}${sellerCta}${sib}`;
+  const body = `${crumb}<div style="padding-top:14px;">${hero}</div>${gbmCard}${insightBlock}${bridge1}${table}${facetBlock}${duelLink}${depLink}${liqLink}${bridge2}${trust}${rivals}${sellerCta}${sib}`;
 
   const canonical = `https://${host}/preco/${slug}`;
   const faq = (q, a) => ({
@@ -2314,7 +2326,12 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
       `Metade dos ${rec.b} ${rec.m} anunciados no OLX pede entre ${FL} e ${FH} (intervalo interquartil P25–P75)${yrRange ? `, para anos ${yrRange}` : ""}. Fora deste intervalo ficam os 25% mais baratos e os 25% mais caros.`,
     ));
   }
-  if (rec.sd != null && rec.sn != null) {
+  if (lqRec) {
+    faqEntries.push(faq(
+      `Quanto tempo demora a vender um ${rec.b} ${rec.m} em Portugal?`,
+      `${Math.round(lqRec.s30 * 100)} em cada 100 anúncios de ${rec.b} ${rec.m} saem do OLX no primeiro mês${lqRec.md != null ? `, com uma mediana de ${lqRec.md} dias` : ""}, medido em ${lqRec.n} anúncios acompanhados até ao fim. Sair do OLX não prova a venda: um anúncio corre em ciclos de 30 dias e pode expirar sem ter vendido.`,
+    ));
+  } else if (rec.sd != null && rec.sn != null) {
     faqEntries.push(faq(
       `Quanto tempo demora a vender um ${rec.b} ${rec.m} em Portugal?`,
       `Um ${rec.b} ${rec.m} vende, em mediana, em cerca de ${rec.sd} dias no OLX, medido numa amostra de ${rec.sn} vendas deste modelo. Modelos que demoram mais a vender costumam exigir preço mais agressivo.`,

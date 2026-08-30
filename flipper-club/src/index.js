@@ -66,6 +66,7 @@ import {
   modelJson, yearJson,
   depreciationAge, depreciationJson,
   renderFacetPage, renderDistrictPage, facetCells, facetCell, facetKind, facetKeys,
+  renderLiquidityPage, liquidityJson, publishedLiquidity,
   isoWeek, missingWeeks, monthlyCuts, renderMarketMonth,
   setWave, publishedYearPages, publishedDepreciation, publishedPairs, publishedFacets,
   DUELS, duel, duelByPath, duelJson, duelSlugs, duelsFor, publishedDuel,
@@ -255,6 +256,9 @@ export default {
       // Head-to-head comparisons + their hub.
       if (pathname.startsWith("/comparar/") && method === "GET") {
         return handleCompare(request, env, url);
+      }
+      if (pathname.startsWith("/liquidez/") && method === "GET") {
+        return handleLiquidityPage(request, env, url);
       }
       const duelPrefix = Object.values(DUELS).find(d => pathname.startsWith(`/${d.path}/`));
       if (duelPrefix && method === "GET") {
@@ -573,6 +577,7 @@ async function handleModelPage(request, env, url) {
       return { k, kind, lbl: cell.lbl, n: cell.n, fm: cell.fm };
     }),
     hasDepreciation: publishedDepreciation(models, slug, rec, builtAt),
+    hasLiquidity: publishedLiquidity(models, slug, rec, builtAt),
     duels: duelsFor(models, slug, rec, builtAt).map(d => ({ path: d.path, kind: d.kind })),
     provenanceHtml: provenance({ n: rec.n, builtAt }),
     altJson: `https://${url.host}/preco/${slug}.json`,
@@ -683,7 +688,7 @@ async function handleDistrict(request, env, url) {
   if (!models || !rec) return notFoundPage(request, env, url, setCookie);
   const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
   return html(renderDistrictPage({
-    key, rec, models, stats: corpusStats(models, mdoc.built_at),
+    key, rec, models, districts, stats: corpusStats(models, mdoc.built_at),
     host: url.host, depositCount, builtAt: mdoc.built_at,
   }), 200, setCookie);
 }
@@ -709,6 +714,7 @@ async function withModels(request, env, url, fn) {
     }), 503, setCookie);
   }
   return fn({ models, builtAt: mdoc.built_at, depositCount, setCookie, mq: mdoc.mq || null,
+              market: mdoc.lqm || null,
               stats: corpusStats(models, mdoc.built_at) });
 }
 
@@ -808,26 +814,58 @@ async function handleCompareHub(request, env, url) {
 
 // /liquidez
 async function handleLiquidity(request, env, url) {
-  return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, stats }) => {
+  return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, market }) => {
     const rows = Object.entries(models)
-      .filter(([, r]) => r.sd != null && r.sn != null)
-      .map(([slug, r]) => ({ slug, b: r.b, m: r.m, sd: r.sd, sn: r.sn, fm: r.fm }))
-      .sort((a, b) => a.sd - b.sd || b.sn - a.sn);
-    return html(renderLiquidityHub({ rows, stats, host: url.host, depositCount, builtAt }), 200, setCookie);
+      .filter(([, r]) => (r.lq && r.lq.s30 != null) || (r.sd != null && r.sn != null))
+      .map(([slug, r]) => ({
+        slug, b: r.b, m: r.m, sd: r.sd, sn: r.sn, fm: r.fm,
+        lq: (r.lq && r.lq.s30 != null) ? r.lq : null,
+        page: publishedLiquidity(models, slug, r, builtAt),
+      }))
+      .sort((a, b) => {
+        if (a.lq && b.lq) return b.lq.s30 - a.lq.s30 || b.lq.n - a.lq.n;
+        if (a.lq) return -1;
+        if (b.lq) return 1;
+        return (a.sd || 0) - (b.sd || 0);
+      });
+    return html(renderLiquidityHub({ rows, market, host: url.host, depositCount, builtAt }), 200, setCookie);
+  });
+}
+
+async function handleLiquidityPage(request, env, url) {
+  let slug;
+  try {
+    slug = decodeURIComponent(url.pathname.slice("/liquidez/".length)).replace(/\/+$/, "").toLowerCase();
+  } catch (_) { return notFoundPage(request, env, url); }
+  const wantsJson = slug.endsWith(".json");
+  if (wantsJson) slug = slug.slice(0, -".json".length);
+  return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, market }) => {
+    const rec = models[slug];
+    if (!rec || !publishedLiquidity(models, slug, rec, builtAt)) return notFoundPage(request, env, url, setCookie);
+    if (wantsJson) return jsonResponse(liquidityJson(rec, slug, { host: url.host, builtAt }));
+    return html(renderLiquidityPage({
+      rec, slug, market,
+      hasDepreciation: publishedDepreciation(models, slug, rec, builtAt),
+      host: url.host, depositCount, builtAt,
+    }), 200, setCookie);
   });
 }
 
 // /sobrevalorizados — both directions of the asking-vs-estimate gap.
 async function handleValuationGap(request, env, url) {
-  return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, stats }) => {
+  return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, stats, market }) => {
     const withGap = Object.entries(models)
       .filter(([, r]) => r.gm > 0 && r.fm > 0)
-      .map(([slug, r]) => ({ slug, b: r.b, m: r.m, fm: r.fm, gm: r.gm, n: r.n, gap: r.fm / r.gm - 1 }))
+      .map(([slug, r]) => ({
+        slug, b: r.b, m: r.m, fm: r.fm, gm: r.gm, n: r.n, gap: r.fm / r.gm - 1,
+        s30: (r.lq && r.lq.s30 != null) ? r.lq.s30 : null,
+        page: publishedLiquidity(models, slug, r, builtAt),
+      }))
       .sort((a, b) => b.gap - a.gap);
     return html(renderValuationGap({
       over: withGap.slice(0, 25),
       under: withGap.slice(-25).reverse(),
-      stats, host: url.host, depositCount, builtAt,
+      market, stats, host: url.host, depositCount, builtAt,
     }), 200, setCookie);
   });
 }
@@ -1075,6 +1113,7 @@ async function handleSitemap(request, env, url) {
         add(`/preco/${encodeURIComponent(slug)}/${encodeURIComponent(k)}`, "weekly", "0.5");
       }
       if (publishedDepreciation(models, slug, rec, lastmodSrc)) add(`/depreciacao/${encodeURIComponent(slug)}`, "monthly", "0.5");
+      if (publishedLiquidity(models, slug, rec, lastmodSrc)) add(`/liquidez/${encodeURIComponent(slug)}`, "weekly", "0.5");
       for (const d of Object.values(DUELS)) {
         if (publishedDuel(models, slug, rec, lastmodSrc, d.kind)) add(`/${d.path}/${encodeURIComponent(slug)}`, "monthly", "0.5");
       }
@@ -1227,7 +1266,7 @@ async function handleLlmsTxt(request, env, url) {
     `- [Mercado: carros abaixo do valor justo](${base}/mercado)`,
     `- [Índice do mercado, com arquivo semanal e mensal permanente](${base}/mercado/indice)`,
     `- [Desvalorização por modelo](${base}/depreciacao)`,
-    `- [Tempo mediano até vender, por modelo](${base}/liquidez)`,
+    `- [Quanto tempo demora a vender cada modelo](${base}/liquidez)`,
     `- [Comparações diretas entre modelos](${base}/comparar)`,
     ...duelHubs.map(d => `- [${d.hubTitle}](${base}/${d.path})`),
     `- [Preço pedido vs. valor justo estimado](${base}/sobrevalorizados)`,
@@ -1250,6 +1289,7 @@ async function handleLlmsTxt(request, env, url) {
     `- \`${base}/preco/{slug}/{distrito}\` — o mesmo modelo num distrito`,
     `- \`${base}/precos/{distrito}\` — o mercado de um distrito`,
     `- \`${base}/depreciacao/{slug}\` — curva de desvalorização, custo de cada ano de idade e onde a queda abranda (existe onde há histórico suficiente)`,
+    `- \`${base}/liquidez/{slug}\` — quanto tempo esse modelo demora a sair do OLX: percentagem que sai em 30/60/90 dias, mediana, e os mesmos cortes por faixa de preço, idade e distrito (+ .json)`,
     `- \`${base}/comparar/{slug-a}-vs-{slug-b}\` — comparação entre dois modelos`,
     `- \`${base}/mercado/indice/{AAAA}-W{SS}\` — corte semanal permanente do mercado`,
     `- \`${base}/mercado/indice/{AAAA}-{MM}\` — corte mensal permanente, mediana dos cortes semanais desse mês`,
@@ -1264,6 +1304,7 @@ async function handleLlmsTxt(request, env, url) {
     `- \`${base}/preco/{slug}.json\``,
     `- \`${base}/preco/{slug}/{ano}.json\``,
     `- \`${base}/depreciacao/{slug}.json\` — taxa anual, meia-vida do valor, custo de um ano de idade por idade, e se a taxa quebra em alguma idade`,
+    `- \`${base}/liquidez/{slug}.json\` — dias até sair do anúncio, percentagem que sai em 30/60/90 dias, quantos voltam a ser anunciados e quanto se costuma baixar no preço`,
     "",
     "Um endereço que não exista devolve 404 — não há páginas geradas para",
     "combinações sem amostra suficiente.",

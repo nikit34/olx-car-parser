@@ -171,6 +171,17 @@ export function publishedFacets(models, slug, rec, builtAt) {
   return facetKeys(rec);
 }
 
+export function liquidityOk(rec) {
+  const lq = rec && rec.lq;
+  return !!(lq && lq.n > 0 && lq.s30 != null);
+}
+
+export function publishedLiquidity(models, slug, rec, builtAt) {
+  const wave = waveSlugs(models, builtAt);
+  if (wave && !wave.has(slug)) return false;
+  return liquidityOk(rec);
+}
+
 /** Integer-year cells (bands excluded), newest first. */
 export function yearCells(rec, minN = 1) {
   return (rec && Array.isArray(rec.yr) ? rec.yr : [])
@@ -507,6 +518,7 @@ export function corpusStats(models, builtAt) {
     priceMed: med(recs.map(r => r.fm)),
     kmMed: med(recs.map(r => r.kmm)),
     sellMed: med(recs.map(r => r.sd)),
+    goneMed: med(recs.map(r => (r.lq && r.lq.s30 != null) ? r.lq.s30 : null)),
     // Spread = interquartile width as a share of the median. A wide spread means
     // condition/spec/history decide the price more than the badge does.
     spreadMed: med(recs.map(r => (r.fm > 0 && r.fl != null && r.fh != null)
@@ -555,7 +567,17 @@ export function modelInsights(rec, stats) {
   }
 
   // 2. Time to sell — the seller's question, and the buyer's leverage.
-  if (rec.sd != null && rec.sn != null && stats.sellMed) {
+  if (rec.lq && rec.lq.s30 != null && stats.goneMed) {
+    const mine = rec.lq.s30, mkt = stats.goneMed;
+    const tail = `${pct(mine)} em cada 100 saem do OLX no primeiro mês (mercado: ${pct(mkt)}), em ${fmtNum(rec.lq.n)} anúncios acompanhados`;
+    if (mine >= mkt * 1.12) {
+      out.push(`Sai depressa: <b>${tail}</b>. A anunciar, tens pouca pressão para descer o preço; a comprar, os bons exemplares desaparecem em dias.`);
+    } else if (mine <= mkt * 0.88) {
+      out.push(`Demora a sair: <b>${tail}</b>. Quem vende costuma ter de ceder no preço, e quem compra tem margem para negociar.`);
+    } else {
+      out.push(`Tempo até sair em linha com o mercado: <b>${tail}</b>.`);
+    }
+  } else if (rec.sd != null && rec.sn != null && stats.sellMed) {
     const d = rec.sd, mkt = stats.sellMed;
     if (d <= mkt * 0.75) {
       out.push(`Vende rápido: mediana de <b>${d} dias</b> no OLX (mercado: ${mkt} dias), em ${rec.sn} vendas observadas. A anunciar, tens pouca pressão para descer o preço; a comprar, os bons exemplares desaparecem em dias.`);
@@ -627,10 +649,11 @@ export function modelInsights(rec, stats) {
  * the page can lift "how many, how fresh, of what" without parsing prose — and a
  * human gets the caveat in the same place every time.
  */
-export function provenance({ n, builtAt, measure = "Preço pedido em anúncios ativos (mediana e P25-P75)", extra = "" }) {
+export function provenance({ n, builtAt, measure = "Preço pedido em anúncios ativos (mediana e P25-P75)",
+                             unit = "anúncios ativos", measureId = "asking-price-median", extra = "" }) {
   const day = (builtAt || "").slice(0, 10);
-  return `<p class="mono fc-prov" data-sample="${n != null ? n : ""}" data-updated="${escapeHtml(day)}" data-measure="asking-price-median" data-source="OLX Portugal">`
-    + `Amostra: ${n != null ? fmtNum(n) + " anúncios ativos" : "n/d"} · Recolhido até: ${day || "n/d"} · Medida: ${escapeHtml(measure)} · Fonte: OLX Portugal${extra ? " · " + extra : ""}`
+  return `<p class="mono fc-prov" data-sample="${n != null ? n : ""}" data-updated="${escapeHtml(day)}" data-measure="${escapeHtml(measureId)}" data-source="OLX Portugal">`
+    + `Amostra: ${n != null ? fmtNum(n) + " " + escapeHtml(unit) : "n/d"} · Recolhido até: ${day || "n/d"} · Medida: ${escapeHtml(measure)} · Fonte: OLX Portugal${extra ? " · " + extra : ""}`
     + `</p>`;
 }
 
@@ -1504,47 +1527,278 @@ export function renderCompareHub({ pairs, models, host, depositCount, builtAt })
 // book publishes, because it needs listings watched over time rather than a
 // snapshot. It answers the seller's real question ("how long will this take")
 // and hands the buyer their leverage ("this one sits, so offer less").
-//
-// One ranked hub, not 243 per-model pages: per model this is a single figure,
-// and a page built on a single figure is a thin page. It lives on the model page
-// too, where it has context.
-export function renderLiquidityHub({ rows, stats, host, depositCount, builtAt }) {
+const LIQ_HORIZONS = [30, 60, 90];
+
+function liqPct(x) { return Math.round(x * 100); }
+
+export function liquidityChart(lq, { w = 640, h = 210, color = "#177A47" } = {}) {
+  const pts = [[0, 1]];
+  for (const d of LIQ_HORIZONS) {
+    const s = lq[`s${d}`];
+    if (s != null) pts.push([d, 1 - s]);
+  }
+  if (pts.length < 3) return "";
+  const padL = 36, padR = 14, padT = 18, padB = 30;
+  const x1 = pts[pts.length - 1][0];
+  const X = d => padL + (d / x1) * (w - padL - padR);
+  const Y = v => padT + (1 - v) * (h - padT - padB);
+  const line = pts.map((p, i) => `${i ? "L" : "M"}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join("");
+  const area = `${line}L${X(x1).toFixed(1)},${Y(0).toFixed(1)}L${X(0).toFixed(1)},${Y(0).toFixed(1)}Z`;
+  const dots = pts.slice(1).map(p =>
+    `<circle cx="${X(p[0]).toFixed(1)}" cy="${Y(p[1]).toFixed(1)}" r="3.2" fill="${color}">`
+    + `<title>Aos ${p[0]} dias ainda estão à venda ${liqPct(p[1])} em cada 100</title></circle>`).join("");
+  const ticks = [0, 0.5, 1].map(f =>
+    `<line x1="${padL}" x2="${w - padR}" y1="${Y(f).toFixed(1)}" y2="${Y(f).toFixed(1)}" class="c-grid"/>`
+    + `<text x="${padL - 5}" y="${(Y(f) + 4).toFixed(1)}" text-anchor="end" class="c-ax">${liqPct(f)}%</text>`).join("");
+  const xlab = pts.map(p =>
+    `<text x="${X(p[0]).toFixed(1)}" y="${h - 9}" text-anchor="${p[0] === 0 ? "start" : p[0] === x1 ? "end" : "middle"}" class="c-ax">${p[0]} dias</text>`).join("");
+  const mark = (lq.md != null && lq.md > 0 && lq.md <= x1)
+    ? `<line x1="${X(lq.md).toFixed(1)}" x2="${X(lq.md).toFixed(1)}" y1="${padT}" y2="${Y(0).toFixed(1)}" class="c-mark"/>`
+      + `<text x="${X(lq.md).toFixed(1)}" y="${padT - 5}" text-anchor="${X(lq.md) > w - 100 ? "end" : "middle"}" class="c-marklab">mediana: ${lq.md} dias</text>`
+    : "";
+  return `<svg class="fc-chart" viewBox="0 0 ${w} ${h}" role="img"
+    aria-label="Percentagem de anúncios ainda à venda ao longo dos dias">${ticks}
+    <path d="${area}" fill="${color}" opacity="0.10"/>
+    <path d="${line}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round"/>
+    ${dots}${mark}${xlab}</svg>`;
+}
+
+export function liquidityJson(rec, slug, { host, builtAt } = {}) {
+  const lq = rec.lq || {};
+  const cut = cells => (cells || []).map(c => ({
+    key: c.k, label: c.lbl, sample: c.n,
+    gone_in_30d: c.s30, median_days: c.md != null ? c.md : null,
+  }));
+  return {
+    slug, brand: rec.b, model: rec.m,
+    url: `https://${host}/liquidez/${slug}`,
+    measure: "days from the listing appearing on OLX to the last scrape cycle that saw it live",
+    estimator: "kaplan-meier, listings still on sale censored at the last scrape",
+    sample_ended: lq.n != null ? lq.n : null,
+    sample_still_listed: lq.cn != null ? lq.cn : null,
+    median_days: lq.md != null ? lq.md : null,
+    p25_days: lq.q1 != null ? lq.q1 : null,
+    p75_days: lq.q3 != null ? lq.q3 : null,
+    gone_in_30d: lq.s30 != null ? lq.s30 : null,
+    gone_in_60d: lq.s60 != null ? lq.s60 : null,
+    gone_in_90d: lq.s90 != null ? lq.s90 : null,
+    relisted_share: lq.rb != null ? lq.rb : null,
+    price_cut_share: lq.cu != null ? lq.cu : null,
+    price_cut_median: lq.cp != null ? lq.cp : null,
+    by_price: cut(lq.pb), by_age: cut(lq.ab), by_district: cut(lq.dt),
+    updated: builtAt || null,
+    licence: licenseUrl(host),
+    caveat: "a listing leaving OLX is not proof of a sale: an ad runs in 30-day cycles and can simply expire",
+  };
+}
+
+function liqCutTable(cells, head) {
+  if (!cells || !cells.length) return "";
+  return `<div class="fc-scroll"><table class="fc-tbl">
+    <thead><tr><th>${head}</th><th>Sai nos primeiros 30 dias</th><th>Mediana</th><th>Anúncios observados</th></tr></thead>
+    <tbody>${cells.map(c => `<tr>
+      <td>${escapeHtml(c.lbl)}</td>
+      <td>${liqPct(c.s30)}%</td>
+      <td class="mut">${c.md != null ? `${c.md} dias` : "—"}</td>
+      <td class="mut">${fmtNum(c.n)}</td></tr>`).join("")}</tbody></table></div>`;
+}
+
+export function renderLiquidityPage({ rec, slug, market, hasDepreciation = false,
+                                      host, depositCount, builtAt }) {
+  const lq = rec.lq;
+  const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
+  const canonical = `https://${host}/liquidez/${slug}`;
+  const mkt = market || {};
+  const s30 = liqPct(lq.s30);
+  const still90 = lq.s90 != null ? liqPct(1 - lq.s90) : null;
+  const vsMkt = mkt.s30 != null
+    ? (lq.s30 >= mkt.s30 * 1.12 ? "acima" : lq.s30 <= mkt.s30 * 0.88 ? "abaixo" : "media")
+    : null;
+  const verdict = vsMkt === "acima"
+    ? `Sai mais depressa do que a média do mercado (${liqPct(mkt.s30)} em cada 100). A anunciar, tens pouca razão para começar abaixo do valor; a comprar, os exemplares bem preçados desaparecem antes de teres tempo de pensar.`
+    : vsMkt === "abaixo"
+      ? `Sai mais devagar do que a média do mercado (${liqPct(mkt.s30)} em cada 100). A anunciar, conta com um segundo ciclo e com ter de ceder; a comprar, o tempo joga a teu favor — quem já lá está há semanas ouve uma proposta.`
+      : vsMkt === "media" ? `É o ritmo médio deste mercado (${liqPct(mkt.s30)} em cada 100).` : "";
+
+  const horizonRows = LIQ_HORIZONS.filter(d => lq[`s${d}`] != null).map(d => `<tr>
+      <td>${d} dias</td>
+      <td>${liqPct(lq[`s${d}`])} em cada 100</td>
+      <td class="mut">${liqPct(1 - lq[`s${d}`])} ainda à venda</td></tr>`).join("");
+
+  const pb = lq.pb || [];
+  const cheap = pb.length ? pb[0] : null, dear = pb.length > 1 ? pb[pb.length - 1] : null;
+  const spread = (cheap && dear && cheap.k !== dear.k && Math.abs(cheap.s30 - dear.s30) >= 0.05);
+  const priceLine = spread
+    ? `<p class="fc-p">O preço é o que mais mexe com isto: na faixa <b>${escapeHtml(cheap.lbl.toLowerCase())}</b> saem ${liqPct(cheap.s30)} em cada 100 no primeiro mês; na faixa <b>${escapeHtml(dear.lbl.toLowerCase())}</b> são ${liqPct(dear.s30)}. Não é o mesmo carro a demorar mais: é outro comprador, com mais alternativas e menos pressa.</p>`
+    : "";
+
+  const ab = lq.ab || [];
+  const dt = lq.dt || [];
+  const districtLine = dt.length >= 2
+    ? `<p class="fc-p">Entre ${escapeHtml(dt[0].lbl)} e ${escapeHtml(dt[dt.length - 1].lbl)} a diferença no primeiro mês é de ${liqPct(dt[0].s30)}% para ${liqPct(dt[dt.length - 1].s30)}%. Onde há mais oferta há normalmente mais procura, por isso o distrito costuma mexer mais com o preço do que com o tempo — os preços locais estão em <a href="/precos/${encodeURIComponent(dt[0].k)}">carros usados ${emDistrito(dt[0].k, dt[0].lbl)}</a>.</p>`
+    : "";
+
+  const cutBlock = (lq.cu != null) ? `
+    <section class="section fc-wrap">
+      <h2 class="fc-h2">Quantos acabam por baixar o preço</h2>
+      <p class="fc-p"><b>${liqPct(lq.cu)} em cada 100</b> anúncios de ${B} ${M} que acompanhámos até ao fim desceram o preço pelo caminho${lq.cp != null ? `, com um corte mediano de <b>${liqPct(lq.cp)}%</b>` : ""}. É a margem que este modelo costuma ceder, e a referência mais honesta que temos para o que dá para negociar.</p>
+      ${(lq.cd != null && lq.hd != null) ? `<p class="fc-p">Os anúncios que baixaram estiveram no ar ${lq.cd} dias, contra ${lq.hd} dos que nunca mexeram no preço. Lê-se na direção certa: baixa-se o preço porque o anúncio está parado, não fica parado por se ter baixado o preço.</p>` : ""}
+    </section>` : "";
+
+  const relistBlock = (lq.rb != null) ? `<p class="fc-p">De uns quantos sabemos que não venderam: pelo menos <b>${liqPct(lq.rb)}%</b> reapareceram semanas depois como anúncio novo do mesmo carro, que conseguimos emparelhar com o anterior. É um mínimo e não uma taxa — só contamos os reaparecimentos que identificámos, e quem saiu na semana passada ainda não teve tempo de voltar.</p>` : "";
+
+  const body = crumbs([
+    { name: "Início", href: "/" }, { name: "Tempo de venda", href: "/liquidez" },
+    { name: `${rec.b} ${rec.m}` },
+  ]) + `
+    <div style="padding-top:14px;">
+      <div class="side-card" style="max-width:680px;margin:0 auto;">
+        <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">TEMPO DE VENDA · OLX PORTUGAL</span></div>
+        <h1 class="fc-h1">Quanto tempo demora a vender um ${B} ${M}?</h1>
+        <p class="lede" style="font-size:16px;margin:0 0 18px;">Acompanhámos <b>${fmtNum(lq.n)} anúncios</b> de ${B} ${M} até saírem do OLX${lq.cn ? `, mais ${fmtNum(lq.cn)} que ainda lá estão` : ""}: <b>${s30} em cada 100 desaparecem no primeiro mês</b>${lq.md != null ? `, e a mediana está nos <b>${lq.md} dias</b>` : ""}. ${verdict}</p>
+        <div class="fc-stat-row">
+          <div class="fc-stat"><div class="k">EM 30 DIAS</div><div class="v">${s30}%</div><div class="s">${mkt.s30 != null ? `mercado: ${liqPct(mkt.s30)}%` : "dos anúncios saem"}</div></div>
+          ${lq.md != null ? `<div class="fc-stat"><div class="k">MEDIANA</div><div class="v">${lq.md} d</div><div class="s">${(lq.q1 != null && lq.q3 != null) ? `metade sai entre ${lq.q1} e ${lq.q3} dias` : "até sair do OLX"}</div></div>` : ""}
+          ${still90 != null ? `<div class="fc-stat"><div class="k">AOS 90 DIAS</div><div class="v">${still90}%</div><div class="s">ainda à venda</div></div>` : ""}
+          ${lq.rb != null ? `<div class="fc-stat"><div class="k">VOLTAM A ANUNCIAR</div><div class="v">${liqPct(lq.rb)}%</div><div class="s">estes não venderam</div></div>` : ""}
+        </div>
+        ${provenance({ n: lq.n, builtAt, unit: "anúncios acompanhados até saírem",
+                       measureId: "days-on-market-km",
+                       measure: "Dias entre o anúncio aparecer no OLX e o último ciclo que o viu no ar",
+                       extra: `Kaplan-Meier, com ${lq.cn ? fmtNum(lq.cn) + " anúncios" : "os anúncios"} ainda à venda contados como censurados` })}
+      </div>
+    </div>
+    <section class="section fc-wrap">
+      <h2 class="fc-h2">A que ritmo saem</h2>
+      ${liquidityChart(lq)}
+      <div class="fc-scroll" style="margin-top:12px;"><table class="fc-tbl">
+        <thead><tr><th>Ao fim de</th><th>Já saíram</th><th>Continuam no ar</th></tr></thead>
+        <tbody>${horizonRows}</tbody></table></div>
+      <p class="fc-p" style="margin-top:12px;">A conta inclui os anúncios que ainda estão à venda, não só os que já acabaram. É a diferença entre medir o mercado e medir apenas os anúncios que tiveram pressa — olhar só para os que já saíram encurta o resultado em cerca de dez dias.</p>
+    </section>
+    <section class="section fc-wrap">
+      <h2 class="fc-h2">Sair do OLX não é o mesmo que vender</h2>
+      <p class="fc-p">Um anúncio do OLX corre em ciclos de 30 dias, e isso vê-se nos dados: há uma acumulação de saídas exatamente nesse dia, em todos os modelos. Um anúncio que acaba aí tanto pode ter vendido como ter expirado sem que ninguém o renovasse, e nós não distinguimos as duas coisas — quem sabe é o vendedor. É por isso que a primeira frase desta página é a percentagem que sai no primeiro mês e não uma mediana: a mediana cai dentro desse degrau em quase todos os modelos e acaba a descrever o ciclo do OLX em vez do ${B} ${M}.</p>
+      ${relistBlock}
+    </section>
+    ${pb.length ? `<section class="section fc-wrap">
+      <h2 class="fc-h2">Por faixa de preço</h2>
+      ${priceLine}
+      ${liqCutTable(pb, "Faixa de preço")}
+    </section>` : ""}
+    ${ab.length ? `<section class="section fc-wrap">
+      <h2 class="fc-h2">Por idade do carro</h2>
+      <p class="fc-p">Idade e preço andam juntos neste mercado, por isso esta tabela lê-se com a de cima: em boa parte é o mesmo efeito visto do outro lado.</p>
+      ${liqCutTable(ab, "Idade")}
+    </section>` : ""}
+    ${dt.length ? `<section class="section fc-wrap">
+      <h2 class="fc-h2">Por distrito</h2>
+      ${districtLine}
+      ${liqCutTable(dt, "Distrito")}
+    </section>` : ""}
+    ${cutBlock}
+    <section class="section fc-wide">
+      <div class="cta-banner">
+        <div style="flex:1 1 360px;">
+          <h2>Vais anunciar o teu ${B} ${M}?</h2>
+          <p>O tempo que vai demorar depende sobretudo do preço a que o pões. Cola o link do anúncio e dizemos-te onde ele está em relação ao valor justo.</p>
+        </div>
+        <a class="btn-bright" href="/avaliar?modelo=${encodeURIComponent(slug)}">Avaliar o meu carro&nbsp;&nbsp;→</a>
+      </div>
+    </section>
+    <section class="section fc-wrap" style="padding-bottom:70px;">
+      <p class="fc-p"><a href="/preco/${slug}">Preços de ${B} ${M} por ano</a>${hasDepreciation ? ` · <a href="/depreciacao/${slug}">Quanto se desvaloriza</a>` : ""} · <a href="/liquidez">Tempo de venda de outros modelos</a> · <a href="/sobrevalorizados">Onde se pede acima do valor justo</a> · <a href="${canonical}.json">Dados em JSON</a></p>
+    </section>`;
+
+  const faqs = [
+    [`Quanto tempo demora a vender um ${rec.b} ${rec.m} em Portugal?`,
+     `${s30} em cada 100 anúncios de ${rec.b} ${rec.m} saem do OLX no primeiro mês${lq.md != null ? `, e a mediana é de ${lq.md} dias` : ""}, medido em ${lq.n} anúncios acompanhados até ao fim${lq.cn ? ` e ${lq.cn} ainda à venda` : ""}. Sair do OLX não prova a venda: um anúncio corre em ciclos de 30 dias e pode expirar sem ter vendido.`],
+  ];
+  if (spread) faqs.push([
+    `O preço muda o tempo que um ${rec.b} ${rec.m} demora a vender?`,
+    `Muda. Na faixa ${cheap.lbl.toLowerCase()} saem ${liqPct(cheap.s30)} em cada 100 no primeiro mês; na faixa ${dear.lbl.toLowerCase()}, ${liqPct(dear.s30)}. Medido nos mesmos anúncios de ${rec.b} ${rec.m} do OLX Portugal.`]);
+  if (lq.cu != null) faqs.push([
+    `Quanto se costuma baixar no preço de um ${rec.b} ${rec.m}?`,
+    `${liqPct(lq.cu)}% dos anúncios de ${rec.b} ${rec.m} que acompanhámos baixaram o preço antes de sair${lq.cp != null ? `, com um corte mediano de ${liqPct(lq.cp)}%` : ""}. É a margem que este modelo costuma ceder, e o ponto de partida para negociar.`]);
+  if (lq.rb != null) faqs.push([
+    `Os anúncios de ${rec.b} ${rec.m} que desaparecem do OLX foram todos vendidos?`,
+    `Não. Pelo menos ${liqPct(lq.rb)}% dos que saíram voltaram a aparecer depois como anúncio novo do mesmo carro, ou seja não tinham vendido. É um mínimo: só contamos os reaparecimentos que conseguimos emparelhar.`]);
+
+  return layout({
+    title: `${rec.b} ${rec.m}: quanto tempo demora a vender`,
+    description: `${s30}% dos anúncios de ${rec.b} ${rec.m} saem do OLX Portugal no primeiro mês${lq.md != null ? ` e a mediana é de ${lq.md} dias` : ""}, medido em ${lq.n} anúncios acompanhados ao longo do tempo. Por faixa de preço, idade e distrito.`,
+    canonical, body, zone: "all", nav: "precos", depositCount, index: true, host,
+    altJson: `${canonical}.json`,
+    jsonLd: {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
+          "name": `Tempo até vender de ${rec.b} ${rec.m} em Portugal`,
+          "description": `Dias que um anúncio de ${rec.b} ${rec.m} fica no OLX Portugal antes de sair, estimado por Kaplan-Meier sobre ${lq.n} anúncios terminados${lq.cn ? ` e ${lq.cn} ainda ativos` : ""}, com cortes por faixa de preço, idade e distrito.`,
+          "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
+          "isAccessibleForFree": true, "dateModified": builtAt || undefined,
+          "variableMeasured": ["Dias até o anúncio sair (mediana)", "Percentagem que sai em 30 dias"],
+          "distribution": [{ "@type": "DataDownload", "encodingFormat": "application/json", "contentUrl": `${canonical}.json` }],
+        },
+        breadcrumbLd(host, [
+          { name: "Início", href: "/" }, { name: "Tempo de venda", href: "/liquidez" },
+          { name: `${rec.b} ${rec.m}` },
+        ]),
+        faqLd(faqs),
+      ],
+    },
+  });
+}
+
+export function renderLiquidityHub({ rows, market, host, depositCount, builtAt }) {
   const canonical = `https://${host}/liquidez`;
-  const mkt = stats.sellMed;
-  const tr = rows.map(r => `<tr>
-      <td><a href="/preco/${r.slug}" style="color:#177A47;font-weight:600;">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a></td>
-      <td>${r.sd} dias</td>
-      <td class="mut">${mkt ? (r.sd < mkt ? `${Math.round((1 - r.sd / mkt) * 100)}% mais rápido` : r.sd > mkt ? `${Math.round((r.sd / mkt - 1) * 100)}% mais lento` : "na mediana") : "—"}</td>
-      <td class="mut">${r.sn}</td>
+  const mkt = market || {};
+  const withCurve = rows.filter(r => r.lq);
+  const name = r => `<a href="${r.page ? `/liquidez/${r.slug}` : `/preco/${r.slug}`}" style="color:#177A47;font-weight:600;">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a>`;
+  const tr = rows.map(r => r.lq ? `<tr>
+      <td>${name(r)}</td>
+      <td>${liqPct(r.lq.s30)}%</td>
+      <td class="mut">${r.lq.md != null ? `${r.lq.md} dias` : "—"}</td>
+      <td class="mut">${mkt.s30 ? (r.lq.s30 > mkt.s30 ? `${Math.round((r.lq.s30 / mkt.s30 - 1) * 100)}% acima` : r.lq.s30 < mkt.s30 ? `${Math.round((1 - r.lq.s30 / mkt.s30) * 100)}% abaixo` : "na média") : "—"}</td>
+      <td class="mut">${fmtNum(r.lq.n)}</td>
+      <td class="mut">${fmtEur(r.fm)}</td></tr>` : `<tr>
+      <td>${name(r)}</td>
+      <td class="mut">—</td>
+      <td class="mut">${r.sd != null ? `${r.sd} dias` : "—"}</td>
+      <td class="mut">—</td>
+      <td class="mut">${r.sn != null ? fmtNum(r.sn) : "—"}</td>
       <td class="mut">${fmtEur(r.fm)}</td></tr>`).join("");
-  const fastest = rows[0], slowest = rows[rows.length - 1];
+  const fastest = withCurve[0], slowest = withCurve[withCurve.length - 1];
   const body = crumbs([{ name: "Início", href: "/" }, { name: "Tempo de venda" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">Quanto tempo demora a vender cada carro em Portugal</h1>
-      <p class="fc-p">Mediana de dias entre a publicação e o desaparecimento do anúncio no OLX, por modelo. Medimos os anúncios ao longo do tempo, por isso isto não é uma estimativa a partir do preço — é o que aconteceu.</p>
-      ${(fastest && slowest) ? `<p class="fc-p">Do mais rápido ao mais lento vão <b>${fastest.sd}</b> e <b>${slowest.sd}</b> dias: um ${escapeHtml(fastest.b)} ${escapeHtml(fastest.m)} sai em cerca de ${fastest.sd} dias, um ${escapeHtml(slowest.b)} ${escapeHtml(slowest.m)} demora ${slowest.sd}. Se vais anunciar, é a diferença entre pedir o preço todo e ter de ceder.</p>` : ""}
-      ${mkt ? `<p class="fc-p">Mediana do mercado: <b>${mkt} dias</b>.</p>` : ""}
+      <p class="fc-p">Quantos anúncios de cada modelo saem do OLX no primeiro mês, e ao fim de quantos dias sai metade. Acompanhamos os anúncios ao longo do tempo — isto não é estimado a partir do preço, é o que aconteceu — e a conta inclui os que ainda estão à venda, que é o que a impede de ficar curta.</p>
+      ${(fastest && slowest && fastest !== slowest) ? `<p class="fc-p">Do mais rápido ao mais lento: um ${escapeHtml(fastest.b)} ${escapeHtml(fastest.m)} sai no primeiro mês em <b>${liqPct(fastest.lq.s30)}%</b> dos casos, um ${escapeHtml(slowest.b)} ${escapeHtml(slowest.m)} em <b>${liqPct(slowest.lq.s30)}%</b>. Se vais anunciar, é a diferença entre pedir o preço todo e ter de ceder; se vais comprar, é onde tens margem para negociar.</p>` : ""}
+      ${mkt.s30 != null ? `<p class="fc-p">No conjunto do mercado saem <b>${liqPct(mkt.s30)} em cada 100</b> no primeiro mês${mkt.md != null ? `, com uma mediana de <b>${mkt.md} dias</b>` : ""}. Um anúncio do OLX corre em ciclos de 30 dias e muitos desaparecem exatamente aí, por isso desaparecer não prova que vendeu.</p>` : ""}
       <div class="fc-scroll"><table class="fc-tbl">
-        <thead><tr><th>Modelo</th><th>Mediana até vender</th><th>vs. mercado</th><th>Vendas observadas</th><th>Preço mediano</th></tr></thead>
+        <thead><tr><th>Modelo</th><th>Sai em 30 dias</th><th>Mediana</th><th>vs. mercado</th><th>Anúncios observados</th><th>Preço mediano</th></tr></thead>
         <tbody>${tr}</tbody></table></div>
-      ${provenance({ n: rows.reduce((s, r) => s + (r.sn || 0), 0), builtAt, measure: "Dias medianos entre publicação e remoção do anúncio" })}
-      <p class="fc-p" style="margin-top:18px;"><a href="/precos">Preços por modelo</a> · <a href="/depreciacao">Desvalorização</a> · <a href="/metodologia">Como medimos</a></p>
+      ${provenance({ n: rows.reduce((s, r) => s + ((r.lq && r.lq.n) || r.sn || 0), 0), builtAt,
+                     unit: "anúncios acompanhados até saírem", measureId: "days-on-market-km",
+                     measure: "Dias entre o anúncio aparecer no OLX e o último ciclo que o viu no ar" })}
+      <p class="fc-p" style="margin-top:18px;"><a href="/precos">Preços por modelo</a> · <a href="/depreciacao">Desvalorização</a> · <a href="/sobrevalorizados">Pedido vs. valor justo</a> · <a href="/metodologia">Como medimos</a></p>
     </section>
     <div style="height:60px;"></div>`;
   return layout({
     title: "Quanto tempo demora a vender um carro em Portugal",
-    description: `Dias medianos até vender por modelo no OLX Portugal${mkt ? ` (mediana do mercado: ${mkt} dias)` : ""}. Medido em anúncios reais acompanhados ao longo do tempo.`,
+    description: `Quantos anúncios de cada modelo saem do OLX Portugal no primeiro mês${mkt.s30 != null ? ` (mercado: ${liqPct(mkt.s30)}%)` : ""} e ao fim de quantos dias sai metade. Medido em anúncios reais acompanhados ao longo do tempo.`,
     canonical, body, zone: "all", nav: "precos", depositCount, index: true, host,
     jsonLd: {
       "@context": "https://schema.org",
       "@graph": [
         {
           "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
-          "name": "Tempo mediano até vender, por modelo (Portugal)",
-          "description": "Dias medianos entre publicação e remoção de anúncios de carros usados no OLX Portugal, por modelo.",
+          "name": "Tempo até vender, por modelo (Portugal)",
+          "description": "Percentagem de anúncios que saem no primeiro mês e dias medianos até sair, por modelo, no OLX Portugal.",
           "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
           "isAccessibleForFree": true, "dateModified": builtAt || undefined,
-          "variableMeasured": "Dias até vender (mediana)",
+          "variableMeasured": ["Percentagem que sai em 30 dias", "Dias até sair (mediana)"],
         },
         breadcrumbLd(host, [{ name: "Início", href: "/" }, { name: "Tempo de venda" }]),
       ],
@@ -1559,14 +1813,21 @@ export function renderLiquidityHub({ rows, stats, host, depositCount, builtAt })
 // what we estimate it is worth. Both directions on one page on purpose — a list
 // of only "overpriced" reads as an accusation, and the underpriced half is the
 // actionable one for a buyer.
-export function renderValuationGap({ over, under, stats, host, depositCount, builtAt }) {
+export function renderValuationGap({ over, under, market, stats, host, depositCount, builtAt }) {
   const canonical = `https://${host}/sobrevalorizados`;
+  const mkt = market || {};
   const row = r => `<tr>
       <td><a href="/preco/${r.slug}" style="color:#177A47;font-weight:600;">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a></td>
       <td>${fmtEur(r.fm)}</td>
       <td class="mut">${fmtEur(r.gm)}</td>
       <td>${r.gap > 0 ? "+" : ""}${Math.round(r.gap * 100)}%</td>
+      <td class="mut">${r.s30 != null ? `${r.page ? `<a href="/liquidez/${r.slug}" style="color:#177A47;font-weight:600;">${liqPct(r.s30)}%</a>` : `${liqPct(r.s30)}%`}` : "—"}</td>
       <td class="mut">${r.n}</td></tr>`;
+  const wanted = over.filter(r => r.s30 != null && mkt.s30 != null && r.s30 >= mkt.s30 * 1.12);
+  const stuck = over.filter(r => r.s30 != null && mkt.s30 != null && r.s30 <= mkt.s30 * 0.88);
+  const readLine = (mkt.s30 != null && (wanted.length || stuck.length))
+    ? `<p class="fc-p">A coluna do tempo de venda separa duas coisas que a percentagem sozinha confunde. ${wanted.length ? `Pede-se acima da estimativa e mesmo assim sai depressa — ${wanted.slice(0, 3).map(r => `<b>${escapeHtml(r.b)} ${escapeHtml(r.m)}</b>`).join(", ")} — e aí o prémio é procura a sério: o mercado paga-o e não vais negociá-lo para baixo com uma tabela na mão. ` : ""}${stuck.length ? `Pede-se acima da estimativa <i>e</i> fica no mercado — ${stuck.slice(0, 3).map(r => `<b>${escapeHtml(r.b)} ${escapeHtml(r.m)}</b>`).join(", ")} — e aí é preço a mais à espera de descer.` : ""}</p>`
+    : "";
   const body = crumbs([{ name: "Início", href: "/" }, { name: "Preço pedido vs. valor justo" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">Onde o preço pedido se afasta do valor justo</h1>
@@ -1575,12 +1836,13 @@ export function renderValuationGap({ over, under, stats, host, depositCount, bui
       <h2 class="fc-h2">Pedem mais do que estimamos</h2>
       <p class="fc-p">Se vais comprar, entra a negociar. Se vais vender, o mercado está a teu favor.</p>
       <div class="fc-scroll"><table class="fc-tbl">
-        <thead><tr><th>Modelo</th><th>Pedido (mediana)</th><th>Valor justo estimado</th><th>Desvio</th><th>Anúncios</th></tr></thead>
+        <thead><tr><th>Modelo</th><th>Pedido (mediana)</th><th>Valor justo estimado</th><th>Desvio</th><th>Sai em 30 dias</th><th>Anúncios</th></tr></thead>
         <tbody>${over.map(row).join("")}</tbody></table></div>
+      ${readLine}
       <h2 class="fc-h2">Pedem menos do que estimamos</h2>
       <p class="fc-p">Oferta a mais ou procura fraca. Bom momento para comprar, mau para anunciar.</p>
       <div class="fc-scroll"><table class="fc-tbl">
-        <thead><tr><th>Modelo</th><th>Pedido (mediana)</th><th>Valor justo estimado</th><th>Desvio</th><th>Anúncios</th></tr></thead>
+        <thead><tr><th>Modelo</th><th>Pedido (mediana)</th><th>Valor justo estimado</th><th>Desvio</th><th>Sai em 30 dias</th><th>Anúncios</th></tr></thead>
         <tbody>${under.map(row).join("")}</tbody></table></div>
       ${provenance({ n: null, builtAt, measure: "Preço pedido mediano vs. valor justo estimado pelo modelo" })}
       <p class="fc-p" style="margin-top:18px;">A estimativa só é publicada onde passa os nossos limites de fiabilidade — ver <a href="/metodologia">metodologia</a>. Modelos onde não passa não aparecem aqui.</p>
@@ -2025,7 +2287,13 @@ export function renderMethodology({ stats, mq, host, depositCount, builtAt, duel
       <p class="fc-p">Nesses casos a página mostra só os preços pedidos. Preferimos uma página com menos números a uma página com um número errado.</p>
 
       <h2 class="fc-h2">6. Dias até vender</h2>
-      <p class="fc-p">Acompanhamos cada anúncio até desaparecer e medimos a <b>mediana de dias entre publicação e remoção</b>. Um anúncio pode desaparecer por venda ou por desistência, e não conseguimos distinguir os dois — por isso a leitura correta é "tempo até sair do mercado", que na prática é o que interessa a quem anuncia.</p>
+      <p class="fc-p">Acompanhamos cada anúncio desde que aparece até ao último dia em que o vimos no ar, e daí sai o <a href="/liquidez">tempo de venda</a>. Três coisas nesta conta não são óbvias e mudam o resultado:</p>
+      <ul class="fc-ul">
+        <li class="fc-li"><b>Os anúncios ainda à venda contam.</b> Se olhássemos só para os que já acabaram, ficávamos com os que tiveram pressa — num mercado que recebe anúncios novos todos os dias, isso encurta a conta em cerca de dez dias. Cada anúncio ainda no ar entra com os dias que já leva (é o método de Kaplan-Meier, o mesmo que se usa para não deitar fora quem ainda não teve o desfecho).</li>
+        <li class="fc-li"><b>O dia que conta é o último em que o vimos vivo</b>, não o dia em que reparámos que tinha saído. Quando a recolha fica bloqueada uns dias, a varredura seguinte marca tudo de uma vez, e usar essa data acrescentaria a duração da avaria ao tempo de venda de milhares de carros.</li>
+        <li class="fc-li"><b>Um anúncio do OLX corre em ciclos de 30 dias</b>, e vê-se: há uma acumulação de saídas exatamente aí. Por isso a figura principal é a <b>percentagem que sai no primeiro mês</b> e não a mediana — a mediana cai dentro desse degrau em quase todos os modelos e acaba a descrever o ciclo do OLX.</li>
+      </ul>
+      <p class="fc-p">Um anúncio pode desaparecer por venda ou por desistência, e não distinguimos os dois: a leitura correta é <b>tempo até sair do mercado</b>. O que conseguimos afirmar é um mínimo do que não vendeu — os anúncios que reaparecem semanas depois como anúncio novo do mesmo carro, que emparelhamos pela ficha e pela quilometragem. Uma página de tempo de venda existe a partir de <b>40 anúncios acompanhados até ao fim</b>, e cada corte dentro dela (preço, idade, distrito) precisa dos seus próprios 40.</p>
 
       <h2 class="fc-h2">7. Desvalorização</h2>
       <p class="fc-p">Ajustamos uma reta ao <b>logaritmo</b> da mediana de preço contra o ano de fabrico, e reportamos a taxa anual daí resultante. Logaritmo porque a desvalorização é uma percentagem do que resta: em euros perde-se muito mais no primeiro ano do que no nono, e uma reta sobre euros misturaria as duas coisas. Como é um corte transversal de anos diferentes hoje (e não o mesmo carro seguido ao longo do tempo), a leitura correta é "quanto custa a mais um ano mais recente", não "quanto vou perder no próximo ano".</p>
@@ -2660,7 +2928,16 @@ function emDistrito(key, label) {
   return `${DISTRICT_ARTICLE[key] || "em"} ${label}`;
 }
 
-export function renderDistrictPage({ key, rec, models, stats, host, depositCount, builtAt }) {
+export function districtRanking(districts, key) {
+  const rows = Object.entries(districts || {})
+    .filter(([, r]) => r && r.fm > 0)
+    .map(([k, r]) => ({ k, lbl: r.lbl, n: r.n, fm: r.fm, kmm: r.kmm != null ? r.kmm : null }))
+    .sort((a, b) => b.fm - a.fm);
+  const pos = rows.findIndex(r => r.k === key);
+  return { rows, pos: pos < 0 ? null : pos + 1, total: rows.length };
+}
+
+export function renderDistrictPage({ key, rec, models, districts, stats, host, depositCount, builtAt }) {
   const canonical = `https://${host}/precos/${key}`;
   const L = escapeHtml(rec.lbl);
   const vsNational = stats.priceMed ? (rec.fm - stats.priceMed) / stats.priceMed : null;
@@ -2674,6 +2951,16 @@ export function renderDistrictPage({ key, rec, models, stats, host, depositCount
       <td class="mut">${fmtEur(m.fm)}</td>
       <td>${d == null ? "—" : `${d >= 0 ? "+" : ""}${Math.round(d * 100)}%`}</td></tr>`;
   }).join("");
+
+  const rank = districtRanking(districts || {}, key);
+  const ranking = rank.rows.length >= 3 ? rank.rows.map(r => `<tr>
+      <td>${r.k === key ? `<b>${escapeHtml(r.lbl)}</b>` : `<a href="/precos/${encodeURIComponent(r.k)}" style="color:#177A47;font-weight:600;">${escapeHtml(r.lbl)}</a>`}</td>
+      <td>${fmtEur(r.fm)}</td>
+      <td class="mut">${r.k === key ? "—" : `${r.fm >= rec.fm ? "+" : ""}${Math.round((r.fm / rec.fm - 1) * 100)}%`}</td>
+      <td class="mut">${fmtNum(r.n)}</td></tr>`).join("") : "";
+  const rankLine = (rank.pos && rank.rows.length >= 3)
+    ? `Entre os ${rank.total} distritos com amostra suficiente, ${L} é o <b>${rank.pos}.º mais caro</b>: ${fmtEur(rank.rows[0].fm)} no topo (${escapeHtml(rank.rows[0].lbl)}) contra ${fmtEur(rank.rows[rank.rows.length - 1].fm)} no fim (${escapeHtml(rank.rows[rank.rows.length - 1].lbl)}). A diferença entre pontas é de ${Math.round((rank.rows[0].fm / rank.rows[rank.rows.length - 1].fm - 1) * 100)}%, e não é o mesmo carro a custar mais: onde os preços são mais altos anuncia-se também outro tipo de carro, mais recente e com menos quilómetros.`
+    : "";
 
   const body = crumbs([
     { name: "Início", href: "/" }, { name: "Preços", href: "/precos" }, { name: rec.lbl },
@@ -2695,6 +2982,16 @@ export function renderDistrictPage({ key, rec, models, stats, host, depositCount
       <div class="fc-scroll"><table class="fc-tbl">
         <thead><tr><th>Modelo</th><th>Anúncios aqui</th><th>Mediano aqui</th><th>Mediano nacional</th><th>Diferença</th></tr></thead>
         <tbody>${rows}</tbody></table></div>
+    </section>` : `<section class="section fc-wrap">
+      <h2 class="fc-h2">Modelo a modelo, aqui não dá</h2>
+      <p class="fc-p">Os ${fmtNum(rec.n)} anúncios ${emDistrito(key, L)} chegam para uma mediana do distrito, mas não para uma mediana por modelo: nenhum modelo tem anúncios que cheguem aqui para que a sua mediana signifique alguma coisa. Em vez de a inventar com quatro carros, ficamos pelo que o distrito diz no seu conjunto e pela comparação com o resto do país, aqui em baixo. Para um modelo concreto, os <a href="/precos">preços nacionais</a> são a referência mais firme que temos.</p>
+    </section>`}
+    ${ranking ? `<section class="section fc-wrap">
+      <h2 class="fc-h2">Onde ${L} fica no país</h2>
+      <p class="fc-p">${rankLine}</p>
+      <div class="fc-scroll"><table class="fc-tbl">
+        <thead><tr><th>Distrito</th><th>Preço mediano</th><th>vs. ${L}</th><th>Anúncios</th></tr></thead>
+        <tbody>${ranking}</tbody></table></div>
     </section>` : ""}
     <section class="section fc-wrap" style="padding-bottom:70px;">
       <p class="fc-p"><a href="/precos">Todos os modelos</a> · <a href="/mercado">Carros abaixo do valor justo</a> · <a href="/avaliar">Avaliar um anúncio</a></p>

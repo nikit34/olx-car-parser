@@ -113,12 +113,13 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
     from src.storage.database import init_db, get_session
     from src.storage.repository import (
         get_listings_df, get_price_history_df,
-        get_price_snapshots_df,
+        get_price_snapshots_df, get_relist_events_df,
         get_unmatched_df, get_portfolio_df,
     )
     from src.analytics.computed_columns import enrich_listings
     from src.analytics.text_signals import TEXT_SIGNAL_COLUMNS, add_text_signals
-    from src.analytics.turnover import compute_turnover_stats, compute_sell_speed_by_model
+    from src.analytics.turnover import compute_turnover_stats
+    from src.analytics.liquidity import build_liquidity, page_records, sell_speed_frame
     from src.analytics.valuations import build_valuations
     from src.analytics.model_pages import build_model_pages
     from src.analytics.price_model import load_model, value_configs
@@ -282,7 +283,19 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
     # by the Worker's /avaliar paste-a-link tool. Active+priced listings only;
     # ~0.9 MB gzipped for ~18k cars. Uploaded to the Release by the existing
     # ``data/dashboard/*.json`` glob in scrape-ci (no workflow change needed).
-    sell_speed = compute_sell_speed_by_model(listings)
+    _relisted = set()
+    try:
+        _rel = get_relist_events_df(session)
+        if not _rel.empty:
+            _relisted = set(_rel["original_olx_id"].astype(str))
+    except Exception as e:
+        print(f"[build]   relist events unavailable ({e}) — liquidity ships without them",
+              flush=True)
+    liquidity = build_liquidity(listings, relisted=_relisted)
+    liq_pages = page_records(liquidity)
+    sell_speed = sell_speed_frame(liquidity)
+    print(f"[build]   liquidity: {len(liquidity.get('models', {})):>6} models  "
+          f"({len(liq_pages)} deep enough for a page)", flush=True)
     valuations = build_valuations(listings, predictions, sell_speed)
     val_path = out_dir / "valuations.json"
     # allow_nan=False: a non-finite value (pandas NaN leaking through) emits the
@@ -315,7 +328,10 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
         _valuator = lambda cfg: value_configs(cfg, bundle=_bundle)  # noqa: E731
     else:
         print("[build]   model pages: no fresh price model — shipping asking-only", flush=True)
-    model_pages = build_model_pages(listings, sell_speed, valuator=_valuator)
+    model_pages = build_model_pages(listings, sell_speed, valuator=_valuator,
+                                    liquidity=liq_pages)
+    if liquidity.get("market"):
+        model_pages["lqm"] = liquidity["market"]
     model_pages["built_at"] = built_at   # freshness signal the Worker renders ("atualizado em")
     _mq = _model_quality(_mt if _loaded is not None else None)
     if _mq:

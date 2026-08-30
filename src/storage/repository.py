@@ -1066,6 +1066,7 @@ def get_listings_df(session: Session) -> pd.DataFrame:
             "llm_extras": l.llm_extras,
             "first_seen_at": l.first_seen_at,
             "last_seen_at": l.last_seen_at,
+            "last_scraped_at": l.last_scraped_at,
             # Enrichment columns
             "sub_model": l.sub_model,
             "trim_level": l.trim_level,

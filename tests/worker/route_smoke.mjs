@@ -190,6 +190,42 @@ await check("the second-layer hubs and pages answer", async () => {
   }
 });
 
+await check("a liquidity page exists exactly where the curve does", async () => {
+  const withLq = slugs.filter(s2 => models[s2].lq && models[s2].lq.s30 != null);
+  assert(withLq.length, "fixture carries no liquidity records");
+  const slug = withLq[0];
+  const r = await get(`/liquidez/${slug}`);
+  assert(r.status === 200, `/liquidez/${slug} → ${r.status}`);
+  const body = await r.text();
+  assert(body.includes("primeiro mês"), "liquidity page never states the 30-day share");
+  assert(body.includes("ciclos de 30 dias"), "liquidity page hides the expiry caveat");
+  const without = slugs.find(s2 => !(models[s2].lq && models[s2].lq.s30 != null));
+  if (without) {
+    assert((await get(`/liquidez/${without}`)).status === 404,
+      "a liquidity page exists for a model with no curve");
+  }
+  assert((await get("/liquidez/nao-existe")).status === 404, "unknown slug is not a 404");
+});
+
+await check("the liquidity page has a JSON twin and is linked, not orphaned", async () => {
+  const slug = slugs.find(s2 => models[s2].lq && models[s2].lq.s30 != null);
+  const r = await get(`/liquidez/${slug}.json`);
+  assert(r.status === 200, `/liquidez/${slug}.json → ${r.status}`);
+  assert((r.headers.get("content-type") || "").includes("application/json"), "JSON twin is not served as JSON");
+  const j = JSON.parse(await r.text());
+  assert(j.slug === slug, "JSON twin is about another model");
+  assert(j.gone_in_30d > 0 && j.gone_in_30d <= 1, "JSON twin has no 30-day share");
+  assert(j.sample_ended > 0, "JSON twin has no sample size");
+  assert(typeof j.caveat === "string" && j.caveat.length > 20, "JSON twin drops the caveat");
+
+  const modelPage = await (await get(`/preco/${slug}`)).text();
+  assert(modelPage.includes(`/liquidez/${slug}`), "model page does not link its liquidity page");
+  const hub = await (await get("/liquidez")).text();
+  assert(hub.includes(`href="/liquidez/${slug}"`), "/liquidez does not link the per-model pages");
+  const xml = await (await get("/sitemap.xml")).text();
+  assert(xml.includes(`<loc>https://${HOST}/liquidez/${slug}</loc>`), "sitemap missing the liquidity page");
+});
+
 await check("the depreciation curve has a JSON twin", async () => {
   const depSlug = depreciationSlugs(models)[0];
   const r = await get(`/depreciacao/${depSlug}.json`);
@@ -258,6 +294,7 @@ await check("every sitemap URL resolves to a 200", async () => {
     const shape = p.replace(/\/preco\/[^/]+\/\d{4}/, "/preco/*/YYYY")
                    .replace(/\/preco\/[^/]+/, "/preco/*")
                    .replace(/\/depreciacao\/[^/]+/, "/depreciacao/*")
+                   .replace(/\/liquidez\/[^/]+/, "/liquidez/*")
                    .replace(/\/comparar\/[^/]+/, "/comparar/*")
                    .replace(/\/mercado\/indice\/[^/]+/, "/mercado/indice/*");
     if (!shapes.has(shape)) shapes.set(shape, []);
@@ -392,8 +429,9 @@ await check("facet pages appear when the blob carries the cells", async () => {
 
     const unknown = await get(`/preco/${deep}/nao-existe`);
     assert(unknown.status === 404, `unknown facet → ${unknown.status}`);
-    const noDuel = slugs.find(s2 => !augmented.models[s2].dg);
     for (const d of Object.values(DUELS)) {
+      const noDuel = slugs.find(s2 => s2 !== deep && !augmented.models[s2][d.key]);
+      if (!noDuel) continue;
       assert((await get(`/${d.path}/${noDuel}`)).status === 404,
         `${d.path}: a page exists for a model with no fit`);
     }

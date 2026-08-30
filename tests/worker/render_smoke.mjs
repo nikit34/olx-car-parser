@@ -27,6 +27,7 @@ import {
   depreciationAge, depreciationJson,
   estimateIsv, ISV_TABLES_FOR_TEST, renderDistrictPage,
   renderFacetPage, renderDuelPage, renderDuelHub, duel, duelJson, DUELS, withPrep,
+  renderLiquidityPage, liquidityJson, liquidityOk, districtRanking,
 } from "../../flipper-club/src/seo-pages.js";
 
 const HOST = "carsbuyer.org";
@@ -97,6 +98,7 @@ const mdoc = await loadModels();
 const models = mdoc.models;
 const builtAt = mdoc.built_at;
 const stats = corpusStats(models, builtAt);
+const market = mdoc.lqm || null;
 const slugs = Object.keys(models);
 console.log(`models.json: ${slugs.length} models, built ${builtAt}`);
 
@@ -390,6 +392,46 @@ check("every depreciation page renders without throwing", () => {
   }
 });
 
+check("every liquidity page renders without throwing", () => {
+  const liqSlugs = Object.keys(models).filter(s2 => liquidityOk(models[s2]));
+  assert(liqSlugs.length, "fixture carries no liquidity records");
+  for (const s2 of liqSlugs) {
+    const rec = models[s2];
+    const html = renderLiquidityPage({
+      rec, slug: s2, market, hasDepreciation: false,
+      host: HOST, depositCount: 0, builtAt,
+    });
+    assertPage(html, { indexable: true, canonical: `https://${HOST}/liquidez/${s2}`, label: `liquidez/${s2}` });
+    assert(html.includes("<svg"), `${s2}: liquidity page has no curve`);
+    assert(html.includes("Sair do OLX não é o mesmo que vender"), `${s2}: drops the expiry caveat`);
+    assert(/\d+ em cada 100 desaparecem no primeiro mês/.test(html), `${s2}: no headline share`);
+    assert(html.includes('"@type": "FAQPage"') || html.includes('"@type":"FAQPage"'), `${s2}: no FAQ block`);
+  }
+});
+
+check("the liquidity page never claims a sale it cannot see", () => {
+  const liqSlugs = Object.keys(models).filter(s2 => liquidityOk(models[s2]));
+  for (const s2 of liqSlugs) {
+    const rec = models[s2], lq = rec.lq;
+    const html = renderLiquidityPage({ rec, slug: s2, market, host: HOST, depositCount: 0, builtAt });
+    const json = liquidityJson(rec, s2, { host: HOST, builtAt });
+    assert(json.gone_in_30d === lq.s30, `${s2}: JSON twin disagrees with the record`);
+    assert(json.caveat.includes("not proof of a sale"), `${s2}: JSON twin drops the caveat`);
+    if (lq.rb != null) {
+      assert(html.includes("É um mínimo"), `${s2}: relist share is stated as a rate, not a floor`);
+    }
+    if (lq.cd != null && lq.hd != null) {
+      assert(html.includes("não fica parado por se ter baixado o preço"),
+        `${s2}: the price-cut medians are left to read as causal`);
+    }
+    for (const cells of [lq.pb, lq.ab, lq.dt]) {
+      for (const c of cells || []) {
+        assert(c.n >= 40, `${s2}: a cut of ${c.n} listings reached the page`);
+      }
+    }
+  }
+});
+
 check("the euro figures rest on the fit, not on the thinnest cell", () => {
   for (const s of depSlugs) {
     const rec = models[s], fit = depreciationFit(rec);
@@ -494,16 +536,25 @@ check("hubs render", () => {
   assertPage(renderCompareHub({ pairs, models, host: HOST, depositCount: 0, builtAt }),
     { indexable: true, canonical: `https://${HOST}/comparar`, label: "comparar hub" });
 
-  const liq = Object.entries(models).filter(([, r]) => r.sd != null)
-    .map(([slug, r]) => ({ slug, b: r.b, m: r.m, sd: r.sd, sn: r.sn, fm: r.fm }))
-    .sort((x, y) => x.sd - y.sd);
-  assertPage(renderLiquidityHub({ rows: liq, stats, host: HOST, depositCount: 0, builtAt }),
-    { indexable: true, canonical: `https://${HOST}/liquidez`, label: "liquidez" });
+  const liq = Object.entries(models).filter(([, r]) => (r.lq && r.lq.s30 != null) || r.sd != null)
+    .map(([slug, r]) => ({ slug, b: r.b, m: r.m, sd: r.sd, sn: r.sn, fm: r.fm,
+                           lq: (r.lq && r.lq.s30 != null) ? r.lq : null, page: liquidityOk(r) }))
+    .sort((x, y) => (y.lq ? y.lq.s30 : 0) - (x.lq ? x.lq.s30 : 0));
+  const liqHub = renderLiquidityHub({ rows: liq, market, host: HOST, depositCount: 0, builtAt });
+  assertPage(liqHub, { indexable: true, canonical: `https://${HOST}/liquidez`, label: "liquidez" });
+  if (liq.some(r => r.page)) {
+    assert(liqHub.includes(`href="/liquidez/${liq.find(r => r.page).slug}"`),
+      "liquidity hub does not link the per-model pages");
+  }
+  const noCurve = { slug: "x-y", b: "X", m: "Y", sd: 21, sn: 30, fm: 6000, lq: null, page: false };
+  assertPage(renderLiquidityHub({ rows: [noCurve], market: null, host: HOST, depositCount: 0, builtAt }),
+    { indexable: true, canonical: `https://${HOST}/liquidez`, label: "liquidez (blob sem curva)" });
 
   const gap = Object.entries(models).filter(([, r]) => r.gm > 0 && r.fm > 0)
-    .map(([slug, r]) => ({ slug, b: r.b, m: r.m, fm: r.fm, gm: r.gm, n: r.n, gap: r.fm / r.gm - 1 }))
+    .map(([slug, r]) => ({ slug, b: r.b, m: r.m, fm: r.fm, gm: r.gm, n: r.n, gap: r.fm / r.gm - 1,
+                           s30: (r.lq && r.lq.s30 != null) ? r.lq.s30 : null, page: liquidityOk(r) }))
     .sort((x, y) => y.gap - x.gap);
-  assertPage(renderValuationGap({ over: gap.slice(0, 25), under: gap.slice(-25).reverse(), stats, host: HOST, depositCount: 0, builtAt }),
+  assertPage(renderValuationGap({ over: gap.slice(0, 25), under: gap.slice(-25).reverse(), market, stats, host: HOST, depositCount: 0, builtAt }),
     { indexable: true, canonical: `https://${HOST}/sobrevalorizados`, label: "sobrevalorizados" });
 });
 
@@ -673,6 +724,32 @@ check("district pages take the right Portuguese article", () => {
   for (const [key, lbl] of [["lisboa", "Lisboa"], ["braga", "Braga"], ["faro", "Faro"], ["setubal", "Setúbal"]]) {
     const h = mk(key, lbl);
     assert(h.includes(`carros usados em ${lbl}`), `${lbl} should be bare "em"`);
+  }
+});
+
+check("a district page stands on the country when it cannot stand on models", () => {
+  const thin = renderDistrictPage({
+    key: "braganca",
+    rec: { lbl: "Bragança", n: 107, fl: 3500, fm: 6000, fh: 11000, kmm: 195000, top: [] },
+    models, districts: mdoc.districts || {}, stats, host: HOST, depositCount: 0, builtAt,
+  });
+  assertPage(thin, { indexable: true, canonical: `https://${HOST}/precos/braganca`, label: "precos/braganca" });
+  assert(thin.includes("Modelo a modelo, aqui não dá"), "a thin district hides why the table is missing");
+  assert(!thin.includes("<th>Mediano nacional</th>"), "a thin district renders an empty model table");
+
+  const ds = mdoc.districts || {};
+  const keys = Object.keys(ds);
+  if (keys.length >= 3) {
+    const k = keys[0];
+    const page = renderDistrictPage({
+      key: k, rec: ds[k], models, districts: ds, stats, host: HOST, depositCount: 0, builtAt,
+    });
+    assertPage(page, { indexable: true, canonical: `https://${HOST}/precos/${k}`, label: `precos/${k}` });
+    assert(page.includes("mais caro</b>"), `${k}: no place in the national ranking`);
+    const other = keys.find(x => x !== k);
+    assert(page.includes(`href="/precos/${other}"`), `${k}: the ranking does not link the other districts`);
+    const rank = districtRanking(ds, k);
+    assert(rank.pos >= 1 && rank.pos <= rank.total, `${k}: ranking position out of range`);
   }
 });
 

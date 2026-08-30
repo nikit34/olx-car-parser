@@ -18,6 +18,15 @@ and ``dt`` (district), plus a top-level ``districts`` rollup for the cross-model
 geo pages. Same gate as everything else - a facet with a thin sample is absent,
 not estimated.
 
+Days on market arrive ready-made from ``analytics.liquidity`` and ride along as
+``lq``: how many of this model's listings leave OLX inside 30, 60 and 90 days,
+the median and quartiles behind it, the same cuts by price band, age and
+district, and the share that came back later as a new listing (the only hard
+evidence we have that a disappearance was not a sale). A model carries the key
+only above that module's page floor, which is what tells the Worker a
+/liquidez/{slug} page exists. The market-wide row is written next to
+``districts`` as ``lqm`` by the build script.
+
 Where a model has enough of both sides of an either/or to fit them separately,
 it also carries the mileage-controlled retention duel from ``retention_duel``:
 ``dg`` (diesel vs gasolina) and ``cx`` (caixa manual vs automática) — the
@@ -68,7 +77,7 @@ _FUEL_FACETS = {"diesel": "Diesel", "gasolina": "Gasolina", "gpl": "GPL"}
 _TRANSMISSION_FACETS = {"manual": "Manual", "automatica": "Automática"}
 
 # National floor for a district to get its own cross-model page.
-MIN_DISTRICT_N = 200
+MIN_DISTRICT_N = 100
 MAX_DISTRICT_TOP_MODELS = 40
 
 # ── GBM fair-value display guards ────────────────────────────────────────────
@@ -334,6 +343,21 @@ def _district_rollup(active: pd.DataFrame, models: dict) -> dict:
     Separate from the per-model district cells because the query is different -
     "carros usados Lisboa precos" is about the market, not about one model - and
     because the sample only supports it at the national level for most places.
+
+    The floor is what decides how much of the country has a page. At 200 active
+    listings only 13 of the 18 mainland districts cleared it, and the five that
+    did not - Vila Real, Beja, Guarda, Portalegre, Braganca, between 107 and 188
+    listings - are exactly where a local median is worth most, because there the
+    national number is furthest from what a buyer sees. At 100 all 18 have one.
+
+    What those five cannot carry is the per-model table: none of them has more
+    than two models with five listings, so ``top`` comes back nearly empty and
+    the page has to stand on the district median, its interquartile range and
+    the comparison against the rest of the country. The Worker is told that by
+    the length of ``top`` and says it in words rather than rendering an empty
+    table. The islands stay out on their own numbers (Madeira 63, every Azores
+    island under 35), which is the floor working rather than a decision about
+    them.
     """
     if "district" not in active.columns:
         return {}
@@ -341,7 +365,8 @@ def _district_rollup(active: pd.DataFrame, models: dict) -> dict:
     slug_of = {}
     for slug, rec in models.items():
         slug_of[(rec["b"], rec["m"])] = slug
-    for raw, sub in active.assign(_d=active["district"].map(slugify)).dropna(subset=["_d"]).groupby("_d"):
+    _keys = active["district"].map(lambda v: None if pd.isna(v) else (slugify(str(v)) or None))
+    for raw, sub in active.assign(_d=_keys).dropna(subset=["_d"]).groupby("_d"):
         if not raw or len(sub) < MIN_DISTRICT_N:
             continue
         q = _quantiles(sub["price_eur"])
@@ -374,9 +399,15 @@ def build_model_pages(
     sell_speed: pd.DataFrame | None = None,
     valuator: Callable[[pd.DataFrame], pd.DataFrame] | None = None,
     now_year: int | None = None,
+    liquidity: dict | None = None,
 ) -> dict:
     """Return ``{"v":1, "models": {slug: {...}}}`` for models with >=MIN_MODEL_N
     active, asking-priced listings.
+
+    ``liquidity`` is ``analytics.liquidity.page_records`` output keyed by
+    (brand, model) — the days-on-market curve, its cuts and the relist floor.
+    It arrives ready-gated: a model that has one gets a ``lq`` key and, with it,
+    a /liquidez page; a model that does not simply has neither.
 
     When ``valuator`` is given (a callable taking a configs DataFrame → the
     ``price_model.value_configs`` output), each page and per-year cell also gets
@@ -436,6 +467,13 @@ def build_model_pages(
             if _prev is None or int(r.sell_n) > _prev[1]:
                 sell_lookup[_key] = (int(r.sell_days), int(r.sell_n))
 
+    liq_lookup: dict[tuple, dict] = {}
+    for (_b, _m), _rec in (liquidity or {}).items():
+        _key = _canon.get(slugify(f"{_b}-{_m}"), (str(_b), str(_m)))
+        _prev = liq_lookup.get(_key)
+        if _prev is None or int(_rec.get("n", 0)) > int(_prev.get("n", 0)):
+            liq_lookup[_key] = _rec
+
     for (brand, model), grp in active.groupby(["brand", "model"]):
         if len(grp) < MIN_MODEL_N:
             continue
@@ -485,10 +523,14 @@ def build_model_pages(
         if tx:
             rec["tx"] = tx
         rec.update(all_duels(grp, now_year))
-        dt = _facet_cells(grp, "district", lambda v: slugify(str(v or "")) or None,
+        dt = _facet_cells(grp, "district",
+                          lambda v: None if pd.isna(v) else (slugify(str(v)) or None),
                           lambda v: str(v), MIN_FACET_N, limit=MAX_DISTRICT_ROWS)
         if dt:
             rec["dt"] = dt
+        lq = liq_lookup.get((brand, model))
+        if lq:
+            rec["lq"] = lq
         models[slug] = {k: v for k, v in rec.items() if v is not None}
         if valuator is not None:
             keep = [c for c in _GBM_COLS if c in grp.columns]
