@@ -1,0 +1,99 @@
+name: German price benchmark
+
+# The /importar pages need one number this project cannot produce on its own:
+# what the same model asks in Germany. This walks a slice of the AutoScout24
+# search pages once a week and writes it to import_listings; the pages
+# themselves are built by the scrape workflow, from whatever this has collected.
+#
+# Weekly and budgeted on purpose. A German asking price does not move enough in
+# a day to justify a daily crawl, and the crawler's whole contract with the site
+# it reads is that it stays small and slow (see src/parser/autoscout.py). At the
+# default budget the run makes 200 requests at 6-10 s apart — about half an hour
+# — and picks up where the previous week left off, because model-years refreshed
+# inside the last week are skipped.
+
+on:
+  schedule:
+    # Off-hour minute, and a day the scrape's deep sweep does not need the box.
+    - cron: "41 3 * * 2"
+  workflow_dispatch:
+    inputs:
+      budget:
+        description: "Hard cap on requests for this run"
+        type: string
+        default: "200"
+      models:
+        description: "How many of the deepest-sampled Portuguese models to cover"
+        type: string
+        default: "60"
+
+# Shares the runner with the scrape, so it shares its queue. Never cancel a
+# scrape for this: the benchmark can wait a week, the corpus cannot.
+concurrency:
+  group: scrape-job
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    runs-on: [self-hosted, olx-scraper]
+    timeout-minutes: 90
+
+    env:
+      OLX_DB_URL: ${{ secrets.OLX_DB_URL }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Link persistent data directory
+        run: |
+          rm -rf data
+          ln -s /Users/anastasia/olx-car-parser/data data
+
+      - name: Set up Python venv
+        run: |
+          /opt/homebrew/bin/python3.14 -m venv .venv 2>/dev/null || true
+          .venv/bin/pip install -q -e .
+
+      - name: Read the German side
+        id: crawl
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          set +e
+          .venv/bin/python scripts/crawl_autoscout.py \
+            --budget "${{ inputs.budget || '200' }}" \
+            --models "${{ inputs.models || '60' }}"
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          # rc=2 is the crawler stopping because the site asked it to. That is
+          # the crawler behaving, not a broken build — warn and stay green so a
+          # week of backing off does not read as an outage.
+          if [ $rc -eq 2 ]; then
+            echo "::warning::AutoScout24 asked us to back off — run stopped early, next week picks up"
+            exit 0
+          fi
+          exit $rc
+
+      - name: Report coverage
+        if: ${{ !cancelled() }}
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          .venv/bin/python - <<'PY'
+          from src.analytics.import_deal import build_import_pages
+          from src.storage.database import init_db, get_session
+          from src.storage.repository import get_import_listings_df, get_listings_df
+
+          init_db(None)
+          session = get_session()
+          de = get_import_listings_df(session)
+          doc = build_import_pages(get_listings_df(session), de)
+          models = doc.get("models", {})
+          print(f"german listings held: {len(de)}")
+          print(f"models with a publishable page: {len(models)}")
+          for slug, rec in sorted(models.items(), key=lambda kv: -kv[1]["med_gap"]):
+              print(f"  {slug:28s} {rec['wins']}/{len(rec['yr'])} anos  "
+                    f"mediana {rec['med_gap']:+6d} EUR")
+          if not models:
+              print("::warning::no model has both sides of a model year yet")
+          PY

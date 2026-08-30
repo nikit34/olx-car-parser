@@ -28,6 +28,7 @@ import {
   estimateIsv, ISV_TABLES_FOR_TEST, renderDistrictPage,
   renderFacetPage, renderDuelPage, renderDuelHub, duel, duelJson, DUELS, withPrep,
   renderLiquidityPage, liquidityJson, liquidityOk, districtRanking,
+  renderImportPage, renderImportHub, importJson, importOk, importSlugs,
 } from "../../flipper-club/src/seo-pages.js";
 
 const HOST = "carsbuyer.org";
@@ -99,6 +100,7 @@ const models = mdoc.models;
 const builtAt = mdoc.built_at;
 const stats = corpusStats(models, builtAt);
 const market = mdoc.lqm || null;
+const idoc = JSON.parse(readFileSync(new URL("./fixtures/import.json", import.meta.url), "utf8"));
 const slugs = Object.keys(models);
 console.log(`models.json: ${slugs.length} models, built ${builtAt}`);
 
@@ -430,6 +432,52 @@ check("the liquidity page never claims a sale it cannot see", () => {
       }
     }
   }
+});
+
+check("every import page renders and adds up on the page", () => {
+  const slugs = importSlugs(idoc);
+  assert(slugs.length, "import fixture carries no models");
+  for (const slug of slugs) {
+    const rec = idoc.models[slug];
+    const html = renderImportPage({
+      rec, slug, costs: idoc.costs, hasModelPage: true,
+      host: HOST, depositCount: 0, builtAt: idoc.built_at,
+    });
+    assertPage(html, { indexable: true, canonical: `https://${HOST}/importar/${slug}`, label: `importar/${slug}` });
+    assert(html.includes("Total à porta"), `${slug}: no landed-cost column`);
+    assert(html.includes("O que esta conta não sabe"), `${slug}: drops the caveats`);
+    assert(html.includes("IVA"), `${slug}: never explains the VAT side`);
+    for (const c of rec.yr) {
+      assert(c.ll === c.dm + c.isv + Math.round(idoc.costs.lo) ||
+             c.ll === Math.round(c.dm + c.isv + idoc.costs.lo),
+        `${slug} ${c.y}: the landed cost does not equal the printed parts`);
+      assert(c.gl === c.ptm - c.lh, `${slug} ${c.y}: the saving is not the difference shown`);
+    }
+    const json = importJson(rec, slug, idoc.costs, { host: HOST, builtAt: idoc.built_at });
+    assert(json.years.length === rec.yr.length, `${slug}: JSON twin lost a year`);
+    assert(json.caveat.includes("asking prices"), `${slug}: JSON twin drops the caveat`);
+  }
+});
+
+check("a model that loses money says so instead of hiding the row", () => {
+  const losing = importSlugs(idoc).map(s2 => idoc.models[s2]).find(r => (r.yr || []).some(c => c.gl < 0));
+  if (!losing) return;
+  const slug = importSlugs(idoc).find(s2 => idoc.models[s2] === losing);
+  const html = renderImportPage({ rec: losing, slug, costs: idoc.costs, host: HOST, depositCount: 0, builtAt: idoc.built_at });
+  assert(html.includes("mais €") || html.includes("mais&nbsp;€"), `${slug}: a losing year is not shown as a loss`);
+});
+
+check("the import hub ranks models and states both sides", () => {
+  const rows = importSlugs(idoc).map(slug => {
+    const r = idoc.models[slug];
+    return { slug, b: r.b, m: r.m, med_gap: r.med_gap, wins: r.wins,
+             cells: (r.yr || []).length, nde: r.nde, npt: r.npt };
+  });
+  const html = renderImportHub({ rows, costs: idoc.costs, host: HOST, depositCount: 0, builtAt: idoc.built_at });
+  assertPage(html, { indexable: true, canonical: `https://${HOST}/importar`, label: "importar hub" });
+  assert(html.includes("AutoScout24"), "the hub never says where the German prices come from");
+  const gaps = rows.map(r => r.med_gap);
+  assert(gaps.slice(1).every((g, i) => g <= gaps[i]), "the hub is not ranked by the difference");
 });
 
 check("the euro figures rest on the fit, not on the thinnest cell", () => {

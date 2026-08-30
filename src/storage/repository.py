@@ -1,5 +1,6 @@
 """CRUD operations for listings and price snapshots."""
 
+from dataclasses import asdict
 from datetime import datetime, date, timedelta, timezone
 
 from src.parser.tls_fingerprint import build_ssl_context
@@ -23,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from src.models.listing import Listing, PriceSnapshot, MarketStats, UnmatchedListing
 from src.models.portfolio import PortfolioDeal
+from src.models.import_listing import ImportListing
 from src.models.relist import RelistEvent
 from src.models.seller import Seller
 
@@ -1432,3 +1434,75 @@ def get_portfolio_df(session: Session) -> pd.DataFrame:
             "notes": d.notes, "olx_listing_id": d.olx_listing_id,
         })
     return pd.DataFrame(rows)
+
+
+_IMPORT_FIELDS = (
+    "url", "brand", "model", "model_group", "variant", "motor_type",
+    "price_eur", "vat_label", "vat_reclaimable", "year", "registration_month",
+    "mileage_km", "engine_cc", "horsepower", "power_kw", "fuel_type",
+    "transmission", "co2_g_km", "seller_type", "country_code", "city",
+    "zip_code", "is_damaged",
+)
+
+
+def upsert_import_listings(session: Session, listings) -> tuple[int, int]:
+    """Insert or refresh foreign-market listings. Returns (inserted, updated).
+
+    Brands are canonicalised on the way in, as they are for the Portuguese
+    corpus: AutoScout24 writes "Citroen" where OLX writes "Citroën", and the two
+    have to be the same make or the import pages join against nothing.
+
+    Keyed on (source, external_id). A listing seen again only moves
+    ``last_seen_at`` and whatever the seller changed, so the table records how
+    long a German ad has been up as a side effect — the same lifecycle signal
+    the Portuguese corpus carries.
+    """
+    from src.parser.brand_normalize import normalize_brand
+
+    inserted = updated = 0
+    now = _utcnow()
+    for item in listings:
+        data = item if isinstance(item, dict) else asdict(item)
+        if data.get("brand"):
+            data["brand"] = normalize_brand(data["brand"])
+        source = str(data.get("source") or "")
+        external_id = str(data.get("external_id") or "")
+        if not source or not external_id:
+            continue
+        row = (session.query(ImportListing)
+               .filter_by(source=source, external_id=external_id).first())
+        values = {k: data.get(k) for k in _IMPORT_FIELDS if k in data}
+        if row is None:
+            session.add(ImportListing(source=source, external_id=external_id,
+                                      first_seen_at=now, last_seen_at=now, **values))
+            inserted += 1
+        else:
+            for key, value in values.items():
+                if value is not None:
+                    setattr(row, key, value)
+            row.last_seen_at = now
+            updated += 1
+    session.commit()
+    return inserted, updated
+
+
+def get_import_listings_df(session: Session) -> pd.DataFrame:
+    """Every foreign-market listing as a DataFrame, in this project's vocabulary."""
+    rows = session.query(ImportListing).all()
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame([{
+        "source": r.source, "external_id": r.external_id, "url": r.url,
+        "brand": r.brand, "model": r.model, "model_group": r.model_group,
+        "variant": r.variant, "motor_type": r.motor_type,
+        "price_eur": r.price_eur, "vat_label": r.vat_label,
+        "vat_reclaimable": r.vat_reclaimable,
+        "year": r.year, "registration_month": r.registration_month,
+        "mileage_km": r.mileage_km, "engine_cc": r.engine_cc,
+        "horsepower": r.horsepower, "power_kw": r.power_kw,
+        "fuel_type": r.fuel_type, "transmission": r.transmission,
+        "co2_g_km": r.co2_g_km, "seller_type": r.seller_type,
+        "country_code": r.country_code, "city": r.city, "zip_code": r.zip_code,
+        "is_damaged": r.is_damaged,
+        "first_seen_at": r.first_seen_at, "last_seen_at": r.last_seen_at,
+    } for r in rows])

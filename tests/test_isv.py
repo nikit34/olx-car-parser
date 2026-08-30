@@ -80,3 +80,11 @@ def test_non_eu_no_age_reduction():
                          first_reg_year=2021, as_of_year=2026, is_eu=False)
     assert non_eu["isv_eur"] == non_eu["gross_eur"]      # no reduction
     assert non_eu["isv_eur"] > eu["isv_eur"]
+
+
+def test_a_missing_co2_is_missing_even_when_it_arrives_as_nan():
+    """A pandas column with a hole in it must not be taxed at the top bracket."""
+    nan = float("nan")
+    assert _isv(co2_g_km=nan, engine_cc=1598, fuel_type="Diesel", first_reg_year=2016) is None
+    assert _isv(co2_g_km=120, engine_cc=nan, fuel_type="Diesel", first_reg_year=2016) is None
+    assert _isv(co2_g_km=None, engine_cc=1598, fuel_type="Diesel", first_reg_year=2016) is None

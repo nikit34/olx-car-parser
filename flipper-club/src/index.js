@@ -67,6 +67,7 @@ import {
   depreciationAge, depreciationJson,
   renderFacetPage, renderDistrictPage, facetCells, facetCell, facetKind, facetKeys,
   renderLiquidityPage, liquidityJson, publishedLiquidity,
+  renderImportPage, renderImportHub, importJson, importOk, importSlugs,
   isoWeek, missingWeeks, monthlyCuts, renderMarketMonth,
   setWave, publishedYearPages, publishedDepreciation, publishedPairs, publishedFacets,
   DUELS, duel, duelByPath, duelJson, duelSlugs, duelsFor, publishedDuel,
@@ -96,7 +97,7 @@ const PRODUCT_PATHS = new Set([
   // Second-layer SEO pages (seo-pages.js). Hubs are exact paths; their per-item
   // children (/depreciacao/{slug}, /comparar/{a}-vs-{b}, /mercado/indice/{week|month})
   // are prefix-routed above the asset gate.
-  "/depreciacao", "/comparar", "/liquidez", "/sobrevalorizados",
+  "/depreciacao", "/comparar", "/liquidez", "/sobrevalorizados", "/importar",
   "/metodologia", "/sobre", "/isv",
   ...Object.values(DUELS).map(d => `/${d.path}`),
 ]);
@@ -260,6 +261,9 @@ export default {
       if (pathname.startsWith("/liquidez/") && method === "GET") {
         return handleLiquidityPage(request, env, url);
       }
+      if (pathname.startsWith("/importar/") && method === "GET") {
+        return handleImportPage(request, env, url);
+      }
       const duelPrefix = Object.values(DUELS).find(d => pathname.startsWith(`/${d.path}/`));
       if (duelPrefix && method === "GET") {
         return handleDuel(request, env, url, duelPrefix);
@@ -317,6 +321,7 @@ export default {
       if (duelHub && method === "GET") return handleDuelHub(request, env, url, duelHub);
       if (pathname === "/liquidez" && method === "GET") return handleLiquidity(request, env, url);
       if (pathname === "/sobrevalorizados" && method === "GET") return handleValuationGap(request, env, url);
+      if (pathname === "/importar" && method === "GET") return handleImportHub(request, env, url);
       if (pathname === "/metodologia" && method === "GET") return handleMethodology(request, env, url);
       if (pathname === "/sobre" && method === "GET") return handleAbout(request, env, url);
       if (pathname === "/isv" && method === "GET") return handleIsv(request, env, url);
@@ -870,6 +875,58 @@ async function handleValuationGap(request, env, url) {
   });
 }
 
+async function getImports(env) {
+  const url = `${HOT_DEALS_BASE}/import.json`;
+  try {
+    const r = await fetch(url, {
+      cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": 300, "300-399": 0, "400-499": 0, "500-599": 0 } },
+    });
+    if (!r.ok) return null;
+    const data = await r.json();
+    return data && data.models ? data : null;
+  } catch (err) {
+    console.warn("import fetch error", err && err.message);
+    return null;
+  }
+}
+
+async function handleImportHub(request, env, url) {
+  const { uid, setCookie } = ensureUid(request);
+  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
+  const doc = await getImports(env);
+  if (!doc) return notFoundPage(request, env, url, setCookie);
+  const rows = importSlugs(doc).map(slug => {
+    const r = doc.models[slug];
+    return { slug, b: r.b, m: r.m, med_gap: r.med_gap, wins: r.wins,
+             cells: (r.yr || []).length, nde: r.nde, npt: r.npt };
+  });
+  if (!rows.length) return notFoundPage(request, env, url, setCookie);
+  return html(renderImportHub({
+    rows, costs: doc.costs, host: url.host, depositCount, builtAt: doc.built_at,
+  }), 200, setCookie);
+}
+
+async function handleImportPage(request, env, url) {
+  let slug;
+  try {
+    slug = decodeURIComponent(url.pathname.slice("/importar/".length)).replace(/\/+$/, "").toLowerCase();
+  } catch (_) { return notFoundPage(request, env, url); }
+  const wantsJson = slug.endsWith(".json");
+  if (wantsJson) slug = slug.slice(0, -".json".length);
+  const { uid, setCookie } = ensureUid(request);
+  const doc = await getImports(env);
+  const rec = doc && doc.models ? doc.models[slug] : null;
+  if (!rec || !importOk(rec)) return notFoundPage(request, env, url, setCookie);
+  if (wantsJson) return jsonResponse(importJson(rec, slug, doc.costs, { host: url.host, builtAt: doc.built_at }));
+  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
+  const mdoc = await getModels(env);
+  const hasModelPage = !!(mdoc && mdoc.models && mdoc.models[slug]);
+  return html(renderImportPage({
+    rec, slug, costs: doc.costs, hasModelPage,
+    host: url.host, depositCount, builtAt: doc.built_at,
+  }), 200, setCookie);
+}
+
 // /metodologia, /sobre, /isv
 async function handleMethodology(request, env, url) {
   return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, stats, mq }) =>
@@ -1143,6 +1200,17 @@ async function handleSitemap(request, env, url) {
     } catch (_) { /* archive is optional */ }
   }
 
+  try {
+    const idoc = await getImports(env);
+    if (idoc) {
+      const slugs = importSlugs(idoc);
+      if (slugs.length) {
+        add("/importar", "weekly", "0.7");
+        for (const slug of slugs) add(`/importar/${encodeURIComponent(slug)}`, "weekly", "0.6");
+      }
+    }
+  } catch (_) { /* the import layer is optional */ }
+
   const xml = `<?xml version="1.0" encoding="UTF-8"?>\n`
     + `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>`;
   return new Response(xml, {
@@ -1270,6 +1338,7 @@ async function handleLlmsTxt(request, env, url) {
     `- [Comparações diretas entre modelos](${base}/comparar)`,
     ...duelHubs.map(d => `- [${d.hubTitle}](${base}/${d.path})`),
     `- [Preço pedido vs. valor justo estimado](${base}/sobrevalorizados)`,
+    `- [Importar da Alemanha: em que modelos a conta fecha](${base}/importar)`,
     `- [Simulador de ISV](${base}/isv)`,
     `- [Metodologia](${base}/metodologia)`,
     `- [Quem somos](${base}/sobre)`,
@@ -1290,6 +1359,7 @@ async function handleLlmsTxt(request, env, url) {
     `- \`${base}/precos/{distrito}\` — o mercado de um distrito`,
     `- \`${base}/depreciacao/{slug}\` — curva de desvalorização, custo de cada ano de idade e onde a queda abranda (existe onde há histórico suficiente)`,
     `- \`${base}/liquidez/{slug}\` — quanto tempo esse modelo demora a sair do OLX: percentagem que sai em 30/60/90 dias, mediana, e os mesmos cortes por faixa de preço, idade e distrito (+ .json)`,
+    `- \`${base}/importar/{slug}\` — preço pedido na Alemanha + ISV + legalização contra o preço pedido em Portugal, ano a ano (+ .json)`,
     `- \`${base}/comparar/{slug-a}-vs-{slug-b}\` — comparação entre dois modelos`,
     `- \`${base}/mercado/indice/{AAAA}-W{SS}\` — corte semanal permanente do mercado`,
     `- \`${base}/mercado/indice/{AAAA}-{MM}\` — corte mensal permanente, mediana dos cortes semanais desse mês`,

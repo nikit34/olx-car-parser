@@ -180,12 +180,15 @@ src/
 │   ├── llm_enrichment.py   # domain rules for extracted facts (validation, corrections)
 │   ├── cloud_enrichment.py # Gemini → OpenRouter cascade + per-provider budget ledger
 │   ├── tls_fingerprint.py  # the ClientHello every OLX-facing client must use
+│   ├── autoscout.py        # AutoScout24 search reader — the German side of /importar
 │   ├── photo_damage.py     # ResNet50 wrapper — DamageClassifier
 │   └── damage_decision.py  # torch-free flag rules — imported by the dashboard
 ├── analytics/
 │   ├── value_gate.py       # ranks listings by GBM undervaluation → top-K for the LLM
 │   ├── price_model.py      # LightGBM CQR pipeline + features
 │   ├── model_eval.py       # 5-split time backtest
+│   ├── liquidity.py        # days on market, Kaplan-Meier over live + ended listings
+│   ├── import_deal.py      # German price + ISV + legalisation vs. the Portuguese ask
 │   └── computed_columns.py # depreciation / liquidity / per-segment stats
 ├── dashboard/
 │   ├── 🔥_Recommendations.py   # stlite entry — deal-cards home page
@@ -203,6 +206,7 @@ dashboard-static/               # CF Pages static bundle
 └── files/, data/               # build outputs from build_stlite_bundle.py (gitignored)
 
 scripts/
+├── crawl_autoscout.py                 # budgeted weekly read of German asking prices
 ├── rederive_damage_severity.py        # rule-based severity backfill (no LLM)
 ├── photo_verify_damage.py             # dry-run photo verification (JSON report)
 ├── photo_damage_classifier_eval.py    # eval against gold-labelled holdout

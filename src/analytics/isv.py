@@ -26,6 +26,7 @@ NEDC / ≥2020 WLTP are safe) — surfaced via `confidence`.
 from __future__ import annotations
 
 import datetime
+import math
 
 # ── Componente cilindrada (cm³ → €). Cycle- and fuel-independent. ─────────────
 # (upper_bound_cm3, €/cm³, parcela_a_abater). Floored at 0.
@@ -111,6 +112,13 @@ def compute_isv(co2_g_km, engine_cc, fuel_type, first_reg_year, as_of_year=None,
     Returns a dict {isv_eur, gross_eur, components, cycle, reduction_pct,
     age_years, confidence} or None when uncomputable (per the honesty rule).
     BEV → isv_eur 0. PHEV → None (special regime, needs unavailable eligibility).
+
+    A NaN counts as missing, not as a number. It arrives whenever the caller
+    passes a column rather than a value — a pandas float column with a hole in
+    it — and NaN survives every comparison below (``nan <= 0`` is False, and so
+    is every bracket test), so without this guard a listing with no CO2 at all
+    would be taxed at the top bracket and the page would print the invented
+    figure with a straight face.
     """
     fclass = _fuel_class(fuel_type)
     if fclass is None:
@@ -125,6 +133,8 @@ def compute_isv(co2_g_km, engine_cc, fuel_type, first_reg_year, as_of_year=None,
     try:
         co2 = float(co2_g_km); cc = float(engine_cc); ry = int(first_reg_year)
     except (TypeError, ValueError):
+        return None
+    if not (math.isfinite(co2) and math.isfinite(cc)):
         return None
     if co2 <= 0 or cc <= 0:
         return None

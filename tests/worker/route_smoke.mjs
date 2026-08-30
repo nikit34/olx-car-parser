@@ -12,7 +12,7 @@
 
 import { readFileSync } from "node:fs";
 import worker from "../../flipper-club/src/index.js";
-import { yearPageYears, depreciationSlugs, comparePairs, isoWeek, isoWeekStart, missingWeeks, DUELS, isoWeekMonth, monthlyCuts } from "../../flipper-club/src/seo-pages.js";
+import { yearPageYears, depreciationSlugs, comparePairs, isoWeek, isoWeekStart, missingWeeks, DUELS, isoWeekMonth, monthlyCuts, importSlugs } from "../../flipper-club/src/seo-pages.js";
 
 const HOST = "carsbuyer.org";
 const RELEASE = "https://github.com/nikit34/olx-car-parser/releases/download/latest-data/models.json";
@@ -27,6 +27,7 @@ async function check(name, fn) {
 const arg = process.argv[2];
 const mdoc = arg ? JSON.parse(readFileSync(arg, "utf8")) : await (await fetch(RELEASE)).json();
 const models = mdoc.models;
+const idoc = JSON.parse(readFileSync(new URL("./fixtures/import.json", import.meta.url), "utf8"));
 
 // ── stub env ────────────────────────────────────────────────────────────────
 const kv = new Map();
@@ -60,6 +61,7 @@ const env = {
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
   const u = typeof input === "string" ? input : input.url;
+  if (u.includes("import.json")) return new Response(JSON.stringify(idoc), { status: 200 });
   if (u.includes("models.json")) return new Response(JSON.stringify(mdoc), { status: 200 });
   if (u.includes("hot_deals_")) return new Response(JSON.stringify({ deals: [] }), { status: 200 });
   if (u.includes("valuations.json")) return new Response(JSON.stringify({}), { status: 200 });
@@ -224,6 +226,55 @@ await check("the liquidity page has a JSON twin and is linked, not orphaned", as
   assert(hub.includes(`href="/liquidez/${slug}"`), "/liquidez does not link the per-model pages");
   const xml = await (await get("/sitemap.xml")).text();
   assert(xml.includes(`<loc>https://${HOST}/liquidez/${slug}</loc>`), "sitemap missing the liquidity page");
+});
+
+await check("the import pages exist only where both markets have the same year", async () => {
+  const slugs = importSlugs(idoc);
+  assert(slugs.length, "import fixture carries no models");
+  const hub = await get("/importar");
+  assert(hub.status === 200, `/importar → ${hub.status}`);
+  const hubBody = await hub.text();
+  assert(hubBody.includes(`href="/importar/${slugs[0]}"`), "hub does not link its models");
+
+  const r = await get(`/importar/${slugs[0]}`);
+  assert(r.status === 200, `/importar/${slugs[0]} → ${r.status}`);
+  const body = await r.text();
+  assert(body.includes("Total à porta"), "the landed-cost column is missing");
+  assert(body.includes("ISV"), "the page never mentions the tax");
+  assert((await get("/importar/nao-existe")).status === 404, "unknown import slug is not a 404");
+
+  const j = await get(`/importar/${slugs[0]}.json`);
+  assert(j.status === 200, "import JSON twin missing");
+  const doc = JSON.parse(await j.text());
+  assert(doc.slug === slugs[0], "JSON twin is about another model");
+  assert(doc.years.length >= 2, "JSON twin published a model with one year");
+  assert(doc.fixed_costs_eur.low > 0 && doc.fixed_costs_eur.high > doc.fixed_costs_eur.low,
+    "JSON twin quotes a single legalisation number");
+  for (const y of doc.years) {
+    assert(y.landed_low_eur === Math.round(y.de_asking_median + y.isv_median_eur + doc.fixed_costs_eur.low),
+      `${y.year}: landed cost is not price + tax + fees`);
+    assert(y.de_listings >= 10 && y.pt_listings >= 5, `${y.year}: a cell below its floor shipped`);
+  }
+
+  const xml = await (await get("/sitemap.xml")).text();
+  assert(xml.includes(`<loc>https://${HOST}/importar</loc>`), "sitemap missing the import hub");
+  assert(xml.includes(`<loc>https://${HOST}/importar/${slugs[0]}</loc>`), "sitemap missing the import page");
+});
+
+await check("no German data means no import layer at all, not an empty page", async () => {
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const u = typeof input === "string" ? input : input.url;
+    if (u.includes("import.json")) return new Response("nope", { status: 404 });
+    return prevFetch(input, init);
+  };
+  try {
+    assert((await get("/importar")).status === 404, "/importar answered without data behind it");
+    assert((await get(`/importar/${importSlugs(idoc)[0]}`)).status === 404,
+      "an import page answered without data behind it");
+    const xml = await (await get("/sitemap.xml")).text();
+    assert(!xml.includes("/importar"), "sitemap advertises the import layer with no data");
+  } finally { globalThis.fetch = prevFetch; }
 });
 
 await check("the depreciation curve has a JSON twin", async () => {

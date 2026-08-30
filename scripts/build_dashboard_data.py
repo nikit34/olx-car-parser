@@ -112,7 +112,7 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
     # the whole analytics stack (LightGBM, sklearn, etc.).
     from src.storage.database import init_db, get_session
     from src.storage.repository import (
-        get_listings_df, get_price_history_df,
+        get_import_listings_df, get_listings_df, get_price_history_df,
         get_price_snapshots_df, get_relist_events_df,
         get_unmatched_df, get_portfolio_df,
     )
@@ -121,6 +121,7 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
     from src.analytics.turnover import compute_turnover_stats
     from src.analytics.liquidity import build_liquidity, page_records, sell_speed_frame
     from src.analytics.valuations import build_valuations
+    from src.analytics.import_deal import build_import_pages
     from src.analytics.model_pages import build_model_pages
     from src.analytics.price_model import load_model, value_configs
     from src.dashboard.data_loader import compute_signals
@@ -361,6 +362,23 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
                   f"({sizes['models.json']/1e3:.0f} KB)", flush=True)
         except ValueError as e:
             print(f"[build]   models.json SKIPPED — non-finite value leaked: {e}", flush=True)
+
+    import_doc = build_import_pages(listings, get_import_listings_df(session))
+    import_doc["built_at"] = built_at
+    _n_import = len(import_doc.get("models", {}))
+    if _n_import:
+        import_path = out_dir / "import.json"
+        try:
+            iblob = json.dumps(import_doc, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+            import_path.write_text(iblob)
+            sizes["import.json"] = import_path.stat().st_size
+            print(f"[build]   import pages: {_n_import:>6} models  "
+                  f"({sizes['import.json']/1e3:.0f} KB)", flush=True)
+        except ValueError as e:
+            print(f"[build]   import.json SKIPPED — non-finite value leaked: {e}", flush=True)
+    else:
+        print("[build]   import pages: no model has both sides of a year yet — "
+              "run scripts/crawl_autoscout.py", flush=True)
 
     manifest = {
         "built_at": built_at,

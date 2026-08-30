@@ -650,10 +650,11 @@ export function modelInsights(rec, stats) {
  * human gets the caveat in the same place every time.
  */
 export function provenance({ n, builtAt, measure = "Preço pedido em anúncios ativos (mediana e P25-P75)",
-                             unit = "anúncios ativos", measureId = "asking-price-median", extra = "" }) {
+                             unit = "anúncios ativos", measureId = "asking-price-median",
+                             source = "OLX Portugal", extra = "" }) {
   const day = (builtAt || "").slice(0, 10);
-  return `<p class="mono fc-prov" data-sample="${n != null ? n : ""}" data-updated="${escapeHtml(day)}" data-measure="${escapeHtml(measureId)}" data-source="OLX Portugal">`
-    + `Amostra: ${n != null ? fmtNum(n) + " " + escapeHtml(unit) : "n/d"} · Recolhido até: ${day || "n/d"} · Medida: ${escapeHtml(measure)} · Fonte: OLX Portugal${extra ? " · " + extra : ""}`
+  return `<p class="mono fc-prov" data-sample="${n != null ? n : ""}" data-updated="${escapeHtml(day)}" data-measure="${escapeHtml(measureId)}" data-source="${escapeHtml(source)}">`
+    + `Amostra: ${n != null ? fmtNum(n) + " " + escapeHtml(unit) : "n/d"} · Recolhido até: ${day || "n/d"} · Medida: ${escapeHtml(measure)} · Fonte: ${escapeHtml(source)}${extra ? " · " + extra : ""}`
     + `</p>`;
 }
 
@@ -2295,14 +2296,18 @@ export function renderMethodology({ stats, mq, host, depositCount, builtAt, duel
       </ul>
       <p class="fc-p">Um anúncio pode desaparecer por venda ou por desistência, e não distinguimos os dois: a leitura correta é <b>tempo até sair do mercado</b>. O que conseguimos afirmar é um mínimo do que não vendeu — os anúncios que reaparecem semanas depois como anúncio novo do mesmo carro, que emparelhamos pela ficha e pela quilometragem. Uma página de tempo de venda existe a partir de <b>40 anúncios acompanhados até ao fim</b>, e cada corte dentro dela (preço, idade, distrito) precisa dos seus próprios 40.</p>
 
-      <h2 class="fc-h2">7. Desvalorização</h2>
+      <h2 class="fc-h2" id="importar">7. Importar da Alemanha</h2>
+      <p class="fc-p">A conta das páginas de <a href="/importar">importação</a> tem três parcelas e todas são medidas, não estimadas por regra de três: o <b>preço pedido na Alemanha</b> vem de anúncios do AutoScout24 lidos pelo nosso próprio recolhedor, ano a ano; o <b>ISV</b> é calculado anúncio a anúncio a partir do CO2, da cilindrada e do ano de cada carro alemão (nunca a partir de um carro-tipo, porque as tabelas são progressivas e a média não passa por elas); a <b>legalização</b> é uma lista de rubricas com valores de 2026, publicada como intervalo porque transporte e certificado de conformidade variam.</p>
+      <p class="fc-p">Emparelhamos sempre o <b>mesmo ano de matrícula</b> dos dois lados, e cada linha traz as duas amostras e as duas quilometragens medianas. Sem isso a comparação mediria sobretudo o facto de a oferta alemã ser mais nova e menos rodada do que a portuguesa. Um modelo só tem página com pelo menos dois anos comparáveis, dez anúncios alemães por ano, cinco portugueses e seis carros alemães com CO2 utilizável — o CO2 é campo livre lá, e um valor impossível é descartado em vez de virar imposto.</p>
+
+      <h2 class="fc-h2">8. Desvalorização</h2>
       <p class="fc-p">Ajustamos uma reta ao <b>logaritmo</b> da mediana de preço contra o ano de fabrico, e reportamos a taxa anual daí resultante. Logaritmo porque a desvalorização é uma percentagem do que resta: em euros perde-se muito mais no primeiro ano do que no nono, e uma reta sobre euros misturaria as duas coisas. Como é um corte transversal de anos diferentes hoje (e não o mesmo carro seguido ao longo do tempo), a leitura correta é "quanto custa a mais um ano mais recente", não "quanto vou perder no próximo ano".</p>
 
       <h3 class="fc-h3">"A partir dos N anos deixa de perder valor"</h3>
 <p class="fc-p">A desvalorização é uma percentagem <b>do que resta</b>, por isso a mesma taxa dá uma perda enorme em euros no início e pequena no fim. É daí que vem a frase feita: em euros a queda abranda sempre, em qualquer modelo, sem que a percentagem mude nada. Dizer "a partir dos oito anos já não perde" a partir disso é confundir as duas coisas.</p>
       <p class="fc-p">Por isso medimos as duas em separado. O <b>custo de um ano de idade em euros</b> sai da curva ajustada e está em todas as páginas de desvalorização. A <b>quebra na percentagem</b> é testada: ajustamos uma curva com um joelho em cada idade entre os ${BEND_MIN_AGE} e os ${BEND_MAX_AGE} anos, ficamos com a que melhor explica os preços, e só a publicamos se o joelho compensar o parâmetro extra (F ≥ ${BEND_MIN_F}, com pelo menos ${BEND_MIN_SIDE} anos com amostra de cada lado) e se as duas taxas diferirem em ${Math.round(BEND_MIN_GAP * 100)} pontos ou mais. Na maioria dos modelos deste mercado não compensa, e a página di-lo em vez de desenhar um ponto de inflexão que ninguém mediu.</p>
 
-      <h2 class="fc-h2">8. O que isto não faz</h2>
+      <h2 class="fc-h2">9. O que isto não faz</h2>
       <ul class="fc-ul">
         <li class="fc-li">Não avalia a <b>tua</b> viatura. A mediana de um modelo não sabe do teu histórico, dos teus extras nem do estado da tua embraiagem. Para o carro concreto, <a href="/avaliar">avalia o anúncio</a>.</li>
         <li class="fc-li">Não distingue carros <b>importados por legalizar</b> na mediana do modelo. Um preço muito abaixo do normal costuma ter ISV por pagar — e o <a href="/isv">ISV</a> pode valer milhares.</li>
@@ -2310,7 +2315,7 @@ export function renderMethodology({ stats, mq, host, depositCount, builtAt, duel
         <li class="fc-li">Não é aconselhamento financeiro nem uma avaliação para efeitos legais ou de seguro.</li>
       </ul>
 
-      <h2 class="fc-h2" id="licenca">9. Reutilização e atribuição</h2>
+      <h2 class="fc-h2" id="licenca">10. Reutilização e atribuição</h2>
       <p class="fc-p">Os números destas páginas são estatísticas nossas, calculadas a partir de anúncios públicos do OLX Portugal. <b>Podes citá-los e reutilizá-los</b>, desde que a fonte seja atribuída ao Carsbuyer e seja indicada a data de recolha: a mediana de um modelo muda ao longo do tempo, e uma citação sem data deixa de ser verificável. Se precisares dos valores sem a marcação da página, cada modelo publica o mesmo conteúdo em JSON, bastando acrescentar <b>.json</b> ao endereço, como em <a href="/preco/opel-corsa.json">/preco/opel-corsa.json</a>.</p>
 
       <h2 class="fc-h2">10. Correções</h2>
@@ -2505,6 +2510,10 @@ export function renderIsv({ topModels, host, depositCount, builtAt, refYear }) {
       <div class="fc-out" id="isv-out" aria-live="polite">
         <div class="cap">Preenche a cilindrada e o CO2</div>
         <div class="big">—</div>
+      </div>
+      <div class="exclusive" style="background:#F6FBF8;border:1px solid #DDEBE1;align-items:flex-start;margin-top:18px;">
+        <span style="font-size:15px;">🇩🇪</span>
+        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">O ISV sozinho não responde à pergunta.</b> O que decide é o preço alemão mais o imposto mais a legalização, contra o que o mesmo carro pede em Portugal hoje. Fizemos essa conta modelo a modelo, com anúncios reais dos dois lados. <a href="/importar" style="color:#177A47;font-weight:600;">Ver em que modelos compensa&nbsp;→</a></span>
       </div>
       <p class="fc-p" style="margin-top:14px;">A cilindrada e o CO2 estão no certificado de conformidade e no documento único do carro. Para carros de 2018 e 2019 o ciclo de medição (NEDC ou WLTP) é ambíguo pelo ano — assumimos NEDC, o que pode subestimar ou sobrestimar; confirma no documento.</p>
 
@@ -3021,6 +3030,229 @@ export function renderDistrictPage({ key, rec, models, districts, stats, host, d
         breadcrumbLd(host, [
           { name: "Início", href: "/" }, { name: "Preços", href: "/precos" }, { name: rec.lbl },
         ]),
+      ],
+    },
+  });
+}
+
+export const IMPORT_MIN_CELLS = 2;
+
+export function importOk(rec) {
+  return !!(rec && Array.isArray(rec.yr) && rec.yr.length >= IMPORT_MIN_CELLS);
+}
+
+export function importSlugs(doc) {
+  const models = (doc && doc.models) || {};
+  return Object.entries(models)
+    .filter(([, r]) => importOk(r))
+    .sort((a, b) => (b[1].med_gap || 0) - (a[1].med_gap || 0))
+    .map(([slug]) => slug);
+}
+
+function importVerdict(rec) {
+  const cells = rec.yr || [];
+  const wins = cells.filter(c => c.gl > 0).length;
+  const best = cells.slice().sort((a, b) => b.gl - a.gl)[0] || null;
+  const worst = cells.slice().sort((a, b) => a.gl - b.gl)[0] || null;
+  return { wins, total: cells.length, best, worst, always: wins === cells.length, never: wins === 0 };
+}
+
+export function importJson(rec, slug, costs, { host, builtAt } = {}) {
+  return {
+    slug, brand: rec.b, model: rec.m,
+    url: `https://${host}/importar/${slug}`,
+    question: "does importing this model from Germany land under the Portuguese asking price",
+    sample_de: rec.nde, sample_pt: rec.npt,
+    fixed_costs_eur: costs ? { low: costs.lo, high: costs.hi, items: costs.items } : null,
+    years: (rec.yr || []).map(c => ({
+      year: c.y,
+      de_listings: c.nde, pt_listings: c.npt,
+      de_asking_p25: c.dl, de_asking_median: c.dm, de_asking_p75: c.dh,
+      isv_median_eur: c.isv, isv_sample: c.isvn,
+      landed_low_eur: c.ll, landed_high_eur: c.lh,
+      pt_asking_median: c.ptm,
+      saving_low_eur: c.gl, saving_high_eur: c.gh,
+    })),
+    updated: builtAt || null,
+    licence: licenseUrl(host),
+    caveat: "asking prices on both sides, not transaction prices; the ISV is our own estimate from each German listing's CO2, engine size and first registration",
+  };
+}
+
+export function renderImportPage({ rec, slug, costs, stats, hasModelPage = true,
+                                  host, depositCount, builtAt }) {
+  const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
+  const canonical = `https://${host}/importar/${slug}`;
+  const v = importVerdict(rec);
+  const cells = rec.yr || [];
+  const lo = costs ? costs.lo : null, hi = costs ? costs.hi : null;
+
+  const verdictLine = v.always
+    ? `Nos <b>${v.total} anos</b> que conseguimos comparar, importar sai mais barato — entre ${fmtEur(v.worst.gl)} e ${fmtEur(v.best.gh)} conforme o ano e conforme o que pagares de transporte e papelada.`
+    : v.never
+      ? `Em <b>nenhum</b> dos ${v.total} anos comparados a conta fecha a favor da importação: depois do ISV e da legalização, o ${B} ${M} alemão chega cá mais caro do que o que já está à venda em Portugal.`
+      : `Depende do ano, e essa é a resposta honesta: em <b>${v.wins} dos ${v.total}</b> anos comparados importar sai mais barato, no melhor deles cerca de ${fmtEur(v.best.gl)}; nos outros a conta fecha contra.`;
+
+  const rows = cells.map(c => `<tr>
+      <td>${c.y}</td>
+      <td>${fmtEur(c.dm)} <span class="mut">${fmtEur(c.dl)}–${fmtEur(c.dh)}</span></td>
+      <td class="mut">${fmtEur(c.isv)}</td>
+      <td class="mut">${fmtEur(lo)}–${fmtEur(hi)}</td>
+      <td>${fmtEur(c.ll)}–${fmtEur(c.lh)}</td>
+      <td>${fmtEur(c.ptm)}</td>
+      <td style="font-weight:600;color:${c.gl > 0 ? "#177A47" : "#9B2C2C"};">${c.gl > 0 ? `poupa ${fmtEur(c.gl)}` : `mais ${fmtEur(-c.gl)}`}</td>
+      <td class="mut">${(c.dkm != null && c.ptkm != null) ? `${fmtKm(c.dkm)} / ${fmtKm(c.ptkm)}` : "—"}</td>
+      <td class="mut">${c.nde} / ${c.npt}</td></tr>`).join("");
+  const kmGap = rec.km_gap;
+  const kmLine = (kmGap != null && Math.abs(kmGap) >= 0.15)
+    ? `<p class="fc-p">Uma diferença que a tabela mostra e a conta não corrige: os ${B} ${M} à venda na Alemanha têm, na mediana, <b>${Math.abs(Math.round(kmGap * 100))}% ${kmGap > 0 ? "mais" : "menos"} quilómetros</b> do que os portugueses do mesmo ano. ${kmGap > 0 ? "Ou seja, parte do que parece poupança é um carro mais rodado." : "Ou seja, o carro alemão tende a estar menos rodado, e a poupança na tabela é conservadora."} Comparamos o mesmo ano de matrícula, não a mesma quilometragem.</p>`
+    : "";
+
+  const costRows = (costs && costs.items ? costs.items : []).map(i => `<tr>
+      <td>${escapeHtml(i.lbl)}</td>
+      <td>${i.lo === i.hi ? fmtEur(i.lo) : `${fmtEur(i.lo)} – ${fmtEur(i.hi)}`}</td>
+      <td class="mut">${escapeHtml(i.src || "")}</td></tr>`).join("");
+
+  const body = crumbs([
+    { name: "Início", href: "/" }, { name: "Importar", href: "/importar" },
+    { name: `${rec.b} ${rec.m}` },
+  ]) + `
+    <div style="padding-top:14px;">
+      <div class="side-card" style="max-width:680px;margin:0 auto;">
+        <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">IMPORTAR DA ALEMANHA · ${B.toUpperCase()} ${M.toUpperCase()}</span></div>
+        <h1 class="fc-h1">Vale a pena importar um ${B} ${M} da Alemanha?</h1>
+        <p class="lede" style="font-size:16px;margin:0 0 18px;">Comparámos <b>${fmtNum(rec.nde)} anúncios alemães</b> com <b>${fmtNum(rec.npt)} anúncios portugueses</b> do mesmo modelo, ano a ano, somando ao preço alemão o ISV que esse carro concreto pagaria e a legalização. ${verdictLine}</p>
+        <div class="fc-stat-row">
+          <div class="fc-stat"><div class="k">ANOS A FAVOR</div><div class="v">${v.wins}/${v.total}</div><div class="s">anos comparados</div></div>
+          ${v.best ? `<div class="fc-stat"><div class="k">MELHOR ANO</div><div class="v">${v.best.y}</div><div class="s">${v.best.gl > 0 ? `poupa ${fmtEur(v.best.gl)}` : `perde ${fmtEur(-v.best.gl)}`}</div></div>` : ""}
+          <div class="fc-stat"><div class="k">ISV MEDIANO</div><div class="v">${fmtEur(rec.isv_med != null ? rec.isv_med : cells[0].isv)}</div><div class="s">calculado por anúncio</div></div>
+          ${lo != null ? `<div class="fc-stat"><div class="k">RESTO DA CONTA</div><div class="v">${fmtEur(lo)}+</div><div class="s">até ${fmtEur(hi)} sem o ISV</div></div>` : ""}
+        </div>
+        ${provenance({ n: rec.nde, builtAt, unit: "anúncios alemães", measureId: "import-landed-cost",
+                       source: "AutoScout24 (Alemanha) e OLX (Portugal)",
+                       measure: "Preço pedido na Alemanha + ISV estimado + custos de legalização, contra o preço pedido em Portugal" })}
+      </div>
+    </div>
+    <section class="section fc-wrap">
+      <h2 class="fc-h2">A conta, ano a ano</h2>
+      <div class="fc-scroll"><table class="fc-tbl">
+        <thead><tr><th>Ano</th><th>Alemanha (pedido)</th><th>ISV</th><th>Legalização</th><th>Total à porta</th><th>Portugal (pedido)</th><th>Diferença</th><th>Km DE/PT</th><th>Anúncios DE/PT</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+      ${kmLine}
+      <p class="fc-p" style="margin-top:12px;">A coluna que decide é a última mas uma: <b>total à porta</b> é o que o carro alemão te fica depois de pago tudo, e é isso que se compara com o preço pedido em Portugal — não o preço alemão sozinho, que é o número com que toda a gente vende a ideia da importação.</p>
+      <p class="fc-p">Cada linha compara o <b>mesmo ano de matrícula</b> dos dois lados. Sem isso a conta não significa nada: a oferta alemã costuma ser mais nova do que a portuguesa, e uma diferença que fosse só idade apareceria como poupança.</p>
+    </section>
+    <section class="section fc-wrap">
+      <h2 class="fc-h2">O que está nesta conta</h2>
+      <div class="fc-scroll"><table class="fc-tbl">
+        <thead><tr><th>Rubrica</th><th>Valor</th><th>Nota</th></tr></thead>
+        <tbody>${costRows}
+          <tr><td><b>ISV</b></td><td><b>varia com o carro</b></td><td class="mut">calculado a partir do CO2, cilindrada e ano de cada anúncio — <a href="/isv">simulador</a></td></tr>
+        </tbody></table></div>
+      <p class="fc-p" style="margin-top:12px;">O IVA não aparece aqui de propósito: num usado com mais de seis meses e mais de 6 000 km o IVA é pago no país onde se compra e não volta a ser pago em Portugal. O preço alemão que usamos é o preço pedido ao público, com o IVA alemão lá dentro quando o vendedor é um stand.</p>
+    </section>
+    <section class="section fc-wrap">
+      <h2 class="fc-h2">O que esta conta não sabe</h2>
+      <ul class="fc-ul">
+        <li class="fc-li"><b>São preços pedidos dos dois lados</b>, não preços de venda. Negoceia-se na Alemanha e negoceia-se cá, e não sabemos de que lado se cede mais.</li>
+        <li class="fc-li"><b>O estado do carro concreto.</b> Um anúncio não diz o histórico de manutenção nem o que vai aparecer na inspeção — e um carro comprado à distância é comprado com menos informação, não com mais.</li>
+        <li class="fc-li"><b>A versão e os quilómetros.</b> Emparelhamos pelo ano de matrícula, e dentro do mesmo ano cabe muita coisa — motorizações diferentes, níveis de equipamento diferentes e quilometragens diferentes. É por isso que a coluna alemã traz o intervalo P25-P75 e não só a mediana.</li>
+        <li class="fc-li"><b>O teu tempo e as tuas deslocações</b>, a garantia que perdes ou ganhas, e o risco de a legalização correr mal.</li>
+        <li class="fc-li"><b>O ISV é a nossa estimativa</b>, a partir do CO2 e da cilindrada que o vendedor alemão declarou. Para carros de 2018 e 2019 o ciclo de medição é ambíguo, o que mexe no valor.</li>
+      </ul>
+    </section>
+    <section class="section fc-wide">
+      <div class="cta-banner">
+        <div style="flex:1 1 360px;">
+          <h2>Tens um carro concreto em vista?</h2>
+          <p>Esta página é a mediana do modelo. Para o anúncio que estás a ver, mete a cilindrada, o CO2 e o ano no simulador e fica com o ISV desse carro.</p>
+        </div>
+        <a class="btn-bright" href="/isv">Simular o ISV&nbsp;&nbsp;→</a>
+      </div>
+    </section>
+    <section class="section fc-wrap" style="padding-bottom:70px;">
+      <p class="fc-p">${hasModelPage ? `<a href="/preco/${slug}">Preços de ${B} ${M} em Portugal</a> · ` : ""}<a href="/importar">Outros modelos que vale a pena comparar</a> · <a href="/isv">Simulador de ISV</a> · <a href="${canonical}.json">Dados em JSON</a></p>
+    </section>`;
+
+  const faqs = [
+    [`Vale a pena importar um ${rec.b} ${rec.m} da Alemanha?`,
+     v.never
+       ? `Pelos nossos números, não: em nenhum dos ${v.total} anos comparados o preço alemão mais ISV e legalização fica abaixo do que se pede em Portugal por um ${rec.b} ${rec.m} do mesmo ano.`
+       : `Em ${v.wins} dos ${v.total} anos comparados, sim. No melhor ano (${v.best.y}) a diferença a favor da importação é de cerca de ${fmtEur(v.best.gl)} depois de somar o ISV e a legalização ao preço pedido na Alemanha.`],
+    [`Quanto custa legalizar um ${rec.b} ${rec.m} importado?`,
+     `Fora o ISV, entre ${fmtEur(lo)} e ${fmtEur(hi)}: transporte, certificado de conformidade, inspeção tipo B, matrícula no IMT e registo de propriedade. O ISV depende do carro — para este modelo a mediana dos anúncios alemães que conseguimos calcular anda pelos ${fmtEur(rec.isv_med != null ? rec.isv_med : cells[0].isv)}.`],
+    [`O preço alemão já inclui o IVA?`,
+     `Nos anúncios de stand normalmente sim, e é esse o valor que usamos. Num usado com mais de seis meses e 6 000 km o IVA fica pago na Alemanha e não é cobrado outra vez em Portugal; só um comprador com IVA dedutível recupera a parte alemã.`],
+  ];
+
+  return layout({
+    title: `Importar ${rec.b} ${rec.m} da Alemanha: vale a pena?`,
+    description: `${rec.b} ${rec.m}: preço pedido na Alemanha mais ISV e legalização, comparado ano a ano com o preço pedido em Portugal. ${v.never ? "Pelos nossos números não compensa." : `Compensa em ${v.wins} de ${v.total} anos.`}`,
+    canonical, body, zone: "all", nav: "precos", depositCount, index: true, host,
+    altJson: `${canonical}.json`,
+    jsonLd: {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
+          "name": `Importar ${rec.b} ${rec.m} da Alemanha: custo total contra o preço português`,
+          "description": `Preço pedido mediano de ${rec.b} ${rec.m} na Alemanha por ano de matrícula, ISV estimado por anúncio, custos de legalização e a diferença para o preço pedido em Portugal.`,
+          "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
+          "isAccessibleForFree": true, "dateModified": builtAt || undefined,
+          "variableMeasured": ["Preço pedido na Alemanha (EUR)", "ISV estimado (EUR)", "Custo total à porta (EUR)", "Preço pedido em Portugal (EUR)"],
+          "distribution": [{ "@type": "DataDownload", "encodingFormat": "application/json", "contentUrl": `${canonical}.json` }],
+        },
+        breadcrumbLd(host, [
+          { name: "Início", href: "/" }, { name: "Importar", href: "/importar" },
+          { name: `${rec.b} ${rec.m}` },
+        ]),
+        faqLd(faqs),
+      ],
+    },
+  });
+}
+
+export function renderImportHub({ rows, costs, host, depositCount, builtAt }) {
+  const canonical = `https://${host}/importar`;
+  const lo = costs ? costs.lo : null, hi = costs ? costs.hi : null;
+  const tr = rows.map(r => `<tr>
+      <td><a href="/importar/${r.slug}" style="color:#177A47;font-weight:600;">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a></td>
+      <td style="font-weight:600;color:${r.med_gap > 0 ? "#177A47" : "#9B2C2C"};">${r.med_gap > 0 ? "−" : "+"}${fmtEur(Math.abs(r.med_gap))}</td>
+      <td class="mut">${r.wins}/${r.cells}</td>
+      <td class="mut">${fmtNum(r.nde)}</td>
+      <td class="mut">${fmtNum(r.npt)}</td></tr>`).join("");
+  const winners = rows.filter(r => r.med_gap > 0).length;
+  const body = crumbs([{ name: "Início", href: "/" }, { name: "Importar" }]) + `
+    <section class="section fc-wrap" style="padding-top:16px;">
+      <h1 class="fc-h1">Importar da Alemanha: em que modelos a conta fecha</h1>
+      <p class="fc-p">Toda a gente que vende importação mostra o mesmo: um simulador de ISV. Um ISV sozinho não decide nada — o que decide é o preço alemão <b>mais</b> o imposto <b>mais</b> a legalização, contra o que o mesmo carro pede em Portugal hoje. É essa conta que está aqui, ano a ano, com as duas pontas medidas em anúncios reais: AutoScout24 de um lado, OLX do outro.</p>
+      <p class="fc-p">Em <b>${winners} dos ${rows.length}</b> modelos que conseguimos comparar a importação fecha a favor na mediana dos anos. Nos outros, não — e isso também é resposta.${lo != null ? ` Fora o ISV, a legalização anda entre ${fmtEur(lo)} e ${fmtEur(hi)}.` : ""}</p>
+      <div class="fc-scroll"><table class="fc-tbl">
+        <thead><tr><th>Modelo</th><th>Diferença mediana</th><th>Anos a favor</th><th>Anúncios DE</th><th>Anúncios PT</th></tr></thead>
+        <tbody>${tr}</tbody></table></div>
+      ${provenance({ n: rows.reduce((s, r) => s + (r.nde || 0), 0), builtAt, unit: "anúncios alemães",
+                     measureId: "import-landed-cost",
+                     source: "AutoScout24 (Alemanha) e OLX (Portugal)",
+                     measure: "Preço pedido na Alemanha + ISV estimado + legalização, contra o preço pedido em Portugal" })}
+      <p class="fc-p" style="margin-top:18px;"><a href="/isv">Simulador de ISV</a> · <a href="/precos">Preços em Portugal por modelo</a> · <a href="/metodologia">Como calculamos</a></p>
+    </section>
+    <div style="height:60px;"></div>`;
+  return layout({
+    title: "Importar carro da Alemanha: em que modelos compensa",
+    description: `Preço alemão mais ISV e legalização contra o preço pedido em Portugal, modelo a modelo e ano a ano. Compensa em ${winners} dos ${rows.length} modelos comparados.`,
+    canonical, body, zone: "all", nav: "precos", depositCount, index: true, host,
+    jsonLd: {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
+          "name": "Custo total de importar da Alemanha, por modelo",
+          "description": "Preço pedido mediano na Alemanha, ISV estimado, custos de legalização e a diferença para o preço pedido em Portugal, por modelo.",
+          "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
+          "isAccessibleForFree": true, "dateModified": builtAt || undefined,
+          "variableMeasured": ["Custo total à porta (EUR)", "Preço pedido em Portugal (EUR)"],
+        },
+        breadcrumbLd(host, [{ name: "Início", href: "/" }, { name: "Importar" }]),
       ],
     },
   });
