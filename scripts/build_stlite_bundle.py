@@ -57,6 +57,7 @@ WITNESS_FILES = (
     # "Model quality" sidebar expander on Recommendations
     # (load_metrics_history → R² / MAE / MAPE / 80% coverage).
     "price_metrics.json",
+    "price_backtest.json",
 )
 RELEASE_BASE = (
     "https://github.com/nikit34/olx-car-parser/releases/download/latest-data"

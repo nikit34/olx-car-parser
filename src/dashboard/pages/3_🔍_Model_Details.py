@@ -859,6 +859,52 @@ else:
         st.plotly_chart(fig_h, use_container_width=True)
 
 # --- Panel: Calibration ---
+from src.analytics.model_eval import load_backtest as _load_backtest
+
+st.subheader("Forward backtest — trained on the past, scored on what came next")
+_bt = _load_backtest()
+_folds = (_bt or {}).get("folds") or []
+if not _folds:
+    st.info(
+        "No backtest on this release — it is written by "
+        "`eval-model --time-backtest` during the nightly run."
+    )
+else:
+    bt_df = pd.DataFrame(_folds)
+    _cols = {
+        "fold": "fold",
+        "n_test": "n tested",
+        "mape": "MAPE vs ask %",
+        "bias_pct": "bias vs ask %",
+        "coverage_80": "coverage vs ask",
+        "n_test_sold": "n sold",
+        "mape_vs_target": "MAPE vs target %",
+        "bias_vs_target_pct": "bias vs target %",
+        "coverage_80_vs_target": "coverage vs target",
+    }
+    present = [c for c in _cols if c in bt_df.columns]
+    st.dataframe(
+        bt_df[present].rename(columns=_cols),
+        use_container_width=True, hide_index=True,
+    )
+    if "mape_vs_target" in bt_df.columns and bt_df["mape_vs_target"].notna().any():
+        _ask = float(bt_df["mape"].mean())
+        _tgt = float(bt_df["mape_vs_target"].mean())
+        st.caption(
+            f"Two yardsticks, and the difference is not model error. The model "
+            f"aims at an estimated sale price, so scoring it against the asking "
+            f"price ({_ask:.1f}% MAPE) folds in the gap between what sellers ask "
+            f"and what cars go for. Against its own target it misses by "
+            f"{_tgt:.1f}%. Read the first block as a product number — how far "
+            f"above our valuation sellers list — and the second as accuracy."
+        )
+    else:
+        st.caption(
+            "This release predates the split yardstick, so only the "
+            "asking-price columns are present; those mix model error with "
+            "the gap between asking and sale prices."
+        )
+
 st.subheader("Model calibration on sold listings")
 if not pred_lookup or sold_seg.empty:
     st.info("Need both a saved price model and sold listings to calibrate.")
