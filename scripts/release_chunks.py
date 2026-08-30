@@ -21,6 +21,7 @@ sending and on this link that leaves the name missing for minutes.
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
 import re
@@ -38,6 +39,7 @@ CHUNK_BYTES = 1_500_000
 UPLOAD_RETRIES = 3
 WHOLE_LIMIT = 3_000_000
 CHUNKABLE_SUFFIXES = (".parquet",)
+GZIPPABLE_SUFFIXES = (".json",)
 STAGING_SUFFIX = ".uploading"
 RELEASE_TITLE = "Latest Data"
 RELEASE_NOTES = "Auto-updated dashboard witnesses from scraper"
@@ -210,6 +212,14 @@ def fetch(name: str, base_url: str = BASE_URL) -> bytes | None:
     A digest mismatch returns None rather than a plausible-looking file:
     downstream would bake a corrupt witness into the dashboard bundle.
     """
+    packed = _get(f"{base_url}/{name}.gz", quiet=True)
+    if packed is not None:
+        try:
+            return gzip.decompress(packed)
+        except OSError:
+            print(f"  {name}: the compressed copy does not unpack", file=sys.stderr)
+            return None
+
     raw = _get(f"{base_url}/{name}", quiet=True)
     if raw is not None:
         return raw
@@ -241,6 +251,32 @@ def should_chunk(path: Path) -> bool:
     down on 2026-08-29.
     """
     return path.suffix in CHUNKABLE_SUFFIXES and path.stat().st_size > WHOLE_LIMIT
+
+
+def should_gzip(path: Path) -> bool:
+    """Whether *path* travels compressed.
+
+    What the Worker reads on every request cannot be split — a chunked
+    copy 404s for it — so the oversized JSON has only one way under the
+    size this link can actually push. valuations.json is 3.5 MB and 0.9
+    compressed: it failed on every run while everything else landed.
+    """
+    return path.suffix in GZIPPABLE_SUFFIXES and path.stat().st_size > WHOLE_LIMIT
+
+
+def upload_gzipped(path: Path) -> bool:
+    """Put ``<name>.gz`` in the release and drop the plain copy it replaces."""
+    with tempfile.TemporaryDirectory() as tmp:
+        packed = Path(tmp) / f"{path.name}.gz"
+        with path.open("rb") as src, gzip.open(packed, "wb", compresslevel=6) as dst:
+            shutil.copyfileobj(src, dst)
+        print(f"{path.name}: {path.stat().st_size} bytes, "
+              f"{packed.stat().st_size} gzipped")
+        if not _upload(packed):
+            return False
+    if path.name in _assets():
+        _delete(path.name)
+    return True
 
 
 def ensure_release(retries: int = UPLOAD_RETRIES) -> None:
@@ -275,6 +311,8 @@ def publish(paths: list[Path]) -> int:
             continue
         if should_chunk(path):
             ok = upload(path)
+        elif should_gzip(path):
+            ok = upload_gzipped(path)
         else:
             ok = _upload(path)
         if not ok:

@@ -41,6 +41,11 @@ class TestDetection:
         assets = {audit_release.manifest_name("listings.parquet")}
         assert audit_release.satisfied("listings.parquet", assets) is True
 
+    def test_a_gzipped_asset_counts_as_present(self, monkeypatch):
+        """valuations.json travels compressed; the plain name is gone from
+        the release and healing it back would undo the change."""
+        assert audit_release.satisfied("valuations.json", {"valuations.json.gz"}) is True
+
     def test_parts_missing_under_a_present_manifest_is_caught(self, monkeypatch):
         """A manifest with no parts behind it reads as a whole file to a
         naive check, and would ship a broken witness."""

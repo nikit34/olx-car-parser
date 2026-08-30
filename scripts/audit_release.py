@@ -110,7 +110,7 @@ def incomplete_chunk_sets(assets: set[str]) -> dict[str, str]:
 
 
 def satisfied(name: str, assets: set[str]) -> bool:
-    return name in assets or manifest_name(name) in assets
+    return name in assets or f"{name}.gz" in assets or manifest_name(name) in assets
 
 
 def local_copy(name: str) -> Path | None:

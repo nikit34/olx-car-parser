@@ -1709,23 +1709,29 @@ async function degrade(env, cacheKey) {
 // /avaliar tool is low-traffic). Returns the {olx_id: rec} map, or null if the
 // blob isn't published yet / fetch fails (handler then shows the fallback).
 async function getValuations(env) {
-  const url = `${HOT_DEALS_BASE}/valuations.json`;
-  try {
-    // Cache only successful responses (cacheTtlByStatus) — never pin a 404 from
-    // the pre-publish window, or a transient 5xx, into the edge cache for 10 min.
-    const r = await fetch(url, {
-      cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": 300, "300-399": 0, "400-499": 0, "500-599": 0 } },
-    });
-    if (!r.ok) {
-      console.warn(`valuations fetch ${url} → ${r.status}`);
-      return null;
+  for (const packed of [true, false]) {
+    const url = `${HOT_DEALS_BASE}/valuations.json${packed ? ".gz" : ""}`;
+    try {
+      // Cache only successful responses (cacheTtlByStatus) — never pin a 404 from
+      // the pre-publish window, or a transient 5xx, into the edge cache for 10 min.
+      const r = await fetch(url, {
+        cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": 300, "300-399": 0, "400-499": 0, "500-599": 0 } },
+      });
+      if (!r.ok) {
+        console.warn(`valuations fetch ${url} → ${r.status}`);
+        continue;
+      }
+      const body = packed
+        ? new Response(r.body.pipeThrough(new DecompressionStream("gzip")))
+        : r;
+      const data = await body.json();
+      if (data && data.cars) return data.cars;
+      console.warn(`valuations ${url} → no cars in the blob`);
+    } catch (err) {
+      console.warn("valuations fetch error", url, err && err.message);
     }
-    const data = await r.json();
-    return data && data.cars ? data.cars : null;
-  } catch (err) {
-    console.warn("valuations fetch error", err && err.message);
-    return null;
   }
+  return null;
 }
 
 // models.json — the per-model SEO blob (Tier-3) for /preco/*, /precos, /sitemap.

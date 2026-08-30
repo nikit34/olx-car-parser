@@ -7,6 +7,7 @@ readable as a whole file.
 """
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 
@@ -265,6 +266,74 @@ class TestReplaceInPlace:
         assert not any(n.endswith(release_chunks.STAGING_SUFFIX) for n in gh.assets)
         assert release_chunks.manifest_name("models.json") != (
             "models.json" + release_chunks.STAGING_SUFFIX)
+
+
+class TestGzipTransport:
+    """The oversized JSON the Worker reads on every request cannot be
+    split, so it travels compressed — otherwise it does not travel at all:
+    valuations.json failed its upload on run after run at 3.5 MB."""
+
+    def _sized(self, tmp_path, name: str, size: int):
+        path = tmp_path / name
+        path.write_bytes(b'{"cars":"' + b"x" * size + b'"}')
+        return path
+
+    def test_a_big_json_is_gzipped(self, tmp_path):
+        assert release_chunks.should_gzip(
+            self._sized(tmp_path, "valuations.json", 4_000_000)) is True
+
+    def test_a_small_json_travels_whole(self, tmp_path):
+        assert release_chunks.should_gzip(
+            self._sized(tmp_path, "models.json", 1000)) is False
+
+    def test_a_big_parquet_is_chunked_not_gzipped(self, tmp_path):
+        big = self._sized(tmp_path, "listings.parquet", 4_000_000)
+        assert release_chunks.should_gzip(big) is False
+        assert release_chunks.should_chunk(big) is True
+
+    def test_publish_sends_the_compressed_name_and_drops_the_plain_one(
+            self, tmp_path, monkeypatch):
+        path = self._sized(tmp_path, "valuations.json", 4_000_000)
+        uploaded, deleted = [], []
+        monkeypatch.setattr(release_chunks, "_upload",
+                            lambda p: (uploaded.append((p.name, p.stat().st_size)), True)[1])
+        monkeypatch.setattr(release_chunks, "_assets", lambda refresh=False: {"valuations.json": "u"})
+        monkeypatch.setattr(release_chunks, "_delete", lambda n: deleted.append(n))
+        monkeypatch.setattr(release_chunks, "ensure_release", lambda: None)
+
+        assert release_chunks.publish([path]) == 0
+        assert [n for n, _ in uploaded] == ["valuations.json.gz"]
+        assert uploaded[0][1] < path.stat().st_size
+        assert deleted == ["valuations.json"]
+
+    def test_the_plain_copy_survives_a_failed_compressed_upload(self, tmp_path, monkeypatch):
+        path = self._sized(tmp_path, "valuations.json", 4_000_000)
+        deleted = []
+        monkeypatch.setattr(release_chunks, "_upload", lambda p: False)
+        monkeypatch.setattr(release_chunks, "_assets", lambda refresh=False: {"valuations.json": "u"})
+        monkeypatch.setattr(release_chunks, "_delete", lambda n: deleted.append(n))
+
+        assert release_chunks.upload_gzipped(path) is False
+        assert deleted == []
+
+    def test_fetch_unpacks_the_compressed_copy(self, monkeypatch):
+        payload = b'{"cars":{"1":{"p":1000}}}'
+        served = {"valuations.json.gz": gzip.compress(payload)}
+        monkeypatch.setattr(release_chunks, "_get",
+                            lambda url, timeout=60, quiet=False: served.get(url.rsplit("/", 1)[-1]))
+
+        assert release_chunks.fetch("valuations.json") == payload
+
+    def test_the_compressed_copy_beats_a_stale_plain_one(self, monkeypatch):
+        """Deleting an asset does not empty the CDN: the plain URL kept
+        serving the previous generation for minutes after the switch."""
+        fresh = b'{"cars":{"1":{"p":2000}}}'
+        served = {"valuations.json.gz": gzip.compress(fresh),
+                  "valuations.json": b'{"cars":{"1":{"p":1000}}}'}
+        monkeypatch.setattr(release_chunks, "_get",
+                            lambda url, timeout=60, quiet=False: served.get(url.rsplit("/", 1)[-1]))
+
+        assert release_chunks.fetch("valuations.json") == fresh
 
 
 class TestEnsureRelease:
