@@ -209,8 +209,9 @@ jobs:
           OLX_PROXY: ${{ secrets.OLX_PROXY }}
           # Relay egress via our own Cloudflare Worker. OLX's WAF blocks this
           # runner's address and GitHub-hosted ones alike, while Cloudflare's
-          # path is clean. Only the offers API goes through it — the Worker
-          # refuses any other path.
+          # path is clean. Both the offers API and listing pages go through
+          # it — the latter is how mark_inactive tells sold from merely
+          # unseen; the Worker refuses any other path.
           OLX_RELAY_URL: ${{ secrets.OLX_RELAY_URL }}
           OLX_RELAY_TOKEN: ${{ secrets.OLX_RELAY_TOKEN }}
           # Pacing overrides, both optional. Defaults (2 req/s, 8 workers) are

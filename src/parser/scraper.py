@@ -362,24 +362,18 @@ class OlxScraper:
         return None
 
     def _relay_rewrite(self, url: str, headers: dict) -> tuple[str, dict]:
-        """Re-point an offers-API URL at the Worker relay, or pass it through.
+        """Re-point an olx.pt URL at the Worker relay, or pass it through.
 
-        Only the OLX offers API is relayed: the Worker accepts one path prefix
-        and refuses everything else, so sending StandVirtual or a listing page
-        through it would just earn a 403 with extra steps.
+        Which paths the relay accepts lives in :mod:`src.parser.relay`,
+        mirroring the Worker; StandVirtual and anything else the Worker
+        refuses goes out directly.
         """
-        if not self._relay_url or not url.startswith(OLX_API_URL):
+        from src.parser.relay import relay_rewrite
+
+        if not self._relay_url:
             return url, {}
-        parts = urllib.parse.urlsplit(url)
-        path_q = parts.path + (("?" + parts.query) if parts.query else "")
-        relay = f"{self._relay_url}?path={urllib.parse.quote(path_q, safe='')}"
-        extra = {"X-Relay-Token": self._relay_token}
-        # Carry the rotating UA through, so the relay forwards the same
-        # identity the direct path would have sent rather than its default.
-        ua = headers.get("User-Agent")
-        if ua:
-            extra["X-Relay-UA"] = ua
-        return relay, extra
+        return relay_rewrite(url, headers.get("User-Agent"),
+                             self._relay_url, self._relay_token)
 
     def _fetch_json(self, url: str, retries: int = 3) -> dict | None:
         """Fetch *url* and return parsed JSON, or *None*.

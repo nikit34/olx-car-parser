@@ -14,6 +14,8 @@ def _utcnow() -> datetime:
     """
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
+import threading
+
 import httpx
 import pandas as pd
 from sqlalchemy import func, select, text as sa_text
@@ -36,7 +38,9 @@ _PROBE_CLIENT = httpx.Client(
     # Same CDN wall as the scraper: with httpx's stock TLS context every
     # olx.pt probe comes back 403, which _verify_listing_alive reads as
     # "unknown" and mark_inactive then skips — so nothing gets deactivated
-    # and nothing complains. See src/parser/tls_fingerprint.
+    # and nothing complains. See src/parser/tls_fingerprint. The fingerprint
+    # is only half of it: since 2026-08-25 the host's address is blocked
+    # outright, which is why olx.pt probes go through the Worker relay.
     verify=build_ssl_context(),
     headers={
         "User-Agent": (
@@ -233,6 +237,29 @@ _DEAD_LISTING_MARKERS = (
 )
 
 
+_PROBE_LIMITER = None
+_PROBE_LIMITER_LOCK = threading.Lock()
+
+
+def _probe_limiter():
+    """Space probes out instead of firing them eight at a time.
+
+    A bounded pool caps how many requests are in flight, not how fast they
+    leave: eight threads fire together, drain, fire together again, which is
+    the shape a CDN's reputation rules are built to notice (see
+    tests/test_scrape_pacing.py). The relay does not make that free — bursts
+    would get the Worker's addresses blocked instead of this host's.
+    """
+    global _PROBE_LIMITER
+    if _PROBE_LIMITER is None:
+        with _PROBE_LIMITER_LOCK:
+            if _PROBE_LIMITER is None:
+                from src.parser.scraper import _OLX_MAX_RPS, _RateLimiter
+
+                _PROBE_LIMITER = _RateLimiter(_OLX_MAX_RPS)
+    return _PROBE_LIMITER
+
+
 def _verify_listing_alive(url: str, timeout: float = 8.0) -> bool | None:
     """Probe a listing URL.
 
@@ -249,8 +276,14 @@ def _verify_listing_alive(url: str, timeout: float = 8.0) -> bool | None:
     one cycle (promoted-slot rotation, pagination drift) doesn't get
     flagged "sold" while still actively listed.
     """
+    from src.parser.relay import relay_rewrite
+
+    request_url, relay_headers = relay_rewrite(
+        url, _PROBE_CLIENT.headers.get("User-Agent"))
+    _probe_limiter().acquire()
     try:
-        resp = _PROBE_CLIENT.get(url, timeout=timeout)
+        resp = _PROBE_CLIENT.get(request_url, timeout=timeout,
+                                 headers=relay_headers or None)
     except (httpx.TimeoutException, httpx.HTTPError, OSError):
         return None
     if resp.status_code in (404, 410):
