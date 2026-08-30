@@ -358,7 +358,8 @@
     "CLK 270": "CLK-Class",
     "SLK 200": "SLK-Class",
     "SLK 230": "SLK-Class",
-    "SLK 250": "SLK-Class"
+    "SLK 250": "SLK-Class",
+    "S 320": "S-Class"
   },
   "Audi": {
     "A1 Sportback": "A1",
@@ -414,7 +415,9 @@
     "Mégane Scénic": "Scénic",
     "Megane Scenic": "Scénic",
     "Mégane Cabrio": "Mégane",
-    "Megane Cabrio": "Mégane"
+    "Megane Cabrio": "Mégane",
+    "Talisman Sport Tourer": "Talisman",
+    "Trafic Passenger": "Trafic"
   },
   "Peugeot": {
     "e-208": "208",
@@ -547,7 +550,8 @@
     "500L": "500",
     "Grande Punto": "Punto",
     "Punto Evo": "Punto",
-    "Tipo Station Wagon": "Tipo"
+    "Tipo Station Wagon": "Tipo",
+    "Ducato Maxi": "Ducato"
   },
   "Hyundai": {
     "Kauai": "Kona",
@@ -572,7 +576,8 @@
     "Auris Touring Sports": "Auris",
     "Auris Hybrid": "Auris",
     "Yaris Hybrid": "Yaris",
-    "Corolla SW": "Corolla"
+    "Corolla SW": "Corolla",
+    "HiAce Furgão": "HiAce"
   },
   "Skoda": {
     "Fabia Break": "Fabia",

@@ -1034,6 +1034,13 @@
         "year_from": 1997,
         "year_to": 2006
       }
+    ],
+    "Ami": [
+      {
+        "name": "EV",
+        "year_from": 2020,
+        "year_to": 2026
+      }
     ]
   },
   "Cupra": {
@@ -1357,6 +1364,23 @@
         "name": "Mk1",
         "year_from": 2005,
         "year_to": 2014
+      }
+    ],
+    "Ducato": [
+      {
+        "name": "Mk1",
+        "year_from": 1981,
+        "year_to": 1994
+      },
+      {
+        "name": "Mk2",
+        "year_from": 1994,
+        "year_to": 2006
+      },
+      {
+        "name": "Mk3",
+        "year_from": 2006,
+        "year_to": 2026
       }
     ]
   },
@@ -4175,6 +4199,13 @@
         "year_from": 2009,
         "year_to": 2015
       }
+    ],
+    "205": [
+      {
+        "name": "Mk1",
+        "year_from": 1983,
+        "year_to": 1998
+      }
     ]
   },
   "Pontiac": {
@@ -4521,6 +4552,37 @@
         "name": "Mk3",
         "year_from": 2021,
         "year_to": 2026
+      }
+    ],
+    "Arkana": [
+      {
+        "name": "Mk1",
+        "year_from": 2019,
+        "year_to": 2026
+      }
+    ],
+    "Trafic": [
+      {
+        "name": "X83",
+        "year_from": 1980,
+        "year_to": 2001
+      },
+      {
+        "name": "Mk2",
+        "year_from": 2001,
+        "year_to": 2014
+      },
+      {
+        "name": "X82",
+        "year_from": 2014,
+        "year_to": 2026
+      }
+    ],
+    "Talisman": [
+      {
+        "name": "Mk1",
+        "year_from": 2015,
+        "year_to": 2022
       }
     ]
   },
@@ -4901,6 +4963,13 @@
         "year_from": 2009,
         "year_to": 2014
       }
+    ],
+    "Samurai": [
+      {
+        "name": "SJ",
+        "year_from": 1985,
+        "year_to": 2004
+      }
     ]
   },
   "Tesla": {
@@ -5243,6 +5312,55 @@
         "name": "AJ10",
         "year_from": 2008,
         "year_to": 2015
+      }
+    ],
+    "Celica": [
+      {
+        "name": "A40",
+        "year_from": 1977,
+        "year_to": 1981
+      },
+      {
+        "name": "A60",
+        "year_from": 1981,
+        "year_to": 1985
+      },
+      {
+        "name": "T160",
+        "year_from": 1985,
+        "year_to": 1989
+      },
+      {
+        "name": "T180",
+        "year_from": 1989,
+        "year_to": 1993
+      },
+      {
+        "name": "T200",
+        "year_from": 1993,
+        "year_to": 1999
+      },
+      {
+        "name": "T230",
+        "year_from": 1999,
+        "year_to": 2006
+      }
+    ],
+    "HiAce": [
+      {
+        "name": "H50",
+        "year_from": 1982,
+        "year_to": 1989
+      },
+      {
+        "name": "H100",
+        "year_from": 1989,
+        "year_to": 2004
+      },
+      {
+        "name": "H200",
+        "year_from": 2004,
+        "year_to": 2026
       }
     ]
   },
