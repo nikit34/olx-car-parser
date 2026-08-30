@@ -388,19 +388,35 @@ def _annotate_decisions(signals: pd.DataFrame, listings: pd.DataFrame) -> pd.Dat
 
 
 def _pick_zone_deals(signals: pd.DataFrame, zone: str, districts: list[str] | None,
-                     top_n: int, max_age_days: int) -> pd.DataFrame:
+                     top_n: int, max_age_days: int,
+                     stages: dict[str, int] | None = None) -> pd.DataFrame:
+    """Deals for one zone, recording the size after every gate into *stages*.
+
+    The run log used to jump from "decisions over 190 signals: BUY 20, WATCH 8"
+    straight to "all 14 deals", so a feed that halved between those two lines
+    told nobody which gate ate it. That is the shape of the 2026-08-25 outage
+    (see tests/test_hot_deals_photos.py): every deal was discarded downstream
+    and the only visible symptom was a small number, which reads exactly like a
+    quiet market. Counting each gate is what tells the two apart.
+    """
     df = signals
+    rec = stages if stages is not None else {}
+    rec["signals"] = len(df)
     if "is_active" in df.columns:
         df = df[df["is_active"].fillna(True).astype(bool)]
+    rec["active"] = len(df)
     if max_age_days and "first_seen_at" in df.columns:
         cutoff = pd.Timestamp.now() - pd.Timedelta(days=max_age_days)
         ts = pd.to_datetime(df["first_seen_at"], errors="coerce")
         df = df[ts >= cutoff]
+    rec["fresh"] = len(df)
     if districts is not None:
         df = df[df["district"].isin(districts)]
+    rec["in_zone"] = len(df)
     # Quality gate — only BUY/WATCH verdicts from the decision engine.
     if "verdict" in df.columns:
         df = df[df["verdict"].isin(ALLOWED_VERDICTS)]
+    rec["vetted"] = len(df)
     if df.empty:
         return df
     # Rank by the decision engine's risk-adjusted score (falls back to the
@@ -441,9 +457,12 @@ def main() -> None:
     built_at = pd.Timestamp.now("UTC").tz_localize(None).isoformat(timespec="seconds") + "Z"
     overall_counts: dict[str, int] = {}
 
-    unreachable = 0
     for zone, districts in zone_plan:
-        picked = _pick_zone_deals(signals, zone, districts, args.top_n, args.max_age_days)
+        stages: dict[str, int] = {}
+        picked = _pick_zone_deals(signals, zone, districts, args.top_n,
+                                  args.max_age_days, stages)
+        unreachable = 0
+        dead = 0
         deals: list[dict] = []
         for _, row in picked.iterrows():
             photos: list[str] = []
@@ -460,6 +479,7 @@ def main() -> None:
                 else:
                     # Page fetched and carries no usable photo: the listing is
                     # 410/redirected and its link would be dead anyway.
+                    dead += 1
                     continue
             deals.append(_format_deal(row.to_dict(), photos))
 
@@ -476,6 +496,12 @@ def main() -> None:
         out_path.write_text(json.dumps(payload, ensure_ascii=False, default=str,
                                        indent=2, allow_nan=False))
         overall_counts[zone] = len(deals)
+        print(f"[hot_deals]   {zone:<6} funnel: {stages['signals']} signals"
+              f" → {stages['active']} active"
+              f" → {stages['fresh']} seen <={args.max_age_days}d"
+              f" → {stages['in_zone']} in zone"
+              f" → {stages['vetted']} BUY/WATCH"
+              + (f" → -{dead} dead links" if dead else ""), flush=True)
         print(f"[hot_deals]   {zone:<6} {len(deals):>3} deals → {out_path.name}"
               + (f"  ({unreachable} shipped without a photo — OLX unreachable)"
                  if unreachable else ""), flush=True)

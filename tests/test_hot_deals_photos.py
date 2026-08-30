@@ -79,3 +79,39 @@ class TestFetchPhotoUrls:
         monkeypatch.setattr(bhd, "urlopen", lambda *a, **kw: calls.append(1))
         assert bhd.fetch_photo_urls(url) is None
         assert calls == [], "second call must come from the cache"
+
+
+class TestZoneFunnelIsCounted:
+    """Same failure, one step earlier: a feed that collapses between the
+    verdict counts and the final number used to leave no trace of which gate
+    took the deals, so a silent collapse read exactly like a quiet market."""
+
+    def _frame(self):
+        import pandas as pd
+        return pd.DataFrame([
+            dict(olx_id="a", is_active=True, first_seen_at="2026-08-29",
+                 district="Porto", verdict="BUY", decision_score=1),
+            dict(olx_id="b", is_active=True, first_seen_at="2020-01-01",
+                 district="Porto", verdict="BUY", decision_score=2),
+            dict(olx_id="c", is_active=False, first_seen_at="2026-08-29",
+                 district="Porto", verdict="BUY", decision_score=3),
+            dict(olx_id="d", is_active=True, first_seen_at="2026-08-29",
+                 district="Porto", verdict="SKIP", decision_score=4),
+            dict(olx_id="e", is_active=True, first_seen_at="2026-08-29",
+                 district="Faro", verdict="BUY", decision_score=5),
+        ])
+
+    def test_every_gate_reports_what_it_dropped(self):
+        stages = {}
+        got = bhd._pick_zone_deals(self._frame(), "norte", ["Porto"], 0, 30, stages)
+        assert stages == {"signals": 5, "active": 4, "fresh": 3, "in_zone": 2, "vetted": 1}
+        assert len(got) == 1
+
+    def test_the_all_zone_skips_the_district_gate_without_losing_the_count(self):
+        stages = {}
+        bhd._pick_zone_deals(self._frame(), "all", None, 0, 30, stages)
+        assert stages["in_zone"] == stages["fresh"] == 3
+        assert stages["vetted"] == 2
+
+    def test_stages_are_optional(self):
+        assert len(bhd._pick_zone_deals(self._frame(), "norte", ["Porto"], 0, 30)) == 1
