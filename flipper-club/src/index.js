@@ -573,18 +573,28 @@ async function renderYear({ request, env, url, models, rec, slug, year, builtAt,
   const newer = (idx >= 0 && idx < all.length - 1) ? all[idx + 1] : null;
   const win = all.slice(Math.max(0, idx - 3), idx + 4).slice().sort((a, b) => b.y - a.y);
 
-  let liveDeals = [];
+  // Deals for this exact year, else the nearest years of the same model. A year
+  // page usually has no deal of its own (the feed carries ~30 cars per zone),
+  // and an empty block was the page's only answer to "and what can I buy now".
+  // The fallback is labelled as neighbouring years, never passed off as this one.
+  let liveDeals = [], dealsNear = false;
   try {
     const { deals } = await getDeals(env, "all");
-    liveDeals = (deals || [])
-      .filter(d => slugify(`${d.brand}-${d.model}`) === slug && Number(d.year) === year)
-      .slice(0, 3);
+    const mine = (deals || []).filter(d => slugify(`${d.brand}-${d.model}`) === slug);
+    liveDeals = mine.filter(d => Number(d.year) === year).slice(0, 3);
+    if (!liveDeals.length) {
+      liveDeals = mine
+        .filter(d => Number.isFinite(Number(d.year)) && Math.abs(Number(d.year) - year) <= DEALS_NEAR_YEARS)
+        .sort((a, b) => Math.abs(Number(a.year) - year) - Math.abs(Number(b.year) - year))
+        .slice(0, 3);
+      dealsNear = liveDeals.length > 0;
+    }
   } catch (_) { /* best-effort */ }
 
   return html(renderYearPage({
     rec, slug, year, cell,
     neighbours: { older, newer, window: win },
-    liveDeals, pageYears: publishedYearPages(models, slug, rec, builtAt), stats,
+    liveDeals, dealsNear, pageYears: publishedYearPages(models, slug, rec, builtAt), stats,
     host: url.host, depositCount, builtAt,
   }), 200, setCookie);
 }
@@ -1650,6 +1660,7 @@ async function handleAssetGated(request, env) {
 const HOT_DEALS_BASE =
   "https://github.com/nikit34/olx-car-parser/releases/download/latest-data";
 const DEALS_CACHE_TTL_SEC = 900;
+const DEALS_NEAR_YEARS = 2;
 const DEGRADED_CACHE_TTL_SEC = 30;
 
 // Returns { deals, degraded }. `degraded: true` means we could not load the

@@ -21,6 +21,7 @@ import {
   setSiteIdentity, corpusStats, modelInsights, provenance,
   yearCells, yearCell, yearPageYears, depreciationOk, depreciationFit, depreciationSlugs,
   comparePairs, parseComparePath, comparePairKey, modelJson, yearJson, MIN_YEAR_PAGE_N,
+  yearGap,
   depreciationAge, depreciationJson,
   estimateIsv, ISV_TABLES_FOR_TEST, renderDistrictPage,
 } from "../../flipper-club/src/seo-pages.js";
@@ -231,6 +232,69 @@ check("every year page renders without throwing", () => {
     assert(html.includes("<h1"), `${s}/${y}: no h1`);
     assert(!stripJsonLd(html).includes("undefined"), `${s}/${y}: rendered "undefined"`);
   }
+});
+
+check("a one-year step is only claimed where the two price ranges separate", () => {
+  let claimed = 0, withheld = 0;
+  for (const [s2, y] of yearPages) {
+    const rec = models[s2];
+    const all = yearCells(rec, 1).slice().sort((a, b) => a.y - b.y);
+    const i = all.findIndex(c => c.y === y);
+    const cell = yearCell(rec, y), newer = i < all.length - 1 ? all[i + 1] : null;
+    if (!newer) continue;
+    const html = renderYearPage({
+      rec, slug: s2, year: y, cell,
+      neighbours: {
+        older: i > 0 ? all[i - 1] : null, newer,
+        window: all.slice(Math.max(0, i - 3), i + 4).sort((a, b) => b.y - a.y),
+      },
+      liveDeals: [], pageYears: yearPageYears(rec), stats, host: HOST, depositCount: 0, builtAt,
+    });
+    const g = yearGap(cell, newer);
+    const pct = Math.round(g.pct * 100);
+    const step = new RegExp(`>${pct >= 0 ? "\\+" : ""}${pct}%</b> face a ${y}`);
+    if (g.separated) {
+      assert(step.test(html), `${s2}/${y}: separated ranges but no step stated`);
+      claimed++;
+    } else {
+      assert(!step.test(html),
+        `${s2}/${y}: states a ${pct}% one-year step while P25-P75 overlap ${Math.round(g.overlap * 100)}%`);
+      assert(html.includes("sobrepõem-se"), `${s2}/${y}: overlap withheld the step but never says so`);
+      withheld++;
+    }
+  }
+  assert(claimed > 0 && withheld > 0,
+    `the gate never went both ways (${claimed} claimed, ${withheld} withheld) — it is not being exercised`);
+});
+
+check("deals from neighbouring years are labelled as such, never as this year", () => {
+  const [s2, y] = yearPages[0];
+  const rec = models[s2];
+  const all = yearCells(rec, 1).slice().sort((a, b) => a.y - b.y);
+  const i = all.findIndex(c => c.y === y);
+  const near = {
+    olx_id: "IDN", brand: rec.b, model: rec.m, title: "Carro de teste",
+    price_eur: 7000, fair_median: 8500, fair_low: 7600, fair_high: 9400, discount_pct: 0.17,
+    est_profit_eur: 1500, year: y - 1, mileage_km: 180000, fuel_type: "Diesel",
+    district: "Porto", photo_urls: [], days_on_market: 12, first_seen_at: "2026-08-01T00:00:00Z",
+    seller_type: "Particular",
+  };
+  const args = {
+    rec, slug: s2, year: y, cell: yearCell(rec, y),
+    neighbours: {
+      older: i > 0 ? all[i - 1] : null, newer: i < all.length - 1 ? all[i + 1] : null,
+      window: all.slice(Math.max(0, i - 3), i + 4).sort((a, b) => b.y - a.y),
+    },
+    pageYears: yearPageYears(rec), stats, host: HOST, depositCount: 0, builtAt,
+  };
+  const nearHtml = renderYearPage({ ...args, liveDeals: [near], dealsNear: true });
+  assert(nearHtml.includes("ANOS PRÓXIMOS"), "neighbouring-year deals are not labelled");
+  assert(!nearHtml.includes(`${String(rec.m).toUpperCase()} DE ${y} ABAIXO`),
+    "neighbouring-year deals are presented as deals of this year");
+
+  const ownHtml = renderYearPage({ ...args, liveDeals: [{ ...near, year: y }], dealsNear: false });
+  assert(ownHtml.includes(`DE ${y} ABAIXO`), "a deal of this very year lost its label");
+  assert(!ownHtml.includes("ANOS PRÓXIMOS"), "a deal of this very year is labelled as a neighbour");
 });
 
 check("every depreciation page renders without throwing", () => {

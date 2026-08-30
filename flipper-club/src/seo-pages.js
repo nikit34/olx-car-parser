@@ -654,6 +654,36 @@ export function depreciationChart(av, { w = 640, h = 240, color = "#177A47" } = 
     ${dots}${marks}${xlab}</svg>`;
 }
 
+// ── Comparing two adjacent year cells ────────────────────────────────────────
+//
+// Two neighbouring years are two samples of ~20 cars on sale today, not the same
+// car measured a year apart. Their medians can sit far apart while the asking
+// ranges behind them are one cloud: Golf 2012 asks 7500-14 850 and Golf 2013 asks
+// 9000-17 990, so "+82% for one year of age" is a step the page cannot see, and
+// the GBM agrees with the medians because it is pricing the same skewed samples.
+//
+// So the percentage is only phrased as a step when the two P25-P75 ranges are
+// mostly disjoint. Otherwise the page states both medians, both ranges and both
+// sample sizes, and says what the distance actually measures: which cars happen
+// to be for sale in each year. Same fact, without the claim it cannot carry.
+const GAP_MAX_OVERLAP = 0.5;
+
+export function yearGap(a, b) {
+  if (!a || !b || !(a.fm > 0) || !(b.fm > 0)) return null;
+  let overlap = null;
+  if (a.fl != null && a.fh != null && b.fl != null && b.fh != null) {
+    const lo = Math.max(a.fl, b.fl), hi = Math.min(a.fh, b.fh);
+    const span = Math.min(a.fh - a.fl, b.fh - b.fl);
+    overlap = span > 0 ? Math.max(0, hi - lo) / span : (hi >= lo ? 1 : 0);
+  }
+  return {
+    pct: (b.fm - a.fm) / a.fm,
+    overlap,
+    separated: overlap != null && overlap <= GAP_MAX_OVERLAP,
+    dkm: (a.km != null && b.km != null) ? b.km - a.km : null,
+  };
+}
+
 // ═══ /preco/{slug}/{ano} ═════════════════════════════════════════════════════
 //
 // The model page answers "quanto vale um Golf" for eighteen model years at once,
@@ -663,7 +693,7 @@ export function depreciationChart(av, { w = 640, h = 240, color = "#177A47" } = 
 // It only exists where the year has 10+ active listings (MIN_YEAR_PAGE_N).
 // Thinner years stay as a row in the parent table — visible, linked, honest, and
 // not a URL asking to be indexed on four data points.
-export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, pageYears,
+export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, dealsNear, pageYears,
                                  stats, host, depositCount, builtAt }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
   const FM = fmtEur(cell.fm), FL = fmtEur(cell.fl), FH = fmtEur(cell.fh);
@@ -698,15 +728,32 @@ export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, p
   const stepBlock = (() => {
     const bits = [];
     const older = neighbours.older, newer = neighbours.newer;
+    const rng = c => `${fmtEur(c.fl)}–${fmtEur(c.fh)}`;
     if (newer) {
-      const d = (newer.fm - cell.fm) / cell.fm;
+      const g = yearGap(cell, newer);
+      const pct = Math.round(g.pct * 100);
       const href = pageYears.includes(newer.y) ? `/preco/${slug}/${newer.y}` : `/preco/${slug}`;
-      bits.push(`<li>Um <a href="${href}">${B} ${M} de ${newer.y}</a> pede em mediana ${fmtEur(newer.fm)}, <b>${d >= 0 ? "+" : ""}${Math.round(d * 100)}%</b> face a ${year}${d > 0.10 ? " — um degrau grande para um ano de diferença" : d > 0 ? "" : " — mais recente e ainda assim não mais caro, sinal de amostra desigual"}.</li>`);
+      const link = `<a href="${href}">${B} ${M} de ${newer.y}</a>`;
+      const km = g.dkm != null && g.dkm !== 0
+        ? `, com ${fmtKm(Math.abs(g.dkm))} ${g.dkm < 0 ? "a menos" : "a mais"} no conta-quilómetros`
+        : "";
+      bits.push(g.separated
+        ? `<li>Um ${link} pede em mediana ${fmtEur(newer.fm)}, <b>${pct >= 0 ? "+" : ""}${pct}%</b> face a ${year}${km}${pct <= 0 ? " — mais recente e ainda assim não mais caro" : ""}.</li>`
+        : `<li>Um ${link} pede em mediana ${fmtEur(newer.fm)} contra ${FM} em ${year}, mas as faixas de preço dos dois anos sobrepõem-se (${year}: ${rng(cell)}; ${newer.y}: ${rng(newer)})${km}. Com ${cell.n === newer.n ? `${cell.n} anúncios de cada lado` : `${cell.n} e ${newer.n} anúncios de cada lado`}, essa distância mede sobretudo que carros estão à venda em cada ano, não quanto vale um ano de matrícula.</li>`);
     }
     if (older) {
-      const d = (cell.fm - older.fm) / cell.fm;
+      const g = yearGap(older, cell);
+      const save = Math.round((cell.fm - older.fm) / cell.fm * 100);
       const href = pageYears.includes(older.y) ? `/preco/${slug}/${older.y}` : `/preco/${slug}`;
-      bits.push(`<li>Descer para <a href="${href}">${older.y}</a> poupa cerca de <b>${Math.round(d * 100)}%</b> (mediana ${fmtEur(older.fm)})${older.km != null && cell.km != null ? `, com ${fmtKm(Math.abs(older.km - cell.km))} ${older.km > cell.km ? "a mais" : "a menos"} no conta-quilómetros` : ""}.</li>`);
+      const link = `<a href="${href}">${older.y}</a>`;
+      const km = older.km != null && cell.km != null && older.km !== cell.km
+        ? `, com ${fmtKm(Math.abs(older.km - cell.km))} ${older.km > cell.km ? "a mais" : "a menos"} no conta-quilómetros`
+        : "";
+      bits.push(save <= 0
+        ? `<li>Descer para ${link} não poupa nada: a mediana desse ano é ${fmtEur(older.fm)}, ${save === 0 ? `a mesma de ${year}` : `acima da de ${year}`}${km}. Entre estes dois anos quem manda no preço é o carro, não a matrícula.</li>`
+        : g.separated
+          ? `<li>Descer para ${link} poupa cerca de <b>${save}%</b> (mediana ${fmtEur(older.fm)})${km}.</li>`
+          : `<li>Descer para ${link} baixa a mediana em <b>${save}%</b> (${fmtEur(older.fm)})${km}, mas as faixas dos dois anos sobrepõem-se (${older.y}: ${rng(older)}; ${year}: ${rng(cell)}): há exemplares de ${older.y} a pedir mais do que boa parte dos de ${year}.</li>`);
     }
     if (share != null) {
       bits.push(`<li>O ano ${year} representa <b>${share}%</b> de todos os ${B} ${M} à venda agora (${cell.n} de ${rec.n} anúncios)${share >= 15 ? " — é dos anos com mais escolha" : share <= 5 ? " — há pouca oferta, por isso conta com menos margem para escolher" : ""}.</li>`);
@@ -743,7 +790,8 @@ export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, p
 
   const deals = (liveDeals || []).length ? `
     <section class="section fc-wide">
-      <div class="sec-label">${B} ${M} DE ${year} ABAIXO DO PREÇO JUSTO AGORA</div>
+      <div class="sec-label">${dealsNear ? `${B} ${M} DE ANOS PRÓXIMOS ABAIXO DO PREÇO JUSTO AGORA` : `${B} ${M} DE ${year} ABAIXO DO PREÇO JUSTO AGORA`}</div>
+      ${dealsNear ? `<p class="fc-p" style="margin:0 0 12px;">Nenhum de ${year} neste momento. Estes são ${B} ${M} de anos próximos cujo preço pedido está abaixo do valor justo que estimamos.</p>` : ""}
       <div class="grid">${liveDeals.slice(0, 3).map(d => {
         const p = present(d);
         return `<a class="tile" href="/car?olx_id=${encodeURIComponent(d.olx_id)}" style="max-width:none;">
@@ -755,7 +803,7 @@ export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, p
       }).join("")}</div>
     </section>` : `
     <section class="section fc-wrap">
-      <p class="fc-p">Sem ${B} ${M} de ${year} abaixo do preço justo neste momento. <a href="/avaliar">Avalia um anúncio concreto</a> ou <a href="/mercado">vê o mercado completo</a>.</p>
+      <p class="fc-p">Sem ${B} ${M} abaixo do preço justo neste momento, nem de ${year} nem dos anos à volta. <a href="/avaliar">Avalia um anúncio concreto</a> ou <a href="/mercado">vê o mercado completo</a>.</p>
     </section>`;
 
   const cta = `
@@ -788,10 +836,13 @@ export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, p
     `A quilometragem mediana dos ${rec.b} ${rec.m} de ${year} à venda é ${fmtKm(cell.km)}. Um exemplar bastante abaixo desse valor justifica um preço acima da mediana do ano, e vice-versa.`,
   ]);
   if (neighbours.newer) {
-    const d = Math.round((neighbours.newer.fm - cell.fm) / cell.fm * 100);
+    const nb = neighbours.newer, g = yearGap(cell, nb);
+    const d = Math.round(g.pct * 100);
     faqs.push([
-      `Compensa comprar um ${rec.b} ${rec.m} de ${neighbours.newer.y} em vez de ${year}?`,
-      `Um ${rec.b} ${rec.m} de ${neighbours.newer.y} pede em mediana ${fmtEur(neighbours.newer.fm)}, ou seja ${d >= 0 ? "+" : ""}${d}% face aos ${FM} de ${year}. A diferença compensa se a quilometragem e o estado acompanharem; caso contrário estás a pagar pelo ano na matrícula.`,
+      `Compensa comprar um ${rec.b} ${rec.m} de ${nb.y} em vez de ${year}?`,
+      g.separated
+        ? `Um ${rec.b} ${rec.m} de ${nb.y} pede em mediana ${fmtEur(nb.fm)}, ou seja ${d >= 0 ? "+" : ""}${d}% face aos ${FM} de ${year}. A diferença compensa se a quilometragem e o estado acompanharem; caso contrário estás a pagar pelo ano na matrícula.`
+        : `Os ${rec.b} ${rec.m} de ${nb.y} pedem em mediana ${fmtEur(nb.fm)} e os de ${year} ${FM}, mas as faixas de preço sobrepõem-se (${year}: ${fmtEur(cell.fl)} a ${fmtEur(cell.fh)}; ${nb.y}: ${fmtEur(nb.fl)} a ${fmtEur(nb.fh)}), com ${cell.n} e ${nb.n} anúncios ativos. Entre estes dois anos a diferença de preço vem sobretudo de que carros estão à venda em cada um, por isso a escolha decide-se no exemplar concreto (quilómetros, versão, estado) e não no ano.`,
     ]);
   }
   if (hasG) faqs.push([
