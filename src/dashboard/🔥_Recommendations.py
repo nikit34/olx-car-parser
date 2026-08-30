@@ -105,6 +105,16 @@ decision_ctx = _cached_decision_context(
 # ---------------------------------------------------------------------------
 # Sidebar — filters
 # ---------------------------------------------------------------------------
+# Sidebar nav. Streamlit builds both the URL and the generated label from the
+# page filename, and the bundle names pages lower-case-hyphen so the address
+# reads /analytics/market-direction. That would make the generated sidebar read
+# "market-direction" as well, so it is switched off in dashboard-static/index.html
+# and these three links carry the human labels instead.
+st.sidebar.page_link("\U0001F525_Recommendations.py", label="Recommendations", icon="\U0001F525")
+st.sidebar.page_link("pages/2_\U0001F4C8_market-direction.py", label="Market Direction", icon="\U0001F4C8")
+st.sidebar.page_link("pages/3_\U0001F50D_model-details.py", label="Model Details", icon="\U0001F50D")
+st.sidebar.divider()
+
 st.sidebar.title("Filters")
 
 if listings_df.empty:

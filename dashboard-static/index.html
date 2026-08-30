@@ -79,8 +79,12 @@
     const PY_BASE = "./files";
 
     const files = {
-      // Dashboard sources — emoji-prefixed MEMFS paths so Streamlit's
-      // filename-based multipage nav reads the right icons in the sidebar.
+      // Dashboard sources. The MEMFS path is what Streamlit turns into the
+      // page URL, so these are lower-case-hyphen: /analytics/model-details
+      // instead of /analytics/Model_Details. Streamlit would then label the
+      // sidebar "model-details" too, which is why the generated nav is off
+      // (client.showSidebarNavigation below) and each page draws its own
+      // st.sidebar.page_link with a human label.
       // The on-disk bundle uses ASCII filenames (scripts/build_stlite_bundle.py
       // does the rename) to keep CF Pages URLs clean.
       "\u{1F525}_Recommendations.py":
@@ -89,9 +93,9 @@
         { url: `${PY_BASE}/dashboard/_cache.py` },
       "data_loader.py":
         { url: `${PY_BASE}/dashboard/data_loader.py` },
-      "pages/2_\u{1F4C8}_Market_Direction.py":
+      "pages/2_\u{1F4C8}_market-direction.py":
         { url: `${PY_BASE}/dashboard/pages/2_Market_Direction.py` },
-      "pages/3_\u{1F50D}_Model_Details.py":
+      "pages/3_\u{1F50D}_model-details.py":
         { url: `${PY_BASE}/dashboard/pages/3_Model_Details.py` },
 
       // src/ package — only the modules transitively reached from the
@@ -161,6 +165,11 @@
             "theme.secondaryBackgroundColor": "#262730",
             "theme.textColor": "#FAFAFA",
             "browser.gatherUsageStats": false,
+            // The generated nav labels pages by filename, and the filenames are
+            // lower-case-hyphen to keep the URLs clean. Each page renders its
+            // own links instead, so the address stays pretty and the sidebar
+            // still reads "Market Direction".
+            "client.showSidebarNavigation": false,
             // Hide the top-right hamburger (Print / Record screen / Made
             // with Streamlit v…) and the Deploy button. Belt-and-braces
             // CSS in <head> covers older Streamlit versions where this
