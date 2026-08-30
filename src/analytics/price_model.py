@@ -376,6 +376,10 @@ def _build_sold_target_adjustment(
     > _SOLD_MAX_DAYS) get weight=0 so LightGBM ignores them entirely
     rather than the row being silently dropped — keeps the index aligned
     with the rest of the training arrays.
+
+    An optional ``was_relisted`` column marks originals whose car came back
+    under a new id. Those never sold, so they also get weight=0; the relist
+    row carries the same car at a fresher price.
     """
     n = len(df)
     multiplier = np.ones(n, dtype=float)
@@ -403,6 +407,10 @@ def _build_sold_target_adjustment(
                 multiplier[i] = mult
                 weight[i] = w
                 break
+
+    if "was_relisted" in df.columns:
+        relisted = df["was_relisted"].fillna(False).astype(bool).values
+        weight[sold_mask & relisted] = 0.0
 
     return multiplier, weight
 
@@ -1383,12 +1391,20 @@ def train_price_model(
     ) = _cv_metrics(df)
     metrics["filter_stats"] = filter_stats
 
-    n_sold = int(_sold_row_mask(df).sum())
+    sold_mask_all = _sold_row_mask(df)
+    n_sold = int(sold_mask_all.sum())
+    if "was_relisted" in df.columns:
+        n_relisted = int(
+            (sold_mask_all & df["was_relisted"].fillna(False).astype(bool).values).sum()
+        )
+    else:
+        n_relisted = 0
     n_dropped_sold = int((sold_w == 0.0).sum())
     metrics["sold_inclusion"] = {
         "total_rows": len(df),
         "sold_rows_used": n_sold - n_dropped_sold,
-        "sold_rows_dropped_bad_dates": n_dropped_sold,
+        "sold_rows_dropped_bad_dates": n_dropped_sold - n_relisted,
+        "sold_rows_dropped_relisted": n_relisted,
         "active_rows": len(df) - n_sold,
     }
 

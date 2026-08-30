@@ -1274,14 +1274,25 @@ def train_model():
     )
     from src.dashboard.data_loader import prepare_active_for_model
 
+    from src.storage.repository import get_relist_events_df
+
     init_db()
     session = get_session()
     listings = get_listings_df(session)
+    relists = get_relist_events_df(session)
     session.close()
 
     if listings.empty:
         console.print("[yellow]No listings in DB — nothing to train on.[/yellow]")
         raise typer.Exit(1)
+
+    if not relists.empty and "olx_id" in listings.columns:
+        originals = set(relists["original_olx_id"].dropna())
+        listings["was_relisted"] = listings["olx_id"].isin(originals)
+        console.print(
+            f"[dim]{len(originals)} re-listed originals excluded from the "
+            f"sold-price target — those cars never sold.[/dim]"
+        )
 
     listings = enrich_listings(listings)
     from src.parser.llm_enrichment import merge_real_mileage

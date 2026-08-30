@@ -685,6 +685,36 @@ class TestSoldTargetAdjustment:
         _, w = _build_sold_target_adjustment(df)
         assert (w == 1.0).all()
 
+    def test_relisted_original_is_excluded(self):
+        """The car came back under a new id, so the original never sold.
+        Its last ask is not a sale price and the relist row already carries
+        the same car at a fresher one."""
+        from datetime import datetime, timezone, timedelta
+        from src.analytics.price_model import _build_sold_target_adjustment
+        first = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        rows = [
+            self._row(is_active=False, deactivation_reason="sold",
+                      first_seen_at=first, deactivated_at=first + timedelta(days=5)),
+            self._row(is_active=False, deactivation_reason="sold",
+                      first_seen_at=first, deactivated_at=first + timedelta(days=5)),
+        ]
+        df = pd.DataFrame(rows)
+        df["was_relisted"] = [True, False]
+        _, w = _build_sold_target_adjustment(df)
+        assert w[0] == 0.0
+        assert w[1] == 1.0
+
+    def test_relist_column_absent_changes_nothing(self):
+        from datetime import datetime, timezone, timedelta
+        from src.analytics.price_model import _build_sold_target_adjustment
+        first = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        df = pd.DataFrame([self._row(
+            is_active=False, deactivation_reason="sold",
+            first_seen_at=first, deactivated_at=first + timedelta(days=5),
+        )])
+        _, w = _build_sold_target_adjustment(df)
+        assert w[0] == 1.0
+
     def test_bogus_dates_get_zero_weight(self):
         """Pre-fix DB had rows with 2915-day "sold" lifespans (parser
         noise from a since-fixed date-extraction bug). Those must not
