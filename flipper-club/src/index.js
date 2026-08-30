@@ -67,6 +67,8 @@ import {
   renderFacetPage, renderDistrictPage, facetCells, facetCell, facetKind, facetKeys,
   isoWeek, missingWeeks,
   setWave, publishedYearPages, publishedDepreciation, publishedPairs, publishedFacets,
+  DUELS, duel, duelByPath, duelJson, duelSlugs, duelsFor, publishedDuel,
+  renderDuelPage, renderDuelHub,
 } from "./seo-pages.js";
 
 const ZONES = ["norte", "centro", "sul", "all"];
@@ -94,6 +96,7 @@ const PRODUCT_PATHS = new Set([
   // are prefix-routed above the asset gate.
   "/depreciacao", "/comparar", "/liquidez", "/sobrevalorizados",
   "/metodologia", "/sobre", "/isv",
+  ...Object.values(DUELS).map(d => `/${d.path}`),
 ]);
 
 // Paths that belong to the internal analytics bundle rather than the product.
@@ -252,6 +255,10 @@ export default {
       if (pathname.startsWith("/comparar/") && method === "GET") {
         return handleCompare(request, env, url);
       }
+      const duelPrefix = Object.values(DUELS).find(d => pathname.startsWith(`/${d.path}/`));
+      if (duelPrefix && method === "GET") {
+        return handleDuel(request, env, url, duelPrefix);
+      }
       // Weekly market index archive (/mercado/indice[/{YYYY-Www}]).
       if (pathname === "/mercado/indice" || pathname.startsWith("/mercado/indice/")) {
         if (method !== "GET") return notFound();
@@ -301,6 +308,8 @@ export default {
       if (pathname === "/" && method === "GET") return handleLanding(request, env, url);
       if (pathname === "/depreciacao" && method === "GET") return handleDepreciationHub(request, env, url);
       if (pathname === "/comparar" && method === "GET") return handleCompareHub(request, env, url);
+      const duelHub = Object.values(DUELS).find(d => pathname === `/${d.path}`);
+      if (duelHub && method === "GET") return handleDuelHub(request, env, url, duelHub);
       if (pathname === "/liquidez" && method === "GET") return handleLiquidity(request, env, url);
       if (pathname === "/sobrevalorizados" && method === "GET") return handleValuationGap(request, env, url);
       if (pathname === "/metodologia" && method === "GET") return handleMethodology(request, env, url);
@@ -563,6 +572,7 @@ async function handleModelPage(request, env, url) {
       return { k, kind, lbl: cell.lbl, n: cell.n, fm: cell.fm };
     }),
     hasDepreciation: publishedDepreciation(models, slug, rec, builtAt),
+    duels: duelsFor(models, slug, rec, builtAt).map(d => ({ path: d.path, kind: d.kind })),
     provenanceHtml: provenance({ n: rec.n, builtAt }),
     altJson: `https://${url.host}/preco/${slug}.json`,
   }), 200, setCookie);
@@ -649,6 +659,9 @@ async function renderFacet({ request, env, url, models, rec, slug, facet, builtA
   const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
   return html(renderFacetPage({
     rec, slug, kind, cell,
+    duelSpec: (kind === "fuel" && publishedDuel(models, slug, rec, builtAt, "fuel")) ? DUELS.fuel
+            : (kind === "transmission" && publishedDuel(models, slug, rec, builtAt, "gear")) ? DUELS.gear
+            : null,
     siblingsCells: facetCells(rec, kind),
     stats: corpusStats(models, builtAt),
     host: url.host, depositCount, builtAt,
@@ -730,7 +743,42 @@ async function handleDepreciationHub(request, env, url) {
       return { slug, b: r.b, m: r.m, n: r.n, rate: f.rate, span: f.span,
                half: av && av.halfLife, cheapAge: av && av.cheapFrom ? av.cheapFrom.age : null };
     }).sort((a, b) => b.rate - a.rate);
-    return html(renderDepreciationHub({ rows, stats, host: url.host, depositCount, builtAt }), 200, setCookie);
+    return html(renderDepreciationHub({
+      rows, stats, host: url.host, depositCount, builtAt,
+      duelHubs: Object.values(DUELS).filter(d => duelSlugs(models, d.kind, builtAt).length),
+    }), 200, setCookie);
+  });
+}
+
+async function handleDuel(request, env, url, spec) {
+  let slug;
+  try {
+    slug = decodeURIComponent(url.pathname.slice(`/${spec.path}/`.length)).replace(/\/+$/, "").toLowerCase();
+  } catch (_) { return notFoundPage(request, env, url); }
+  const wantsJson = slug.endsWith(".json");
+  if (wantsJson) slug = slug.slice(0, -".json".length);
+  return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, stats }) => {
+    const rec = models[slug];
+    if (!rec || !publishedDuel(models, slug, rec, builtAt, spec.kind)) return notFoundPage(request, env, url, setCookie);
+    const av = duel(rec, spec.kind, builtAt);
+    if (!av) return notFoundPage(request, env, url, setCookie);
+    if (wantsJson) return jsonResponse(duelJson(rec, slug, av, { host: url.host, builtAt }));
+    return html(renderDuelPage({
+      rec, slug, av, stats, host: url.host, depositCount, builtAt,
+    }), 200, setCookie);
+  });
+}
+
+async function handleDuelHub(request, env, url, spec) {
+  return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, stats }) => {
+    const rows = duelSlugs(models, spec.kind, builtAt).map(slug => {
+      const r = models[slug];
+      return { slug, b: r.b, m: r.m, av: duel(r, spec.kind, builtAt) };
+    }).filter(r => r.av);
+    if (!rows.length) return notFoundPage(request, env, url, setCookie);
+    const other = Object.values(DUELS)
+      .find(d => d.kind !== spec.kind && duelSlugs(models, d.kind, builtAt).length) || null;
+    return html(renderDuelHub({ spec, rows, other, stats, host: url.host, depositCount, builtAt }), 200, setCookie);
   });
 }
 
@@ -785,8 +833,11 @@ async function handleValuationGap(request, env, url) {
 
 // /metodologia, /sobre, /isv
 async function handleMethodology(request, env, url) {
-  return withModels(request, env, url, ({ builtAt, depositCount, setCookie, stats, mq }) =>
-    html(renderMethodology({ stats, mq, host: url.host, depositCount, builtAt }), 200, setCookie));
+  return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, stats, mq }) =>
+    html(renderMethodology({
+      stats, mq, host: url.host, depositCount, builtAt,
+      duelHubs: Object.values(DUELS).filter(d => duelSlugs(models, d.kind, builtAt).length),
+    }), 200, setCookie));
 }
 async function handleAbout(request, env, url) {
   return withModels(request, env, url, ({ builtAt, depositCount, setCookie, stats, mq }) =>
@@ -998,6 +1049,9 @@ async function handleSitemap(request, env, url) {
   if (models) {
     add("/depreciacao", "weekly", "0.7");
     add("/comparar", "weekly", "0.7");
+    for (const d of Object.values(DUELS)) {
+      if (duelSlugs(models, d.kind, lastmodSrc).length) add(`/${d.path}`, "weekly", "0.7");
+    }
     add("/liquidez", "weekly", "0.7");
     add("/sobrevalorizados", "weekly", "0.6");
 
@@ -1013,6 +1067,9 @@ async function handleSitemap(request, env, url) {
         add(`/preco/${encodeURIComponent(slug)}/${encodeURIComponent(k)}`, "weekly", "0.5");
       }
       if (publishedDepreciation(models, slug, rec, lastmodSrc)) add(`/depreciacao/${encodeURIComponent(slug)}`, "monthly", "0.5");
+      for (const d of Object.values(DUELS)) {
+        if (publishedDuel(models, slug, rec, lastmodSrc, d.kind)) add(`/${d.path}/${encodeURIComponent(slug)}`, "monthly", "0.5");
+      }
     }
     for (const k of Object.keys((mdoc && mdoc.districts) || {})) {
       add(`/precos/${encodeURIComponent(k)}`, "weekly", "0.6");
@@ -1121,6 +1178,7 @@ async function handleLlmsTxt(request, env, url) {
   const count = models ? Object.keys(models).length : 0;
   const built = (mdoc && mdoc.built_at) ? String(mdoc.built_at).slice(0, 10) : null;
   const base = `https://${url.host}`;
+  const duelHubs = models ? Object.values(DUELS).filter(d => duelSlugs(models, d.kind, mdoc && mdoc.built_at).length) : [];
   // A handful of the best-covered models, so an agent has real entry points
   // rather than a bare index it would have to crawl to be useful.
   const top = models
@@ -1160,6 +1218,7 @@ async function handleLlmsTxt(request, env, url) {
     `- [Desvalorização por modelo](${base}/depreciacao)`,
     `- [Tempo mediano até vender, por modelo](${base}/liquidez)`,
     `- [Comparações diretas entre modelos](${base}/comparar)`,
+    ...duelHubs.map(d => `- [${d.hubTitle}](${base}/${d.path})`),
     `- [Preço pedido vs. valor justo estimado](${base}/sobrevalorizados)`,
     `- [Simulador de ISV](${base}/isv)`,
     `- [Metodologia](${base}/metodologia)`,
@@ -1175,6 +1234,8 @@ async function handleLlmsTxt(request, env, url) {
     `- \`${base}/preco/{slug}\` — preços de um modelo, por ano`,
     `- \`${base}/preco/{slug}/{ano}\` — um modelo num ano concreto (existe a partir de 10 anúncios ativos nesse ano)`,
     `- \`${base}/preco/{slug}/{combustivel}\` — o mesmo modelo só em diesel, gasolina ou GPL`,
+    `- \`${base}/preco/{slug}/{caixa}\` — o mesmo modelo só com caixa manual ou automática`,
+    ...duelHubs.map(d => `- \`${base}/${d.path}/{slug}\` — ${d.question}: qual segura melhor o preço desse modelo (+ .json)`),
     `- \`${base}/preco/{slug}/{distrito}\` — o mesmo modelo num distrito`,
     `- \`${base}/precos/{distrito}\` — o mercado de um distrito`,
     `- \`${base}/depreciacao/{slug}\` — curva de desvalorização, custo de cada ano de idade e onde a queda abranda (existe onde há histórico suficiente)`,

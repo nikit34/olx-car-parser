@@ -13,9 +13,16 @@ into bands or honestly omitted (yrs_thin). Predicted/fair bands stay in
 valuations.json for the per-listing /avaliar tool — this file is asking-price only.
 
 Beyond the per-year cells, each model also carries FACET cells where the sample
-allows: ``fx`` (fuel: diesel/gasolina/GPL) and ``dt`` (district), plus a
-top-level ``districts`` rollup for the cross-model geo pages. Same gate as
-everything else - a facet with a thin sample is absent, not estimated.
+allows: ``fx`` (fuel: diesel/gasolina/GPL), ``tx`` (gearbox: manual/automática)
+and ``dt`` (district), plus a top-level ``districts`` rollup for the cross-model
+geo pages. Same gate as everything else - a facet with a thin sample is absent,
+not estimated.
+
+Where a model has enough of both sides of an either/or to fit them separately,
+it also carries the mileage-controlled retention duel from ``retention_duel``:
+``dg`` (diesel vs gasolina) and ``cx`` (caixa manual vs automática) — the
+per-year rate of each side and the asking premium at concrete ages, each with
+the interval it was measured at.
 
 slugify() MUST stay byte-identical to the JS slugify() in
 flipper-club/src/templates.js (paired-comment pact, like
@@ -26,12 +33,14 @@ Worker's /preco/{slug} lookup and the live-deal bridge silently miss.
 from __future__ import annotations
 
 import re
+import time
 import unicodedata
 from typing import Callable
 
 import numpy as np
 import pandas as pd
 
+from src.analytics.retention_duel import all_duels
 from src.analytics.valuations import _i
 
 # Page-worthy floor + per-year-cell gate (validated: 271 models clear >=20).
@@ -46,6 +55,8 @@ MAX_YEAR_ROWS = 25          # cap emitted year rows (most recent) to bound size
 # the wrong direction on the current corpus.
 MIN_FACET_N = 15
 MAX_DISTRICT_ROWS = 8       # per model, deepest districts only
+MIN_MATCH_YEAR_N = 5
+MIN_MATCH_YEARS = 3
 
 # Only three fuels get facets. The raw fuel_type vocabulary carries near-
 # duplicates that would slug into competing pages for the same thing
@@ -53,6 +64,8 @@ MAX_DISTRICT_ROWS = 8       # per model, deepest districts only
 # cluster that actually exists is diesel-vs-gasolina anyway. The full mix still
 # ships in ``fu`` for the chart; this is only about which facets get a URL.
 _FUEL_FACETS = {"diesel": "Diesel", "gasolina": "Gasolina", "gpl": "GPL"}
+
+_TRANSMISSION_FACETS = {"manual": "Manual", "automatica": "Automática"}
 
 # National floor for a district to get its own cross-model page.
 MIN_DISTRICT_N = 200
@@ -203,18 +216,80 @@ def _fuel_facet_key(value) -> str | None:
     return k if k in _FUEL_FACETS else None
 
 
+def _transmission_facet_key(value) -> str | None:
+    """Canonical facet key for a raw transmission, or None if it gets no facet."""
+    k = slugify(str(value or ""))
+    return k if k in _TRANSMISSION_FACETS else None
+
+
+def _year_medians(sub: pd.DataFrame) -> dict[int, tuple[float, int]]:
+    """{year: (median asking price, n)} over years carrying MIN_MATCH_YEAR_N."""
+    yr = pd.to_numeric(sub.get("year"), errors="coerce")
+    out: dict[int, tuple[float, int]] = {}
+    if yr is None:
+        return out
+    for y, rows in sub.assign(_y=yr).dropna(subset=["_y"]).groupby("_y"):
+        if len(rows) < MIN_MATCH_YEAR_N:
+            continue
+        v = pd.to_numeric(rows["price_eur"], errors="coerce").dropna()
+        if v.empty:
+            continue
+        out[int(y)] = (float(v.median()), int(len(rows)))
+    return out
+
+
+def _weighted_median(points: list[tuple[float, int]]) -> float | None:
+    if not points:
+        return None
+    pts = sorted(points)
+    total = sum(w for _, w in pts)
+    acc = 0
+    for value, w in pts:
+        acc += w
+        if acc * 2 >= total:
+            return value
+    return pts[-1][0]
+
+
+def _matched_ratio(a: dict[int, tuple[float, int]],
+                   b: dict[int, tuple[float, int]]) -> list | None:
+    """[ratio, shared_years] comparing two samples year by year, or None.
+
+    The raw medians of two facets cannot be subtracted: they describe different
+    cars. A Golf automatic asks 4.3x a Golf manual, which reads as "the gearbox
+    is worth 330%" and is not what the corpus says - the automatics on sale are
+    simply much newer. So the ratio here is the sample-weighted median of the
+    PER-YEAR ratios (a five-listing year cannot outvote a forty-listing one),
+    which holds the age mix fixed by construction. Same method as the
+    model-vs-model gap on the comparison pages. None below MIN_MATCH_YEARS
+    shared years, so the page is left with no percentage to print rather than a
+    percentage that means the age difference."""
+    shared = [(a[y][0] / b[y][0], min(a[y][1], b[y][1]))
+              for y in a.keys() & b.keys() if b[y][0] > 0]
+    if len(shared) < MIN_MATCH_YEARS:
+        return None
+    r = _weighted_median(shared)
+    return None if r is None else [round(r, 4), len(shared)]
+
+
 def _facet_cells(grp: pd.DataFrame, col: str, keyer, labeller,
                  min_n: int, limit: int | None = None) -> list[dict]:
-    """Asking-price cells for one facet dimension (fuel or district).
+    """Asking-price cells for one facet dimension (fuel, gearbox or district).
 
     Same shape and same honesty rules as ``_year_cells``: median WITH its
     P25-P75, gated on sample size, and simply absent when the sample is thin —
     never merged with an unrelated bucket to reach the floor.
+
+    Each cell also carries the year-matched ratios ``vsm`` (this facet against
+    the whole model) and ``vs`` (against each sibling facet) — see
+    ``_matched_ratio`` for why the raw medians may not be compared directly.
+    Both are absent where too few model years carry a sample on both sides.
     """
     if col not in grp.columns:
         return []
     keys = grp[col].map(keyer)
     out: list[dict] = []
+    by_key: dict[str, dict[int, tuple[float, int]]] = {}
     for key, sub in grp.assign(_k=keys).dropna(subset=["_k"]).groupby("_k"):
         if len(sub) < min_n:
             continue
@@ -230,8 +305,27 @@ def _facet_cells(grp: pd.DataFrame, col: str, keyer, labeller,
         if len(yrs):
             cell["y0"], cell["y1"] = int(yrs.min()), int(yrs.max())
         out.append(cell)
+        by_key[str(key)] = _year_medians(sub)
     out.sort(key=lambda c: -c["n"])
-    return out[:limit] if limit else out
+    out = out[:limit] if limit else out
+
+    parent = _year_medians(grp)
+    kept = {c["k"] for c in out}
+    for cell in out:
+        mine = by_key[cell["k"]]
+        vsm = _matched_ratio(mine, parent)
+        if vsm:
+            cell["vsm"] = vsm
+        vs = {}
+        for other in kept:
+            if other == cell["k"]:
+                continue
+            r = _matched_ratio(mine, by_key[other])
+            if r:
+                vs[other] = r
+        if vs:
+            cell["vs"] = vs
+    return out
 
 
 def _district_rollup(active: pd.DataFrame, models: dict) -> dict:
@@ -279,6 +373,7 @@ def build_model_pages(
     listings: pd.DataFrame,
     sell_speed: pd.DataFrame | None = None,
     valuator: Callable[[pd.DataFrame], pd.DataFrame] | None = None,
+    now_year: int | None = None,
 ) -> dict:
     """Return ``{"v":1, "models": {slug: {...}}}`` for models with >=MIN_MODEL_N
     active, asking-priced listings.
@@ -289,7 +384,11 @@ def build_model_pages(
     the cheap-tail/ceiling/agreement guards (``_gbm_passes``); otherwise the cell
     stays asking-only. ``valuator`` stays a callable so this module needs no
     LightGBM import (it's built host-side; the Worker only reads the blob).
+
+    ``now_year`` is the reference year ages are counted from in the ``dg`` /
+    ``cx`` retention duels; it defaults to the build year.
     """
+    now_year = now_year or time.gmtime().tm_year
     models: dict[str, dict] = {}
     page_groups: dict[str, pd.DataFrame] = {}   # slug → its real listings (for GBM)
     if listings.empty:
@@ -380,6 +479,12 @@ def build_model_pages(
                           lambda v: _FUEL_FACETS[_fuel_facet_key(v)], MIN_FACET_N)
         if fx:
             rec["fx"] = fx
+        tx = _facet_cells(grp, "transmission", _transmission_facet_key,
+                          lambda v: _TRANSMISSION_FACETS[_transmission_facet_key(v)],
+                          MIN_FACET_N)
+        if tx:
+            rec["tx"] = tx
+        rec.update(all_duels(grp, now_year))
         dt = _facet_cells(grp, "district", lambda v: slugify(str(v or "")) or None,
                           lambda v: str(v), MIN_FACET_N, limit=MAX_DISTRICT_ROWS)
         if dt:

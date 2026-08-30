@@ -322,6 +322,9 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
         model_pages["mq"] = _mq
     _n_models = len(model_pages.get("models", {}))
     _n_gbm = sum(1 for r in model_pages.get("models", {}).values() if "gm" in r)
+    _n_facets = sum(len(r.get(k, [])) for r in model_pages.get("models", {}).values()
+                    for k in ("fx", "tx", "dt"))
+    _n_duel = sum(1 for r in model_pages.get("models", {}).values() if "dg" in r)
     models_path = out_dir / "models.json"
     # Collapse guard: refuse to overwrite a healthy blob with a gutted one (a
     # data/query regression that halves the corpus would silently 404 hundreds of
@@ -338,6 +341,7 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
             models_path.write_text(mblob)
             sizes["models.json"] = models_path.stat().st_size
             print(f"[build]   model pages: {_n_models:>6} models  ({_n_gbm} with GBM band)  "
+                  f"{_n_facets} facet cells, {_n_duel} fuel-retention fits  "
                   f"({sizes['models.json']/1e3:.0f} KB)", flush=True)
         except ValueError as e:
             print(f"[build]   models.json SKIPPED — non-finite value leaked: {e}", flush=True)

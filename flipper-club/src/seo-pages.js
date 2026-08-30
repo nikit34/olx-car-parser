@@ -1217,7 +1217,7 @@ export function renderDepreciationPage({ rec, slug, fit, stats, pageYears, host,
 }
 
 // ── /depreciacao — hub, ranked ───────────────────────────────────────────────
-export function renderDepreciationHub({ rows, stats, host, depositCount, builtAt }) {
+export function renderDepreciationHub({ rows, stats, host, depositCount, builtAt, duelHubs = [] }) {
   const canonical = `https://${host}/depreciacao`;
   const dec = x => x.toFixed(1).replace(".", ",");
   const tr = rows.map(r => `<tr>
@@ -1249,6 +1249,7 @@ export function renderDepreciationHub({ rows, stats, host, depositCount, builtAt
         <tbody>${tr}</tbody></table></div>
       <p class="fc-prov mono">"Metade do valor" é o tempo que o modelo leva a valer metade, ao ritmo medido. "Um ano custa &lt;500 €" é a idade a partir da qual mais um ano de matrícula vale menos de 500 € na curva ajustada; um travessão significa que isso não acontece antes dos ${CHEAP_MAX_AGE} anos, ou seja a matrícula manda no preço em toda a gama que se compra. As curvas atravessam gerações: parte da queda é modelo diferente, não idade.</p>
       ${provenance({ n: stats.listings, builtAt, measure: "Preço pedido mediano por ano de fabrico, ajuste log-linear" })}
+      ${duelHubs.length ? `<p class="fc-p" style="margin-top:18px;">Esta tabela mede o modelo inteiro, com todas as versões juntas. Onde a amostra chega para separar as curvas, separamo-las: ${duelHubs.map(d => `<a href="/${d.path}">${escapeHtml(d.question)}</a>`).join(" · ")}.</p>` : ""}
       <p class="fc-p" style="margin-top:18px;"><a href="/precos">Todos os modelos</a> · <a href="/liquidez">Quanto tempo demoram a vender</a> · <a href="/metodologia">Como calculamos</a></p>
     </section>
     <div style="height:60px;"></div>`;
@@ -1798,7 +1799,10 @@ function modelQualityBlock(mq) {
 // Every number on this site is an estimate, and the honest move is to publish
 // where it comes from and where it stops working — including the thresholds that
 // make us DROP a figure rather than show a weak one.
-export function renderMethodology({ stats, mq, host, depositCount, builtAt }) {
+export function renderMethodology({ stats, mq, host, depositCount, builtAt, duelHubs = [] }) {
+  const duelList = duelHubs.length
+    ? duelHubs.map(d => `<a href="/${d.path}">${escapeHtml(d.question)}</a>`).join(" e ")
+    : "diesel ou gasolina e caixa manual ou automática";
   const canonical = `https://${host}/metodologia`;
   const body = crumbs([{ name: "Início", href: "/" }, { name: "Metodologia" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
@@ -1821,8 +1825,15 @@ export function renderMethodology({ stats, mq, host, depositCount, builtAt }) {
         <li class="fc-li"><b>5 anúncios</b> — mínimo para uma linha por ano na tabela. Anos mais finos são juntados em intervalos de dois ou mais anos, ou omitidos e contados no rodapé da tabela.</li>
         <li class="fc-li"><b>${MIN_YEAR_PAGE_N} anúncios</b> — mínimo para um ano ter <b>página própria</b>. Abaixo disso, um único anúncio fora do normal move a mediana mais do que a diferença entre anos que estaríamos a afirmar.</li>
         <li class="fc-li"><b>${DEP_MIN_CELLS} anos com amostra e ${DEP_MIN_SPAN} anos de intervalo</b> — mínimo para uma <a href="/depreciacao">curva de desvalorização</a>, mais um ajuste que explique de facto os pontos (R² ≥ ${DEP_MIN_R2}).</li>
+        <li class="fc-li"><b>15 anúncios</b> — mínimo para um <b>corte</b> do modelo (combustível, caixa, distrito) ter página própria.</li>
+        <li class="fc-li"><b>3 anos com amostra dos dois lados</b> — mínimo para comparar dois cortes em percentagem. Sem isso a página mostra as duas medianas e diz que a distância entre elas ainda inclui a diferença de idades.</li>
+        <li class="fc-li"><b>20 anúncios de cada lado</b>, mais uma margem estreita o suficiente para a resposta significar alguma coisa — mínimo para uma página de duelo (${duelList}).</li>
         <li class="fc-li"><b>Uma quebra na taxa só é publicada se for medida</b> — ver abaixo.</li>
       </ul>
+
+      <h3 class="fc-h3">Comparar dois cortes do mesmo modelo</h3>
+      <p class="fc-p">As medianas de dois cortes não se subtraem. Os automáticos à venda são muito mais novos do que os manuais, por isso a razão em bruto entre as duas medianas mede sobretudo a diferença de idades e chamar-lhe prémio da caixa seria inventar um número que os dados não dizem. Cada comparação entre cortes é feita <b>dentro de cada ano de matrícula</b> e só depois juntada, ponderada pela amostra mais fina de cada ano — o mesmo método das <a href="/comparar">comparações entre modelos</a>.</p>
+      <p class="fc-p">Nas páginas de duelo (${duelList}) vamos um passo mais longe, porque aí a pergunta é sobre o <i>ritmo</i> da queda e não sobre o preço de hoje: ajustamos o preço à idade <b>e</b> à quilometragem em simultâneo, e a taxa de cada lado é lida com a quilometragem igualada. Sem isso mediríamos o facto de os diesels à venda andarem muito mais e os automáticos muito menos. Cada página traz a margem de 95% da diferença que afirma, e um modelo só tem página quando essa margem é estreita o suficiente para que "não há diferença" queira dizer <b>não há vantagem apreciável</b> e não <b>não conseguimos ver</b>.</p>
 
 <h2 class="fc-h2" id="modelo">5. O "valor justo estimado"</h2>
       <p class="fc-p">Além dos preços pedidos, treinamos um modelo estatístico — <i>gradient boosting</i>, uma soma de muitas árvores de decisão em que cada uma corrige o erro das anteriores — sobre todos os anúncios com preço que recolhemos, incluindo os que já saíram do mercado. Lê marca, modelo, ano, quilometragem, cilindrada, potência, combustível, caixa, geração, versão, nível de equipamento, segmento e distrito, e devolve um valor com uma banda à volta, nunca um número seco. Nas páginas de modelo, esse valor é a <b>mediana das estimativas dos anúncios reais</b> daquele modelo — não a estimativa de um carro-tipo inventado.</p>
@@ -2297,7 +2308,7 @@ export function yearJson(rec, slug, year, cell, { host, builtAt }) {
 
 /** Facet cells of one kind: "fuel" → rec.fx, "district" → rec.dt. */
 export function facetCells(rec, kind) {
-  const arr = kind === "fuel" ? rec.fx : rec.dt;
+  const arr = kind === "fuel" ? rec.fx : kind === "transmission" ? rec.tx : rec.dt;
   return Array.isArray(arr) ? arr : [];
 }
 
@@ -2309,26 +2320,40 @@ export function facetCell(rec, kind, key) {
 /** Which facet kind a path segment belongs to, if any. */
 export function facetKind(rec, key) {
   if (facetCell(rec, "fuel", key)) return "fuel";
+  if (facetCell(rec, "transmission", key)) return "transmission";
   if (facetCell(rec, "district", key)) return "district";
   return null;
 }
 
 /** Every facet URL segment this model publishes (for the sitemap). */
 export function facetKeys(rec) {
-  return [...facetCells(rec, "fuel"), ...facetCells(rec, "district")].map(c => c.k);
+  return [...facetCells(rec, "fuel"), ...facetCells(rec, "transmission"),
+          ...facetCells(rec, "district")].map(c => c.k);
 }
 
-export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, host, depositCount, builtAt }) {
+export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, host, depositCount, builtAt, duelSpec = null }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
   const label = escapeHtml(cell.lbl);
   const canonical = `https://${host}/preco/${slug}/${cell.k}`;
   const isFuel = kind === "fuel";
+  const isGear = kind === "transmission";
   // "um Golf diesel" vs "um Golf no Porto" — the preposition is the difference
   // between a sentence and a slot-filled template.
-  const phrase = isFuel ? `${B} ${M} ${label.toLowerCase()}` : `${B} ${M} no distrito de ${label}`;
-  const titlePhrase = isFuel ? `${rec.b} ${rec.m} ${cell.lbl.toLowerCase()}` : `${rec.b} ${rec.m} em ${cell.lbl}`;
+  const phrase = isFuel ? `${B} ${M} ${label.toLowerCase()}`
+    : isGear ? `${B} ${M} com caixa ${label.toLowerCase()}`
+    : `${B} ${M} no distrito de ${label}`;
+  const titlePhrase = isFuel ? `${rec.b} ${rec.m} ${cell.lbl.toLowerCase()}`
+    : isGear ? `${rec.b} ${rec.m} caixa ${cell.lbl.toLowerCase()}`
+    : `${rec.b} ${rec.m} em ${cell.lbl}`;
+  const sibHead = isFuel ? "Contra as outras motorizações"
+    : isGear ? "Contra a outra caixa" : "Contra o resto do país";
+  const sibLabel = isFuel ? "OUTRAS MOTORIZAÇÕES"
+    : isGear ? "OUTRAS CAIXAS" : "OUTROS DISTRITOS";
   const share = rec.n ? Math.round(cell.n / rec.n * 100) : null;
+  const matched = Array.isArray(cell.vsm) ? { pct: cell.vsm[0] - 1, years: cell.vsm[1] } : null;
   const vsAll = rec.fm > 0 ? (cell.fm - rec.fm) / rec.fm : null;
+  const more = x => x >= 0 ? "mais" : "menos";
+  const dearer = x => x >= 0 ? "mais caro" : "mais barato";
 
   let pin = 50;
   if (cell.fh > cell.fl) pin = Math.max(6, Math.min(94, Math.round((cell.fm - cell.fl) / (cell.fh - cell.fl) * 100)));
@@ -2337,10 +2362,18 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
   // model's other facets of the same kind. "Diesel or petrol, which holds its
   // price" is answered everywhere with opinion and nowhere with a number.
   const others = siblingsCells.filter(c => c.k !== cell.k);
+  const pairOf = o => (cell.vs && Array.isArray(cell.vs[o.k]))
+    ? { pct: cell.vs[o.k][0] - 1, years: cell.vs[o.k][1] } : null;
   const compare = others.map(o => {
-    const d = (cell.fm - o.fm) / o.fm;
     const href = `/preco/${slug}/${o.k}`;
-    return `<li>Contra <a href="${href}">${escapeHtml(o.lbl)}</a> (${o.n} anúncios, mediana ${fmtEur(o.fm)}): ${Math.abs(Math.round(d * 100))}% ${d >= 0 ? "mais caro" : "mais barato"}${o.km != null && cell.km != null ? `, com ${fmtKm(Math.abs(cell.km - o.km))} ${cell.km > o.km ? "a mais" : "a menos"} de quilometragem mediana` : ""}.</li>`;
+    const link = `<a href="${href}">${escapeHtml(o.lbl)}</a>`;
+    const km = (o.km != null && cell.km != null)
+      ? ` A quilometragem mediana difere em ${fmtKm(Math.abs(cell.km - o.km))} (${cell.km > o.km ? "mais" : "menos"} deste lado).` : "";
+    const m = pairOf(o);
+    if (m) {
+      return `<li>Contra ${link} (${o.n} anúncios, mediana ${fmtEur(o.fm)}): <b>${Math.abs(Math.round(m.pct * 100))}% ${dearer(m.pct)}</b> comparando ano a ano, sobre ${m.years} anos com amostra dos dois lados. As medianas em bruto (${fmtEur(cell.fm)} contra ${fmtEur(o.fm)}) dizem outra coisa porque cada lado tem a sua mistura de idades.${km}</li>`;
+    }
+    return `<li>Contra ${link}: mediana ${fmtEur(o.fm)} em ${o.n} anúncios${o.y0 && o.y1 ? ` (anos ${o.y0}-${o.y1})` : ""}, contra ${fmtEur(cell.fm)} aqui${cell.y0 && cell.y1 ? ` (anos ${cell.y0}-${cell.y1})` : ""}. Não há anos que cheguem com amostra dos dois lados para comparar à mesma idade, por isso a distância entre as duas medianas ainda inclui a diferença de anos.${km}</li>`;
   }).join("");
 
   const body = crumbs([
@@ -2351,7 +2384,7 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
       <div class="side-card" style="max-width:680px;margin:0 auto;">
         <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">${escapeHtml(cell.lbl).toUpperCase()} · OLX PORTUGAL</span></div>
         <h1 class="fc-h1">Quanto vale um ${phrase} usado?</h1>
-        <p class="lede" style="font-size:16px;margin:0 0 20px;">Em <b>${cell.n} anúncios ativos</b>${isFuel ? "" : " no distrito"}, um ${phrase} pede em mediana <b>${fmtEur(cell.fm)}</b>${cell.km != null ? `, com ${fmtKm(cell.km)} medianos` : ""}${cell.y0 && cell.y1 ? `, para anos ${cell.y0}-${cell.y1}` : ""}.</p>
+        <p class="lede" style="font-size:16px;margin:0 0 20px;">Em <b>${cell.n} anúncios ativos</b>${isFuel || isGear ? "" : " no distrito"}, um ${phrase} pede em mediana <b>${fmtEur(cell.fm)}</b>${cell.km != null ? `, com ${fmtKm(cell.km)} medianos` : ""}${cell.y0 && cell.y1 ? `, para anos ${cell.y0}-${cell.y1}` : ""}.</p>
         <div class="side-prices">
           <div><div class="cap">Preço mediano (pedido)</div><div class="big">${fmtEur(cell.fm)}</div></div>
           <div class="side-fair"><div class="cap">${cell.n} anúncios${share != null ? ` · ${share}% do modelo` : ""}</div><div class="v">${cell.km != null ? fmtKm(cell.km) : "—"}</div></div>
@@ -2365,15 +2398,16 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
     </div>
     ${(compare || vsAll != null) ? `
     <section class="section fc-wrap">
-      <h2 class="fc-h2">${isFuel ? "Contra as outras motorizações" : "Contra o resto do país"}</h2>
+      <h2 class="fc-h2">${sibHead}</h2>
       <ul class="fc-insights">
-        ${vsAll != null ? `<li>Face a todos os ${B} ${M} do país (mediana ${fmtEur(rec.fm)}), este corte pede <b>${Math.abs(Math.round(vsAll * 100))}% ${vsAll >= 0 ? "mais" : "menos"}</b>.</li>` : ""}
+        ${matched ? `<li>Face a todos os ${B} ${M} do país (mediana ${fmtEur(rec.fm)}), este corte pede <b>${Math.abs(Math.round(matched.pct * 100))}% ${more(matched.pct)}</b> ao comparar ano a ano, sobre ${matched.years} anos com amostra.</li>`
+          : vsAll != null ? `<li>Face a todos os ${B} ${M} do país, este corte pede em mediana ${fmtEur(cell.fm)} contra ${fmtEur(rec.fm)}${cell.y0 && cell.y1 ? `, em anos ${cell.y0}-${cell.y1}` : ""}. Os dois números não se subtraem: descrevem misturas de idades diferentes.</li>` : ""}
         ${compare}
       </ul>
     </section>` : ""}
     ${siblingsCells.length > 1 ? `
     <section class="section fc-wrap">
-      <div class="sec-label" style="margin-bottom:10px;">${isFuel ? "OUTRAS MOTORIZAÇÕES" : "OUTROS DISTRITOS"}</div>
+      <div class="sec-label" style="margin-bottom:10px;">${sibLabel}</div>
       <div class="fc-yearlinks">${siblingsCells.map(c =>
         c.k === cell.k ? `<a class="on" href="/preco/${slug}/${c.k}">${escapeHtml(c.lbl)}</a>`
                        : `<a href="/preco/${slug}/${c.k}">${escapeHtml(c.lbl)}</a>`).join("")}</div>
@@ -2388,7 +2422,7 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
       </div>
     </section>
     <section class="section fc-wrap" style="padding-bottom:70px;">
-      <p class="fc-p"><a href="/preco/${slug}">Todos os ${B} ${M}</a>${isFuel ? "" : ` · <a href="/precos/${cell.k}">Carros usados ${emDistrito(cell.k, escapeHtml(cell.lbl))}</a>`} · <a href="/precos">Todos os modelos</a></p>
+      <p class="fc-p"><a href="/preco/${slug}">Todos os ${B} ${M}</a>${duelSpec ? ` · <a href="/${duelSpec.path}/${slug}">${escapeHtml(duelSpec.crumb)} neste modelo</a>` : ""}${isFuel || isGear ? "" : ` · <a href="/precos/${cell.k}">Carros usados ${emDistrito(cell.k, escapeHtml(cell.lbl))}</a>`} · <a href="/precos">Todos os modelos</a></p>
     </section>`;
 
   const faqs = [[
@@ -2397,11 +2431,15 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
   ]];
   if (others.length) {
     const o = others[0];
-    const d = Math.round((cell.fm - o.fm) / o.fm * 100);
+    const m = pairOf(o);
+    const d = Math.round((m ? m.pct : (cell.fm - o.fm) / o.fm) * 100);
     faqs.push([
       isFuel ? `${rec.b} ${rec.m}: ${cell.lbl.toLowerCase()} ou ${o.lbl.toLowerCase()}?`
+             : isGear ? `${rec.b} ${rec.m}: caixa ${cell.lbl.toLowerCase()} ou ${o.lbl.toLowerCase()}?`
              : `Um ${rec.b} ${rec.m} é mais caro em ${cell.lbl} ou em ${o.lbl}?`,
-      `A mediana pedida é ${fmtEur(cell.fm)} para ${cell.lbl.toLowerCase()} e ${fmtEur(o.fm)} para ${o.lbl.toLowerCase()}, uma diferença de ${Math.abs(d)}%. A comparação é entre anúncios ativos do mesmo modelo, por isso a diferença é do corte e não do modelo.`,
+      m
+        ? `Comparando ano a ano — só anos em que ambos têm amostra, ${m.years} ao todo — o corte ${cell.lbl.toLowerCase()} fica ${Math.abs(d)}% ${dearer(m.pct)} do que ${o.lbl.toLowerCase()}. As medianas em bruto (${fmtEur(cell.fm)} e ${fmtEur(o.fm)}) não se comparam directamente porque cada lado tem a sua mistura de anos.`
+        : `A mediana pedida é ${fmtEur(cell.fm)} para ${cell.lbl.toLowerCase()} e ${fmtEur(o.fm)} para ${o.lbl.toLowerCase()}, mas em anos diferentes${cell.y0 && cell.y1 && o.y0 && o.y1 ? ` (${cell.y0}-${cell.y1} contra ${o.y0}-${o.y1})` : ""} e sem anos suficientes com amostra dos dois lados para comparar à mesma idade. A distância entre os dois números inclui a diferença de idades.`,
     ]);
   }
 
@@ -2429,6 +2467,7 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
             "@type": "Car", "name": titlePhrase,
             "brand": { "@type": "Brand", "name": rec.b }, "model": rec.m,
             ...(isFuel ? { "fuelType": cell.lbl } : {}),
+            ...(isGear ? { "vehicleTransmission": cell.lbl } : {}),
           },
         },
         breadcrumbLd(host, [
@@ -2518,6 +2557,376 @@ export function renderDistrictPage({ key, rec, models, stats, host, depositCount
         breadcrumbLd(host, [
           { name: "Início", href: "/" }, { name: "Preços", href: "/precos" }, { name: rec.lbl },
         ]),
+      ],
+    },
+  });
+}
+
+export const DUEL_SIG_T = 1.96;
+
+export const DUELS = {
+  fuel: {
+    kind: "fuel", key: "dg", path: "diesel-ou-gasolina",
+    crumb: "Diesel ou gasolina", eyebrow: "DIESEL vs. GASOLINA",
+    question: "diesel ou gasolina",
+    hubH1: "Diesel ou gasolina: onde a escolha muda mesmo o preço",
+    hubTitle: "Diesel ou gasolina: qual segura melhor o preço, modelo a modelo",
+    hubLede: "combustível",
+    a: { lbl: "Diesel", chip: "DIESEL", low: "diesel", subj: "o diesel",
+         facet: "diesel", only: "Só diesel", json: "diesel" },
+    b: { lbl: "Gasolina", chip: "GASOLINA", low: "gasolina", subj: "a gasolina",
+         facet: "gasolina", only: "Só gasolina", json: "gasoline" },
+  },
+  gear: {
+    kind: "gear", key: "cx", path: "manual-ou-automatica",
+    crumb: "Manual ou automática", eyebrow: "CAIXA MANUAL vs. AUTOMÁTICA",
+    question: "caixa manual ou automática",
+    hubH1: "Manual ou automática: onde a caixa muda mesmo o preço",
+    hubTitle: "Caixa manual ou automática: qual segura melhor o preço, modelo a modelo",
+    hubLede: "caixa",
+    a: { lbl: "Manual", chip: "MANUAL", low: "caixa manual", subj: "a caixa manual",
+         facet: "manual", only: "Só manual", json: "manual" },
+    b: { lbl: "Automática", chip: "AUTOMÁTICA", low: "caixa automática",
+         subj: "a caixa automática", facet: "automatica", only: "Só automática",
+         json: "automatic" },
+  },
+};
+
+export function duelSpec(kind) {
+  return DUELS[kind] || null;
+}
+
+export function duelByPath(segment) {
+  return Object.values(DUELS).find(d => d.path === segment) || null;
+}
+
+export function duel(rec, kind, builtAt) {
+  const spec = DUELS[kind];
+  const g = spec && rec ? rec[spec.key] : null;
+  if (!g || !g.a || !g.b || !(g.a.r > 0) || !(g.b.r > 0)) return null;
+  const built = parseInt((builtAt || "").slice(0, 4), 10);
+  const ref = Number.isFinite(built) ? built : new Date().getUTCFullYear();
+  const a0 = Math.max(0, ref - (g.y1 || ref));
+  const a1 = Math.max(a0 + 1, ref - (g.y0 || ref));
+  const diff = g.b.r - g.a.r;
+  return {
+    spec, a: g.a, b: g.b, ci: g.ci || 0, t: g.t || 0, r2: g.r2 || 0,
+    y0: g.y0, y1: g.y1, gap: Array.isArray(g.gap) ? g.gap : [],
+    ref, a0, a1, diff, n: (g.a.n || 0) + (g.b.n || 0),
+    decisive: Math.abs(g.t || 0) >= DUEL_SIG_T,
+    winner: diff > 0 ? "a" : "b",
+  };
+}
+
+export function duelOk(rec, kind) {
+  const spec = DUELS[kind];
+  const g = spec && rec ? rec[spec.key] : null;
+  return !!(g && g.a && g.b && g.a.r > 0 && g.b.r > 0);
+}
+
+/**
+ * Duel pages are OUTSIDE the SEO_WAVE_MODELS gate, like the comparison pages
+ * and unlike everything per-model: the whole layer is a few dozen URLs, and its
+ * own publishing gate (20 listings a side, a 95% interval under 3pp/yr, R²) is
+ * already stricter than anything a wave could stage. There is nothing here to
+ * release in batches.
+ */
+export function publishedDuel(models, slug, rec, builtAt, kind) {
+  return duelOk(rec, kind);
+}
+
+export function duelSlugs(models, kind, builtAt) {
+  const spec = DUELS[kind];
+  if (!spec) return [];
+  return Object.entries(models)
+    .filter(([slug, r]) => publishedDuel(models, slug, r, builtAt, kind))
+    .sort((x, y) => Math.abs(y[1][spec.key].b.r - y[1][spec.key].a.r)
+                  - Math.abs(x[1][spec.key].b.r - x[1][spec.key].a.r))
+    .map(([s]) => s);
+}
+
+/** Every duel this model publishes, for the model page's own links. */
+export function duelsFor(models, slug, rec, builtAt) {
+  return Object.keys(DUELS)
+    .filter(k => publishedDuel(models, slug, rec, builtAt, k))
+    .map(k => DUELS[k]);
+}
+
+const CONTRACTIONS = { "de|o": "do", "de|a": "da", "a|o": "ao", "a|a": "à" };
+
+export function withPrep(prep, subject) {
+  const m = /^(o|a)\s+(.*)$/.exec(subject || "");
+  if (!m) return `${prep} ${subject}`;
+  return `${CONTRACTIONS[`${prep}|${m[1]}`] || `${prep} ${m[1]}`} ${m[2]}`;
+}
+
+const keepPct = (rate, years) => Math.round(Math.pow(1 - rate, years) * 100);
+const ppc = x => (Math.abs(x) * 100).toFixed(1).replace(".", ",");
+const pctc = x => (x * 100).toFixed(1).replace(".", ",");
+
+export function retentionChart(av, { w = 640, h = 240 } = {}) {
+  if (!av) return "";
+  const padL = 34, padR = 14, padT = 22, padB = 34;
+  const a0 = av.a0, a1 = av.a1;
+  const X = a => padL + ((a - a0) / Math.max(1, a1 - a0)) * (w - padL - padR);
+  const Y = v => padT + (1 - v) * (h - padT - padB);
+  const curve = (rate) => {
+    let dpath = "";
+    const step = Math.max(0.25, (a1 - a0) / 120);
+    for (let a = a0; a <= a1 + 1e-9; a += step) {
+      dpath += `${dpath ? "L" : "M"}${X(a).toFixed(1)},${Y(Math.pow(1 - rate, a - a0)).toFixed(1)}`;
+    }
+    return dpath + `L${X(a1).toFixed(1)},${Y(Math.pow(1 - rate, a1 - a0)).toFixed(1)}`;
+  };
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map(f =>
+    `<line x1="${padL}" x2="${w - padR}" y1="${Y(f).toFixed(1)}" y2="${Y(f).toFixed(1)}" class="c-grid"/>`
+    + `<text x="${padL - 5}" y="${(Y(f) + 4).toFixed(1)}" text-anchor="end" class="c-ax">${Math.round(f * 100)}%</text>`).join("");
+  const step = Math.max(1, Math.ceil((a1 - a0) / 6));
+  let xlab = "";
+  for (let a = a0; a <= a1; a += step) {
+    xlab += `<text x="${X(a).toFixed(1)}" y="${h - 13}" text-anchor="${a === a0 ? "start" : "middle"}" class="c-ax">${a}</text>`;
+  }
+  xlab += `<text x="${w - padR}" y="${h - 2}" text-anchor="end" class="c-ax">anos de idade</text>`;
+  return `<svg class="fc-chart" viewBox="0 0 ${w} ${h}" role="img"
+    aria-label="Percentagem do preço mantida por idade, ${escapeHtml(av.spec.question)}">${ticks}
+    <path d="${curve(av.a.r)}" fill="none" stroke="#177A47" stroke-width="2.4" stroke-linejoin="round"/>
+    <path d="${curve(av.b.r)}" fill="none" stroke="#B4661E" stroke-width="2.4" stroke-dasharray="5 4" stroke-linejoin="round"/>
+    ${xlab}
+    <text x="${w - padR}" y="${padT}" text-anchor="end" class="c-ax" fill="#177A47">— ${escapeHtml(av.spec.a.lbl.toLowerCase())}</text>
+    <text x="${w - padR}" y="${padT + 14}" text-anchor="end" class="c-ax" fill="#B4661E">- - ${escapeHtml(av.spec.b.lbl.toLowerCase())}</text></svg>`;
+}
+
+export function duelJson(rec, slug, av, { host, builtAt }) {
+  const S = av.spec;
+  const canonical = `https://${host}/${S.path}/${slug}`;
+  const side = s => ({ sample_size: s.n, annual_depreciation_rate: s.r,
+                       median_asking_eur: s.fm, median_mileage_km: s.km });
+  return {
+    url: canonical, slug, brand: rec.b, model: rec.m,
+    compares: S.kind === "fuel" ? "fuel_type" : "transmission",
+    measured: "asking_price",
+    method: `log(price) ~ age + log(mileage) + side + age*side, OLS on active listings`,
+    collected_until: (builtAt || "").slice(0, 10) || null,
+    model_years: { from: av.y0, to: av.y1 },
+    [S.a.json]: side(av.a),
+    [S.b.json]: side(av.b),
+    rate_difference_pp_per_year: Math.round(av.diff * 1000) / 10,
+    rate_difference_ci95_half_width_pp: Math.round(av.ci * 1000) / 10,
+    distinguishable_at_95: av.decisive,
+    holds_value_better: av.decisive ? S[av.winner].json : null,
+    premium_by_age: av.gap.map(([age, est, half]) =>
+      ({ age, premium_of: S.a.json, premium: est, ci95_half_width: half })),
+    fit_r2: av.r2,
+    licence: licenseUrl(host),
+  };
+}
+
+export function renderDuelPage({ rec, slug, av, stats, host, depositCount, builtAt }) {
+  const S = av.spec;
+  const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
+  const canonical = `https://${host}/${S.path}/${slug}`;
+  const aPct = pctc(av.a.r), bPct = pctc(av.b.r);
+  const win = S[av.winner], lose = S[av.winner === "a" ? "b" : "a"];
+  const winSide = av[av.winner], loseSide = av[av.winner === "a" ? "b" : "a"];
+
+  const verdict = av.decisive
+    ? `<p class="fc-p"><b>Neste modelo, ${win.subj} segura melhor o preço.</b> Com a quilometragem igualada, ${S.a.subj} perde <b>${aPct}% por ano de idade</b> e ${S.b.subj} <b>${bPct}%</b> — uma diferença de <b>${ppc(av.diff)} pontos por ano</b> a favor ${withPrep("de", win.subj)} (intervalo de 95%: ${ppc(Math.abs(av.diff) - av.ci)} a ${ppc(Math.abs(av.diff) + av.ci)} pontos). Ao fim de cinco anos são ${keepPct(winSide.r, 5)}% do preço mantidos contra ${keepPct(loseSide.r, 5)}%.</p>`
+    : `<p class="fc-p"><b>Neste modelo, ${S.kind === "fuel" ? "a escolha do combustível" : "a escolha da caixa"} não decide a desvalorização.</b> ${S.a.subj[0].toUpperCase()}${S.a.subj.slice(1)} perde ${aPct}% por ano de idade e ${S.b.subj} ${bPct}%, e a diferença de ${ppc(av.diff)} pontos cabe dentro da margem da própria medição (±${ppc(av.ci)} pontos). Não é "não sabemos": a amostra chega para dizer que, se existe vantagem, ela é menor do que ${ppc(av.ci + Math.abs(av.diff))} pontos por ano — pouco ao lado do que separa dois exemplares do mesmo ano.</p>`;
+
+  const gapRows = av.gap.map(([age, est, half]) => {
+    const lo = est - half, hi = est + half;
+    const sure = lo > 0 || hi < 0;
+    const read = !sure ? "indistinguível"
+      : est > 0 ? `${escapeHtml(S.a.lbl)} pede mais` : `${escapeHtml(S.b.lbl)} pede mais`;
+    return `<tr><td>${age} anos <span class="mut">(${av.ref - age})</span></td>
+      <td>${est >= 0 ? "+" : "−"}${ppc(est)}%</td>
+      <td class="mut">${(lo >= 0 ? "+" : "−")}${ppc(lo)}% a ${(hi >= 0 ? "+" : "−")}${ppc(hi)}%</td>
+      <td class="mut">${read}</td></tr>`;
+  }).join("");
+
+  const drift = av.gap.length >= 2 ? (() => {
+    const [g0, e0] = av.gap[0], [g1, e1] = av.gap[av.gap.length - 1];
+    const move = e1 > e0 ? `vai encarecendo face ${withPrep("a", S.b.subj)}` : `vai ficando mais barat${S.a.subj.startsWith("a ") ? "a" : "o"} face ${withPrep("a", S.b.subj)}`;
+    const winnerStartsCheaper = av.winner === "a" ? e0 < 0 : e0 > 0;
+    const tail = winnerStartsCheaper
+      ? "O que segura melhor o preço é também o mais barato à partida, por isso a vantagem soma-se: pagas menos hoje e perdes menos depois."
+      : "O que segura melhor o preço é também o mais caro à partida — o prémio paga-se na compra e devolve-se em desvalorização, e quanto tempo ficas com o carro decide se compensa.";
+    const say = (a, e) => `aos ${a} anos ${S.a.subj} pede ${e >= 0 ? "mais" : "menos"} ${ppc(e)}% do que ${S.b.subj}`;
+    return `<p class="fc-p">As duas leituras são a mesma conta vista de dois lados: ${say(g0, e0)}, e ${say(g1, e1)}. Ou seja, com a idade ${S.a.subj} <b>${move}</b> — que é exactamente o que a diferença de ${ppc(av.diff)} pontos por ano diz, escrita em preço em vez de em taxa. ${av.decisive ? tail : ""}</p>`;
+  })() : "";
+
+  const gapBlock = av.gap.length ? `
+    <section class="section fc-wrap">
+      <h2 class="fc-h2">E hoje, qual pede mais?</h2>
+      <p class="fc-p">A pergunta anterior era sobre o ritmo da queda; esta é sobre o preço no balcão. Cada linha compara ${S.a.subj} e ${S.b.subj} <b>da mesma idade e com os mesmos quilómetros</b> — a quilometragem entra no ajuste, por isso a diferença abaixo já não é ${S.kind === "fuel" ? 'o "diesel anda mais"' : 'o "automático é de outro segmento"'}.</p>
+      <div class="fc-scroll"><table class="fc-tbl">
+        <thead><tr><th>Idade</th><th>${escapeHtml(S.a.lbl)} vs. ${escapeHtml(S.b.lbl.toLowerCase())}</th><th>Intervalo (95%)</th><th>Leitura</th></tr></thead>
+        <tbody>${gapRows}</tbody></table></div>
+      ${drift}
+      <p class="fc-prov mono">Valores do ajuste, não medianas em bruto: as medianas por idade misturam versões e quilometragens diferentes de cada lado.</p>
+    </section>` : "";
+
+  const tbl = `
+    <div class="fc-scroll"><table class="fc-tbl">
+      <thead><tr><th>&nbsp;</th><th>${escapeHtml(S.a.lbl)}</th><th>${escapeHtml(S.b.lbl)}</th></tr></thead>
+      <tbody>
+        <tr><td>Anúncios ativos no ajuste</td><td>${av.a.n}</td><td>${av.b.n}</td></tr>
+        <tr><td>Preço pedido mediano</td><td>${fmtEur(av.a.fm)}</td><td>${fmtEur(av.b.fm)}</td></tr>
+        <tr><td>Quilometragem mediana</td><td>${fmtKm(av.a.km)}</td><td>${fmtKm(av.b.km)}</td></tr>
+        <tr><td>Perda por ano de idade</td><td>${aPct}%</td><td>${bPct}%</td></tr>
+        <tr><td>Mantém ao fim de 5 anos</td><td>${keepPct(av.a.r, 5)}%</td><td>${keepPct(av.b.r, 5)}%</td></tr>
+        <tr><td>Mantém ao fim de 10 anos</td><td>${keepPct(av.a.r, 10)}%</td><td>${keepPct(av.b.r, 10)}%</td></tr>
+      </tbody></table></div>`;
+
+  const body = crumbs([
+    { name: "Início", href: "/" }, { name: S.crumb, href: `/${S.path}` },
+    { name: `${rec.b} ${rec.m}` },
+  ]) + `
+    <div style="padding-top:14px;">
+      <div class="side-card" style="max-width:680px;margin:0 auto;">
+        <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">${S.eyebrow} · OLX PORTUGAL</span></div>
+        <h1 class="fc-h1">${B} ${M}: ${S.question} segura melhor o preço?</h1>
+        <p class="lede" style="font-size:16px;margin:0 0 18px;">Ajustámos as duas curvas em separado sobre <b>${av.n} anúncios ativos</b> de ${B} ${M} (${av.a.n} ${escapeHtml(S.a.low)}, ${av.b.n} ${escapeHtml(S.b.low)}, matrículas de ${av.y0} a ${av.y1}), com a quilometragem igualada. ${S.a.subj[0].toUpperCase()}${S.a.subj.slice(1)} perde <b>${aPct}% por ano de idade</b>, ${S.b.subj} <b>${bPct}%</b>.</p>
+        <div class="fc-stat-row">
+          <div class="fc-stat"><div class="k">${S.a.chip}</div><div class="v">${aPct}%</div><div class="s">por ano · ${av.a.n} anúncios</div></div>
+          <div class="fc-stat"><div class="k">${S.b.chip}</div><div class="v">${bPct}%</div><div class="s">por ano · ${av.b.n} anúncios</div></div>
+          <div class="fc-stat"><div class="k">DIFERENÇA</div><div class="v">${ppc(av.diff)} pp</div><div class="s">±${ppc(av.ci)} pp · ${av.decisive ? `a favor ${withPrep("de", win.subj)}` : "indistinguível"}</div></div>
+        </div>
+        ${provenance({ n: av.n, builtAt, measure: `Preço pedido de ${rec.b} ${rec.m}, ${S.a.low} e ${S.b.low} em separado (${av.y0}-${av.y1})`, extra: `Ajuste log-linear com quilometragem controlada, R²=${av.r2.toFixed(2)}` })}
+      </div>
+    </div>
+    <section class="section fc-wrap">
+      <h2 class="fc-h2">A resposta</h2>
+      ${verdict}
+      <p class="fc-p">A comparação directa das medianas não responde a isto: no ${B} ${M} ${S.a.subj} à venda tem ${fmtKm(av.a.km)} medianos e ${S.b.subj} ${fmtKm(av.b.km)}, e uma curva ajustada sem contar com isso mede a mistura de quilometragens e chama-lhe ${S.kind === "fuel" ? "combustível" : "caixa"}. Por isso o ajuste usa idade <b>e</b> quilometragem, e as duas curvas abaixo estão à mesma quilometragem.</p>
+    </section>
+    <section class="section fc-wrap">
+      <h2 class="fc-h2">As duas curvas</h2>
+      ${retentionChart(av)}
+      <p class="fc-p" style="margin-top:10px;">Percentagem do preço mantida à medida que o carro envelhece, a partir do exemplar mais novo com amostra (${av.ref - av.a0}). São preços pedidos em anúncios ativos, não vendas fechadas: medem o que o mercado pede hoje por cada idade, não o que um dono concreto recebeu.</p>
+    </section>
+    ${gapBlock}
+    <section class="section fc-wrap">
+      <h2 class="fc-h2">Os dois lados, lado a lado</h2>
+      ${tbl}
+    </section>
+    <section class="section fc-wide">
+      <div class="cta-banner">
+        <div style="flex:1 1 360px;">
+          <h2>E o TEU ${B} ${M}?</h2>
+          <p>Estas são as curvas do modelo. Cola o link do teu anúncio e dizemos o valor justo desse carro concreto — com a tua versão, os teus quilómetros e a tua caixa.</p>
+        </div>
+        <a class="btn-bright" href="/avaliar?modelo=${encodeURIComponent(slug)}">Avaliar o meu carro&nbsp;&nbsp;→</a>
+      </div>
+    </section>
+    <section class="section fc-wrap" style="padding-bottom:70px;">
+      <p class="fc-p"><a href="/preco/${slug}">Todos os ${B} ${M}</a> · <a href="/preco/${slug}/${S.a.facet}">${S.a.only}</a> · <a href="/preco/${slug}/${S.b.facet}">${S.b.only}</a> · <a href="/${S.path}">Outros modelos</a> · <a href="/metodologia">Como calculamos</a></p>
+    </section>`;
+
+  const faqs = [
+    [`Num ${rec.b} ${rec.m}, ${S.a.low} desvaloriza mais do que ${S.b.low}?`,
+     av.decisive
+       ? `Não da forma que se costuma dizer: neste modelo é ${win.subj} que segura melhor o preço. Em ${av.n} anúncios ativos do OLX Portugal, com a quilometragem igualada, ${S.a.subj} perde ${aPct}% por ano de idade e ${S.b.subj} ${bPct}% — ${ppc(av.diff)} pontos de diferença por ano a favor ${withPrep("de", win.subj)}, contra ${lose.subj}.`
+       : `Neste modelo a diferença não é distinguível: ${S.a.subj} perde ${aPct}% por ano de idade e ${S.b.subj} ${bPct}%, uma distância de ${ppc(av.diff)} pontos que cabe na margem da medição (±${ppc(av.ci)} pontos) sobre ${av.n} anúncios ativos do OLX Portugal.`],
+    [`Um ${rec.b} ${rec.m} ${S.a.low} é mais caro do que ${S.b.low}?`,
+     av.gap.length
+       ? `Aos ${av.gap[0][0]} anos e com a mesma quilometragem, ${S.a.subj} pede ${av.gap[0][1] >= 0 ? "mais" : "menos"} ${ppc(av.gap[0][1])}% do que ${S.b.subj}. Em bruto, sem igualar quilómetros, a mediana pedida é ${fmtEur(av.a.fm)} (${fmtKm(av.a.km)} medianos) contra ${fmtEur(av.b.fm)} (${fmtKm(av.b.km)}).`
+       : `A mediana pedida é ${fmtEur(av.a.fm)} (${fmtKm(av.a.km)} medianos) contra ${fmtEur(av.b.fm)} (${fmtKm(av.b.km)} medianos). São quilometragens muito diferentes, por isso a diferença de preço em bruto não é só ${S.kind === "fuel" ? "do combustível" : "da caixa"}.`],
+  ];
+
+  return layout({
+    title: `${rec.b} ${rec.m}: ${S.question} segura melhor o preço?`,
+    description: `Num ${rec.b} ${rec.m}, ${S.a.low} perde ${aPct}% por ano de idade e ${S.b.low} ${bPct}%, medido em ${av.n} anúncios ativos do OLX Portugal com a quilometragem igualada.${av.decisive ? ` Vantagem ${withPrep("de", win.subj)}: ${ppc(av.diff)} pontos por ano.` : " A diferença não é distinguível da margem da medição."}`,
+    canonical, body, zone: "all", nav: "precos", depositCount, index: true, host,
+    altJson: `${canonical}.json`,
+    jsonLd: {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
+          "name": `Desvalorização de ${rec.b} ${rec.m} por ${S.kind === "fuel" ? "combustível" : "caixa"}`,
+          "description": `Taxa de desvalorização anual de ${rec.b} ${rec.m} em ${S.a.low} (${aPct}%) e em ${S.b.low} (${bPct}%), ajustada à quilometragem, sobre ${av.n} anúncios ativos do OLX Portugal entre ${av.y0} e ${av.y1}.`,
+          "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
+          "isAccessibleForFree": true, "dateModified": builtAt || undefined,
+          "temporalCoverage": `${av.y0}/${av.y1}`,
+          "variableMeasured": ["Desvalorização anual (%)", "Preço pedido (EUR)", "Quilometragem (km)"],
+          "distribution": [{ "@type": "DataDownload", "encodingFormat": "application/json", "contentUrl": `${canonical}.json` }],
+        },
+        breadcrumbLd(host, [
+          { name: "Início", href: "/" }, { name: S.crumb, href: `/${S.path}` },
+          { name: `${rec.b} ${rec.m}` },
+        ]),
+        faqLd(faqs),
+      ],
+    },
+  });
+}
+
+export function renderDuelHub({ spec, rows, other, stats, host, depositCount, builtAt }) {
+  const S = spec;
+  const canonical = `https://${host}/${S.path}`;
+  const aWins = rows.filter(r => r.av.decisive && r.av.winner === "a").length;
+  const bWins = rows.filter(r => r.av.decisive && r.av.winner === "b").length;
+  const draws = rows.length - aWins - bWins;
+
+  const tr = rows.map(r => `<tr>
+      <td><a href="/${S.path}/${r.slug}" style="color:#177A47;font-weight:600;">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a></td>
+      <td>${pctc(r.av.a.r)}%</td>
+      <td>${pctc(r.av.b.r)}%</td>
+      <td class="mut">${ppc(r.av.diff)} pp ±${ppc(r.av.ci)}</td>
+      <td>${r.av.decisive ? escapeHtml(S[r.av.winner].lbl) : "<span class=\"mut\">Empate</span>"}</td>
+      <td class="mut">${r.av.a.n} / ${r.av.b.n}</td></tr>`).join("");
+
+  const body = crumbs([{ name: "Início", href: "/" }, { name: S.crumb }]) + `
+    <div style="padding-top:14px;">
+      <div class="side-card" style="max-width:680px;margin:0 auto;">
+        <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">${S.eyebrow} · ${rows.length} MODELOS</span></div>
+        <h1 class="fc-h1">${S.hubH1}</h1>
+        <p class="lede" style="font-size:16px;margin:0 0 18px;">A resposta não é uma para todos os carros — é uma por modelo. Nos <b>${rows.length} modelos</b> com anúncios ativos suficientes para ajustar as duas curvas em separado, ${S.a.subj} segura melhor o preço em <b>${aWins}</b>, ${S.b.subj} em <b>${bWins}</b>, e em <b>${draws}</b> a diferença não se distingue da margem da medição.</p>
+        ${provenance({ n: rows.reduce((a, r) => a + r.av.n, 0), builtAt, measure: `Preço pedido por idade, ${S.a.low} e ${S.b.low} em separado, com a quilometragem controlada` })}
+      </div>
+    </div>
+    <section class="section fc-wrap">
+      <h2 class="fc-h2">Modelo a modelo</h2>
+      <p class="fc-p">Ordenado pela distância entre as duas curvas. A coluna do meio é o que a página do modelo desenvolve: quantos pontos percentuais por ano separam os dois lados, e com que margem foram medidos.</p>
+      <div class="fc-scroll"><table class="fc-tbl">
+        <thead><tr><th>Modelo</th><th>${escapeHtml(S.a.lbl)} /ano</th><th>${escapeHtml(S.b.lbl)} /ano</th><th>Diferença</th><th>Segura melhor</th><th>Anúncios ${escapeHtml(S.a.lbl[0])}/${escapeHtml(S.b.lbl[0])}</th></tr></thead>
+        <tbody>${tr}</tbody></table></div>
+    </section>
+    <section class="section fc-wrap">
+      <h2 class="fc-h2">Porque é que "empate" também é uma resposta</h2>
+      <p class="fc-p">Uma diferença de meio ponto por ano entre duas curvas ajustadas em algumas dezenas de anúncios não é um resultado, é ruído com três casas decimais. Por isso cada linha traz a sua margem, e um modelo só entra nesta tabela quando essa margem é estreita o suficiente para que "empate" signifique <b>não há vantagem apreciável</b> e não <b>não conseguimos ver</b>. Os modelos onde a amostra não chega para essa distinção simplesmente não têm página aqui.</p>
+      <p class="fc-p">A quilometragem entra no ajuste em todos eles. Sem isso, a tabela mediria sobretudo o facto de ${S.kind === "fuel" ? "os diesels à venda andarem muito mais" : "os automáticos à venda serem mais recentes e andarem muito menos"} — e chamaria a isso ${S.kind === "fuel" ? "combustível" : "caixa"}.</p>
+    </section>
+    <section class="section fc-wide">
+      <div class="cta-banner">
+        <div style="flex:1 1 360px;">
+          <h2>Estás a escolher entre dois carros concretos?</h2>
+          <p>Cola o link de cada anúncio e dizemos o valor justo de cada um — com a motorização, os quilómetros e a versão de cada exemplar.</p>
+        </div>
+        <a class="btn-bright" href="/avaliar">Avaliar um anúncio&nbsp;&nbsp;→</a>
+      </div>
+    </section>
+    <section class="section fc-wrap" style="padding-bottom:70px;">
+      <p class="fc-p">${other ? `<a href="/${other.path}">${other.crumb}</a> · ` : ""}<a href="/depreciacao">Desvalorização por modelo</a> · <a href="/precos">Preços por modelo</a> · <a href="/metodologia">Como calculamos</a></p>
+    </section>`;
+
+  return layout({
+    title: S.hubTitle,
+    description: `Em ${rows.length} modelos com amostra para separar as duas curvas, ${S.a.low} segura melhor o preço em ${aWins} e ${S.b.low} em ${bWins}. Taxas por ano de idade medidas em anúncios ativos do OLX Portugal, com a quilometragem controlada.`,
+    canonical, body, zone: "all", nav: "precos", depositCount, index: true, host,
+    jsonLd: {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
+          "name": `Desvalorização por ${S.kind === "fuel" ? "combustível" : "caixa"}, modelo a modelo (Portugal)`,
+          "description": `Taxa de desvalorização anual em ${S.a.low} e em ${S.b.low} para ${rows.length} modelos, ajustada à quilometragem, a partir de anúncios ativos do OLX Portugal.`,
+          "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
+          "isAccessibleForFree": true, "dateModified": builtAt || undefined,
+          "variableMeasured": ["Desvalorização anual (%)", S.kind === "fuel" ? "Combustível" : "Caixa"],
+        },
+        breadcrumbLd(host, [{ name: "Início", href: "/" }, { name: S.crumb }]),
       ],
     },
   });

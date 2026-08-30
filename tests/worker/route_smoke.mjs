@@ -12,7 +12,7 @@
 
 import { readFileSync } from "node:fs";
 import worker from "../../flipper-club/src/index.js";
-import { yearPageYears, depreciationSlugs, comparePairs, isoWeek, isoWeekStart, missingWeeks } from "../../flipper-club/src/seo-pages.js";
+import { yearPageYears, depreciationSlugs, comparePairs, isoWeek, isoWeekStart, missingWeeks, DUELS } from "../../flipper-club/src/seo-pages.js";
 
 const HOST = "carsbuyer.org";
 const RELEASE = "https://github.com/nikit34/olx-car-parser/releases/download/latest-data/models.json";
@@ -302,10 +302,18 @@ await check("the canonical-host redirect still bypasses the webhook", async () =
 // are checked here, against the real blob and against an augmented copy.
 
 await check("facet URLs 404 while the blob has no facet cells", async () => {
-  if (models[deep].fx || models[deep].dt) return;   // data has landed; skip
-  for (const p of [`/preco/${deep}/diesel`, `/preco/${deep}/porto`, "/precos/porto"]) {
+  if (models[deep].fx || models[deep].dt || models[deep].tx) return;   // data has landed; skip
+  for (const p of [`/preco/${deep}/diesel`, `/preco/${deep}/porto`, "/precos/porto",
+                   `/preco/${deep}/automatica`,
+                   ...Object.values(DUELS).flatMap(d => [`/${d.path}`, `/${d.path}/${deep}`])]) {
     const r = await get(p);
     assert(r.status === 404, `${p} → ${r.status}, must 404 before the data exists`);
+  }
+  for (const p of ["/", "/precos", `/preco/${deep}`, "/depreciacao", "/metodologia"]) {
+    const body = await (await get(p)).text();
+    const links = Object.values(DUELS).flatMap(d =>
+      [...body.matchAll(new RegExp(`href="(/${d.path}[^"]*)"`, "g"))].map(m => m[1]));
+    assert(links.length === 0, `${p} links ${links[0]} while no model carries the fit`);
   }
 });
 
@@ -314,9 +322,22 @@ await check("facet pages appear when the blob carries the cells", async () => {
   augmented.built_at = "2026-08-26T00:00:00Z";        // bust the corpus-stats memo
   const rec = augmented.models[deep];
   rec.fx = [
-    { k: "diesel", lbl: "Diesel", n: 40, fl: 5000, fm: 7000, fh: 9000, km: 190000, y0: 2010, y1: 2018 },
-    { k: "gasolina", lbl: "Gasolina", n: 18, fl: 4200, fm: 5800, fh: 7600, km: 150000, y0: 2008, y1: 2016 },
+    { k: "diesel", lbl: "Diesel", n: 40, fl: 5000, fm: 7000, fh: 9000, km: 190000, y0: 2010, y1: 2018,
+      vsm: [1.05, 7], vs: { gasolina: [1.2, 6] } },
+    { k: "gasolina", lbl: "Gasolina", n: 18, fl: 4200, fm: 5800, fh: 7600, km: 150000, y0: 2008, y1: 2016,
+      vsm: [0.9, 5], vs: { diesel: [0.833, 6] } },
   ];
+  rec.tx = [
+    { k: "manual", lbl: "Manual", n: 60, fl: 2800, fm: 4999, fh: 7500, km: 232000, y0: 2004, y1: 2016 },
+    { k: "automatica", lbl: "Automática", n: 20, fl: 14500, fm: 21500, fh: 27000, km: 127000, y0: 2017, y1: 2024 },
+  ];
+  const FIT = {
+    a: { n: 40, r: 0.066, km: 190000, fm: 7000 },
+    b: { n: 30, r: 0.086, km: 150000, fm: 5800 },
+    ci: 0.0097, t: 4.07, r2: 0.76, y0: 2006, y1: 2022,
+    gap: [[6, 0.11, 0.05], [12, -0.02, 0.06]],
+  };
+  for (const d of Object.values(DUELS)) rec[d.key] = FIT;
   rec.dt = [{ k: "porto", lbl: "Porto", n: 22, fl: 5200, fm: 7300, fh: 9100, km: 185000 }];
   augmented.districts = {
     porto: { lbl: "Porto", n: 4200, fl: 4000, fm: 8000, fh: 14000, kmm: 175000,
@@ -330,7 +351,9 @@ await check("facet pages appear when the blob carries the cells", async () => {
     return prevFetch(input, init);
   };
   try {
-    for (const p of [`/preco/${deep}/diesel`, `/preco/${deep}/gasolina`, `/preco/${deep}/porto`, "/precos/porto"]) {
+    for (const p of [`/preco/${deep}/diesel`, `/preco/${deep}/gasolina`, `/preco/${deep}/porto`, "/precos/porto",
+                     `/preco/${deep}/manual`, `/preco/${deep}/automatica`,
+                     ...Object.values(DUELS).flatMap(d => [`/${d.path}`, `/${d.path}/${deep}`])]) {
       const r = await get(p);
       assert(r.status === 200, `${p} → ${r.status}`);
       const body = await r.text();
@@ -340,24 +363,53 @@ await check("facet pages appear when the blob carries the cells", async () => {
       assert(!body.replace(/<script[\s\S]*?<\/script>/g, "").includes("undefined"),
         `${p}: rendered "undefined"`);
     }
-    // The comparison that justifies the page existing at all.
     const diesel = await (await get(`/preco/${deep}/diesel`)).text();
     assert(diesel.includes(`/preco/${deep}/gasolina`), "fuel facet does not link its sibling");
-    assert(/2[01]% (mais caro|mais barato)/.test(diesel), "fuel facet states no price gap");
+    assert(diesel.includes("20% mais caro") && diesel.includes("comparando ano a ano"),
+      "fuel facet states no year-matched gap");
+    assert(!diesel.includes("21% mais caro"), "fuel facet fell back to the raw medians");
+
+    const auto = await (await get(`/preco/${deep}/automatica`)).text();
+    assert(!/% (mais caro|mais barato)/.test(auto),
+      "gearbox facet claims a price gap it cannot measure year-matched");
+    assert(auto.includes("inclui a diferença de anos"), "gearbox facet hides why there is no percentage");
+    assert(auto.includes(`/preco/${deep}/manual`), "gearbox facet does not link its sibling");
+
+    for (const d of Object.values(DUELS)) {
+      const page = await (await get(`/${d.path}/${deep}`)).text();
+      assert(/6,6%/.test(page) && /8,6%/.test(page), `${d.path}: lost one of the two rates`);
+      assert(page.includes("±1,0 pp"), `${d.path}: hides the interval`);
+      assert(page.includes(`/preco/${deep}/${d.a.facet}`), `${d.path}: does not link its facet cuts`);
+      const dj = await (await get(`/${d.path}/${deep}.json`)).json();
+      assert(dj.distinguishable_at_95 === true && dj.holds_value_better === d.a.json,
+        `${d.path}: JSON twin disagrees with the page`);
+      assert(dj.measured === "asking_price", `${d.path}: JSON does not say what it measures`);
+      const hub = await (await get(`/${d.path}`)).text();
+      assert(hub.includes(`/${d.path}/${deep}`), `${d.path}: hub does not link its own page`);
+    }
 
     const unknown = await get(`/preco/${deep}/nao-existe`);
     assert(unknown.status === 404, `unknown facet → ${unknown.status}`);
+    const noDuel = slugs.find(s2 => !augmented.models[s2].dg);
+    for (const d of Object.values(DUELS)) {
+      assert((await get(`/${d.path}/${noDuel}`)).status === 404,
+        `${d.path}: a page exists for a model with no fit`);
+    }
     assert((await get("/precos/nao-existe")).status === 404, "served a district we have no data for");
 
     const xml = await (await get("/sitemap.xml")).text();
-    for (const want of [`/preco/${deep}/diesel`, `/preco/${deep}/porto`, "/precos/porto"]) {
+    for (const want of [`/preco/${deep}/diesel`, `/preco/${deep}/porto`, "/precos/porto",
+                        `/preco/${deep}/automatica`,
+                        ...Object.values(DUELS).flatMap(d => [`/${d.path}`, `/${d.path}/${deep}`])]) {
       assert(xml.includes(`<loc>https://carsbuyer.org${want}</loc>`), `sitemap missing ${want}`);
     }
 
     // In the sitemap is not enough. A page nothing on the site links to is an
     // orphan: a crawler reaches it once and a reader never does.
     const modelPage = await (await get(`/preco/${deep}`)).text();
-    for (const want of [`/preco/${deep}/diesel`, `/preco/${deep}/gasolina`, `/preco/${deep}/porto`]) {
+    for (const want of [`/preco/${deep}/diesel`, `/preco/${deep}/gasolina`, `/preco/${deep}/porto`,
+                        `/preco/${deep}/manual`, `/preco/${deep}/automatica`,
+                        ...Object.values(DUELS).map(d => `/${d.path}/${deep}`)]) {
       assert(modelPage.includes(want), `model page does not link ${want}`);
     }
     const hub = await (await get("/precos")).text();

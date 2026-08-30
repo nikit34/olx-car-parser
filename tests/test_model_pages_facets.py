@@ -13,6 +13,7 @@ import pandas as pd
 from src.analytics.model_pages import (
     MIN_DISTRICT_N,
     MIN_FACET_N,
+    MIN_MATCH_YEARS,
     MIN_MODEL_N,
     build_model_pages,
     slugify,
@@ -26,12 +27,22 @@ def _listings(rows: list[dict]) -> pd.DataFrame:
 
 
 def _make(brand="Volkswagen", model="Golf", n=MIN_MODEL_N, price=7000,
-          fuel="Diesel", district="Porto", year=2014, km=180000, start=0):
+          fuel="Diesel", district="Porto", year=2014, km=180000, start=0,
+          transmission="Manual"):
     return [{
         "brand": brand, "model": model, "price_eur": price + (i % 7) * 100,
         "fuel_type": fuel, "district": district, "year": year,
+        "transmission": transmission,
         "mileage_km": km + (i % 5) * 1000, "olx_id": f"x{start + i}",
     } for i in range(n)]
+
+
+def _spread(years, per_year, **kw):
+    """One block per year, so a facet can be compared year by year."""
+    rows = []
+    for i, y in enumerate(years):
+        rows += _make(n=per_year, year=y, start=kw.pop("start", 0) + i * 1000, **kw)
+    return rows
 
 
 class TestFuelFacets:
@@ -117,3 +128,73 @@ class TestDistrictRollup:
         doc = build_model_pages(_listings(rows))
         assert doc["v"] == 1 and "volkswagen-golf" in doc["models"]
         assert "districts" not in doc
+
+
+class TestTransmissionFacets:
+    def test_both_gearboxes_get_a_cell(self):
+        rows = (_make(n=30, transmission="Manual")
+                + _make(n=20, transmission="Automática", price=15000, start=100))
+        rec = build_model_pages(_listings(rows))["models"]["volkswagen-golf"]
+        keys = {c["k"]: c for c in rec["tx"]}
+        assert set(keys) == {"manual", "automatica"}
+        assert keys["automatica"]["lbl"] == "Automática"
+        for cell in rec["tx"]:
+            assert cell["fl"] <= cell["fm"] <= cell["fh"]
+
+    def test_thin_gearbox_is_absent(self):
+        rows = (_make(n=30, transmission="Manual")
+                + _make(n=MIN_FACET_N - 1, transmission="Automática", price=15000, start=100))
+        rec = build_model_pages(_listings(rows))["models"]["volkswagen-golf"]
+        assert [c["k"] for c in rec["tx"]] == ["manual"]
+
+    def test_unknown_gearbox_vocabulary_gets_no_facet(self):
+        rows = _make(n=25, transmission="Semi-automática")
+        rec = build_model_pages(_listings(rows))["models"]["volkswagen-golf"]
+        assert "tx" not in rec
+
+
+class TestMatchedRatios:
+    """The number a facet page is allowed to print.
+
+    Two facets of one model are two different mixes of model years, so their
+    medians cannot be subtracted: the automatics on sale are newer than the
+    manuals, and the raw ratio reports that as a gearbox premium. Every facet
+    therefore carries the ratio measured WITHIN each year and then pooled.
+    """
+
+    def test_matched_ratio_ignores_the_age_mix(self):
+        years = [2012, 2014, 2016, 2018]
+        rows = (_spread(years, 8, transmission="Manual", price=10000)
+                + _spread(years, 8, transmission="Automática", price=12000, start=500))
+        rec = build_model_pages(_listings(rows))["models"]["volkswagen-golf"]
+        auto = next(c for c in rec["tx"] if c["k"] == "automatica")
+        ratio, shared = auto["vs"]["manual"]
+        assert shared == len(years)
+        assert 1.15 <= ratio <= 1.25
+
+    def test_no_shared_years_means_no_ratio(self):
+        """Where the two sides never overlap in year there is nothing to match,
+        and the page must be left with no percentage to print."""
+        rows = (_spread([2006, 2008, 2010, 2012], 8, transmission="Manual", price=4000)
+                + _spread([2020, 2021, 2022, 2023], 8, transmission="Automática",
+                          price=22000, start=500))
+        rec = build_model_pages(_listings(rows))["models"]["volkswagen-golf"]
+        auto = next(c for c in rec["tx"] if c["k"] == "automatica")
+        assert "vs" not in auto or "manual" not in auto.get("vs", {})
+
+    def test_one_shared_year_is_not_enough(self):
+        rows = (_spread([2010, 2012, 2014], 8, transmission="Manual", price=6000)
+                + _spread([2014], 20, transmission="Automática", price=9000, start=500))
+        rec = build_model_pages(_listings(rows))["models"]["volkswagen-golf"]
+        auto = next(c for c in rec["tx"] if c["k"] == "automatica")
+        assert MIN_MATCH_YEARS > 1
+        assert "vs" not in auto or "manual" not in auto.get("vs", {})
+
+    def test_fuel_cells_carry_it_too(self):
+        years = [2012, 2014, 2016, 2018]
+        rows = (_spread(years, 8, fuel="Diesel", price=10000)
+                + _spread(years, 8, fuel="Gasolina", price=8000, start=500))
+        rec = build_model_pages(_listings(rows))["models"]["volkswagen-golf"]
+        diesel = next(c for c in rec["fx"] if c["k"] == "diesel")
+        assert diesel["vs"]["gasolina"][0] > 1
+        assert diesel["vsm"][1] >= MIN_MATCH_YEARS

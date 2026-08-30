@@ -2046,7 +2046,8 @@ export function fmtBuilt(iso) {
 export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositCount, builtAt,
                                   insights = [], yearPages = [], competitors = [],
                                   competitorKind = "price", comparisons = [],
-                                  facets = [], hasDepreciation = false, provenanceHtml = "", altJson = null }) {
+                                  facets = [], hasDepreciation = false, duels = [],
+                                  provenanceHtml = "", altJson = null }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
   const FM = fmtEur(rec.fm), FL = fmtEur(rec.fl), FH = fmtEur(rec.fh);
   const FRESH = fmtBuilt(builtAt);
@@ -2184,6 +2185,7 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
   // also the natural next question on this page — "and what does the diesel one
   // go for" — so the link earns its place twice.
   const fuelFacets = (facets || []).filter(f => f.kind === "fuel");
+  const gearFacets = (facets || []).filter(f => f.kind === "transmission");
   const geoFacets = (facets || []).filter(f => f.kind === "district");
   const facetRow = (label, list) => list.length ? `
       <div style="margin-bottom:16px;">
@@ -2191,9 +2193,10 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
         <div class="fc-yearlinks">${list.map(f =>
           `<a href="/preco/${encodeURIComponent(slug)}/${encodeURIComponent(f.k)}">${escapeHtml(f.lbl)} <span class="mut">${fmtEur(f.fm)}</span></a>`).join("")}</div>
       </div>` : "";
-  const facetBlock = (fuelFacets.length || geoFacets.length) ? `
+  const facetBlock = (fuelFacets.length || gearFacets.length || geoFacets.length) ? `
     <section class="section" style="padding:30px 22px 0;max-width:680px;">
       ${facetRow(`${B} ${M} POR COMBUSTÍVEL`, fuelFacets)}
+      ${facetRow(`${B} ${M} POR CAIXA`, gearFacets)}
       ${facetRow(`${B} ${M} POR DISTRITO`, geoFacets)}
     </section>` : "";
 
@@ -2258,6 +2261,22 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
       </div>
     </section>` : "";
 
+  const DUEL_COPY = {
+    fuel: { icon: "⛽", head: "Diesel ou gasolina?", what: "os dois combustíveis", which: "qual dos dois" },
+    gear: { icon: "⚙️", head: "Caixa manual ou automática?", what: "as duas caixas", which: "qual das duas" },
+  };
+  const duelLink = (duels || []).map(d => {
+    const c = DUEL_COPY[d.kind];
+    if (!c) return "";
+    return `
+    <section class="section" style="padding:26px 22px 0;max-width:680px;">
+      <div class="exclusive" style="background:#F6FBF8;border:1px solid #DDEBE1;align-items:flex-start;">
+        <span style="font-size:15px;">${c.icon}</span>
+        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">${c.head}</b> Neste modelo há anúncios ativos que cheguem para ajustar ${c.what} em separado, com a quilometragem igualada, e dizer ${c.which} segura melhor o preço. <a href="/${d.path}/${encodeURIComponent(slug)}" style="color:#177A47;font-weight:600;">Ver a resposta&nbsp;→</a></span>
+      </div>
+    </section>`;
+  }).join("");
+
   // 8. Sibling models footer
   const sibChips = (siblings || []).slice(0, 8).map(s =>
     `<a class="mchip" href="/preco/${encodeURIComponent(s.slug)}">${escapeHtml(s.m)} <span class="mut">${fmtEur(s.fm)}</span></a>`).join("");
@@ -2272,7 +2291,7 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
   // internal links back to / and /precos (reinforcing the crawl spine).
   const crumb = `<nav class="section" aria-label="Breadcrumb" style="max-width:680px;padding:22px 22px 0;font-size:12.5px;color:#8A8F98;">`
     + `<a href="/" style="color:#8A8F98;">Início</a> › <a href="/precos" style="color:#8A8F98;">Preços</a> › <span style="color:#16181D;">${B} ${M}</span></nav>`;
-  const body = `${crumb}<div style="padding-top:14px;">${hero}</div>${gbmCard}${insightBlock}${bridge1}${table}${facetBlock}${depLink}${bridge2}${trust}${rivals}${sellerCta}${sib}`;
+  const body = `${crumb}<div style="padding-top:14px;">${hero}</div>${gbmCard}${insightBlock}${bridge1}${table}${facetBlock}${duelLink}${depLink}${bridge2}${trust}${rivals}${sellerCta}${sib}`;
 
   const canonical = `https://${host}/preco/${slug}`;
   const faq = (q, a) => ({

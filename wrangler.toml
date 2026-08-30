@@ -114,7 +114,8 @@ SITE_AUTHOR = "Nikita Permiakov"
 SITE_CONTACT_EMAIL = "permikov134@yandex.ru"
 
 # Staged rollout of the per-model second SEO layer (model-year, depreciation and
-# facet pages). Caps it to the N deepest-sampled models; empty = no cap.
+# facet pages: fuel, gearbox, district). Caps it to the N deepest-sampled models;
+# empty = no cap.
 #
 # 718 model-year pages arriving on one crawl is a bad way to learn whether the
 # layer works: 40% indexation could be an unconvincing template or a crawl-budget
@@ -122,15 +123,20 @@ SITE_CONTACT_EMAIL = "permikov134@yandex.ru"
 # URLs at a time, check indexation and positions in Search Console for that wave,
 # then widen. Wave size is not free to pick: the gate counts models, not URLs, and
 # the deepest-sampled models carry the most pages, so 10 models to 25 is already
-# 280 new URLs. Measured against the 2026-08-30 blob, N maps to gated URLs like
-# this (year + depreciation + facet pages):
+# 307 new URLs. Measured against the 2026-08-30 blob, N maps to gated URLs like
+# this (year + depreciation + fuel/gearbox/district facet pages):
 #
-#   SEO_WAVE_MODELS = "10"   ->  289    "25"  ->  572    "60"  ->  938
-#                     "20"   ->  494    "30"  ->  647    ""    -> 1450
+#   SEO_WAVE_MODELS = "10"   ->  304    "25"  ->  611    "60"  -> 1033
+#                     "20"   ->  525    "30"  ->  695    ""    -> 1769
 #
 # The curve is steep at the start because the deepest-sampled models are also the
 # ones with the most publishable years — 10 models already carry 188 of the 718
 # year pages. "10" was the right first wave.
+#
+# The retention duels (/diesel-ou-gasolina, /manual-ou-automatica) are outside
+# this number: the whole layer is ~55 URLs and its own gate (20 listings a side,
+# a 95% interval under 3 pp/yr, R2) is already stricter than anything a wave
+# could stage. There is nothing there to release in batches.
 #
 # The gate is read by the router, the sitemap AND the year links on the model
 # page, so a page outside the wave is unreachable and unlinked — never a link to

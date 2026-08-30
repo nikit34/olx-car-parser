@@ -25,6 +25,7 @@ import {
   yearGap,
   depreciationAge, depreciationJson,
   estimateIsv, ISV_TABLES_FOR_TEST, renderDistrictPage,
+  renderFacetPage, renderDuelPage, renderDuelHub, duel, duelJson, DUELS, withPrep,
 } from "../../flipper-club/src/seo-pages.js";
 
 const HOST = "carsbuyer.org";
@@ -617,6 +618,90 @@ check("district pages take the right Portuguese article", () => {
     assert(h.includes(`carros usados em ${lbl}`), `${lbl} should be bare "em"`);
   }
 });
+
+const DUEL = {
+  a: { n: 243, r: 0.063, km: 260000, fm: 5500 },
+  b: { n: 238, r: 0.085, km: 152768, fm: 11950 },
+  ci: 0.0094, t: 4.57, r2: 0.77, y0: 1981, y1: 2023,
+  gap: [[11, -0.236, 0.089], [25, 0.062, 0.118]],
+};
+
+check("Portuguese contracts the preposition with the article", () => {
+  assert(withPrep("de", "a caixa automática") === "da caixa automática", "de + a");
+  assert(withPrep("de", "o diesel") === "do diesel", "de + o");
+  assert(withPrep("a", "a caixa manual") === "à caixa manual", "a + a");
+  assert(withPrep("a", "o diesel") === "ao diesel", "a + o");
+  assert(withPrep("de", "gasolina") === "de gasolina", "no article, no contraction");
+  for (const S of Object.values(DUELS)) {
+    for (const side of [S.a, S.b]) {
+      assert(/^(o|a) /.test(side.subj), `${side.lbl}: subject carries no article`);
+    }
+  }
+});
+
+check("the gearbox facet reads as a gearbox, not as a fuel", () => {
+  const rec = models[deep];
+  const cells = [
+    { k: "manual", lbl: "Manual", n: 60, fl: 2800, fm: 4999, fh: 7500, km: 232000, y0: 2004, y1: 2016,
+      vs: { automatica: [0.63, 9] }, vsm: [0.98, 27] },
+    { k: "automatica", lbl: "Automática", n: 20, fl: 14500, fm: 21500, fh: 27000, km: 127000, y0: 2017, y1: 2024,
+      vs: { manual: [1.59, 9] }, vsm: [1.08, 13] },
+  ];
+  const html = renderFacetPage({
+    rec, slug: deep, kind: "transmission", cell: cells[1], siblingsCells: cells,
+    stats, host: HOST, depositCount: 0, builtAt,
+  });
+  assertPage(html, { indexable: true, canonical: `https://${HOST}/preco/${deep}/automatica`, label: "gearbox facet" });
+  assert(html.includes("com caixa automática"), "gearbox facet does not name the gearbox");
+  assert(!html.includes("no distrito"), "gearbox facet reuses the district preposition");
+  assert(html.includes("59% mais caro"), "gearbox facet lost the year-matched gap");
+  assert(html.includes("vehicleTransmission"), "gearbox facet does not mark up the gearbox");
+
+  const bare = cells.map(c => ({ ...c, vs: undefined, vsm: undefined }));
+  const naked = renderFacetPage({
+    rec, slug: deep, kind: "transmission", cell: bare[1], siblingsCells: bare,
+    stats, host: HOST, depositCount: 0, builtAt,
+  });
+  assert(!/% (mais caro|mais barato)/.test(naked), "claimed a gap it could not measure year-matched");
+  assert(naked.includes("inclui a diferença de anos"), "silently dropped the comparison instead of explaining it");
+});
+
+for (const kind of Object.keys(DUELS)) {
+  const S = DUELS[kind];
+  check(`the ${kind} duel page states both curves and its own margin`, () => {
+    const rec = { ...models[deep], [S.key]: DUEL };
+    const av = duel(rec, kind, builtAt);
+    assert(av && av.decisive && av.winner === "a", "the fit was read wrong");
+    const html = renderDuelPage({ rec, slug: deep, av, stats, host: HOST, depositCount: 0, builtAt });
+    assertPage(html, { indexable: true, canonical: `https://${HOST}/${S.path}/${deep}`, label: `${kind} duel` });
+    assert(html.includes("6,3%") && html.includes("8,5%"), "one of the two rates is missing");
+    assert(html.includes("±0,9 pp"), "the page hides the margin on its own claim");
+    assert(html.includes("quilometragem igualada"), "the page never says the mileage is controlled");
+    assert(html.includes("preços pedidos"), "the page passes asking prices off as sales");
+    assert(html.includes(`/preco/${deep}/${S.a.facet}`) && html.includes(`/preco/${deep}/${S.b.facet}`),
+      "the duel page does not link the two facet cuts it is built from");
+
+    const flat = { ...rec, [S.key]: { ...DUEL, b: { ...DUEL.b, r: 0.064 }, t: 0.4 } };
+    const fav = duel(flat, kind, builtAt);
+    assert(!fav.decisive, "a 0.1pp difference was called decisive");
+    const nullPage = renderDuelPage({ rec: flat, slug: deep, av: fav, stats, host: HOST, depositCount: 0, builtAt });
+    assert(nullPage.includes("não decide a desvalorização"), "the null result is not stated as a result");
+    assert(!nullPage.includes("segura melhor o preço.</b>"), "a null result claims a winner");
+
+    const j = duelJson(rec, deep, av, { host: HOST, builtAt });
+    assert(j.holds_value_better === S.a.json && j.rate_difference_pp_per_year > 0,
+      "JSON twin disagrees with the page");
+    assert(j[S.a.json] && j[S.b.json], "JSON twin does not name its two sides");
+    assert(JSON.parse(JSON.stringify(j)), "duel JSON is not serialisable");
+
+    const hub = renderDuelHub({
+      spec: S, rows: [{ slug: deep, b: rec.b, m: rec.m, av }], other: null,
+      stats, host: HOST, depositCount: 0, builtAt,
+    });
+    assertPage(hub, { indexable: true, canonical: `https://${HOST}/${S.path}`, label: `${kind} duel hub` });
+    assert(hub.includes(`/${S.path}/${deep}`), "the hub does not link its own page");
+  });
+}
 
 check("404 page is noindex, links back, and never 401s in spirit", () => {
   const sugg = slugs.slice(0, 12).map(s => ({ slug: s, m: `${models[s].b} ${models[s].m}`, fm: models[s].fm }));
