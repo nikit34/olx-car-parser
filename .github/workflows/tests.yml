@@ -11,9 +11,12 @@ on:
   workflow_dispatch:
 
 # A PR gets one run per head commit; pushing a fixup cancels the run still
-# grinding through the previous one instead of queueing behind it.
+# grinding through the previous one instead of queueing behind it. Pushes to
+# master get a group PER COMMIT instead of sharing one: the group holds a single
+# pending run, so a shared group let each push evict the previous commit's
+# queued run and master went a whole day with no tested head.
 concurrency:
-  group: tests-${{ github.workflow }}-${{ github.ref }}
+  group: tests-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -55,6 +58,10 @@ jobs:
         run: pytest tests/ -v --tb=short -m "not smoke"
 
       - name: Worker smoke
+        # Runs even when pytest failed: the two suites cover different code, and
+        # a red Python test used to cancel this step and hide whether the worker
+        # was broken too. Only a cancelled run skips it.
+        if: ${{ !cancelled() }}
         # The Python suite cannot see flipper-club/src. `node --check` only
         # parses — it happily accepts a const used above its declaration, which
         # then throws at request time in production. Actually rendering a page
