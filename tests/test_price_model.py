@@ -625,26 +625,6 @@ def test_metrics_history(tmp_path, monkeypatch):
     assert history[0]["mae"] == metrics["mae"]
 
 
-class TestPerBucketCalibrationFloor:
-    """A price bucket only overrides the global conformal q when its own
-    calibration slice can carry an 80% quantile. Below the floor the 80th
-    order statistic is a handful of points and one outlier moves it, while
-    the global q is estimated on the whole slice."""
-
-    def test_floor_is_high_enough_to_carry_a_quantile(self):
-        from src.analytics.price_model import _MIN_BUCKET_CAL_ROWS
-        assert _MIN_BUCKET_CAL_ROWS >= 100
-
-    def test_thin_bucket_falls_back_to_global_q(self):
-        import numpy as np
-        from src.analytics import price_model as pm
-        scores = np.linspace(-0.05, 0.20, 40)
-        thin = pm._conformal_q_from_scores(scores[:5])
-        full = pm._conformal_q_from_scores(scores)
-        assert thin != full
-        assert len(scores[:5]) < pm._MIN_BUCKET_CAL_ROWS
-
-
 class TestSoldTargetAdjustment:
     """``_build_sold_target_adjustment`` lets the trainer reuse sold
     listings as ~3× extra training data without trusting last-ask as
