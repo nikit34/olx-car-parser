@@ -1653,13 +1653,84 @@ export function missingWeeks(history, upTo) {
   return gaps;
 }
 
+export function isoWeekMonth(wk) {
+  const mon = isoWeekStart(wk);
+  if (!mon) return null;
+  const thu = new Date(mon.getTime() + 3 * 86400000);
+  return `${thu.getUTCFullYear()}-${String(thu.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+export function weeksOfMonth(month) {
+  const m = /^(\d{4})-(\d{2})$/.exec(month || "");
+  if (!m || +m[2] < 1 || +m[2] > 12) return [];
+  const out = [];
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, 1));
+  const end = new Date(Date.UTC(+m[1], +m[2], 0));
+  for (; d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+    if (d.getUTCDay() === 4) out.push(isoWeek(d));
+  }
+  return out;
+}
+
+const MONTH_NAMES_PT = ["janeiro", "fevereiro", "março", "abril", "maio", "junho",
+  "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+
+export function monthLabel(month) {
+  const m = /^(\d{4})-(\d{2})$/.exec(month || "");
+  if (!m || +m[2] < 1 || +m[2] > 12) return month || "";
+  return `${MONTH_NAMES_PT[+m[2] - 1]} de ${m[1]}`;
+}
+
+export const IDX_MIN_MONTH_WEEKS = 2;
+
+function medianOf(values) {
+  const v = (values || []).filter(x => x != null && Number.isFinite(x)).sort((a, b) => a - b);
+  if (!v.length) return null;
+  const mid = v.length >> 1;
+  return v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2;
+}
+
+export function monthlyCuts(history, currentWeek = null) {
+  const openMonth = currentWeek ? isoWeekMonth(currentWeek) : null;
+  const byMonth = new Map();
+  for (const h of history || []) {
+    const month = isoWeekMonth(h.week);
+    if (!month) continue;
+    if (openMonth && month >= openMonth) continue;
+    if (!byMonth.has(month)) byMonth.set(month, []);
+    byMonth.get(month).push(h);
+  }
+  const cuts = [];
+  for (const [month, rows] of byMonth) {
+    if (rows.length < IDX_MIN_MONTH_WEEKS) continue;
+    rows.sort((a, b) => a.week < b.week ? -1 : 1);
+    const med = (k, round = false) => {
+      const v = medianOf(rows.map(r => r[k]));
+      return v == null ? null : (round ? Math.round(v) : v);
+    };
+    const first = isoWeekStart(rows[0].week);
+    const last = isoWeekStart(rows[rows.length - 1].week);
+    const all = weeksOfMonth(month);
+    cuts.push({
+      month, rows, weeks: rows.map(r => r.week), n: rows.length, monthWeeks: all.length,
+      missing: all.filter(w => !rows.some(r => r.week === w)),
+      from: first ? first.toISOString().slice(0, 10) : null,
+      to: last ? new Date(last.getTime() + 6 * 86400000).toISOString().slice(0, 10) : null,
+      priceMed: med("priceMed", true), listings: med("listings", true), models: med("models", true),
+      sellMed: med("sellMed", true), kmMed: med("kmMed", true), depMed: med("depMed"),
+      builtAt: rows[rows.length - 1].builtAt || null,
+    });
+  }
+  return cuts.sort((a, b) => a.month < b.month ? -1 : 1);
+}
+
 // ═══ /mercado/indice — the market index, with a permanent weekly archive ═════
 //
 // Journalists and forums link to a number they can cite with a date. A page whose
 // figures change under the link is not citable, so every week gets its OWN
 // permanent URL (/mercado/indice/2026-W35) that never changes again, and the
 // bare /mercado/indice always shows the latest plus the trend.
-export function renderMarketIndex({ snapshot, history, host, depositCount, isArchive = false, currentWeek = null, gaps = [] }) {
+export function renderMarketIndex({ snapshot, history, host, depositCount, isArchive = false, currentWeek = null, gaps = [], months = [] }) {
   const wk = snapshot.week;                 // display form, ISO: "2026-W35"
   // URL form is lower-case, because the router normalises every public path to
   // lower case and a canonical that disagreed with its own URL would 301 to
@@ -1693,13 +1764,21 @@ export function renderMarketIndex({ snapshot, history, host, depositCount, isArc
       <td class="mut">${h.sellMed != null ? h.sellMed + " dias" : "—"}</td></tr>`).join("");
 
 
+  const monthRows = months.slice().sort((a, b) => a.month < b.month ? 1 : -1).slice(0, 24).map(c => `<tr>
+      <td><a href="/mercado/indice/${escapeHtml(c.month)}" style="color:#177A47;font-weight:600;">${escapeHtml(monthLabel(c.month))}</a></td>
+      <td class="mut">${escapeHtml(c.from || "")} — ${escapeHtml(c.to || "")}</td>
+      <td>${fmtEur(c.priceMed)}</td>
+      <td class="mut">${fmtNum(c.listings)}</td>
+      <td class="mut">${c.sellMed != null ? c.sellMed + " dias" : "—"}</td>
+      <td class="mut">${c.n}/${c.monthWeeks}</td></tr>`).join("");
+
   const body = crumbs(isArchive
     ? [{ name: "Início", href: "/" }, { name: "Índice de mercado", href: "/mercado/indice" }, { name: wk }]
     : [{ name: "Início", href: "/" }, { name: "Índice de mercado" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">SEMANA ${escapeHtml(wk)} · ${escapeHtml(snapshot.date || "")}</span></div>
       <h1 class="fc-h1">Índice do mercado de usados em Portugal${isArchive ? ` — ${escapeHtml(wk)}` : ""}</h1>
-      <p class="fc-p">Retrato semanal do que está à venda no OLX Portugal: quanto se pede, quanto há e quanto demora a sair.${isArchive ? " Este é o registo permanente desta semana — os números desta página não voltam a mudar." : " Cada semana fica guardada num endereço próprio, para poderes citar um número com data."}</p>
+      <p class="fc-p">Retrato semanal do que está à venda no OLX Portugal: quanto se pede, quanto há e quanto demora a sair.${isArchive ? " Este é o registo permanente desta semana — os números desta página não voltam a mudar." : " Cada semana e cada mês fechado ficam guardados num endereço próprio, para poderes citar um número com data."}</p>
       <div class="fc-stat-row" style="margin:20px 0 8px;">
         <div class="fc-stat"><div class="k">PREÇO MEDIANO</div><div class="v">${fmtEur(snapshot.priceMed)}</div>${delta(snapshot.priceMed, prev && prev.priceMed)}</div>
         <div class="fc-stat"><div class="k">ANÚNCIOS ATIVOS</div><div class="v">${fmtNum(snapshot.listings)}</div>${delta(snapshot.listings, prev && prev.listings)}</div>
@@ -1717,6 +1796,15 @@ export function renderMarketIndex({ snapshot, history, host, depositCount, isArc
         <tbody>${rows}</tbody></table></div>
       <p class="fc-p" style="margin-top:12px;">O histórico começa na semana em que passámos a guardar os cortes. Cresce uma linha por semana, e nenhuma linha antiga é reescrita.</p>
       ${gaps.length ? `<p class="fc-p" style="color:#B4551F;">Faltam ${gaps.length} semana${gaps.length === 1 ? "" : "s"} no histórico: ${gaps.map(escapeHtml).join(", ")}. Não as preenchemos, e é de propósito: os números dessas semanas já não existem, e escrever os de hoje com a data de então seria inventá-los.</p>` : ""}
+    </section>` : ""}
+    ${rows ? `<section class="section fc-wrap">
+      <h2 class="fc-h2">Arquivo mensal</h2>
+      ${monthRows ? `<p class="fc-p">Cada mês fechado tem o seu próprio endereço permanente, com a mediana dos cortes semanais desse mês. É o corte a citar quando a frase é sobre um mês e não sobre uma semana.</p>
+      <div class="fc-scroll"><table class="fc-tbl">
+        <thead><tr><th>Mês</th><th>Período</th><th>Preço mediano</th><th>Anúncios</th><th>Dias até vender</th><th>Semanas</th></tr></thead>
+        <tbody>${monthRows}</tbody></table></div>
+      <p class="fc-p" style="margin-top:12px;">O período é o das semanas ISO que fecham dentro do mês, por isso não coincide com o dia 1 nem com o último dia. A última coluna diz quantas semanas do mês entraram no cálculo.</p>`
+        : `<p class="fc-p">Ainda não há nenhum mês fechado com pelo menos ${IDX_MIN_MONTH_WEEKS} cortes semanais guardados. O primeiro abre assim que houver, no endereço <span class="mono">/mercado/indice/{AAAA}-{MM}</span>, e também não volta a mudar.</p>`}
     </section>` : ""}
     <section class="section fc-wrap" style="padding-bottom:70px;">
       <h2 class="fc-h2">Podes citar isto</h2>
@@ -1746,6 +1834,85 @@ export function renderMarketIndex({ snapshot, history, host, depositCount, isArc
         breadcrumbLd(host, isArchive
           ? [{ name: "Início", href: "/" }, { name: "Índice de mercado", href: "/mercado/indice" }, { name: wk }]
           : [{ name: "Início", href: "/" }, { name: "Índice de mercado" }]),
+      ],
+    },
+  });
+}
+
+export function renderMarketMonth({ cut, months = [], host, depositCount }) {
+  const label = monthLabel(cut.month);
+  const permalink = `https://${host}/mercado/indice/${cut.month}`;
+  const idx = months.findIndex(c => c.month === cut.month);
+  const prev = idx > 0 ? months[idx - 1] : null;
+  const next = idx >= 0 && idx < months.length - 1 ? months[idx + 1] : null;
+
+  const delta = (now, then) => {
+    if (!prev || then == null || now == null || !then) return "";
+    const d = (now - then) / then;
+    if (Math.abs(d) < 0.005) return `<div class="s">estável vs. ${escapeHtml(monthLabel(prev.month))}</div>`;
+    return `<div class="s" style="color:${d > 0 ? "#B4551F" : "#177A47"};">${d > 0 ? "+" : ""}${(d * 100).toFixed(1)}% vs. ${escapeHtml(monthLabel(prev.month))}</div>`;
+  };
+
+  const weekRows = cut.rows.slice().sort((a, b) => a.week < b.week ? 1 : -1).map(h => `<tr>
+      <td><a href="/mercado/indice/${escapeHtml(h.week.toLowerCase())}" style="color:#177A47;font-weight:600;">${escapeHtml(h.week)}</a></td>
+      <td class="mut">${escapeHtml(h.date || "")}</td>
+      <td>${fmtEur(h.priceMed)}</td>
+      <td class="mut">${fmtNum(h.listings)}</td>
+      <td class="mut">${h.sellMed != null ? h.sellMed + " dias" : "—"}</td></tr>`).join("");
+
+  const crumbItems = [
+    { name: "Início", href: "/" },
+    { name: "Índice de mercado", href: "/mercado/indice" },
+    { name: label },
+  ];
+
+  const body = crumbs(crumbItems) + `
+    <section class="section fc-wrap" style="padding-top:16px;">
+      <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">MÊS ${escapeHtml(cut.month)} · ${escapeHtml(cut.from || "")} — ${escapeHtml(cut.to || "")}</span></div>
+      <h1 class="fc-h1">Índice do mercado de usados em Portugal — ${escapeHtml(label)}</h1>
+      <p class="fc-p">Corte mensal do que estava à venda no OLX Portugal em ${escapeHtml(label)}: a mediana dos ${cut.n} cortes semanais desse mês. Este é o registo permanente do mês — os números desta página não voltam a mudar.</p>
+      <div class="fc-stat-row" style="margin:20px 0 8px;">
+        <div class="fc-stat"><div class="k">PREÇO MEDIANO</div><div class="v">${fmtEur(cut.priceMed)}</div>${delta(cut.priceMed, prev && prev.priceMed)}</div>
+        <div class="fc-stat"><div class="k">ANÚNCIOS ATIVOS</div><div class="v">${fmtNum(cut.listings)}</div>${delta(cut.listings, prev && prev.listings)}</div>
+        <div class="fc-stat"><div class="k">MODELOS COBERTOS</div><div class="v">${cut.models != null ? cut.models : "—"}</div><div class="s">com amostra suficiente</div></div>
+        <div class="fc-stat"><div class="k">DIAS ATÉ VENDER</div><div class="v">${cut.sellMed != null ? cut.sellMed : "—"}</div><div class="s">mediana do mercado</div></div>
+        <div class="fc-stat"><div class="k">KM MEDIANO</div><div class="v">${cut.kmMed != null ? fmtNum(cut.kmMed) : "—"}</div><div class="s">à venda</div></div>
+        <div class="fc-stat"><div class="k">DESVALORIZAÇÃO</div><div class="v">${cut.depMed != null ? Math.round(cut.depMed * 100) + "%" : "—"}</div><div class="s">por ano de idade</div></div>
+      </div>
+      ${provenance({ n: cut.listings, builtAt: cut.builtAt, measure: `Mediana dos ${cut.n} cortes semanais de ${label}` })}
+    </section>
+    <section class="section fc-wrap">
+      <h2 class="fc-h2">As semanas deste mês</h2>
+      <div class="fc-scroll"><table class="fc-tbl">
+        <thead><tr><th>Semana</th><th>Data</th><th>Preço mediano</th><th>Anúncios</th><th>Dias até vender</th></tr></thead>
+        <tbody>${weekRows}</tbody></table></div>
+      <p class="fc-p" style="margin-top:12px;">Entram as semanas ISO que fecham dentro do mês, por isso o período vai de ${escapeHtml(cut.from || "")} a ${escapeHtml(cut.to || "")} e não do dia 1 ao último dia.${cut.missing.length ? ` Falta${cut.missing.length === 1 ? "" : "m"} ${cut.missing.length} das ${cut.monthWeeks} semanas (${cut.missing.map(escapeHtml).join(", ")}): não ${cut.missing.length === 1 ? "a guardámos" : "as guardámos"} na altura e não ${cut.missing.length === 1 ? "a inventamos" : "as inventamos"} agora, por isso a mediana deste mês é a de ${cut.n} semanas.` : ` Estão cá as ${cut.monthWeeks} semanas do mês.`}</p>
+    </section>
+    <section class="section fc-wrap" style="padding-bottom:70px;">
+      <h2 class="fc-h2">Podes citar isto</h2>
+      <p class="fc-p">Estes números podem ser usados com atribuição a Carsbuyer e indicação do mês. Endereço permanente: <span class="mono fc-url">${escapeHtml(permalink)}</span>.</p>
+      <p class="fc-p">${prev ? `<a href="/mercado/indice/${escapeHtml(prev.month)}" style="color:#177A47;font-weight:600;">← ${escapeHtml(monthLabel(prev.month))}</a> · ` : ""}<a href="/mercado/indice">Índice e semana atual</a>${next ? ` · <a href="/mercado/indice/${escapeHtml(next.month)}" style="color:#177A47;font-weight:600;">${escapeHtml(monthLabel(next.month))} →</a>` : ""}</p>
+      <p class="fc-p"><a href="/precos">Preços por modelo</a> · <a href="/liquidez">Tempo de venda</a> · <a href="/sobrevalorizados">Pedido vs. valor justo</a> · <a href="/metodologia">Metodologia</a></p>
+    </section>`;
+
+  return layout({
+    title: `Índice do mercado de usados em Portugal — ${label}`,
+    description: `${label}: preço mediano ${fmtEur(cut.priceMed)} em ${fmtNum(cut.listings)} anúncios ativos no OLX Portugal${cut.sellMed != null ? `, ${cut.sellMed} dias medianos até vender` : ""} — mediana de ${cut.n} cortes semanais.`,
+    canonical: permalink, body, zone: "all", nav: "feed", depositCount, index: true, host,
+    jsonLd: {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Dataset", "license": licenseUrl(host), "url": permalink, "inLanguage": "pt-PT",
+          "name": `Índice do mercado de carros usados em Portugal — ${label}`,
+          "description": "Preço pedido mediano, número de anúncios ativos, quilometragem mediana e dias medianos até vender no mercado português de carros usados, agregados por mês a partir dos cortes semanais.",
+          "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
+          "isAccessibleForFree": true,
+          "temporalCoverage": cut.from && cut.to ? `${cut.from}/${cut.to}` : undefined,
+          "dateModified": cut.builtAt || undefined,
+          "variableMeasured": ["Preço pedido mediano (EUR)", "Anúncios ativos", "Dias até vender (mediana)"],
+        },
+        breadcrumbLd(host, crumbItems),
       ],
     },
   });

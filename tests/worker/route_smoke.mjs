@@ -12,7 +12,7 @@
 
 import { readFileSync } from "node:fs";
 import worker from "../../flipper-club/src/index.js";
-import { yearPageYears, depreciationSlugs, comparePairs, isoWeek, isoWeekStart, missingWeeks, DUELS } from "../../flipper-club/src/seo-pages.js";
+import { yearPageYears, depreciationSlugs, comparePairs, isoWeek, isoWeekStart, missingWeeks, DUELS, isoWeekMonth, monthlyCuts } from "../../flipper-club/src/seo-pages.js";
 
 const HOST = "carsbuyer.org";
 const RELEASE = "https://github.com/nikit34/olx-car-parser/releases/download/latest-data/models.json";
@@ -212,6 +212,8 @@ await check("generated pages outside the published set 404", async () => {
   assert((await get("/comparar/volkswagen-golf-vs-volkswagen-golf")).status === 404, "served a self-comparison");
   assert((await get("/mercado/indice/1999-w03")).status === 404, "served an index week we never recorded");
   assert((await get("/mercado/indice/lixo")).status === 404, "served a malformed index week");
+  assert((await get("/mercado/indice/1999-03")).status === 404, "served an index month we never recorded");
+  assert((await get("/mercado/indice/2026-13")).status === 404, "served a month that does not exist");
   // The ISO spelling is what a human copies out of the page text; it must land
   // on the lower-case URL rather than 404.
   const upper = await get("/mercado/indice/1999-W03");
@@ -571,6 +573,46 @@ await check("a week the cron missed shows on the page as a gap", async () => {
   assert(!kv.has(`idx:week:${oneAgo}`), "a past week was backfilled with current data");
   // The current week, by contrast, is written on this very request.
   assert(kv.has(`idx:week:${nowWk}`), "the current week was not recorded");
+});
+
+await check("a closed month gets a permanent address, the open one does not", async () => {
+  kv.clear();
+  const nowWk = isoWeek(new Date());
+  const at = (n) => isoWeek(new Date(isoWeekStart(nowWk).getTime() - n * 7 * 86400000));
+  const hist = [];
+  for (let i = 8; i >= 1; i--) {
+    hist.push({ week: at(i), date: "2026-01-01", models: 10, listings: 100 + i,
+                priceMed: 8000 + i, kmMed: 170000, sellMed: 29, depMed: 0.1 });
+  }
+  kv.set("idx:weeks", JSON.stringify(hist));
+  const cuts = monthlyCuts(hist, nowWk);
+  assert(cuts.length >= 1, "eight weeks back did not close a single month");
+
+  for (const c of cuts) {
+    const r = await get(`/mercado/indice/${c.month}`);
+    assert(r.status === 200, `/mercado/indice/${c.month} → ${r.status}`);
+    const body = await r.text();
+    assert(body.includes(`https://${HOST}/mercado/indice/${c.month}`), `${c.month}: no permanent address on the page`);
+    assert(body.includes(`<link rel="canonical" href="https://${HOST}/mercado/indice/${c.month}">`),
+      `${c.month}: the month page is not its own canonical`);
+  }
+  const open = isoWeekMonth(nowWk);
+  assert((await get(`/mercado/indice/${open}`)).status === 404, "served the month still in progress");
+
+  const before = kv.get("idx:weeks");
+  await get(`/mercado/indice/${cuts[0].month}`);
+  await get("/mercado/indice");
+  const after = JSON.parse(kv.get("idx:weeks"));
+  for (const h of JSON.parse(before)) {
+    const same = after.find(x => x.week === h.week);
+    assert(same && JSON.stringify(same) === JSON.stringify(h), `week ${h.week} changed under its own URL`);
+  }
+
+  const xml = await (await get("/sitemap.xml")).text();
+  const locs = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => new URL(m[1]).pathname);
+  const listed = locs.filter(p => /^\/mercado\/indice\/\d{4}-\d{2}$/.test(p)).sort();
+  const expected = cuts.map(c => `/mercado/indice/${c.month}`).sort();
+  assert(listed.join() === expected.join(), `sitemap months ${listed.join()} vs router ${expected.join()}`);
 });
 
 await check("no data means no row, not a row of nulls", async () => {

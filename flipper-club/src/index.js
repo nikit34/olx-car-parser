@@ -23,7 +23,8 @@
 //   /comparar[/{a}-vs-{b}]     two models side by side
 //   /liquidez                  how long each model takes to sell
 //   /sobrevalorizados          asking price vs. our estimate
-//   /mercado/indice[/{semana}]  weekly market index + permanent weekly archive
+//   /mercado/indice[/{semana|mes}]  weekly market index + permanent weekly
+//                               and monthly archive
 //   /metodologia /sobre /isv   how the numbers are made, by whom, and ISV
 //
 // Every one of those exists only where its sample clears a floor, and both the
@@ -65,7 +66,7 @@ import {
   modelJson, yearJson,
   depreciationAge, depreciationJson,
   renderFacetPage, renderDistrictPage, facetCells, facetCell, facetKind, facetKeys,
-  isoWeek, missingWeeks,
+  isoWeek, missingWeeks, monthlyCuts, renderMarketMonth,
   setWave, publishedYearPages, publishedDepreciation, publishedPairs, publishedFacets,
   DUELS, duel, duelByPath, duelJson, duelSlugs, duelsFor, publishedDuel,
   renderDuelPage, renderDuelHub,
@@ -92,7 +93,7 @@ const PRODUCT_PATHS = new Set([
   // настоящую 404, но известный роут всё равно обязан быть в этом списке.)
   "/privacidade",
   // Second-layer SEO pages (seo-pages.js). Hubs are exact paths; their per-item
-  // children (/depreciacao/{slug}, /comparar/{a}-vs-{b}, /mercado/indice/{week})
+  // children (/depreciacao/{slug}, /comparar/{a}-vs-{b}, /mercado/indice/{week|month})
   // are prefix-routed above the asset gate.
   "/depreciacao", "/comparar", "/liquidez", "/sobrevalorizados",
   "/metodologia", "/sobre", "/isv",
@@ -259,7 +260,7 @@ export default {
       if (duelPrefix && method === "GET") {
         return handleDuel(request, env, url, duelPrefix);
       }
-      // Weekly market index archive (/mercado/indice[/{YYYY-Www}]).
+      // Market index archive (/mercado/indice[/{YYYY-Www}|/{YYYY-MM}]).
       if (pathname === "/mercado/indice" || pathname.startsWith("/mercado/indice/")) {
         if (method !== "GET") return notFound();
         return handleMarketIndex(request, env, url);
@@ -927,8 +928,15 @@ async function handleMarketIndex(request, env, url) {
     const now = new Date();
     const { week, history } = await recordWeeklyIndex(env, now);
     const gaps = missingWeeks(history, week);
+    const months = monthlyCuts(history, week);
 
     if (tail) {
+      const mm = /^(\d{4})-(\d{2})$/.exec(tail);
+      if (mm) {
+        const cut = months.find(c => c.month === tail);
+        if (!cut) return notFoundPage(request, env, url, setCookie);
+        return html(renderMarketMonth({ cut, months, host: url.host, depositCount }), 200, setCookie);
+      }
       // An archived week. Only weeks we actually recorded exist — an invented
       // /mercado/indice/1999-w03 is a 404, not an empty page.
       // Normalisation has already lower-cased the path, so the URL token is
@@ -942,14 +950,14 @@ async function handleMarketIndex(request, env, url) {
       if (!snap) return notFoundPage(request, env, url, setCookie);
       return html(renderMarketIndex({
         snapshot: snap, history, host: url.host, depositCount,
-        isArchive: true, currentWeek: week, gaps,
+        isArchive: true, currentWeek: week, gaps, months,
       }), 200, setCookie);
     }
 
     const current = history.find(h => h.week === week)
       || snapshotFrom(models, builtAt, week, now.toISOString().slice(0, 10), "web");
     return html(renderMarketIndex({
-      snapshot: current, history, host: url.host, depositCount, currentWeek: week, gaps,
+      snapshot: current, history, host: url.host, depositCount, currentWeek: week, gaps, months,
     }), 200, setCookie);
   });
 }
@@ -1089,6 +1097,9 @@ async function handleSitemap(request, env, url) {
           if (h.week === liveWeek) continue;
           add(`/mercado/indice/${h.week.toLowerCase()}`, "yearly", "0.3");
         }
+        for (const c of monthlyCuts(history, liveWeek).slice(-24)) {
+          add(`/mercado/indice/${c.month}`, "yearly", "0.4");
+        }
       }
     } catch (_) { /* archive is optional */ }
   }
@@ -1214,7 +1225,7 @@ async function handleLlmsTxt(request, env, url) {
     `- [Índice de preços por modelo](${base}/precos)`,
     `- [Avaliar um anúncio concreto](${base}/avaliar)`,
     `- [Mercado: carros abaixo do valor justo](${base}/mercado)`,
-    `- [Índice do mercado, com arquivo semanal permanente](${base}/mercado/indice)`,
+    `- [Índice do mercado, com arquivo semanal e mensal permanente](${base}/mercado/indice)`,
     `- [Desvalorização por modelo](${base}/depreciacao)`,
     `- [Tempo mediano até vender, por modelo](${base}/liquidez)`,
     `- [Comparações diretas entre modelos](${base}/comparar)`,
@@ -1241,6 +1252,7 @@ async function handleLlmsTxt(request, env, url) {
     `- \`${base}/depreciacao/{slug}\` — curva de desvalorização, custo de cada ano de idade e onde a queda abranda (existe onde há histórico suficiente)`,
     `- \`${base}/comparar/{slug-a}-vs-{slug-b}\` — comparação entre dois modelos`,
     `- \`${base}/mercado/indice/{AAAA}-W{SS}\` — corte semanal permanente do mercado`,
+    `- \`${base}/mercado/indice/{AAAA}-{MM}\` — corte mensal permanente, mediana dos cortes semanais desse mês`,
     "",
     "## Dados em JSON",
     "",

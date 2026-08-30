@@ -17,7 +17,8 @@ import {
 import {
   renderYearPage, renderNotFound, renderDepreciationPage, renderDepreciationHub,
   renderComparePage, renderCompareHub, renderLiquidityHub, renderValuationGap,
-  renderMarketIndex, renderMethodology, renderAbout, renderIsv,
+  renderMarketIndex, renderMarketMonth, renderMethodology, renderAbout, renderIsv,
+  monthlyCuts, isoWeekMonth, weeksOfMonth, monthLabel, IDX_MIN_MONTH_WEEKS,
   setSiteIdentity, corpusStats, modelInsights, provenance,
   yearCells, yearCell, yearPageYears, depreciationOk, depreciationFit, depreciationSlugs,
   comparePairs, parseComparePath, comparePairKey, comparePriceGap, modelClass, comparePool,
@@ -599,6 +600,62 @@ check("market index renders, current and archived", () => {
   const archive = renderMarketIndex({ snapshot: snap, history: [prev, snap], host: HOST, depositCount: 0, isArchive: true });
   assertPage(archive, { indexable: true, canonical: `https://${HOST}/mercado/indice/2026-w35`, label: "indice archive" });
   assert(archive.includes("2026-W35"), "archive page does not show the ISO week");
+});
+
+check("months are cut from the weekly rows, and only when closed", () => {
+  assert(isoWeekMonth("2026-W35") === "2026-08", `W35 landed in ${isoWeekMonth("2026-W35")}`);
+  assert(isoWeekMonth("2026-W36") === "2026-09", `W36 landed in ${isoWeekMonth("2026-W36")}`);
+  assert(weeksOfMonth("2026-08").join() === "2026-W32,2026-W33,2026-W34,2026-W35",
+    `August's weeks came out as ${weeksOfMonth("2026-08").join()}`);
+  assert(monthLabel("2026-08") === "agosto de 2026", "month label is not Portuguese");
+
+  const row = (week, priceMed, listings) => ({ week, date: "2026-08-01", models: 10, listings,
+                                               priceMed, kmMed: 170000, sellMed: 30, depMed: 0.1 });
+  const hist = [row("2026-W32", 8000, 100), row("2026-W33", 8200, 110),
+                row("2026-W34", 8400, 120), row("2026-W35", 8600, 130),
+                row("2026-W36", 9000, 200)];
+  const cuts = monthlyCuts(hist, "2026-W37");
+  assert(cuts.length === 1 && cuts[0].month === "2026-08",
+    `expected only closed August, got ${cuts.map(c => c.month).join()}`);
+  assert(cuts[0].priceMed === 8300, `August median price came out ${cuts[0].priceMed}`);
+  assert(cuts[0].listings === 115, `August median listings came out ${cuts[0].listings}`);
+  assert(cuts[0].n === 4 && cuts[0].monthWeeks === 4 && cuts[0].missing.length === 0,
+    "August coverage is misreported");
+  assert(cuts[0].from === "2026-08-03" && cuts[0].to === "2026-08-30",
+    `August period came out ${cuts[0].from}—${cuts[0].to}`);
+  assert(monthlyCuts(hist, "2026-W36").every(c => c.month !== "2026-09"),
+    "published a month that has not closed");
+  assert(monthlyCuts([row("2026-W35", 8600, 130)], "2026-W40").length === 0,
+    `published a month off fewer than ${IDX_MIN_MONTH_WEEKS} weeks`);
+  const holed = monthlyCuts([row("2026-W32", 8000, 100), row("2026-W35", 8600, 130)], "2026-W40");
+  assert(holed.length === 1 && holed[0].n === 2 && holed[0].missing.length === 2,
+    "a month with a gap did not report it");
+});
+
+check("the monthly page renders and stays on its own address", () => {
+  const row = (week, priceMed) => ({ week, date: "2026-08-01", models: stats.models, listings: stats.listings,
+                                     priceMed, kmMed: stats.kmMed, sellMed: stats.sellMed, depMed: stats.depMed, builtAt });
+  const cuts = monthlyCuts([
+    row("2026-W27", 7600), row("2026-W28", 7700), row("2026-W29", 7800), row("2026-W30", 7900),
+    row("2026-W32", 8000), row("2026-W33", 8200), row("2026-W34", 8400), row("2026-W35", 8600),
+  ], "2026-W40");
+  assert(cuts.length === 2, `expected July and August, got ${cuts.map(c => c.month).join()}`);
+  const aug = cuts[1];
+  const html = renderMarketMonth({ cut: aug, months: cuts, host: HOST, depositCount: 0 });
+  assertPage(html, { indexable: true, canonical: `https://${HOST}/mercado/indice/2026-08`, label: "indice month" });
+  assert(html.includes("agosto de 2026"), "the month page never names its month");
+  assert(html.includes("/mercado/indice/2026-w35"), "the month page does not link the weeks behind it");
+  assert(html.includes("vs. julho de 2026"), "the month page does not compare with the previous published month");
+  assert(html.includes(`https://${HOST}/mercado/indice/2026-08`), "the month page never states its permanent address");
+
+  const snap = { week: "2026-W36", date: "2026-09-01", builtAt, models: stats.models, listings: stats.listings,
+                 priceMed: stats.priceMed, kmMed: stats.kmMed, sellMed: stats.sellMed, depMed: stats.depMed };
+  const hub = renderMarketIndex({ snapshot: snap, history: [snap], host: HOST, depositCount: 0, months: cuts });
+  assert(hub.includes("/mercado/indice/2026-08") && hub.includes("Arquivo mensal"),
+    "the hub does not link its monthly archive");
+  const bare = renderMarketIndex({ snapshot: snap, history: [snap], host: HOST, depositCount: 0, months: [] });
+  assert(!bare.includes("/mercado/indice/2026-08"), "the hub links a month it has no cut for");
+  assert(bare.includes("Ainda não há nenhum mês fechado"), "the empty monthly archive says nothing");
 });
 
 check("district pages take the right Portuguese article", () => {
