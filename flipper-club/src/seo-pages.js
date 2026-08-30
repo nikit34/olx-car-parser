@@ -57,9 +57,48 @@ const DEP_MAX_RATE = 0.22;    // >22%/yr means the year mix, not age, is driving
 // site: 243 models is 29 403 unordered pairs. These bounds keep only pairs a
 // buyer would actually put against each other.
 const CMP_POOL = 60;          // deepest-sampled models only
-const CMP_PRICE_TOL = 0.25;   // medians within 25% of each other
+const CMP_PRICE_TOL = 0.50;
+const CMP_MIN_YEARS = 6;
 const CMP_PER_MODEL = 3;      // so one popular model can't monopolise the set
-const CMP_MAX = 90;
+const CMP_MAX = 50;
+const CMP_TABLE_YEARS = 12;
+
+const MODEL_CLASS = new Map(Object.entries({
+  "smart-fortwo-coupe": "a", "smart-fortwo-cabrio": "a", "citroen-c1": "a",
+  "renault-twingo": "a", "fiat-panda": "a",
+  "opel-corsa": "b", "renault-clio": "b", "seat-ibiza": "b", "volkswagen-polo": "b",
+  "citroen-c3": "b", "ford-fiesta": "b", "peugeot-208": "b", "peugeot-207": "b",
+  "peugeot-206": "b", "fiat-punto": "b", "fiat-grande-punto": "b", "toyota-yaris": "b",
+  "dacia-sandero": "b", "nissan-micra": "b", "citroen-c2": "b", "citroen-saxo": "b",
+  "chevrolet-aveo": "b",
+  "fiat-500": "b-premium", "mini-3-portas": "b-premium", "mini-cooper": "b-premium",
+  "mini-clubman": "b-premium", "mini-cabrio": "b-premium", "mini-coupe": "b-premium",
+  "alfa-romeo-mito": "b-premium",
+  "volkswagen-golf": "c", "opel-astra": "c", "renault-megane": "c", "ford-focus": "c",
+  "peugeot-308": "c", "peugeot-307": "c", "seat-leon": "c", "citroen-c4": "c",
+  "citroen-c4-cactus": "c", "honda-civic": "c", "toyota-corolla": "c",
+  "audi-a3": "c", "audi-a3-sportback": "c", "bmw-116": "c", "bmw-118": "c",
+  "bmw-120": "c", "volvo-v40": "c", "mercedes-benz-a-180": "c",
+  "volkswagen-golf-variant": "c-estate", "opel-astra-sports-tourer": "c-estate",
+  "opel-astra-caravan": "c-estate", "renault-megane-sport-tourer": "c-estate",
+  "renault-megane-break": "c-estate", "ford-focus-sw": "c-estate",
+  "peugeot-308-sw": "c-estate", "peugeot-307-sw": "c-estate",
+  "skoda-octavia-break": "c-estate", "volvo-v50": "c-estate",
+  "bmw-316": "d", "bmw-318": "d", "bmw-320": "d", "bmw-330": "d", "audi-a4": "d",
+  "mercedes-benz-c-200": "d", "mercedes-benz-c-220": "d", "mercedes-benz-c-300": "d",
+  "volkswagen-passat": "d", "citroen-c5": "d", "tesla-model-3": "d",
+  "audi-a4-avant": "d-estate", "volkswagen-passat-variant": "d-estate",
+  "peugeot-508-sw": "d-estate", "volvo-v60": "d-estate",
+  "bmw-520": "e", "bmw-525": "e", "bmw-530": "e",
+  "mercedes-benz-e-220": "e", "mercedes-benz-e-300": "e",
+  "audi-a6-avant": "e-estate",
+  "peugeot-2008": "suv-b", "renault-captur": "suv-b", "nissan-juke": "suv-b",
+  "nissan-qashqai": "suv-c", "peugeot-3008": "suv-c", "bmw-x1": "suv-c",
+  "bmw-x3": "suv-c", "mini-countryman": "suv-c",
+  "peugeot-5008": "suv-d", "bmw-x5": "suv-d",
+  "renault-scenic": "mpv", "renault-grand-scenic": "mpv", "opel-zafira": "mpv",
+  "citroen-c4-grand-picasso": "mpv", "ford-s-max": "mpv",
+}));
 
 // ── Page-set selection ───────────────────────────────────────────────────────
 // These are pure functions of the blob, and BOTH the router and the sitemap call
@@ -73,11 +112,13 @@ const CMP_MAX = 90;
 // the layer works: if indexation comes back at 40% there is no way to tell an
 // unconvincing page template from a crawl-budget wall.
 //
-// SEO_WAVE_MODELS (wrangler.toml [vars]) caps the layer to the N deepest-sampled
-// models. The gate is applied in ONE place and everything reads it — router,
-// sitemap, and the year links on the model page — so a page outside the current
-// wave is not merely unlisted, it is unreachable and unlinked. Widening the
-// number is the whole release step; no deploy of code, no data rebuild.
+// SEO_WAVE_MODELS (wrangler.toml [vars]) caps the PER-MODEL layer to the N
+// deepest-sampled models. The gate is applied in ONE place and everything reads
+// it — router, sitemap, and the year links on the model page — so a page outside
+// the current wave is not merely unlisted, it is unreachable and unlinked.
+// Widening the number is the whole release step; no deploy of code, no data
+// rebuild.
+//
 //
 // Empty ⇒ no cap, every qualifying page is live.
 let WAVE_MODELS = 0;
@@ -119,11 +160,8 @@ export function publishedDepreciation(models, slug, rec, builtAt) {
   return depreciationOk(rec);
 }
 
-/** Comparison pairs published in the current wave (both sides must be in). */
-export function publishedPairs(models, builtAt) {
-  const wave = waveSlugs(models, builtAt);
-  const all = comparePairs(models);
-  return wave ? all.filter(([a, b]) => wave.has(a) && wave.has(b)) : all;
+export function publishedPairs(models) {
+  return comparePairs(models);
 }
 
 /** Facet URLs published for this model in the current wave. */
@@ -303,29 +341,80 @@ export function depreciationAge(rec, fit, builtAt) {
   };
 }
 
+export function comparePool(models) {
+  return Object.entries(models)
+    .filter(([, r]) => r.fm > 0)
+    .sort((a, b) => (b[1].n || 0) - (a[1].n || 0))
+    .slice(0, CMP_POOL);
+}
+
+export function modelClass(slug) {
+  return MODEL_CLASS.get(slug) || null;
+}
+
+export function comparePriceGap(ra, rb) {
+  const byYear = new Map();
+  for (const c of (rb && Array.isArray(rb.yr) ? rb.yr : [])) {
+    if (typeof c.y === "number" && c.fm > 0) byYear.set(c.y, c);
+  }
+  const cells = [];
+  for (const ca of (ra && Array.isArray(ra.yr) ? ra.yr : [])) {
+    if (typeof ca.y !== "number" || !(ca.fm > 0)) continue;
+    const cb = byYear.get(ca.y);
+    if (!cb) continue;
+    cells.push({
+      y: ca.y, fa: ca.fm, fb: cb.fm,
+      na: ca.n || 0, nb: cb.n || 0, n: Math.min(ca.n || 0, cb.n || 0),
+    });
+  }
+  if (!cells.length) return null;
+  cells.sort((p, q) => q.y - p.y);
+  const ratio = weightedMedian(cells.map(c => [c.fa / c.fb, c.n || 1]));
+  return {
+    cells, years: cells.length, ratio,
+    dist: 1 - Math.min(ratio, 1 / ratio),
+    n: cells.reduce((t, c) => t + (c.n || 0), 0),
+  };
+}
+
+function weightedMedian(points) {
+  const s = points.slice().sort((p, q) => p[0] - q[0]);
+  const total = s.reduce((t, p) => t + p[1], 0);
+  let acc = 0;
+  for (const p of s) {
+    acc += p[1];
+    if (acc * 2 >= total) return p[0];
+  }
+  return s[s.length - 1][0];
+}
+
 /**
  * The comparison set: deterministic, so routing and the sitemap agree.
  *
- * Cross-brand only (a Golf against a Polo is the same brand's own ladder, which
- * the model page's sibling chips already cover) and price-adjacent, because
- * "{A} ou {B}" is a question people ask about cars that are actual substitutes.
+ * Three gates, and a pair has to clear all of them:
+ *   cross-brand   — a Golf against a Polo is the same brand's own ladder, which
+ *                   the model page's sibling chips already cover;
+ *   same class    — what makes two cars substitutes, and the reason the earlier
+ *                   price-only rule shipped a Mégane against a Smart Fortwo;
+ *   price, at the same model year — bounds how far apart two cars of one class
+ *                   may be before "{A} ou {B}" stops being one person's choice.
+ *
  * Ordering inside a pair is alphabetical so /comparar/a-vs-b and /comparar/b-vs-a
  * can never both exist.
  */
 export function comparePairs(models) {
-  const pool = Object.entries(models)
-    .filter(([, r]) => r.fm > 0)
-    .sort((a, b) => (b[1].n || 0) - (a[1].n || 0))
-    .slice(0, CMP_POOL);
+  const pool = comparePool(models);
   const cand = [];
   for (let i = 0; i < pool.length; i++) {
     for (let j = i + 1; j < pool.length; j++) {
       const [sa, ra] = pool[i], [sb, rb] = pool[j];
       if (ra.b === rb.b) continue;
-      const dist = Math.abs(ra.fm - rb.fm) / Math.max(ra.fm, rb.fm);
-      if (dist > CMP_PRICE_TOL) continue;
+      const cls = modelClass(sa);
+      if (!cls || cls !== modelClass(sb)) continue;
+      const gap = comparePriceGap(ra, rb);
+      if (!gap || gap.years < CMP_MIN_YEARS || gap.dist > CMP_PRICE_TOL) continue;
       const [x, y] = sa < sb ? [sa, sb] : [sb, sa];
-      cand.push({ a: x, b: y, dist, depth: Math.min(ra.n || 0, rb.n || 0) });
+      cand.push({ a: x, b: y, dist: gap.dist, depth: Math.min(ra.n || 0, rb.n || 0) });
     }
   }
   // Deepest samples first; ties broken by how close the two prices are, then by
@@ -1198,6 +1287,9 @@ export function renderComparePage({ a, b, ra, rb, stats, host, depositCount, bui
   const depB = (fitB && fitB.cells.length >= 5 && fitB.rate > 0 && fitB.rate < 0.30) ? fitB.rate : null;
   const sprA = ra.fm > 0 ? (ra.fh - ra.fl) / ra.fm : null;
   const sprB = rb.fm > 0 ? (rb.fh - rb.fl) / rb.fm : null;
+  const gap = comparePriceGap(ra, rb);
+  const gPct = gap ? Math.round((Math.max(gap.ratio, 1 / gap.ratio) - 1) * 100) : null;
+  const gDearer = gap ? (gap.ratio > 1 ? "a" : "b") : null;
 
   const card = (slug, r, name, wins) => `
     <div class="fc-vs-card${wins ? " win" : ""}">
@@ -1218,14 +1310,13 @@ export function renderComparePage({ a, b, ra, rb, stats, host, depositCount, bui
   // Per-dimension verdicts. Each row states which side wins AND why that matters,
   // because "cheaper" is only an advantage once you know what it costs elsewhere.
   const verdicts = [];
-  const cheaper = ra.fm <= rb.fm ? "a" : "b";
-  const dPct = Math.round(Math.abs(ra.fm - rb.fm) / Math.max(ra.fm, rb.fm) * 100);
+  const cheaper = gap ? (gDearer === "a" ? "b" : "a") : (ra.fm <= rb.fm ? "a" : "b");
   verdicts.push({
-    k: "Preço de entrada",
+    k: "Preço ao mesmo ano",
     w: cheaper,
-    t: dPct === 0
-      ? `As medianas são praticamente iguais (${fmtEur(ra.fm)} contra ${fmtEur(rb.fm)}).`
-      : `${cheaper === "a" ? A : Bn} entra ${dPct}% mais barato: ${fmtEur(Math.min(ra.fm, rb.fm))} contra ${fmtEur(Math.max(ra.fm, rb.fm))}.`,
+    t: gPct === 0
+      ? `Ao mesmo ano de modelo pedem praticamente o mesmo, nos ${gap.years} anos em que ambos têm amostra.`
+      : `Ao mesmo ano de modelo, ${gDearer === "a" ? A : Bn} pede ${gPct}% mais do que ${gDearer === "a" ? Bn : A} — mediana dos ${gap.years} anos em que ambos têm anúncios suficientes.`,
   });
   if (ra.sd != null && rb.sd != null) {
     const w = ra.sd <= rb.sd ? "a" : "b";
@@ -1256,7 +1347,7 @@ export function renderComparePage({ a, b, ra, rb, stats, host, depositCount, bui
     verdicts.push({
       k: "Quilometragem à venda",
       w,
-      t: `Os ${w === "a" ? A : Bn} à venda estão menos rodados (${fmtKm(Math.min(ra.kmm, rb.kmm))} contra ${fmtKm(Math.max(ra.kmm, rb.kmm))} medianos), o que também explica parte da diferença de preço.`,
+      t: `Os ${w === "a" ? A : Bn} à venda estão menos rodados (${fmtKm(Math.min(ra.kmm, rb.kmm))} contra ${fmtKm(Math.max(ra.kmm, rb.kmm))} medianos). A comparação de preço acima já é ao mesmo ano, mas não ao mesmo quilómetro: parte do que sobra é isto.`,
     });
   }
   const scoreA = verdicts.filter(v => v.w === "a").length;
@@ -1267,6 +1358,19 @@ export function renderComparePage({ a, b, ra, rb, stats, host, depositCount, bui
       <td class="nm">${v.w === "a" ? `<b>${escapeHtml(ra.m)}</b>` : escapeHtml(ra.m)}${v.w === "a" ? '<span class="fc-win">+</span>' : ""}</td>
       <td class="nm">${v.w === "b" ? `<b>${escapeHtml(rb.m)}</b>` : escapeHtml(rb.m)}${v.w === "b" ? '<span class="fc-win">+</span>' : ""}</td>
     </tr>`).join("");
+
+  const yrows = gap ? gap.cells.slice(0, CMP_TABLE_YEARS).map(c => {
+    const r = c.fa / c.fb;
+    const dearer = r > 1 ? escapeHtml(ra.m) : escapeHtml(rb.m);
+    const pct = Math.round((Math.max(r, 1 / r) - 1) * 100);
+    return `<tr>
+      <td class="mono">${c.y}</td>
+      <td class="mono">${fmtEur(c.fa)}</td>
+      <td class="mono">${fmtEur(c.fb)}</td>
+      <td>${pct === 0 ? "iguais" : `${dearer} +${pct}%`}</td>
+      <td class="mut mono">${c.na}&nbsp;/&nbsp;${c.nb}</td>
+    </tr>`;
+  }).join("") : "";
 
   const body = crumbs([
     { name: "Início", href: "/" }, { name: "Comparar", href: "/comparar" },
@@ -1280,6 +1384,7 @@ export function renderComparePage({ a, b, ra, rb, stats, host, depositCount, bui
         ${card(a, ra, nameA, scoreA > scoreB)}
         ${card(b, rb, nameB, scoreB > scoreA)}
       </div>
+      ${gap ? `<p class="fc-prov mono">As duas medianas acima são de carros de idades diferentes: ${ra.y0 && ra.y1 ? `${ra.m} ${ra.y0}–${ra.y1}` : ra.m} contra ${rb.y0 && rb.y1 ? `${rb.m} ${rb.y0}–${rb.y1}` : rb.m}. A comparação de preço desta página é feita ano a ano, mais abaixo.</p>` : ""}
       ${provenance({ n: ra.n + rb.n, builtAt, measure: "Preço pedido em anúncios ativos dos dois modelos (mediana e P25-P75)" })}
     </section>
     <section class="section fc-wrap">
@@ -1289,6 +1394,15 @@ export function renderComparePage({ a, b, ra, rb, stats, host, depositCount, bui
         <tbody>${vrows}</tbody></table></div>
       <ul class="fc-insights" style="margin-top:16px;">${verdicts.map(v => `<li>${v.t}</li>`).join("")}</ul>
     </section>
+    ${gap ? `
+    <section class="section fc-wrap">
+      <h2 class="fc-h2">Preço lado a lado, ano a ano</h2>
+      <p class="fc-p">O mesmo ano de matrícula dos dois lados, que é a única forma de a diferença ser sobre os carros e não sobre a idade de quem está a vender. ${gPct === 0 ? `No conjunto dos ${gap.years} anos comuns, as medianas empatam.` : `No conjunto dos ${gap.years} anos comuns, ${gDearer === "a" ? A : Bn} pede <b>${gPct}% mais</b>.`}</p>
+      <div class="fc-scroll"><table class="fc-tbl">
+        <thead><tr><th>Ano</th><th>${escapeHtml(ra.m)}</th><th>${escapeHtml(rb.m)}</th><th>Diferença</th><th>Anúncios</th></tr></thead>
+        <tbody>${yrows}</tbody></table></div>
+      <p class="fc-prov mono">A última coluna é o número de anúncios de cada lado nesse ano — a diferença de um ano com 5 e 6 anúncios diz muito menos do que a de um com 40. A percentagem do conjunto pesa cada ano por essa amostra, e não pela sua ordem.${gap.cells.length > CMP_TABLE_YEARS ? ` Mostrados os ${CMP_TABLE_YEARS} anos mais recentes dos ${gap.cells.length} em que ambos têm amostra; a percentagem usa todos.` : ""}</p>
+    </section>` : ""}
     <section class="section fc-wide">
       <div class="cta-banner">
         <div style="flex:1 1 360px;">
@@ -1304,9 +1418,9 @@ export function renderComparePage({ a, b, ra, rb, stats, host, depositCount, bui
 
   const faqs = [
     [`${nameA} ou ${nameB}: qual é mais barato em Portugal?`,
-     dPct === 0
-       ? `As medianas estão praticamente empatadas: ${fmtEur(ra.fm)} para o ${nameA} e ${fmtEur(rb.fm)} para o ${nameB}, em anúncios ativos do OLX Portugal.`
-       : `O ${cheaper === "a" ? nameA : nameB} pede em mediana ${fmtEur(Math.min(ra.fm, rb.fm))} contra ${fmtEur(Math.max(ra.fm, rb.fm))} do ${cheaper === "a" ? nameB : nameA}, uma diferença de ${dPct}% nos anúncios ativos do OLX Portugal.`],
+     gPct === 0
+       ? `Ao mesmo ano de modelo os dois pedem praticamente o mesmo, na mediana dos ${gap.years} anos em que ambos têm amostra no OLX Portugal.`
+       : `Ao mesmo ano de modelo, o ${gDearer === "a" ? nameA : nameB} pede cerca de ${gPct}% mais do que o ${gDearer === "a" ? nameB : nameA}, na mediana dos ${gap.years} anos em que ambos têm amostra no OLX Portugal. Nas medianas de tudo o que está à venda a diferença parece outra (${fmtEur(ra.fm)} contra ${fmtEur(rb.fm)}), porque os dois modelos não estão à venda com a mesma idade.`],
   ];
   if (depA != null && depB != null) faqs.push([
     `${nameA} ou ${nameB}: qual perde menos valor?`,
@@ -1317,7 +1431,9 @@ export function renderComparePage({ a, b, ra, rb, stats, host, depositCount, bui
 
   return layout({
     title: `${nameA} ou ${nameB}? Comparação de preços usados`,
-    description: `${nameA} (${fmtEur(ra.fm)}) contra ${nameB} (${fmtEur(rb.fm)}) no mercado português de usados: preço, quilometragem, tempo até vender e desvalorização, em anúncios ativos do OLX.`,
+    description: gap
+      ? `${nameA} contra ${nameB} no mercado português de usados: preço comparado ao mesmo ano de modelo (${gPct === 0 ? "empate" : `${gDearer === "a" ? nameA : nameB} +${gPct}%`}), quilometragem, tempo até vender e desvalorização, em anúncios ativos do OLX.`
+      : `${nameA} (${fmtEur(ra.fm)}) contra ${nameB} (${fmtEur(rb.fm)}) no mercado português de usados: preço, quilometragem, tempo até vender e desvalorização, em anúncios ativos do OLX.`,
     canonical, body, zone: "all", nav: "precos", depositCount, index: true, host,
     jsonLd: {
       "@context": "https://schema.org",
@@ -1332,18 +1448,37 @@ export function renderComparePage({ a, b, ra, rb, stats, host, depositCount, bui
   });
 }
 
-// ── /comparar — hub ──────────────────────────────────────────────────────────
+const CLASS_LABEL = new Map(Object.entries({
+  a: "Citadinos", b: "Utilitários", "b-premium": "Utilitários premium",
+  c: "Compactos", "c-estate": "Carrinhas compactas",
+  d: "Berlinas médias", "d-estate": "Carrinhas médias",
+  e: "Berlinas grandes", "e-estate": "Carrinhas grandes",
+  "suv-b": "SUV pequenos", "suv-c": "SUV médios", "suv-d": "SUV grandes",
+  mpv: "Monovolumes",
+}));
+
 export function renderCompareHub({ pairs, models, host, depositCount, builtAt }) {
   const canonical = `https://${host}/comparar`;
-  const items = pairs.map(([a, b]) => {
-    const ra = models[a], rb = models[b];
-    return `<a class="mchip" href="/comparar/${a}-vs-${b}">${escapeHtml(ra.b)} ${escapeHtml(ra.m)} <span class="mut">vs</span> ${escapeHtml(rb.b)} ${escapeHtml(rb.m)}</a>`;
+  const groups = new Map();
+  for (const [a, b] of pairs) {
+    const k = modelClass(a) || "outros";
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push([a, b]);
+  }
+  const order = [...CLASS_LABEL.keys(), "outros"];
+  const items = order.filter(k => groups.has(k)).map(k => {
+    const chips = groups.get(k).map(([a, b]) => {
+      const ra = models[a], rb = models[b];
+      return `<a class="mchip" href="/comparar/${a}-vs-${b}">${escapeHtml(ra.b)} ${escapeHtml(ra.m)} <span class="mut">vs</span> ${escapeHtml(rb.b)} ${escapeHtml(rb.m)}</a>`;
+    }).join("");
+    return `<h2 class="fc-h2" style="font-size:16px;margin:22px 0 10px;">${escapeHtml(CLASS_LABEL.get(k) || "Outros")}</h2><div class="mchips">${chips}</div>`;
   }).join("");
   const body = crumbs([{ name: "Início", href: "/" }, { name: "Comparar" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">Comparar carros usados em Portugal</h1>
-      <p class="fc-p">Cada comparação usa os anúncios ativos dos dois modelos no OLX: preço mediano, dispersão, quilometragem, tempo até vender e desvalorização. Comparamos apenas modelos de marcas diferentes com preços próximos, porque são esses que se disputam de facto — um carro contra outro três vezes mais caro não é uma decisão que alguém tome.</p>
-      <div class="mchips">${items}</div>
+      <p class="fc-p">Cada comparação usa os anúncios ativos dos dois modelos no OLX: preço, dispersão, quilometragem, tempo até vender e desvalorização. Só pomos frente a frente modelos de marcas diferentes que jogam no mesmo segmento — é entre esses que a escolha existe de facto, e é por isso que não vais encontrar aqui um citadino contra uma berlina.</p>
+      <p class="fc-p">O preço é comparado <b>ao mesmo ano de modelo</b>, não pela mediana de tudo o que está à venda. Um modelo cujos anúncios são em média mais velhos parece mais barato sem o ser, e essa é a comparação que toda a gente faz por engano.</p>
+      ${items}
       ${provenance({ n: null, builtAt, measure: "Preço pedido mediano dos dois modelos comparados" })}
       <p class="fc-p" style="margin-top:18px;"><a href="/precos">Todos os modelos</a> · <a href="/depreciacao">Desvalorização</a> · <a href="/metodologia">Como calculamos</a></p>
     </section>
@@ -1555,6 +1690,7 @@ export function renderMarketIndex({ snapshot, history, host, depositCount, isArc
       <td class="mut">${fmtNum(h.listings)}</td>
       <td class="mut">${h.models}</td>
       <td class="mut">${h.sellMed != null ? h.sellMed + " dias" : "—"}</td></tr>`).join("");
+
 
   const body = crumbs(isArchive
     ? [{ name: "Início", href: "/" }, { name: "Índice de mercado", href: "/mercado/indice" }, { name: wk }]

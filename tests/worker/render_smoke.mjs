@@ -20,7 +20,8 @@ import {
   renderMarketIndex, renderMethodology, renderAbout, renderIsv,
   setSiteIdentity, corpusStats, modelInsights, provenance,
   yearCells, yearCell, yearPageYears, depreciationOk, depreciationFit, depreciationSlugs,
-  comparePairs, parseComparePath, comparePairKey, modelJson, yearJson, MIN_YEAR_PAGE_N,
+  comparePairs, parseComparePath, comparePairKey, comparePriceGap, modelClass, comparePool,
+  modelJson, yearJson, MIN_YEAR_PAGE_N,
   yearGap,
   depreciationAge, depreciationJson,
   estimateIsv, ISV_TABLES_FOR_TEST, renderDistrictPage,
@@ -147,6 +148,49 @@ check("comparison set is stable across calls", () => {
     "comparePairs is not deterministic — router and sitemap would disagree");
 });
 
+check("every model in the comparison pool has a segment", () => {
+  const missing = comparePool(models).map(([s]) => s).filter(s => !modelClass(s));
+  assert(missing.length === 0,
+    `unclassified in the top-${comparePool(models).length} pool: ${missing.join(", ")}`
+    + " — add each to MODEL_CLASS in seo-pages.js");
+});
+
+check("every comparison is same-segment and price-adjacent at equal model year", () => {
+  for (const [a, b] of pairs) {
+    const cls = modelClass(a);
+    assert(cls, `${a} has no segment but is being compared`);
+    assert(cls === modelClass(b), `${a}-vs-${b} crosses segments (${cls} vs ${modelClass(b)})`);
+    const gap = comparePriceGap(models[a], models[b]);
+    assert(gap, `${a}-vs-${b} has no overlapping model year`);
+    assert(gap.years >= 6, `${a}-vs-${b} rests on only ${gap.years} common years`);
+    assert(gap.dist <= 0.5, `${a}-vs-${b} is ${gap.ratio.toFixed(2)}x apart at equal year`);
+  }
+});
+
+check("the age-matched gap is narrower than the raw-median gap where age differs", () => {
+  const ra = models["volkswagen-golf"], rb = models["opel-astra"];
+  if (!ra || !rb) return;
+  const gap = comparePriceGap(ra, rb);
+  assert(gap, "no Golf/Astra overlap in this blob");
+  const raw = Math.max(ra.fm / rb.fm, rb.fm / ra.fm);
+  const matched = Math.max(gap.ratio, 1 / gap.ratio);
+  assert(matched < raw, `age-matched ${matched.toFixed(2)}x is not below raw ${raw.toFixed(2)}x`);
+  assert(gap.dist <= 0.5, "Golf vs Astra fell outside the price bound");
+});
+
+check("comparePriceGap ignores year bands and unmatched years", () => {
+  const A = { yr: [{ y: 2015, fm: 10000, n: 20 }, { y: 2014, fm: 9000, n: 10 },
+                   { y: "2010-2012", fm: 5000, n: 30 }, { y: 2001, fm: 1000, n: 8 }] };
+  const B = { yr: [{ y: 2015, fm: 5000, n: 20 }, { y: 2014, fm: 4500, n: 10 },
+                   { y: "2010-2012", fm: 2500, n: 30 }] };
+  const g = comparePriceGap(A, B);
+  assert(g.years === 2, `expected 2 matched years, got ${g.years}`);
+  assert(Math.abs(g.ratio - 2) < 1e-9, `expected a 2x ratio, got ${g.ratio}`);
+  assert(g.cells[0].y === 2015, "cells are not newest-first");
+  assert(comparePriceGap(A, { yr: [{ y: 1990, fm: 900, n: 9 }] }) === null,
+    "returned a gap for models that never overlap");
+});
+
 check("an invented comparison is refused", () => {
   const set = new Set(pairs.map(([a, b]) => comparePairKey(a, b)));
   assert(parseComparePath("nao-existe-vs-tambem-nao", models, set) === null, "accepted a made-up pair");
@@ -181,6 +225,32 @@ check("model page renders with its new blocks", () => {
   assert(html.includes(`/preco/${deep}/`), "model page does not link any year page");
   assert(html.includes("/comparar/"), "model page does not link a comparison");
   assert(html.includes("fc-prov"), "model page has no provenance line");
+});
+
+check("alternatives are labelled for what they actually are", () => {
+  const rec = models[deep];
+  const base = {
+    rec, slug: deep, liveDeals: [], siblings: [], host: HOST, depositCount: 0, builtAt,
+    insights: modelInsights(rec, stats), yearPages: yearPageYears(rec), comparisons: [],
+  };
+  const seg = renderModelPage({
+    ...base, competitorKind: "segment",
+    competitors: [{ slug: "opel-astra", b: "Opel", m: "Astra", fm: 3000, ratio: 1.7 }],
+  });
+  assert(seg.includes("ALTERNATIVAS NO MESMO SEGMENTO"), "segment list is not labelled as one");
+  assert(seg.includes("PREÇO AO MESMO ANO"), "segment list does not say what its number is");
+  assert(seg.includes(">+70%<"), "segment chip does not carry the same-year difference");
+  assert(!seg.includes("MESMA FAIXA DE PREÇO"), "segment list kept the price-band label");
+
+  const price = renderModelPage({
+    ...base, competitorKind: "price",
+    competitors: [{ slug: "opel-astra", b: "Opel", m: "Astra", fm: 3000 }],
+  });
+  assert(price.includes("ALTERNATIVAS NA MESMA FAIXA DE PREÇO"), "price list lost its label");
+  assert(!price.includes("PREÇO AO MESMO ANO"),
+    "price-band list claims a same-year comparison it did not make");
+  assert(!/[+−]\d+%<\/span>/.test(price.split("MESMA FAIXA DE PREÇO")[1].slice(0, 600)),
+    "price-band chip shows a percentage instead of the median it measured");
 });
 
 check("model insights differ between models", () => {
@@ -403,6 +473,10 @@ check("every comparison page renders without throwing", () => {
     assertPage(html, { indexable: true, canonical: `https://${HOST}/comparar/${a}-vs-${b}`, label: `comparar/${a}-vs-${b}` });
     assert(html.includes(`/preco/${a}`) && html.includes(`/preco/${b}`),
       `${a}-vs-${b}: does not link both model pages`);
+    assert(html.includes("ao mesmo ano") || html.includes("Ao mesmo ano"),
+      `${a}-vs-${b}: no same-model-year price comparison on the page`);
+    assert(html.includes("Preço lado a lado, ano a ano"),
+      `${a}-vs-${b}: the year-by-year table is missing`);
   }
 });
 

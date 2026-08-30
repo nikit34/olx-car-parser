@@ -23,7 +23,7 @@
 //   /comparar[/{a}-vs-{b}]     two models side by side
 //   /liquidez                  how long each model takes to sell
 //   /sobrevalorizados          asking price vs. our estimate
-//   /mercado/indice[/{semana}] weekly market index + permanent archive
+//   /mercado/indice[/{semana}]  weekly market index + permanent weekly archive
 //   /metodologia /sobre /isv   how the numbers are made, by whom, and ISV
 //
 // Every one of those exists only where its sample clears a floor, and both the
@@ -61,7 +61,8 @@ import {
   renderMarketIndex, renderMethodology, renderAbout, renderIsv,
   setSiteIdentity, corpusStats, modelInsights, provenance,
   yearCells, yearCell, yearPageYears, depreciationOk, depreciationFit, depreciationSlugs,
-  comparePairs, parseComparePath, comparePairKey, modelJson, yearJson,
+  comparePairs, parseComparePath, comparePairKey, comparePriceGap, modelClass,
+  modelJson, yearJson,
   depreciationAge, depreciationJson,
   renderFacetPage, renderDistrictPage, facetCells, facetCell, facetKind, facetKeys,
   isoWeek, missingWeeks,
@@ -518,18 +519,30 @@ async function handleModelPage(request, env, url) {
     .slice(0, 8)
     .map(([sl, r]) => ({ slug: sl, m: r.m, fm: r.fm, n: r.n }));
 
-  // … and the cross-brand alternatives the page never had. Same price band,
-  // different badge — which is the comparison a buyer is actually running, and
-  // the link that turns 243 brand-shaped islands into one graph.
-  const competitors = Object.entries(models)
-    .filter(([sl, r]) => sl !== slug && r.b !== rec.b && r.fm > 0
-      && Math.abs(r.fm - rec.fm) / Math.max(r.fm, rec.fm) <= 0.22)
-    .sort((a, b) => (b[1].n || 0) - (a[1].n || 0))
-    .slice(0, 6)
-    .map(([sl, r]) => ({ slug: sl, b: r.b, m: r.m, fm: r.fm }));
+  const cls = modelClass(slug);
+  let competitors = [], competitorKind = "price";
+  if (cls) {
+    competitors = Object.entries(models)
+      .filter(([sl, r]) => sl !== slug && r.b !== rec.b && r.fm > 0 && modelClass(sl) === cls)
+      .map(([sl, r]) => ({ sl, r, gap: comparePriceGap(r, rec) }))
+      .filter(x => x.gap && x.gap.years >= COMPETITOR_MIN_YEARS && x.gap.dist <= COMPETITOR_TOL)
+      .sort((a, b) => (b.r.n || 0) - (a.r.n || 0))
+      .slice(0, 6)
+      .map(x => ({ slug: x.sl, b: x.r.b, m: x.r.m, fm: x.r.fm, ratio: x.gap.ratio }));
+    if (competitors.length) competitorKind = "segment";
+  }
+  if (!competitors.length) {
+    competitors = Object.entries(models)
+      .filter(([sl, r]) => sl !== slug && r.b !== rec.b && r.fm > 0
+        && Math.abs(r.fm - rec.fm) / Math.max(r.fm, rec.fm) <= 0.22)
+      .sort((a, b) => (b[1].n || 0) - (a[1].n || 0))
+      .slice(0, 6)
+      .map(([sl, r]) => ({ slug: sl, b: r.b, m: r.m, fm: r.fm }));
+    competitorKind = "price";
+  }
 
   // Generated comparison pages that include this model.
-  const comparisons = publishedPairs(models, builtAt)
+  const comparisons = publishedPairs(models)
     .filter(([a, b]) => a === slug || b === slug)
     .map(([a, b]) => {
       const other = a === slug ? b : a;
@@ -540,7 +553,7 @@ async function handleModelPage(request, env, url) {
     rec, slug, liveDeals, siblings, host: url.host, depositCount, builtAt,
     insights: modelInsights(rec, stats),
     yearPages: publishedYearPages(models, slug, rec, builtAt),
-    competitors, comparisons,
+    competitors, competitorKind, comparisons,
     // Fuel/district cuts, tagged with their kind so the page can label them.
     // Gated by the same wave as everything else, so the page never links a URL
     // the router would refuse.
@@ -728,7 +741,7 @@ async function handleCompare(request, env, url) {
     rest = decodeURIComponent(url.pathname.slice("/comparar/".length)).replace(/\/+$/, "").toLowerCase();
   } catch (_) { return notFoundPage(request, env, url); }
   return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, stats }) => {
-    const pairSet = new Set(publishedPairs(models, builtAt).map(([a, b]) => comparePairKey(a, b)));
+    const pairSet = new Set(publishedPairs(models).map(([a, b]) => comparePairKey(a, b)));
     const pair = parseComparePath(rest, models, pairSet);
     if (!pair) return notFoundPage(request, env, url, setCookie);
     return html(renderComparePage({
@@ -741,7 +754,7 @@ async function handleCompare(request, env, url) {
 // /comparar
 async function handleCompareHub(request, env, url) {
   return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie }) =>
-    html(renderCompareHub({ pairs: publishedPairs(models, builtAt), models, host: url.host, depositCount, builtAt }), 200, setCookie));
+    html(renderCompareHub({ pairs: publishedPairs(models), models, host: url.host, depositCount, builtAt }), 200, setCookie));
 }
 
 // /liquidez
@@ -1004,7 +1017,7 @@ async function handleSitemap(request, env, url) {
     for (const k of Object.keys((mdoc && mdoc.districts) || {})) {
       add(`/precos/${encodeURIComponent(k)}`, "weekly", "0.6");
     }
-    for (const [a, b] of publishedPairs(models, lastmodSrc)) {
+    for (const [a, b] of publishedPairs(models)) {
       add(`/comparar/${encodeURIComponent(a)}-vs-${encodeURIComponent(b)}`, "monthly", "0.5");
     }
     // Archived index weeks: permanent URLs, so they belong in the sitemap.
@@ -1143,7 +1156,7 @@ async function handleLlmsTxt(request, env, url) {
     `- [Índice de preços por modelo](${base}/precos)`,
     `- [Avaliar um anúncio concreto](${base}/avaliar)`,
     `- [Mercado: carros abaixo do valor justo](${base}/mercado)`,
-    `- [Índice semanal do mercado, com arquivo permanente](${base}/mercado/indice)`,
+    `- [Índice do mercado, com arquivo semanal permanente](${base}/mercado/indice)`,
     `- [Desvalorização por modelo](${base}/depreciacao)`,
     `- [Tempo mediano até vender, por modelo](${base}/liquidez)`,
     `- [Comparações diretas entre modelos](${base}/comparar)`,
@@ -1661,6 +1674,9 @@ const HOT_DEALS_BASE =
   "https://github.com/nikit34/olx-car-parser/releases/download/latest-data";
 const DEALS_CACHE_TTL_SEC = 900;
 const DEALS_NEAR_YEARS = 2;
+
+const COMPETITOR_MIN_YEARS = 4;
+const COMPETITOR_TOL = 0.6;
 const DEGRADED_CACHE_TTL_SEC = 30;
 
 // Returns { deals, degraded }. `degraded: true` means we could not load the

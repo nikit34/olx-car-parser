@@ -2044,7 +2044,8 @@ export function fmtBuilt(iso) {
 // builtAt = models.json build stamp (freshness signal). rec.gl/gm/gh = the
 // MODEL fair-value band, present only when it cleared the build-time guards.
 export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositCount, builtAt,
-                                  insights = [], yearPages = [], competitors = [], comparisons = [],
+                                  insights = [], yearPages = [], competitors = [],
+                                  competitorKind = "price", comparisons = [],
                                   facets = [], hasDepreciation = false, provenanceHtml = "", altJson = null }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
   const FM = fmtEur(rec.fm), FL = fmtEur(rec.fl), FH = fmtEur(rec.fh);
@@ -2232,17 +2233,19 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
       </div>
     </section>`;
 
-  // 7b. Cross-brand links — the ones a buyer actually wants and the page had
-  // none of. Sibling chips only ever led to the same brand's own ladder
-  // (Golf → Passat → Polo), so a reader comparing a Golf with an Astra had to
-  // leave, and the crawler saw 243 brand-shaped islands instead of one graph.
-  const compChips = (competitors || []).slice(0, 6).map(c =>
-    `<a class="mchip" href="/preco/${encodeURIComponent(c.slug)}">${escapeHtml(c.b)} ${escapeHtml(c.m)} <span class="mut">${fmtEur(c.fm)}</span></a>`).join("");
+  const bySegment = competitorKind === "segment";
+  const compChips = (competitors || []).slice(0, 6).map(c => {
+    const rel = (bySegment && c.ratio > 0)
+      ? (Math.abs(c.ratio - 1) < 0.025 ? "igual"
+        : `${c.ratio > 1 ? "+" : "−"}${Math.round((c.ratio > 1 ? c.ratio - 1 : 1 - c.ratio) * 100)}%`)
+      : fmtEur(c.fm);
+    return `<a class="mchip" href="/preco/${encodeURIComponent(c.slug)}">${escapeHtml(c.b)} ${escapeHtml(c.m)} <span class="mut">${rel}</span></a>`;
+  }).join("");
   const cmpChips = (comparisons || []).slice(0, 4).map(c =>
     `<a class="mchip" href="/comparar/${c.href}">${escapeHtml(rec.m)} <span class="mut">vs</span> ${escapeHtml(c.m)}</a>`).join("");
   const rivals = (compChips || cmpChips) ? `
     <section class="section" style="padding:34px 22px 0;max-width:1180px;">
-      ${compChips ? `<div class="sec-label">ALTERNATIVAS NA MESMA FAIXA DE PREÇO</div><div class="mchips">${compChips}</div>` : ""}
+      ${compChips ? `<div class="sec-label">${bySegment ? `ALTERNATIVAS NO MESMO SEGMENTO · PREÇO AO MESMO ANO QUE O ${B} ${M}` : "ALTERNATIVAS NA MESMA FAIXA DE PREÇO"}</div><div class="mchips">${compChips}</div>` : ""}
       ${cmpChips ? `<div class="sec-label" style="margin-top:22px;">COMPARAÇÕES DIRETAS</div><div class="mchips">${cmpChips}</div>` : ""}
     </section>` : "";
 
