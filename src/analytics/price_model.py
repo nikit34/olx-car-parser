@@ -84,6 +84,7 @@ _SCHEMA_VERSION = 13
 # listings — backtest showed 80% nominal coverage delivering 61–69% on
 # tomorrow's data. Calibrating on a held-out time-tail closes that gap.
 _TIME_CALIBRATION_FRAC = 0.2
+_MIN_BUCKET_CAL_ROWS = 200
 
 
 NUMERIC_FEATURES = [
@@ -820,7 +821,7 @@ def _time_aware_conformal_q(
         if label is None:
             continue
         mask = np.array([b == label for b in bucket_labels])
-        if mask.sum() < 30:
+        if mask.sum() < _MIN_BUCKET_CAL_ROWS:
             continue  # too few rows for a reliable per-bucket q
         per_bucket[label] = _conformal_q_from_scores(scores[mask])
 
