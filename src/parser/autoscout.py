@@ -319,8 +319,14 @@ def _to_listing(item: dict) -> DeListing | None:
 
 
 def search_path(make: str, model: str, *, year: int | None = None, page: int = 1,
-                country: str = "D") -> str:
-    """The path+query for one model-year page, in the form robots.txt leaves open."""
+                country: str = "D", body: str | None = None) -> str:
+    """The path+query for one model-year page, in the form robots.txt leaves open.
+
+    ``body`` is AutoScout24's body-type segment (``bt_kombi`` and friends). It
+    exists because half the Portuguese estate vocabulary — "308 SW", "Leon ST",
+    "Mégane Sport Tourer" — is a body type there rather than a model, so those
+    models are unreachable without it and were coming back 404.
+    """
     params = {
         "atype": "C",
         "cy": country,
@@ -334,7 +340,8 @@ def search_path(make: str, model: str, *, year: int | None = None, page: int = 1
         params["fregto"] = year
     if page and page > 1:
         params["page"] = page
-    return f"{SEARCH_PATH}/{make}/{model}?{urlencode(params)}"
+    tail = f"/{body}" if body else ""
+    return f"{SEARCH_PATH}/{make}/{model}{tail}?{urlencode(params)}"
 
 
 @dataclass
@@ -388,13 +395,13 @@ class AutoScoutClient:
             return None
         return resp.text
 
-    def model_year(self, make: str, model: str, year: int, *, max_pages: int = 1
-                   ) -> list[DeListing]:
+    def model_year(self, make: str, model: str, year: int, *, max_pages: int = 1,
+                   body: str | None = None) -> list[DeListing]:
         """Every listing we are willing to read for one model in one year."""
         found: list[DeListing] = []
         for page in range(1, max(1, min(max_pages, MAX_PAGE)) + 1):
             html = self.fetch(search_path(make, model, year=year, page=page,
-                                          country=self.config.country))
+                                          country=self.config.country, body=body))
             if html is None:
                 break
             listings, meta = parse_search(html)

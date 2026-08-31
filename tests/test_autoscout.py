@@ -179,3 +179,38 @@ class TestManners:
         client._client = httpx.Client(transport=httpx.MockTransport(handler))
         found = client.model_year("bmw", "320", 2016, max_pages=5)
         assert len(found) == 1 and client.spent == 1
+
+
+class TestPortugueseNamesOnAutoScout:
+    """Portugal names a body type as a model; AutoScout24 does not."""
+
+    @staticmethod
+    def _q(brand, model):
+        from scripts.crawl_autoscout import as24_query
+        return as24_query(brand, model)
+
+    def test_an_estate_becomes_the_base_model_plus_a_body_filter(self):
+        assert self._q("Peugeot", "308 SW") == ("peugeot", "308", "bt_kombi")
+        assert self._q("Seat", "Leon ST") == ("seat", "leon", "bt_kombi")
+        assert self._q("Renault", "Mégane Sport Tourer") == ("renault", "megane", "bt_kombi")
+        assert self._q("Opel", "Astra Caravan") == ("opel", "astra", "bt_kombi")
+
+    def test_a_coupe_does_the_same(self):
+        assert self._q("BMW", "420 Gran Coupé") == ("bmw", "420", "bt_coupe")
+        assert self._q("Smart", "ForTwo Coupé") == ("smart", "fortwo", "bt_coupe")
+        assert self._q("Mini", "Cabrio Sport Tourer")[2] == "bt_kombi"
+
+    def test_a_model_that_is_only_a_body_word_is_left_alone(self):
+        """Stripping "Cabrio" off "Mini Cabrio" would ask for a model with no
+        name; AutoScout24 has a Mini called Cabrio, so it goes through as-is."""
+        assert self._q("Mini", "Cabrio") == ("mini", "cabrio", None)
+
+    def test_everything_else_goes_through_untouched(self):
+        assert self._q("Volkswagen", "Golf") == ("volkswagen", "golf", None)
+        assert self._q("Mercedes-Benz", "C 220") == ("mercedes-benz", "c-220", None)
+        assert self._q("Citroën", "C3") == ("citroen", "c3", None)
+
+    def test_the_body_filter_lands_in_the_path_robots_allows(self):
+        path = search_path("peugeot", "308", year=2016, body="bt_kombi")
+        assert path.startswith("/lst/peugeot/308/bt_kombi?")
+        assert robots_allows(path)
