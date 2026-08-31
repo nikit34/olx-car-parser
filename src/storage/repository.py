@@ -1452,6 +1452,12 @@ def upsert_import_listings(session: Session, listings) -> tuple[int, int]:
     corpus: AutoScout24 writes "Citroen" where OLX writes "Citroën", and the two
     have to be the same make or the import pages join against nothing.
 
+    One SELECT for the whole batch, not one per listing. The crawler writes
+    twenty rows per request and runs against a database it may reach over a
+    tunnel, where forty round trips cost far more than the polite delay between
+    requests — on the first ad-hoc run that turned a 30-minute pass into a
+    four-hour one while AutoScout24 was answering in half a second.
+
     Keyed on (source, external_id). A listing seen again only moves
     ``last_seen_at`` and whatever the seller changed, so the table records how
     long a German ad has been up as a side effect — the same lifecycle signal
@@ -1461,17 +1467,30 @@ def upsert_import_listings(session: Session, listings) -> tuple[int, int]:
 
     inserted = updated = 0
     now = _utcnow()
+    incoming: list[tuple[str, str, dict]] = []
     for item in listings:
         data = item if isinstance(item, dict) else asdict(item)
         if data.get("brand"):
             data["brand"] = normalize_brand(data["brand"])
         source = str(data.get("source") or "")
         external_id = str(data.get("external_id") or "")
-        if not source or not external_id:
-            continue
-        row = (session.query(ImportListing)
-               .filter_by(source=source, external_id=external_id).first())
+        if source and external_id:
+            incoming.append((source, external_id, data))
+    if not incoming:
+        return 0, 0
+
+    existing: dict[tuple[str, str], ImportListing] = {}
+    for source in {src for src, _, _ in incoming}:
+        ids = [ext for src, ext, _ in incoming if src == source]
+        for chunk in _chunked(ids):
+            for row in (session.query(ImportListing)
+                        .filter(ImportListing.source == source,
+                                ImportListing.external_id.in_(chunk)).all()):
+                existing[(row.source, row.external_id)] = row
+
+    for source, external_id, data in incoming:
         values = {k: data.get(k) for k in _IMPORT_FIELDS if k in data}
+        row = existing.get((source, external_id))
         if row is None:
             session.add(ImportListing(source=source, external_id=external_id,
                                       first_seen_at=now, last_seen_at=now, **values))

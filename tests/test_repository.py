@@ -14,8 +14,10 @@ from src.storage.repository import (
     compute_market_stats,
     deduplicate_cross_platform,
     deduplicate_same_platform,
+    get_import_listings_df,
     get_listings_df,
     get_unmatched_df,
+    upsert_import_listings,
 )
 
 
@@ -961,3 +963,50 @@ class TestDeduplicateSamePlatform:
         self._make(db_session, "sv-a", source="standvirtual")
         db_session.commit()
         assert deduplicate_same_platform(db_session) == 0
+
+
+class TestImportListings:
+    """Foreign-market rows: kept apart from the corpus, refreshed in place."""
+
+    @staticmethod
+    def _rows(n=3, price=10000):
+        return [{
+            "source": "autoscout24", "external_id": f"de-{i}",
+            "url": f"https://www.autoscout24.de/angebote/x{i}",
+            "brand": "Citroen", "model": "C3", "year": 2018,
+            "price_eur": price + i, "co2_g_km": 110, "engine_cc": 1199,
+            "fuel_type": "Gasolina", "mileage_km": 90000,
+            "vat_label": "inkl. MwSt.", "vat_reclaimable": False,
+        } for i in range(n)]
+
+    def test_insert_then_refresh_keeps_one_row_per_listing(self, db_session):
+        assert upsert_import_listings(db_session, self._rows()) == (3, 0)
+        assert upsert_import_listings(db_session, self._rows(price=9000)) == (0, 3)
+        df = get_import_listings_df(db_session)
+        assert len(df) == 3
+        assert sorted(df["price_eur"]) == [9000.0, 9001.0, 9002.0]
+
+    def test_the_first_sighting_is_not_overwritten(self, db_session):
+        upsert_import_listings(db_session, self._rows(1))
+        first = get_import_listings_df(db_session)["first_seen_at"].iloc[0]
+        upsert_import_listings(db_session, self._rows(1, price=8000))
+        after = get_import_listings_df(db_session).iloc[0]
+        assert after["first_seen_at"] == first
+        assert after["last_seen_at"] >= first
+
+    def test_the_german_spelling_of_a_make_is_canonicalised(self, db_session):
+        upsert_import_listings(db_session, self._rows(1))
+        assert get_import_listings_df(db_session)["brand"].iloc[0] == "Citroën"
+
+    def test_a_row_without_an_id_is_dropped_not_stored_blank(self, db_session):
+        rows = self._rows(2)
+        rows[0]["external_id"] = ""
+        assert upsert_import_listings(db_session, rows) == (1, 0)
+
+    def test_german_rows_never_enter_the_portuguese_corpus(self, db_session):
+        upsert_import_listings(db_session, self._rows())
+        assert get_listings_df(db_session).empty
+
+    def test_an_empty_batch_costs_nothing(self, db_session):
+        assert upsert_import_listings(db_session, []) == (0, 0)
+        assert get_import_listings_df(db_session).empty
