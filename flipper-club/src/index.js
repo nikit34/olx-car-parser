@@ -68,8 +68,8 @@ import {
   renderFacetPage, renderDistrictPage, facetCells, facetCell, facetKind, facetKeys,
   renderLiquidityPage, liquidityJson, publishedLiquidity,
   renderImportPage, renderImportHub, importJson, importOk, importSlugs,
-  isoWeek, missingWeeks, monthlyCuts, renderMarketMonth,
   setWave, publishedYearPages, publishedDepreciation, publishedPairs, publishedFacets,
+  isoWeek, missingWeeks, monthlyCuts, renderMarketMonth, breadcrumbLd,
   DUELS, duel, duelByPath, duelJson, duelSlugs, duelsFor, publishedDuel,
   renderDuelPage, renderDuelHub,
 } from "./seo-pages.js";
@@ -1452,7 +1452,7 @@ async function handleFeed(request, env, url) {
     const r = zoneResults[z];
     zoneCounts[z] = (r && !r.degraded && Array.isArray(r.deals)) ? r.deals.length : null;
   }
-  const { deals, degraded } = zoneResults[zone] || { deals: [], degraded: true };
+  const { deals, degraded, builtAt: feedBuiltAt } = zoneResults[zone] || { deals: [], degraded: true, builtAt: null };
   const unlockedSet = await listUnlocked(env, uid, { fresh: !!setCookie });
   const depositCount = unlockedSet.size;
 
@@ -1496,11 +1496,79 @@ async function handleFeed(request, env, url) {
   }
   const modelLinks = [...counted.values()].sort((a, b) => b.count - a.count || a.b.localeCompare(b.b));
 
+  const mBuiltAt = mdoc && mdoc.built_at;
+  const seenYear = new Set(), yearLinks = [];
+  const contextLinks = [], districtLinks = [];
+  if (mmap) {
+    for (const [sl, c] of counted) {
+      const rec = mmap[sl];
+      const pub = publishedYearPages(mmap, sl, rec, mBuiltAt);
+      for (const d of sorted) {
+        if (slugify(`${d.brand}-${d.model}`) !== sl) continue;
+        const y = Number(d.year);
+        if (!pub.includes(y) || seenYear.has(`${sl}/${y}`)) continue;
+        seenYear.add(`${sl}/${y}`);
+        yearLinks.push({ href: `/preco/${encodeURIComponent(sl)}/${y}`, name: `${rec.b} ${rec.m} ${y}` });
+      }
+      if (publishedDepreciation(mmap, sl, rec, mBuiltAt)) {
+        contextLinks.push({ href: `/depreciacao/${encodeURIComponent(sl)}`,
+                            name: `Desvalorização ${rec.b} ${rec.m}` });
+      }
+      if (publishedLiquidity(mmap, sl, rec, mBuiltAt)) {
+        contextLinks.push({ href: `/liquidez/${encodeURIComponent(sl)}`,
+                            name: `Tempo de venda ${rec.b} ${rec.m}` });
+      }
+      void c;
+    }
+    const dseen = new Set();
+    for (const d of sorted) {
+      const k = slugify(String(d.district || ""));
+      if (!k || dseen.has(k) || !((mdoc && mdoc.districts) || {})[k]) continue;
+      dseen.add(k);
+      districtLinks.push({ href: `/precos/${encodeURIComponent(k)}`,
+                           name: `Preços em ${d.district}` });
+    }
+  }
+
+  const canonicalView = zone === "all" && sort === "score" && view !== "revender";
+  const items = [
+    ...modelLinks.slice(0, 24).map(m => ({ href: `/preco/${encodeURIComponent(m.slug)}`,
+                                          name: `${m.b} ${m.m}` })),
+    ...yearLinks.slice(0, 24), ...contextLinks.slice(0, 24), ...districtLinks.slice(0, 24),
+  ];
+  const origin = `https://${url.host}`;
+  const jsonLd = (canonicalView && items.length) ? {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "CollectionPage",
+        "@id": `${origin}/mercado#page`,
+        "url": `${origin}/mercado`,
+        "name": "Carros usados abaixo do preço em Portugal (OLX)",
+        "description": "Carros usados no OLX Portugal abaixo do preço justo de mercado, com desconto, lucro estimado e nota de risco.",
+        "inLanguage": "pt-PT",
+        "isPartOf": { "@id": `${origin}/#site` },
+        ...(feedBuiltAt || mBuiltAt ? { "dateModified": String(feedBuiltAt || mBuiltAt) } : {}),
+      },
+      {
+        "@type": "ItemList",
+        "@id": `${origin}/mercado#lista`,
+        "name": "Preço de mercado dos modelos com negócios agora",
+        "numberOfItems": items.length,
+        "itemListElement": items.map((it, i) => ({
+          "@type": "ListItem", "position": i + 1, "name": it.name, "url": `${origin}${it.href}`,
+        })),
+      },
+      breadcrumbLd(url.host, [{ name: "Início", href: "/" }, { name: "Carros abaixo do preço" }]),
+    ],
+  } : null;
+
   return html(renderGrid({
     deals: sorted, zone, sort, view, unlockedSet, depositCount, zoneCounts,
     depositEur: depositCents(env) / 100,
     stripeReady: stripeConfigured(env), host: url.host,
-    modelLinks, builtAt: mdoc && mdoc.built_at,
+    modelLinks, yearLinks, contextLinks, districtLinks, jsonLd,
+    builtAt: mBuiltAt, feedBuiltAt,
   }), 200, setCookie);
 }
 
@@ -1877,8 +1945,8 @@ async function getDeals(env, zone) {
   if (cached) {
     try {
       const parsed = JSON.parse(cached);
-      if (parsed && parsed.__degraded) return { deals: [], degraded: true };
-      if (Array.isArray(parsed.deals)) return { deals: parsed.deals, degraded: false };
+      if (parsed && parsed.__degraded) return { deals: [], degraded: true, builtAt: null };
+      if (Array.isArray(parsed.deals)) return { deals: parsed.deals, degraded: false, builtAt: parsed.built_at || null };
     } catch {}
   }
   const url = `${HOT_DEALS_BASE}/hot_deals_${safeZone}.json`;
@@ -1902,7 +1970,7 @@ async function getDeals(env, zone) {
     } catch (err) {
       console.warn("deals cache write failed", err && err.message);
     }
-    return { deals: parsed.deals, degraded: false };
+    return { deals: parsed.deals, degraded: false, builtAt: parsed.built_at || null };
   } catch (err) {
     console.warn("hot_deals fetch error", err && err.message);
     return degrade(env, cacheKey);
@@ -1916,7 +1984,7 @@ async function degrade(env, cacheKey) {
   } catch (err) {
     console.warn("degrade tombstone write failed", err && err.message);
   }
-  return { deals: [], degraded: true };
+  return { deals: [], degraded: true, builtAt: null };
 }
 
 // valuations.json — the public "value any listing" lookup (Tier-2). ~0.9 MB

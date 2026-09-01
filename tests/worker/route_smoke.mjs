@@ -557,6 +557,60 @@ await check("a wave gates the router, the sitemap and the on-page links together
   }
 });
 
+await check("the deal feed carries its own markup, and only on the canonical view", async () => {
+  const yr = yearPageYears(models[deep])[0];
+  const feedDeal = {
+    olx_id: "MKT1", brand: models[deep].b, model: models[deep].m, title: "Carro de teste",
+    price_eur: 7000, fair_median: 8500, fair_low: 7600, fair_high: 9400, discount_pct: 0.17,
+    est_profit_eur: 1500, year: yr, mileage_km: 180000, fuel_type: "Diesel",
+    district: "Porto", photo_urls: [], days_on_market: 12,
+    first_seen_at: "2026-08-01T00:00:00Z", seller_type: "Particular",
+  };
+  const feedStamp = "2026-09-01T06:39:25Z";
+  const prevFetch = globalThis.fetch;
+  const fresh = { ...env, KV: { ...env.KV, async get() { return null; }, async put() {} } };
+  globalThis.fetch = async (input, init) => {
+    const u = typeof input === "string" ? input : input.url;
+    if (u.includes("hot_deals_")) {
+      return new Response(JSON.stringify({ built_at: feedStamp, deals: [feedDeal] }), { status: 200 });
+    }
+    return prevFetch(input, init);
+  };
+  try {
+    const page = await (await worker.fetch(new Request(`https://${HOST}/mercado`), fresh)).text();
+    const m = page.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/);
+    assert(m, "/mercado still ships no JSON-LD");
+    const graph = JSON.parse(m[1])["@graph"];
+    const types = graph.map(n => n["@type"]);
+    for (const t of ["CollectionPage", "ItemList", "BreadcrumbList"]) {
+      assert(types.includes(t), `/mercado JSON-LD is missing ${t}`);
+    }
+    const coll = graph.find(n => n["@type"] === "CollectionPage");
+    assert(coll.dateModified === feedStamp,
+      `dateModified is ${coll.dateModified}, not the feed's own stamp`);
+    const list = graph.find(n => n["@type"] === "ItemList");
+    assert(list.numberOfItems === list.itemListElement.length, "ItemList miscounts itself");
+    list.itemListElement.forEach((it, i) => {
+      assert(it.position === i + 1, `ItemList position ${it.position} at index ${i}`);
+    });
+    assert(!coll.mainEntity,
+      "CollectionPage claims a list of reference links is the page's main content");
+    for (const it of list.itemListElement) {
+      const path = new URL(it.url).pathname;
+      assert(page.includes(`href="${path}"`), `ItemList advertises ${path}, the page never links it`);
+      assert((await worker.fetch(new Request(`https://${HOST}${path}`), fresh)).status === 200,
+        `ItemList advertises ${path} but it answers otherwise`);
+    }
+    assert(page.includes(`/preco/${deep}/${yr}`), "the feed does not link the year of the car it shows");
+
+    const zoned = await (await worker.fetch(new Request(`https://${HOST}/mercado?zone=norte`), fresh)).text();
+    assert(!zoned.includes("application/ld+json"),
+      "a filtered view ships an ItemList the canonical URL does not serve");
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
 // ── KV must not be load-bearing for a render ────────────────────────────────
 // The outage these exist for: KV refused ops, every rendered page answered
 // 1101, and /healthz plus the sitemap stayed green the whole time.

@@ -1224,7 +1224,9 @@ export function renderLanding({ stats, featured, depositEur, depositCount, host 
 // (importer/flipper). It only RELABELS the same decision_score-ranked feed —
 // never re-sorts or filters — so we never imply a precision the ranking lacks.
 export function renderGrid({ deals, zone, sort, view, unlockedSet, depositEur, depositCount,
-                             zoneCounts, host, modelLinks = [], builtAt = null }) {
+                             zoneCounts, host, modelLinks = [], builtAt = null,
+                             yearLinks = [], contextLinks = [], districtLinks = [],
+                             jsonLd = null, feedBuiltAt = null }) {
   const lens = view === "revender" ? "revender" : "comprar";
   const profitLabel = lens === "comprar" ? "💰 Maior poupança" : "💰 Maior margem";
   const tabLabel = s => s === "score" ? "🏆 Melhor aposta" : s === "profit" ? profitLabel : "🆕 Mais recentes";
@@ -1282,6 +1284,12 @@ export function renderGrid({ deals, zone, sort, view, unlockedSet, depositEur, d
     </a>`;
   }).join("\n");
 
+  const chipRow = (label, links) => (links && links.length
+    ? `<div class="sec-label" style="margin-top:26px;">${label}</div>
+      <div class="mchips">${links.slice(0, 24).map(l =>
+        `<a class="mchip" href="${l.href}">${escapeHtml(l.name)}</a>`).join("")}</div>`
+    : "");
+
   // Model links for the models in today's feed.
   //
   // Every link on this page used to point at /car?olx_id=… — pages that are
@@ -1295,12 +1303,15 @@ export function renderGrid({ deals, zone, sort, view, unlockedSet, depositEur, d
       <div class="sec-label">PREÇO DE MERCADO DOS MODELOS COM NEGÓCIOS AGORA</div>
       <div class="mchips">${modelLinks.slice(0, 24).map(m =>
         `<a class="mchip" href="/preco/${encodeURIComponent(m.slug)}">${escapeHtml(m.b)} ${escapeHtml(m.m)} <span class="mut">mediana ${fmtEur(m.fm)}${m.count > 1 ? ` · ${m.count} negócios` : ""}</span></a>`).join("")}</div>
+      ${chipRow("O ANO EXATO DESTES CARROS", yearLinks)}
+      ${chipRow("QUANTO PERDEM E QUANTO DEMORAM A VENDER", contextLinks)}
+      ${chipRow("O MERCADO DOS DISTRITOS COM NEGÓCIOS AGORA", districtLinks)}
       <p style="font-size:13.5px;color:#5B606B;margin:16px 0 0;">
         <a href="/precos" style="color:#177A47;font-weight:600;">Todos os modelos</a> ·
         <a href="/mercado/indice" style="color:#177A47;font-weight:600;">Índice semanal do mercado</a> ·
         <a href="/sobrevalorizados" style="color:#177A47;font-weight:600;">Onde se pede acima do valor justo</a>
       </p>
-      ${builtAt ? `<p class="mono fc-prov" data-updated="${escapeHtml(String(builtAt).slice(0, 10))}" data-measure="live-deal-feed" data-source="OLX Portugal">Anúncios ativos recolhidos ao longo do dia · preços de referência atualizados a ${escapeHtml(String(builtAt).slice(0, 10))} · fonte: OLX Portugal</p>` : ""}
+      ${(feedBuiltAt || builtAt) ? `<p class="mono fc-prov" data-updated="${escapeHtml(String(feedBuiltAt || builtAt).slice(0, 10))}" data-measure="live-deal-feed" data-source="OLX Portugal">Anúncios ativos recolhidos até ${escapeHtml(String(feedBuiltAt || builtAt).slice(0, 10))}${builtAt && feedBuiltAt && String(builtAt).slice(0, 10) !== String(feedBuiltAt).slice(0, 10) ? `, com os preços de referência de ${escapeHtml(String(builtAt).slice(0, 10))}` : ""} · fonte: OLX Portugal</p>` : ""}
     </section>` : "";
 
   const n = deals.length;
@@ -1338,7 +1349,7 @@ export function renderGrid({ deals, zone, sort, view, unlockedSet, depositEur, d
     title, description, body, zone, nav: "feed", depositCount, index: true,
     // Collapse the zone×sort×view variants onto one indexable URL — the feed is
     // transient and not the SEO target, so folding the params avoids ~24 dupes.
-    host, canonical: origin ? `${origin}/mercado` : null,
+    host, canonical: origin ? `${origin}/mercado` : null, jsonLd,
   });
 }
 
