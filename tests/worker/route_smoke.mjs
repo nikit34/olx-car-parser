@@ -12,7 +12,7 @@
 
 import { readFileSync } from "node:fs";
 import worker from "../../flipper-club/src/index.js";
-import { yearPageYears, depreciationSlugs, comparePairs, isoWeek, isoWeekStart, missingWeeks, DUELS, isoWeekMonth, monthlyCuts, importSlugs } from "../../flipper-club/src/seo-pages.js";
+import { yearPageYears, liquidityOk, depreciationSlugs, comparePairs, isoWeek, isoWeekStart, missingWeeks, DUELS, isoWeekMonth, monthlyCuts, importSlugs } from "../../flipper-club/src/seo-pages.js";
 
 const HOST = "carsbuyer.org";
 const RELEASE = "https://github.com/nikit34/olx-car-parser/releases/download/latest-data/models.json";
@@ -372,6 +372,12 @@ await check("robots and llms.txt describe the new surface", async () => {
     assert(g.includes("Allow: /"), `${who} lost its Allow`);
   }
   const llms = await (await get("/llms.txt")).text();
+  assert(!/vaga/i.test(llms), "llms.txt promises a wave section with no wave set");
+  const gatedLlms = await (await worker.fetch(new Request(`https://${HOST}/llms.txt`),
+    { ...env, SEO_WAVE_MODELS: "5" })).text();
+  assert(/## Publicação por vagas/.test(gatedLlms),
+    "llms.txt hides the wave that decides which of its address templates resolve");
+  assert(/page: null/.test(gatedLlms), "llms.txt does not say where the withheld numbers are");
   for (const needle of ["/preco/{slug}/{ano}", "/depreciacao/{slug}", "/comparar/{slug-a}-vs-{slug-b}",
                         "/preco/{slug}.json", "/mercado/indice"]) {
     assert(llms.includes(needle), `llms.txt does not document ${needle}`);
@@ -476,6 +482,10 @@ await check("facet pages appear when the blob carries the cells", async () => {
 
     for (const d of Object.values(DUELS)) {
       const page = await (await get(`/${d.path}/${deep}`)).text();
+      for (const href of [...page.matchAll(/href="(\/preco\/[^"]+)"/g)].map(m => m[1])) {
+        assert((await get(href)).status === 200,
+          `${d.path}/${deep} links ${href}, which does not resolve`);
+      }
       assert(/6,6%/.test(page) && /8,6%/.test(page), `${d.path}: lost one of the two rates`);
       assert(page.includes("±1,0 pp"), `${d.path}: hides the interval`);
       assert(page.includes(`/preco/${deep}/${d.a.facet}`), `${d.path}: does not link its facet cuts`);
@@ -485,6 +495,46 @@ await check("facet pages appear when the blob carries the cells", async () => {
       assert(dj.measured === "asking_price", `${d.path}: JSON does not say what it measures`);
       const hub = await (await get(`/${d.path}`)).text();
       assert(hub.includes(`/${d.path}/${deep}`), `${d.path}: hub does not link its own page`);
+    }
+
+    for (const k of ["diesel", "manual", "porto"]) {
+      const r = await get(`/preco/${deep}/${k}.json`);
+      assert(r.status === 200, `/preco/${deep}/${k}.json → ${r.status}`);
+      assert((r.headers.get("content-type") || "").includes("application/json"),
+        `/preco/${deep}/${k}.json still answers with the HTML page`);
+      const fj = await r.json();
+      assert(fj.facet && fj.facet.key === k, `${k}.json does not name its own cut`);
+      assert(fj.measured === "asking_price", `${k}.json does not say what it measures`);
+      assert(fj.sample_size > 0, `${k}.json lost the sample size`);
+      for (const sib of fj.siblings) {
+        assert((await get(new URL(sib.page).pathname)).status === 200,
+          `${k}.json advertises ${sib.page} but it answers otherwise`);
+      }
+    }
+    const facetHtml = await (await get(`/preco/${deep}/diesel`)).text();
+    assert(facetHtml.includes(`/preco/${deep}/diesel.json`),
+      "the facet page hides its own JSON twin");
+
+    const solo = slugs.find(s2 => {
+      const r = models[s2];
+      for (const kind of ["fx", "tx"]) {
+        const cells = r[kind] || [];
+        if (cells.length === 1 && r.n && cells[0].n / r.n >= 0.85) return true;
+      }
+      return false;
+    });
+    if (solo) {
+      const r = models[solo];
+      const kind = (r.fx || []).length === 1 && r.fx[0].n / r.n >= 0.85 ? "fx" : "tx";
+      const key = r[kind][0].k;
+      const red = await get(`/preco/${solo}/${key}`);
+      assert(red.status === 301,
+        `a retired near-duplicate facet answered ${red.status}, throwing away an indexed URL`);
+      assert(new URL(red.headers.get("location")).pathname === `/preco/${solo}`,
+        "a retired facet does not fold into its model page");
+      const xml2 = await (await get("/sitemap.xml")).text();
+      assert(!xml2.includes(`<loc>https://${HOST}/preco/${solo}/${key}</loc>`),
+        "sitemap still advertises a retired facet");
     }
 
     const unknown = await get(`/preco/${deep}/nao-existe`);
@@ -541,6 +591,38 @@ await check("a wave gates the router, the sitemap and the on-page links together
   // Unreachable AND unlinked: an in-page link to a 404 is worse than no page.
   const page = await (await g(`/preco/${outside}`)).text();
   assert(!page.includes(`/preco/${outside}/${yr}`), "model page links a year page the wave hides");
+
+  const feed = await (await g(`/preco/${outside}.json`)).json();
+  const advertised = feed.by_year.filter(c => c.page);
+  assert(advertised.length === 0,
+    `JSON feed advertises ${advertised.length} year pages the wave hides`);
+  assert(feed.by_year.some(c => c.year === yr),
+    "JSON feed dropped the year cell along with its page");
+  assert(feed.related.depreciation === null && feed.related.facets.length === 0,
+    "JSON feed advertises related pages the wave hides");
+  assert(feed.by_fuel.every(c => c.page === null) && feed.by_transmission.every(c => c.page === null),
+    "JSON feed advertises facet pages the wave hides");
+  const insideFeed = await (await g(`/preco/${inWave[0]}.json`)).json();
+  for (const c of insideFeed.by_year.filter(x => x.page)) {
+    assert((await g(new URL(c.page).pathname)).status === 200,
+      `JSON feed advertises ${c.page} but it answers otherwise`);
+  }
+  for (const u of [insideFeed.related.depreciation, insideFeed.related.liquidity,
+                   ...insideFeed.related.facets, ...insideFeed.related.duels].filter(Boolean)) {
+    assert((await g(new URL(u).pathname)).status === 200,
+      `JSON feed advertises ${u} but it answers otherwise`);
+  }
+
+  const duelOutside = slugs.find(s2 => !inWave.includes(s2)
+    && Object.values(DUELS).some(d => models[s2][d.key]));
+  if (duelOutside) {
+    const d = Object.values(DUELS).find(x => models[duelOutside][x.key]);
+    const page = await (await g(`/${d.path}/${duelOutside}`)).text();
+    for (const href of [...page.matchAll(/href="(\/preco\/[^"]+)"/g)].map(m => m[1])) {
+      assert((await g(href)).status === 200,
+        `a duel page outside the wave links ${href}, which the wave hides`);
+    }
+  }
 
   const xml = await (await g("/sitemap.xml")).text();
   assert(!xml.includes(`<loc>https://${HOST}/preco/${outside}/${yr}</loc>`),
@@ -634,6 +716,32 @@ await check("lastmod tells a frozen archive cut apart from a page rebuilt daily"
     "a page rebuilt every few hours lost its build stamp");
   assert(model.includes("<changefreq>daily</changefreq>"),
     "a page rebuilt every few hours still advertises weekly");
+});
+
+await check("the liquidity layer is staged on its own knob, not the price wave", async () => {
+  const priceWaved = { ...env, SEO_WAVE_MODELS: "5" };
+  const outside = slugs.slice().sort((a, b) => (models[b].n || 0) - (models[a].n || 0)
+    || (a < b ? -1 : 1)).slice(5).find(s2 => liquidityOk(models[s2]));
+  assert(outside, "fixture has no liquidity model outside a 5-model price wave");
+  const g = (p, e) => worker.fetch(new Request(`https://${HOST}${p}`), e);
+  assert((await g(`/liquidez/${outside}`, priceWaved)).status === 200,
+    "the price wave still hides a liquidity page it does not stage");
+
+  const liqCapped = { ...priceWaved, LIQ_WAVE_MODELS: "1" };
+  const deepest = Object.entries(models)
+    .filter(([, r]) => liquidityOk(r))
+    .sort((a, b) => ((b[1].lq && b[1].lq.n) || 0) - ((a[1].lq && a[1].lq.n) || 0)
+                 || (a[0] < b[0] ? -1 : 1))[0][0];
+  assert((await g(`/liquidez/${deepest}`, liqCapped)).status === 200,
+    "the liquidity wave hid its own deepest model");
+  const hidden = Object.keys(models).find(s2 => s2 !== deepest && liquidityOk(models[s2]));
+  if (hidden) {
+    assert((await g(`/liquidez/${hidden}`, liqCapped)).status === 404,
+      "a liquidity page outside its own wave is still reachable");
+    const xml = await (await g("/sitemap.xml", liqCapped)).text();
+    assert(!xml.includes(`<loc>https://${HOST}/liquidez/${hidden}</loc>`),
+      "sitemap advertises a liquidity page outside its own wave");
+  }
 });
 
 // ── KV must not be load-bearing for a render ────────────────────────────────

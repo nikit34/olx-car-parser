@@ -2235,7 +2235,7 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
       ${sellLine}
       <div class="exclusive" style="background:#FAFAF8;border:1px solid #EFECE6;align-items:flex-start;">
         <span style="font-size:15px;">📊</span>
-        <span class="x" style="color:#5B606B;"><b style="color:#16181D;">Como lemos estes números.</b> Mostramos a mediana e o intervalo dos preços PEDIDOS em anúncios ativos do OLX — não preços de venda fechados, e não uma avaliação da tua viatura específica. O preço real depende de quilómetros, estado, extras, histórico e se é importado (ISV por pagar). Para uma leitura do teu carro em concreto, <a href="/avaliar" style="color:#177A47;font-weight:600;">avalia o anúncio</a>.</span>
+        <span class="x" style="color:#5B606B;"><b style="color:#16181D;">Como lemos estes números.</b> Mediana e intervalo P25-P75 dos preços <b>pedidos</b> em ${rec.n} anúncios ativos do OLX — não preços de venda fechados, e não uma avaliação da tua viatura: quilómetros, estado, histórico e o ISV por pagar num importado mudam o valor real. <a href="/metodologia" style="color:#177A47;font-weight:600;">O método, em detalhe</a> · <a href="/avaliar" style="color:#177A47;font-weight:600;">avaliar o meu anúncio</a>.</span>
       </div>
     </section>`;
 
@@ -2245,7 +2245,7 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
       <div class="cta-banner" style="background:#fff;border:1px solid #E8E6E1;">
         <div style="flex:1 1 360px;">
           <h2 style="color:#16181D;">Vais vender o teu ${B} ${M}?</h2>
-          <p style="color:#5B606B;">Sabe por quanto anunciar sem deixar dinheiro em cima da mesa — avaliação independente, grátis.</p>
+          <p style="color:#5B606B;">Metade dos ${B} ${M} anunciados no OLX pede entre ${FL} e ${FH}. Sabe onde cai o teu antes de anunciar — grátis.</p>
         </div>
         <a class="btn-dark" href="/avaliar" style="font-size:15px;padding:14px 26px;">Avaliar o meu carro&nbsp;&nbsp;→</a>
       </div>

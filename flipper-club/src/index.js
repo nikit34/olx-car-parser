@@ -65,11 +65,11 @@ import {
   comparePairs, parseComparePath, comparePairKey, comparePriceGap, modelClass,
   modelJson, yearJson,
   depreciationAge, depreciationJson,
-  renderFacetPage, renderDistrictPage, facetCells, facetCell, facetKind, facetKeys,
-  renderLiquidityPage, liquidityJson, publishedLiquidity,
+  renderFacetPage, renderDistrictPage, facetCell, facetKind, facetJson, publishedCells, retiredFacetKind,
+  renderLiquidityPage, liquidityJson, publishedLiquidity, setLiqWave, liqWaveSlugs,
   renderImportPage, renderImportHub, importJson, importOk, importSlugs,
-  setWave, publishedYearPages, publishedDepreciation, publishedPairs, publishedFacets,
   isoWeek, missingWeeks, monthlyCuts, renderMarketMonth, breadcrumbLd,
+  setWave, waveSlugs, publishedYearPages, publishedDepreciation, publishedPairs, publishedFacets,
   DUELS, duel, duelByPath, duelJson, duelSlugs, duelsFor, publishedDuel,
   renderDuelPage, renderDuelHub,
 } from "./seo-pages.js";
@@ -199,6 +199,7 @@ export default {
       setSiteIdentity({ author: env.SITE_AUTHOR, contact: env.SITE_CONTACT_EMAIL });
       // Staged rollout of the second SEO layer. Empty ⇒ everything is live.
       setWave(env.SEO_WAVE_MODELS);
+      setLiqWave(env.LIQ_WAVE_MODELS);
 
       // Internal stlite dashboard + its assets — Basic-Auth gated, fail-closed.
       if (pathname === "/analytics" || pathname.startsWith("/analytics/")) {
@@ -517,9 +518,9 @@ async function handleModelPage(request, env, url) {
   const builtAt = mdoc && mdoc.built_at;
 
   if (year != null) return renderYear({ request, env, url, models, rec, slug, year, builtAt, wantsJson, uid, setCookie });
-  if (facet != null) return renderFacet({ request, env, url, models, rec, slug, facet, builtAt, uid, setCookie });
+  if (facet != null) return renderFacet({ request, env, url, models, rec, slug, facet, builtAt, wantsJson, uid, setCookie });
 
-  if (wantsJson) return jsonResponse(modelJson(rec, slug, { host: url.host, builtAt }));
+  if (wantsJson) return jsonResponse(modelJson(rec, slug, { host: url.host, builtAt, models }));
 
   const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
   const stats = corpusStats(models, builtAt);
@@ -663,17 +664,29 @@ async function handleModelWidget(request, env, url) {
 // them has run, facetKind() finds nothing and every such URL 404s — which is
 // the correct answer, and means the pages switch on by themselves at the next
 // data build with no deploy.
-async function renderFacet({ request, env, url, models, rec, slug, facet, builtAt, uid, setCookie }) {
+async function renderFacet({ request, env, url, models, rec, slug, facet, builtAt, wantsJson, uid, setCookie }) {
   const kind = publishedFacets(models, slug, rec, builtAt).includes(facet) ? facetKind(rec, facet) : null;
-  if (!kind) return notFoundPage(request, env, url, setCookie);
+  if (!kind) {
+    if (retiredFacetKind(rec, facet)) {
+      return new Response(null, {
+        status: 301,
+        headers: { location: `https://${url.host}/preco/${encodeURIComponent(slug)}` },
+      });
+    }
+    return notFoundPage(request, env, url, setCookie);
+  }
   const cell = facetCell(rec, kind, facet);
+  if (wantsJson) {
+    return jsonResponse(facetJson(rec, slug, kind, cell, publishedCells(rec, kind),
+                                 { host: url.host, builtAt }));
+  }
   const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
   return html(renderFacetPage({
-    rec, slug, kind, cell,
+    rec, slug, kind, cell, altJson: `https://${url.host}/preco/${slug}/${cell.k}.json`,
     duelSpec: (kind === "fuel" && publishedDuel(models, slug, rec, builtAt, "fuel")) ? DUELS.fuel
             : (kind === "transmission" && publishedDuel(models, slug, rec, builtAt, "gear")) ? DUELS.gear
             : null,
-    siblingsCells: facetCells(rec, kind),
+    siblingsCells: publishedCells(rec, kind),
     stats: corpusStats(models, builtAt),
     host: url.host, depositCount, builtAt,
   }), 200, setCookie);
@@ -777,6 +790,7 @@ async function handleDuel(request, env, url, spec) {
     if (wantsJson) return jsonResponse(duelJson(rec, slug, av, { host: url.host, builtAt }));
     return html(renderDuelPage({
       rec, slug, av, stats, host: url.host, depositCount, builtAt,
+      facetKeys: publishedFacets(models, slug, rec, builtAt),
     }), 200, setCookie);
   });
 }
@@ -933,6 +947,21 @@ async function handleMethodology(request, env, url) {
     html(renderMethodology({
       stats, mq, host: url.host, depositCount, builtAt,
       duelHubs: Object.values(DUELS).filter(d => duelSlugs(models, d.kind, builtAt).length),
+      wave: (() => {
+        const w = waveSlugs(models, builtAt);
+        if (!w) return null;
+        let pages = 0;
+        for (const s of w) {
+          pages += publishedYearPages(models, s, models[s], builtAt).length
+                 + publishedFacets(models, s, models[s], builtAt).length
+                 + (publishedDepreciation(models, s, models[s], builtAt) ? 1 : 0);
+        }
+        const sample = Object.entries(models)
+          .filter(([s, r]) => !w.has(s) && yearPageYears(r).length)
+          .sort((a, b) => (b[1].n || 0) - (a[1].n || 0))
+          .map(([s]) => s)[0] || null;
+        return { models: w.size, total: Object.keys(models).length, pages, sample };
+      })(),
     }), 200, setCookie));
 }
 async function handleAbout(request, env, url) {
@@ -1308,6 +1337,10 @@ async function handleLlmsTxt(request, env, url) {
   const built = (mdoc && mdoc.built_at) ? String(mdoc.built_at).slice(0, 10) : null;
   const base = `https://${url.host}`;
   const duelHubs = models ? Object.values(DUELS).filter(d => duelSlugs(models, d.kind, mdoc && mdoc.built_at).length) : [];
+  const wave = models ? waveSlugs(models, mdoc && mdoc.built_at) : null;
+  const waveCount = wave ? wave.size : 0;
+  const liqWave = models ? liqWaveSlugs(models, mdoc && mdoc.built_at) : null;
+  const liqCount = liqWave ? liqWave.size : 0;
   // A handful of the best-covered models, so an agent has real entry points
   // rather than a bare index it would have to crawl to be useful.
   const top = models
@@ -1362,7 +1395,7 @@ async function handleLlmsTxt(request, env, url) {
     "`alfa-romeo-giulietta`); `{ano}` são quatro dígitos.",
     "",
     `- \`${base}/preco/{slug}\` — preços de um modelo, por ano`,
-    `- \`${base}/preco/{slug}/{ano}\` — um modelo num ano concreto (existe a partir de 10 anúncios ativos nesse ano)`,
+    `- \`${base}/preco/{slug}/{ano}\` — um modelo num ano concreto (a partir de 10 anúncios ativos nesse ano${waveCount ? ", nos modelos já publicados: ver \"Publicação por vagas\"" : ""})`,
     `- \`${base}/preco/{slug}/{combustivel}\` — o mesmo modelo só em diesel, gasolina ou GPL`,
     `- \`${base}/preco/{slug}/{caixa}\` — o mesmo modelo só com caixa manual ou automática`,
     ...duelHubs.map(d => `- \`${base}/${d.path}/{slug}\` — ${d.question}: qual segura melhor o preço desse modelo (+ .json)`),
@@ -1375,6 +1408,25 @@ async function handleLlmsTxt(request, env, url) {
     `- \`${base}/mercado/indice/{AAAA}-W{SS}\` — corte semanal permanente do mercado`,
     `- \`${base}/mercado/indice/{AAAA}-{MM}\` — corte mensal permanente, mediana dos cortes semanais desse mês`,
     "",
+    waveCount ? "" : null,
+    waveCount ? "## Publicação por vagas" : null,
+    waveCount ? "" : null,
+    waveCount ? `As páginas por ano, por corte (combustível, caixa, distrito) e de` : null,
+    waveCount ? `desvalorização não existem para todos os modelos ao mesmo tempo: são` : null,
+    waveCount ? `publicadas por vagas e neste momento existem para os **${waveCount} modelos**` : null,
+    waveCount ? `com mais anúncios ativos. Nos restantes, um ano com amostra suficiente` : null,
+    waveCount ? `devolve **404** — mas os números desse ano estão na mesma em` : null,
+    waveCount ? `\`${base}/preco/{slug}.json\`, no campo \`by_year\`, com \`page: null\`.` : null,
+    waveCount ? `O mesmo vale para \`by_fuel\`, \`by_transmission\` e \`by_district\`.` : null,
+    waveCount ? `Constrói o endereço a partir de \`page\`, não a partir do padrão.` : null,
+    waveCount ? `` : null,
+    liqCount ? `## Publicação por vagas (liquidez)` : null,
+    liqCount ? `` : null,
+    liqCount ? `\`${base}/liquidez/{slug}\` tem uma vaga própria, separada da de cima:` : null,
+    liqCount ? `${liqCount} modelos publicados. O número de dias até vender aparece na mesma` : null,
+    liqCount ? `na página do modelo, mesmo quando o modelo ainda não tem página de liquidez.` : null,
+    liqCount ? `` : null,
+    waveCount ? "" : null,
     "## Dados em JSON",
     "",
     "Cada página de modelo e de modelo-ano tem uma versão JSON no mesmo",
@@ -1384,11 +1436,13 @@ async function handleLlmsTxt(request, env, url) {
     "",
     `- \`${base}/preco/{slug}.json\``,
     `- \`${base}/preco/{slug}/{ano}.json\``,
+    `- \`${base}/preco/{slug}/{combustivel|caixa|distrito}.json\` — o mesmo corte, com a razão contra o modelo controlada pela idade (ano a ano onde a amostra chega, anúncio a anúncio onde não chega)`,
     `- \`${base}/depreciacao/{slug}.json\` — taxa anual, meia-vida do valor, custo de um ano de idade por idade, e se a taxa quebra em alguma idade`,
     `- \`${base}/liquidez/{slug}.json\` — dias até sair do anúncio, percentagem que sai em 30/60/90 dias, quantos voltam a ser anunciados e quanto se costuma baixar no preço`,
     "",
-    "Um endereço que não exista devolve 404 — não há páginas geradas para",
-    "combinações sem amostra suficiente.",
+    waveCount
+      ? "Um endereço que não exista devolve 404: ou a amostra é fina demais, ou o modelo ainda não entrou na vaga de publicação."
+      : "Um endereço que não exista devolve 404 — não há páginas geradas para combinações sem amostra suficiente.",
     top.length ? "" : null,
     top.length ? "## Modelos com mais dados" : null,
     top.length ? "" : null,

@@ -176,8 +176,29 @@ export function liquidityOk(rec) {
   return !!(lq && lq.n > 0 && lq.s30 != null);
 }
 
+let LIQ_WAVE = 0;
+export function setLiqWave(n) {
+  const v = parseInt(n, 10);
+  LIQ_WAVE = Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+let _liqKey = null, _liqVal = null;
+export function liqWaveSlugs(models, builtAt) {
+  if (!LIQ_WAVE) return null;
+  const key = `${builtAt || ""}:${Object.keys(models).length}:${LIQ_WAVE}`;
+  if (_liqKey === key && _liqVal) return _liqVal;
+  _liqVal = new Set(Object.entries(models)
+    .filter(([, r]) => liquidityOk(r))
+    .sort((a, b) => ((b[1].lq && b[1].lq.n) || 0) - ((a[1].lq && a[1].lq.n) || 0)
+                 || (a[0] < b[0] ? -1 : 1))
+    .slice(0, LIQ_WAVE)
+    .map(([slug]) => slug));
+  _liqKey = key;
+  return _liqVal;
+}
+
 export function publishedLiquidity(models, slug, rec, builtAt) {
-  const wave = waveSlugs(models, builtAt);
+  const wave = liqWaveSlugs(models, builtAt);
   if (wave && !wave.has(slug)) return false;
   return liquidityOk(rec);
 }
@@ -949,7 +970,7 @@ export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, d
       <div class="cta-banner">
         <div style="flex:1 1 360px;">
           <h2>Tens um ${B} ${M} de ${year}?</h2>
-          <p>Esta é a mediana do ano. Cola o link do teu anúncio e dizemos o preço justo desse carro em concreto — quilómetros, versão e estado incluídos.</p>
+          <p>Metade dos ${cell.n} anúncios de ${year} pede entre ${FL} e ${FH}. Cola o link do teu e dizemos onde cai — quilómetros, versão e estado incluídos.</p>
         </div>
         <a class="btn-bright" href="/avaliar?modelo=${encodeURIComponent(slug)}&ano=${year}">Avaliar o meu ${year}&nbsp;&nbsp;→</a>
       </div>
@@ -957,7 +978,7 @@ export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, d
 
   const links = `
     <section class="section fc-wrap" style="padding-bottom:70px;">
-      <p class="fc-p"><a href="/preco/${slug}">Preços de ${B} ${M} por ano</a>${depreciationOk(rec) ? ` · <a href="/depreciacao/${slug}">Curva de desvalorização</a>` : ""} · <a href="/precos">Todos os modelos</a></p>
+      <p class="fc-p"><a href="/preco/${slug}">Preços de ${B} ${M} por ano</a>${depreciationOk(rec) ? ` · <a href="/depreciacao/${slug}">Curva de desvalorização</a>` : ""} · <a href="/metodologia">Como calculamos</a> · <a href="/precos">Todos os modelos</a></p>
     </section>`;
 
   const body = crumbs([
@@ -2233,7 +2254,7 @@ function modelQualityBlock(mq) {
 // Every number on this site is an estimate, and the honest move is to publish
 // where it comes from and where it stops working — including the thresholds that
 // make us DROP a figure rather than show a weak one.
-export function renderMethodology({ stats, mq, host, depositCount, builtAt, duelHubs = [] }) {
+export function renderMethodology({ stats, mq, host, depositCount, builtAt, duelHubs = [], wave = null }) {
   const duelList = duelHubs.length
     ? duelHubs.map(d => `<a href="/${d.path}">${escapeHtml(d.question)}</a>`).join(" e ")
     : "diesel ou gasolina e caixa manual ou automática";
@@ -2255,18 +2276,22 @@ export function renderMethodology({ stats, mq, host, depositCount, builtAt, duel
       <h2 class="fc-h2">4. Quando é que uma página existe</h2>
       <p class="fc-p">Um número só é publicado quando a amostra por trás dele significa alguma coisa:</p>
       <ul class="fc-ul">
-        <li class="fc-li"><b>20 anúncios ativos</b> — mínimo para um modelo ter página.</li>
-        <li class="fc-li"><b>5 anúncios</b> — mínimo para uma linha por ano na tabela. Anos mais finos são juntados em intervalos de dois ou mais anos, ou omitidos e contados no rodapé da tabela.</li>
-        <li class="fc-li"><b>${MIN_YEAR_PAGE_N} anúncios</b> — mínimo para um ano ter <b>página própria</b>. Abaixo disso, um único anúncio fora do normal move a mediana mais do que a diferença entre anos que estaríamos a afirmar.</li>
+        <li class="fc-li"><b>20 anúncios ativos</b> — mínimo para um modelo <b>ganhar</b> página. Uma vez publicada, a página mantém-se enquanto houver <b>14</b>: o stock de um modelo oscila de dia para dia, e deixar o endereço morrer e ressuscitar ao sabor de um anúncio a mais ou a menos é pior do que publicar 14 e dizer que são 14. O número de anúncios por trás de cada mediana está sempre à vista.</li>
+        <li class="fc-li"><b>5 anúncios</b> — mínimo para uma linha por ano na tabela, <b>3</b> para uma linha já publicada se manter. Anos mais finos são juntados em intervalos de dois ou mais anos, ou omitidos e contados no rodapé da tabela.</li>
+        <li class="fc-li"><b>${MIN_YEAR_PAGE_N} anúncios</b> — mínimo para um ano <b>ganhar página própria</b>, <b>7</b> para a manter depois de a ter. Abaixo de ${MIN_YEAR_PAGE_N}, um único anúncio fora do normal move a mediana mais do que a diferença entre anos que estaríamos a afirmar; e um ano que já tem endereço não o deve perder por causa de um carro vendido esta semana.</li>
         <li class="fc-li"><b>${DEP_MIN_CELLS} anos com amostra e ${DEP_MIN_SPAN} anos de intervalo</b> — mínimo para uma <a href="/depreciacao">curva de desvalorização</a>, mais um ajuste que explique de facto os pontos (R² ≥ ${DEP_MIN_R2}).</li>
-        <li class="fc-li"><b>15 anúncios</b> — mínimo para um <b>corte</b> do modelo (combustível, caixa, distrito) ter página própria.</li>
+        <li class="fc-li"><b>15 anúncios</b> — mínimo para um <b>corte</b> do modelo (combustível, caixa, distrito) ganhar página própria, <b>11</b> para a manter. Um corte que é praticamente o modelo inteiro — a única motorização, ou a única caixa, com mais de 85% dos anúncios — não ganha página nenhuma: seria a página do modelo outra vez noutro endereço.</li>
         <li class="fc-li"><b>3 anos com amostra dos dois lados</b> — mínimo para comparar dois cortes em percentagem. Sem isso a página mostra as duas medianas e diz que a distância entre elas ainda inclui a diferença de idades.</li>
         <li class="fc-li"><b>20 anúncios de cada lado</b>, mais uma margem estreita o suficiente para a resposta significar alguma coisa — mínimo para uma página de duelo (${duelList}).</li>
         <li class="fc-li"><b>Uma quebra na taxa só é publicada se for medida</b> — ver abaixo.</li>
       </ul>
+      ${wave ? `<h3 class="fc-h3" id="vagas">Amostra suficiente e ainda sem página</h3>
+      <p class="fc-p">Passar o limite da amostra é condição necessária, não suficiente. As páginas por ano, por corte e de desvalorização são publicadas <b>por vagas</b>, começando pelos modelos com mais anúncios: neste momento existem para <b>${fmtNum(wave.models)} dos ${fmtNum(wave.total)} modelos</b>, ${fmtNum(wave.pages)} páginas ao todo. A página de <a href="/liquidez">tempo de venda</a> tem uma vaga própria, separada desta. Publicamos por vagas para conseguirmos medir se cada camada é lida antes de multiplicá-la — mil páginas de uma vez só dizem que algo não funcionou, não o quê.</p>
+      <p class="fc-p">Nos modelos que ainda não entraram, um ano com amostra suficiente devolve <b>404</b> e não aparece ligado em lado nenhum: preferimos uma página em falta a uma ligação partida. Os números desses anos não estão escondidos — estão na versão JSON de cada modelo${wave.sample ? ` (<a href="/preco/${encodeURIComponent(wave.sample)}.json">exemplo</a>)` : ""}, em <code>by_year</code>, com <code>page: null</code> a dizer que a página ainda não existe.</p>` : ""}
 
       <h3 class="fc-h3">Comparar dois cortes do mesmo modelo</h3>
       <p class="fc-p">As medianas de dois cortes não se subtraem. Os automáticos à venda são muito mais novos do que os manuais, por isso a razão em bruto entre as duas medianas mede sobretudo a diferença de idades e chamar-lhe prémio da caixa seria inventar um número que os dados não dizem. Cada comparação entre cortes é feita <b>dentro de cada ano de matrícula</b> e só depois juntada, ponderada pela amostra mais fina de cada ano — o mesmo método das <a href="/comparar">comparações entre modelos</a>.</p>
+      <p class="fc-p">Um corte fino — um distrito com trinta anúncios espalhados por vinte anos — raramente tem três anos com amostra dos dois lados, e é precisamente onde a mistura de idades mais engana. Nesses casos comparamos <b>anúncio a anúncio</b>: cada carro do corte é dividido pela mediana do modelo no seu próprio ano de matrícula, e a resposta é a mediana desses quocientes. Um ano só entra se o modelo tiver aí pelo menos o dobro dos anúncios do corte, senão o corte estaria a dividir-se por si próprio. A página diz sempre qual dos dois métodos usou, e abaixo de <b>5%</b> não afirmamos direção nenhuma: a essa distância os dois métodos discordam de sinal com demasiada frequência para a diferença significar alguma coisa.</p>
       <p class="fc-p">Nas páginas de duelo (${duelList}) vamos um passo mais longe, porque aí a pergunta é sobre o <i>ritmo</i> da queda e não sobre o preço de hoje: ajustamos o preço à idade <b>e</b> à quilometragem em simultâneo, e a taxa de cada lado é lida com a quilometragem igualada. Sem isso mediríamos o facto de os diesels à venda andarem muito mais e os automáticos muito menos. Cada página traz a margem de 95% da diferença que afirma, e um modelo só tem página quando essa margem é estreita o suficiente para que "não há diferença" queira dizer <b>não há vantagem apreciável</b> e não <b>não conseguimos ver</b>.</p>
 
 <h2 class="fc-h2" id="modelo">5. O "valor justo estimado"</h2>
@@ -2628,8 +2653,25 @@ export function renderIsv({ topModels, host, depositCount, builtAt, refYear }) {
 // than one that has to infer them from a table. Every field is named in full —
 // the blob's two-letter keys are a size optimisation for our own transport, not
 // an interface anyone else should have to decode.
-export function modelJson(rec, slug, { host, builtAt }) {
+function facetSummary(rec, kind, slug, base, published) {
+  const live = new Set(published || []);
+  return facetCells(rec, kind).map(c => ({
+    key: c.k, label: c.lbl, sample_size: c.n,
+    share_of_model_listings: rec.n ? Math.round((c.n / rec.n) * 1000) / 1000 : null,
+    asking_price: { median: c.fm, p25: c.fl, p75: c.fh },
+    mileage_km_median: c.km != null ? c.km : null,
+    model_years: (c.y0 && c.y1) ? { from: c.y0, to: c.y1 } : null,
+    vs_model_year_matched: Array.isArray(c.vsm) ? { ratio: c.vsm[0], shared_years: c.vsm[1] } : null,
+    vs_model_age_normalized: Array.isArray(c.dr) ? { ratio: c.dr[0], listings_used: c.dr[1] } : null,
+    page: live.has(c.k) ? `${base}/preco/${slug}/${c.k}` : null,
+  }));
+}
+
+export function modelJson(rec, slug, { host, builtAt, models = null }) {
   const base = `https://${host}`;
+  const pageYears = new Set(models ? publishedYearPages(models, slug, rec, builtAt) : []);
+  const facets = models ? publishedFacets(models, slug, rec, builtAt) : [];
+  const duels = models ? duelsFor(models, slug, rec, builtAt) : [];
   return {
     source: "Carsbuyer",
     source_url: `${base}/preco/${slug}`,
@@ -2649,17 +2691,30 @@ export function modelJson(rec, slug, { host, builtAt }) {
     mileage_km_median: rec.kmm != null ? rec.kmm : null,
     model_years: (rec.y0 && rec.y1) ? { from: rec.y0, to: rec.y1 } : null,
     fuel_mix: Array.isArray(rec.fu) ? rec.fu.map(([f, share]) => ({ fuel: f, share })) : null,
+    by_fuel: facetSummary(rec, "fuel", slug, base, facets),
+    by_transmission: facetSummary(rec, "transmission", slug, base, facets),
+    by_district: facetSummary(rec, "district", slug, base, facets),
     days_to_sell: rec.sd != null ? { median_days: rec.sd, sample_size: rec.sn } : null,
     by_year: (rec.yr || []).map(c => ({
       year: c.y, sample_size: c.n,
       asking_price: { median: c.fm, p25: c.fl, p75: c.fh },
       fair_value_estimate: c.gm != null ? { median: c.gm, low: c.gl, high: c.gh } : null,
       mileage_km_median: c.km != null ? c.km : null,
-      page: (typeof c.y === "number" && c.n >= MIN_YEAR_PAGE_N) ? `${base}/preco/${slug}/${c.y}` : null,
+      page: pageYears.has(c.y) ? `${base}/preco/${slug}/${c.y}` : null,
+      page_absent_because: pageYears.has(c.y) ? null
+        : typeof c.y !== "number" ? "merged_band"
+        : (c.n || 0) < MIN_YEAR_PAGE_N ? "below_year_floor"
+        : "outside_publication_wave",
     })),
     years_omitted_thin_sample: rec.yt || 0,
+    page_coverage_note: `\`page\` é o endereço que existe agora; quando é nulo, \`page_absent_because\` diz porquê. \"merged_band\" é uma linha que junta anos vizinhos e nunca terá endereço próprio; \"below_year_floor\" é um ano com menos de ${MIN_YEAR_PAGE_N} anúncios, que não publicamos de propósito; \"outside_publication_wave\" é amostra suficiente num modelo que ainda não entrou na vaga de publicação — esse volta a aparecer. Em qualquer dos casos os números do ano estão aqui na mesma. Os limiares estão em /metodologia.`,
     related: {
-      depreciation: depreciationOk(rec) ? `${base}/depreciacao/${slug}` : null,
+      depreciation: (models && publishedDepreciation(models, slug, rec, builtAt))
+        ? `${base}/depreciacao/${slug}` : null,
+      liquidity: (models && publishedLiquidity(models, slug, rec, builtAt))
+        ? `${base}/liquidez/${slug}` : null,
+      facets: facets.map(k => `${base}/preco/${slug}/${k}`),
+      duels: duels.map(d => `${base}/${d.path}/${slug}`),
       methodology: `${base}/metodologia`,
     },
   };
@@ -2723,6 +2778,43 @@ export function depreciationJson(rec, slug, fit, av, { host, builtAt }) {
   };
 }
 
+export function facetJson(rec, slug, kind, cell, siblings, { host, builtAt }) {
+  const base = `https://${host}`;
+  const seg = kind === "fuel" ? "combustivel" : kind === "transmission" ? "caixa" : "distrito";
+  return {
+    source: "Carsbuyer",
+    source_url: `${base}/preco/${slug}/${cell.k}`,
+    licence: "Citação permitida com atribuição a Carsbuyer e indicação da data.",
+    measured: "asking_price",
+    measured_note: "Preços PEDIDOS em anúncios ativos do OLX Portugal, não preços de venda fechados.",
+    collected_until: (builtAt || "").slice(0, 10) || null,
+    updated_at: builtAt || null,
+    market: "PT", currency: "EUR",
+    brand: rec.b, model: rec.m, slug,
+    facet: { kind: seg, key: cell.k, label: cell.lbl },
+    sample_size: cell.n,
+    share_of_model_listings: rec.n ? Math.round((cell.n / rec.n) * 1000) / 1000 : null,
+    asking_price: { median: cell.fm, p25: cell.fl, p75: cell.fh },
+    mileage_km_median: cell.km != null ? cell.km : null,
+    model_years: (cell.y0 && cell.y1) ? { from: cell.y0, to: cell.y1 } : null,
+    vs_model_year_matched: Array.isArray(cell.vsm)
+      ? { ratio: cell.vsm[0], shared_years: cell.vsm[1],
+          note: "Razão medida dentro de cada ano de matrícula e só depois juntada; as medianas em bruto não se subtraem porque descrevem misturas de idades diferentes." }
+      : null,
+    vs_model_age_normalized: Array.isArray(cell.dr)
+      ? { ratio: cell.dr[0], listings_used: cell.dr[1],
+          note: "Cada anúncio dividido pela mediana do modelo no seu próprio ano de matrícula; usado onde a amostra é fina demais para a razão ano a ano." }
+      : null,
+    siblings: (siblings || []).filter(c => c.k !== cell.k).map(c => ({
+      key: c.k, label: c.lbl, sample_size: c.n,
+      asking_price_median: c.fm, page: `${base}/preco/${slug}/${c.k}`,
+      vs_this_cut_year_matched: (cell.vs && Array.isArray(cell.vs[c.k]))
+        ? { ratio: cell.vs[c.k][0], shared_years: cell.vs[c.k][1] } : null,
+    })),
+    related: { model: `${base}/preco/${slug}`, methodology: `${base}/metodologia` },
+  };
+}
+
 export function yearJson(rec, slug, year, cell, { host, builtAt }) {
   const base = `https://${host}`;
   return {
@@ -2767,19 +2859,38 @@ export function facetCell(rec, kind, key) {
 
 /** Which facet kind a path segment belongs to, if any. */
 export function facetKind(rec, key) {
-  if (facetCell(rec, "fuel", key)) return "fuel";
-  if (facetCell(rec, "transmission", key)) return "transmission";
-  if (facetCell(rec, "district", key)) return "district";
+  for (const kind of ["fuel", "transmission", "district"]) {
+    if (publishedCells(rec, kind).some(c => c.k === key)) return kind;
+  }
   return null;
+}
+
+export function retiredFacetKind(rec, key) {
+  for (const kind of ["fuel", "transmission", "district"]) {
+    if (facetCells(rec, kind).some(c => c.k === key)
+        && !publishedCells(rec, kind).some(c => c.k === key)) return kind;
+  }
+  return null;
+}
+
+const FACET_SOLO_MAX_SHARE = 0.85;
+const FACET_AGE_GAP_MIN = 0.05;
+
+export function publishedCells(rec, kind) {
+  const cells = facetCells(rec, kind);
+  if (kind === "district" || cells.length !== 1) return cells;
+  const only = cells[0];
+  const share = rec && rec.n ? (only.n || 0) / rec.n : 0;
+  return share >= FACET_SOLO_MAX_SHARE ? [] : cells;
 }
 
 /** Every facet URL segment this model publishes (for the sitemap). */
 export function facetKeys(rec) {
-  return [...facetCells(rec, "fuel"), ...facetCells(rec, "transmission"),
-          ...facetCells(rec, "district")].map(c => c.k);
+  return [...publishedCells(rec, "fuel"), ...publishedCells(rec, "transmission"),
+          ...publishedCells(rec, "district")].map(c => c.k);
 }
 
-export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, host, depositCount, builtAt, duelSpec = null }) {
+export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, host, depositCount, builtAt, duelSpec = null, altJson = null }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
   const label = escapeHtml(cell.lbl);
   const canonical = `https://${host}/preco/${slug}/${cell.k}`;
@@ -2799,6 +2910,16 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
     : isGear ? "OUTRAS CAIXAS" : "OUTROS DISTRITOS";
   const share = rec.n ? Math.round(cell.n / rec.n * 100) : null;
   const matched = Array.isArray(cell.vsm) ? { pct: cell.vsm[0] - 1, years: cell.vsm[1] } : null;
+  const normalized = (!matched && Array.isArray(cell.dr))
+    ? { pct: cell.dr[0] - 1, used: cell.dr[1] } : null;
+  const age = matched || normalized;
+  const agePct = age ? Math.abs(Math.round(age.pct * 100)) : null;
+  const ageMoves = !!(age && Math.abs(age.pct) >= FACET_AGE_GAP_MIN);
+  const refAll = (isFuel || isGear) ? "o modelo todo" : "o modelo no país inteiro";
+  const ageMethod = matched
+    ? `comparando ano a ano, sobre ${matched && matched.years} anos com amostra dos dois lados`
+    : normalized ? `dividindo cada um dos ${normalized.used} anúncios pela mediana do modelo no seu próprio ano de matrícula`
+    : "";
   const vsAll = rec.fm > 0 ? (cell.fm - rec.fm) / rec.fm : null;
   const more = x => x >= 0 ? "mais" : "menos";
   const dearer = x => x >= 0 ? "mais caro" : "mais barato";
@@ -2824,6 +2945,9 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
     return `<li>Contra ${link}: mediana ${fmtEur(o.fm)} em ${o.n} anúncios${o.y0 && o.y1 ? ` (anos ${o.y0}-${o.y1})` : ""}, contra ${fmtEur(cell.fm)} aqui${cell.y0 && cell.y1 ? ` (anos ${cell.y0}-${cell.y1})` : ""}. Não há anos que cheguem com amostra dos dois lados para comparar à mesma idade, por isso a distância entre as duas medianas ainda inclui a diferença de anos.${km}</li>`;
   }).join("");
 
+  const ageNote = !age ? ""
+    : ageMoves ? ` Ajustado pela idade, este corte pede ${more(age.pct)} ${agePct}% do que ${refAll}: a mediana acima é em bruto e inclui a diferença de anos.`
+    : ` Ajustado pela idade, este corte pede o mesmo que ${refAll} — a distância entre as duas medianas em bruto é a diferença de anos.`;
   const body = crumbs([
     { name: "Início", href: "/" }, { name: "Preços", href: "/precos" },
     { name: `${rec.b} ${rec.m}`, href: `/preco/${slug}` }, { name: cell.lbl },
@@ -2832,7 +2956,7 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
       <div class="side-card" style="max-width:680px;margin:0 auto;">
         <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">${escapeHtml(cell.lbl).toUpperCase()} · OLX PORTUGAL</span></div>
         <h1 class="fc-h1">Quanto vale um ${phrase} usado?</h1>
-        <p class="lede" style="font-size:16px;margin:0 0 20px;">Em <b>${cell.n} anúncios ativos</b>${isFuel || isGear ? "" : " no distrito"}, um ${phrase} pede em mediana <b>${fmtEur(cell.fm)}</b>${cell.km != null ? `, com ${fmtKm(cell.km)} medianos` : ""}${cell.y0 && cell.y1 ? `, para anos ${cell.y0}-${cell.y1}` : ""}.</p>
+        <p class="lede" style="font-size:16px;margin:0 0 20px;">Em <b>${cell.n} anúncios ativos</b>${isFuel || isGear ? "" : " no distrito"}, um ${phrase} pede em mediana <b>${fmtEur(cell.fm)}</b>${cell.km != null ? `, com ${fmtKm(cell.km)} medianos` : ""}${cell.y0 && cell.y1 ? `, para anos ${cell.y0}-${cell.y1}` : ""}.${ageNote}</p>
         <div class="side-prices">
           <div><div class="cap">Preço mediano (pedido)</div><div class="big">${fmtEur(cell.fm)}</div></div>
           <div class="side-fair"><div class="cap">${cell.n} anúncios${share != null ? ` · ${share}% do modelo` : ""}</div><div class="v">${cell.km != null ? fmtKm(cell.km) : "—"}</div></div>
@@ -2848,7 +2972,7 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
     <section class="section fc-wrap">
       <h2 class="fc-h2">${sibHead}</h2>
       <ul class="fc-insights">
-        ${matched ? `<li>Face a todos os ${B} ${M} do país (mediana ${fmtEur(rec.fm)}), este corte pede <b>${Math.abs(Math.round(matched.pct * 100))}% ${more(matched.pct)}</b> ao comparar ano a ano, sobre ${matched.years} anos com amostra.</li>`
+        ${age ? `<li>Face a todos os ${B} ${M} do país (mediana ${fmtEur(rec.fm)}), este corte ${ageMoves ? `pede <b>${more(age.pct)} ${agePct}%</b>` : "pede <b>o mesmo</b>"}, ${ageMethod}.${Math.abs(cell.fm / rec.fm - 1) >= FACET_AGE_GAP_MIN ? ` As medianas em bruto (${fmtEur(cell.fm)} contra ${fmtEur(rec.fm)}) estão mais afastadas do que isso porque descrevem misturas de idades diferentes.` : ""}</li>`
           : vsAll != null ? `<li>Face a todos os ${B} ${M} do país, este corte pede em mediana ${fmtEur(cell.fm)} contra ${fmtEur(rec.fm)}${cell.y0 && cell.y1 ? `, em anos ${cell.y0}-${cell.y1}` : ""}. Os dois números não se subtraem: descrevem misturas de idades diferentes.</li>` : ""}
         ${compare}
       </ul>
@@ -2893,8 +3017,8 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
 
   return layout({
     title: `Quanto vale um ${titlePhrase} usado?`,
-    description: `${titlePhrase}: preço mediano ${fmtEur(cell.fm)} (${fmtEur(cell.fl)}–${fmtEur(cell.fh)}) em ${cell.n} anúncios ativos do OLX Portugal. Comparação com os outros cortes do mesmo modelo.`,
-    canonical, body, zone: "all", nav: "precos", depositCount, index: true, host,
+    description: `${titlePhrase}: preço mediano ${fmtEur(cell.fm)} (${fmtEur(cell.fl)}–${fmtEur(cell.fh)}) em ${cell.n} anúncios ativos do OLX Portugal.${ageMoves ? ` Ajustado pela idade, o corte pede ${more(age.pct)} ${agePct}% do que ${refAll}.` : ""}`,
+    canonical, body, zone: "all", nav: "precos", depositCount, index: true, host, altJson,
     jsonLd: {
       "@context": "https://schema.org",
       "@graph": [
@@ -2906,6 +3030,7 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
           "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
           "isAccessibleForFree": true, "dateModified": builtAt || undefined,
           "variableMeasured": "Preço pedido (EUR)", "url": canonical,
+          "distribution": [{ "@type": "DataDownload", "encodingFormat": "application/json", "contentUrl": `${canonical}.json` }],
           ...(cell.y0 && cell.y1 ? { "temporalCoverage": `${cell.y0}/${cell.y1}` } : {}),
         },
         {
@@ -3421,7 +3546,7 @@ export function duelJson(rec, slug, av, { host, builtAt }) {
   };
 }
 
-export function renderDuelPage({ rec, slug, av, stats, host, depositCount, builtAt }) {
+export function renderDuelPage({ rec, slug, av, stats, host, depositCount, builtAt, facetKeys: liveFacets = null }) {
   const S = av.spec;
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
   const canonical = `https://${host}/${S.path}/${slug}`;
@@ -3520,7 +3645,7 @@ export function renderDuelPage({ rec, slug, av, stats, host, depositCount, built
       </div>
     </section>
     <section class="section fc-wrap" style="padding-bottom:70px;">
-      <p class="fc-p"><a href="/preco/${slug}">Todos os ${B} ${M}</a> · <a href="/preco/${slug}/${S.a.facet}">${S.a.only}</a> · <a href="/preco/${slug}/${S.b.facet}">${S.b.only}</a> · <a href="/${S.path}">Outros modelos</a> · <a href="/metodologia">Como calculamos</a></p>
+      <p class="fc-p"><a href="/preco/${slug}">Todos os ${B} ${M}</a>${[S.a, S.b].filter(side => !liveFacets || liveFacets.includes(side.facet)).map(side => ` · <a href="/preco/${slug}/${side.facet}">${side.only}</a>`).join("")} · <a href="/${S.path}">Outros modelos</a> · <a href="/metodologia">Como calculamos</a></p>
     </section>`;
 
   const faqs = [

@@ -222,6 +222,16 @@ check("model page renders with its new blocks", () => {
     altJson: `https://${HOST}/preco/${deep}.json`,
   });
   assertPage(html, { indexable: true, canonical: `https://${HOST}/preco/${deep}`, label: "model" });
+  assert(/não preços de venda fechados/.test(html),
+    "the model page no longer says these are not closed-sale prices");
+  assert(/preços <b>pedidos<\/b>|preços PEDIDOS/.test(html),
+    "the model page no longer says the prices are asking prices");
+  assert(html.includes('href="/metodologia"'),
+    "the model page cites a method it does not link");
+  assert(/ISV/.test(html),
+    "the model page lost the one caveat it cannot restate elsewhere: an import's unpaid ISV");
+  assert(/anunciados no OLX/.test(html),
+    "the model page claims a population wider than the corpus it measures");
   const types = ldTypes(html);
   for (const t of ["Dataset", "AggregateOffer", "BreadcrumbList", "FAQPage"]) {
     assert(types.has(t), `model page lost its ${t} schema`);
@@ -283,6 +293,9 @@ check("year page renders", () => {
     liveDeals: [], pageYears: yearPageYears(rec), stats, host: HOST, depositCount: 0, builtAt,
   });
   assertPage(html, { indexable: true, canonical: `https://${HOST}/preco/${s}/${y}`, label: "year" });
+  assert(html.includes('href="/metodologia"'),
+    "the year page cites a method it does not link");
+  assert(/preços pedidos/i.test(html), "the year page no longer says what it measures");
   const types = ldTypes(html);
   for (const t of ["Dataset", "AggregateOffer", "BreadcrumbList", "FAQPage"]) {
     assert(types.has(t), `year page lost its ${t} schema`);
@@ -938,9 +951,39 @@ check("existing product pages still render", () => {
     { indexable: false, label: "info" });
 });
 
+check("a cut whose gap is entirely age says so instead of printing a percentage", () => {
+  const rec = { b: "Renault", m: "Clio", n: 458, fl: 2000, fm: 3900, fh: 7000 };
+  const base = { k: "faro", lbl: "Faro", n: 18, fl: 2387, fm: 8595, fh: 9000, y0: 1995, y1: 2019 };
+  const args = c => ({
+    rec, slug: "renault-clio", kind: "district", cell: c, siblingsCells: [c],
+    stats, host: HOST, depositCount: 0, builtAt,
+  });
+
+  const flat = renderFacetPage(args({ ...base, dr: [1.0, 17] }));
+  assert(!/0% (mais|menos)/.test(flat), "printed a 0% difference as if it were one");
+  assert(flat.includes("pede o mesmo que o modelo no país inteiro"),
+    "a cut in line with the model does not say so");
+  assert(!/comparando ano a ano/.test(flat),
+    "described a per-listing ratio as a year-by-year comparison");
+  assert(flat.includes("pela mediana do modelo no seu próprio ano"),
+    "did not say how the age-controlled number was computed");
+  const flatDesc = (flat.match(/<meta name="description" content="([^"]*)"/) || [])[1] || "";
+  assert(!/% (mais|menos)/.test(flatDesc), "the meta description claims a gap the data does not show");
+
+  const real = renderFacetPage(args({ ...base, dr: [1.22, 17] }));
+  assert(/mais 22%/.test(real), "a gap big enough to state was not stated");
+  assert(real.includes("misturas de idades diferentes"),
+    "did not explain why the raw medians are further apart");
+
+  const noise = renderFacetPage(args({ ...base, vsm: [1.02, 6] }));
+  assert(!/(mais|menos) 2%/.test(noise), "printed a 2% year-matched gap as a finding");
+  assert(/comparando ano a ano/.test(noise), "a year-matched cut does not say which method it used");
+  assert(noise.includes("pede <b>o mesmo</b>"), "a null result is not reported as one");
+});
+
 check("JSON twins carry the sample size and the date", () => {
   const rec = models[deep];
-  const j = modelJson(rec, deep, { host: HOST, builtAt });
+  const j = modelJson(rec, deep, { host: HOST, builtAt, models });
   assert(j.sample_size === rec.n, "model JSON lost the sample size");
   assert(j.collected_until === builtAt.slice(0, 10), "model JSON lost the collection date");
   assert(j.asking_price.median === rec.fm, "model JSON median disagrees with the blob");

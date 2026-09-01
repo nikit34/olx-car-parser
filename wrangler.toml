@@ -142,6 +142,7 @@ SITE_CONTACT_EMAIL = "permikov134@yandex.ru"
 # page, so a page outside the wave is unreachable and unlinked — never a link to
 # a 404. Widening is only this number: no code deploy, no data rebuild.
 SEO_WAVE_MODELS = "25"
+LIQ_WAVE_MODELS = "60"
 
 # Cron. Records the weekly market cut for /mercado/indice.
 #
