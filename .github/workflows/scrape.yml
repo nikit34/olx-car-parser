@@ -2,8 +2,7 @@ name: Scrape OLX
 
 on:
   schedule:
-    # Every 4 hours, except 04:00 UTC — 5 shallow + 1 deep at 04:00. The
-    # shallow runs hit ~30 pages of "newest first" (early-stop), so deep-tail
+    # The shallow runs hit ~30 pages of "newest first" (early-stop), so deep-tail
     # listings invisible to that window only get last_seen_at + price refresh
     # via the daily deep sweep. Without the split, a listing that sinks past
     # page 30 the day it's posted never has its price re-checked.
@@ -11,7 +10,7 @@ on:
     # five xx:00 crons were dropped outright (04:37 deep, 08:00, 16:00) and
     # the two that fired were 40 min and 2 h41 late. The deep sweep was moved
     # off the hour in May for the same reason and has fared better.
-    - cron: "23 0,8,12,16,20 * * *"
+    - cron: "23 0,2,6,8,10,12,14,16,18,20,22 * * *"
     # Off-hour minute (xx:37) instead of 04:00 — GitHub silently drops
     # scheduled runs at the top of the hour during peak load (we saw
     # the deep sweep skipped 9 days in a row, May 2 → May 11, while
@@ -58,18 +57,42 @@ env:
   HF_HUB_OFFLINE: "1"
   TRANSFORMERS_OFFLINE: "1"
 
-# One self-hosted runner, so scrapes serialise regardless; we cancel any
-# in-flight run when a new cron fires instead of letting them queue up.
-# Without this, runs were piling up: a
-# 6-hour scrape + 8-hour cron interval was barely making it; throw in any
-# slowdown and queue depth grew unbounded (we saw queued runs waiting 20+
-# hours).
 concurrency:
   group: scrape-job
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
+  gate:
+    runs-on: [self-hosted, olx-scraper]
+    timeout-minutes: 5
+    outputs:
+      proceed: ${{ steps.check.outputs.proceed }}
+    steps:
+      - id: check
+        env:
+          IS_DEEP: ${{ github.event.schedule == '37 4 * * *' || inputs.deep == 'true' }}
+          MIN_GAP_MIN: "90"
+          MARK: /Users/anastasia/olx-car-parser/data/.last_scrape_start
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != "schedule" ] || [ "$IS_DEEP" = "true" ]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ ! -f "$MARK" ]; then
+            echo "::notice::no previous start recorded — proceeding"
+            echo "proceed=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          age=$(( ( $(date +%s) - $(stat -f %m "$MARK") ) / 60 ))
+          if [ "$age" -lt "$MIN_GAP_MIN" ]; then
+            echo "::notice::previous scrape started ${age} min ago (< ${MIN_GAP_MIN}) — skipping this delivery"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::previous scrape started ${age} min ago — proceeding"
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          fi
+
   scrape:
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
     runs-on: [self-hosted, olx-scraper]
     # Lowered from 720 → 240 (4h). With early-stop in scrape_all, the
     # steady-state run is ~20-30 minutes. 4h is generous for a slow LLM
@@ -89,6 +112,7 @@ jobs:
         run: |
           rm -rf data
           ln -s /Users/anastasia/olx-car-parser/data data
+          touch data/.last_scrape_start || true
 
       - name: Fast-forward the host's persistent clone
         # CI runs from actions/checkout in _work/, so ~/olx-car-parser only

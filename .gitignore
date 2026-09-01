@@ -63,3 +63,4 @@ data/damage_seg/triage/
 data/damage_seg/clip_damage_rank.json
 data/damage_seg/model_rank.json
 data/damage_seg/view_order.json
+data/.last_scrape_start
