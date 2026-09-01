@@ -362,6 +362,15 @@ await check("every sitemap URL resolves to a 200", async () => {
 await check("robots and llms.txt describe the new surface", async () => {
   const robots = await (await get("/robots.txt")).text();
   assert(robots.includes("Sitemap: https://carsbuyer.org/sitemap.xml"), "sitemap line missing");
+  const groups = robots.split(/\n(?=User-agent:)/).filter(g => g.startsWith("User-agent:"));
+  assert(groups.length >= 8, `robots has ${groups.length} groups, expected the wildcard plus the answer engines`);
+  for (const g of groups) {
+    const who = g.split("\n")[0];
+    for (const path of ["/reservas", "/claim", "/reserve", "/unlocked", "/analytics", "/_olx"]) {
+      assert(g.includes(`Disallow: ${path}`), `${who} is not told to skip ${path}`);
+    }
+    assert(g.includes("Allow: /"), `${who} lost its Allow`);
+  }
   const llms = await (await get("/llms.txt")).text();
   for (const needle of ["/preco/{slug}/{ano}", "/depreciacao/{slug}", "/comparar/{slug-a}-vs-{slug-b}",
                         "/preco/{slug}.json", "/mercado/indice"]) {

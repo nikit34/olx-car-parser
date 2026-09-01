@@ -1394,11 +1394,15 @@ async function handleLlmsTxt(request, env, url) {
 }
 
 // /robots.txt — allow public, block transactional/internal, point at the sitemap.
+const ROBOTS_RULES = [
+  "Allow: /",
+  "Disallow: /analytics", "Disallow: /claim", "Disallow: /reserve",
+  "Disallow: /unlocked", "Disallow: /reservas", "Disallow: /_olx",
+];
+
 async function handleRobots(request, env, url) {
   const body = [
-    "User-agent: *", "Allow: /",
-    "Disallow: /analytics", "Disallow: /claim", "Disallow: /reserve",
-    "Disallow: /unlocked", "Disallow: /reservas", "Disallow: /_olx",
+    "User-agent: *", ...ROBOTS_RULES,
     // /widget stays crawlable on purpose: it is noindex,follow and links back to
     // the canonical /preco page, so it works as a backlink lever when embedded.
     "",
@@ -1408,13 +1412,13 @@ async function handleRobots(request, env, url) {
     // distribution channel where being the ORIGINAL source of the numbers
     // (median asking price, IQR, days-to-sell, per-year table) is the whole
     // advantage. Blocking these is how sites vanish from AI answers.
-    "User-agent: GPTBot", "Allow: /",          // OpenAI crawler (training/index)
-    "User-agent: OAI-SearchBot", "Allow: /",   // OpenAI, powers ChatGPT search
-    "User-agent: ChatGPT-User", "Allow: /",    // live fetch on a user's request
-    "User-agent: PerplexityBot", "Allow: /",
-    "User-agent: ClaudeBot", "Allow: /",
-    "User-agent: Google-Extended", "Allow: /", // Gemini / AI Overviews grounding
-    "User-agent: CCBot", "Allow: /",
+    "User-agent: GPTBot", ...ROBOTS_RULES,          // OpenAI crawler (training/index)
+    "User-agent: OAI-SearchBot", ...ROBOTS_RULES,   // OpenAI, powers ChatGPT search
+    "User-agent: ChatGPT-User", ...ROBOTS_RULES,    // live fetch on a user's request
+    "User-agent: PerplexityBot", ...ROBOTS_RULES,
+    "User-agent: ClaudeBot", ...ROBOTS_RULES,
+    "User-agent: Google-Extended", ...ROBOTS_RULES, // Gemini / AI Overviews grounding
+    "User-agent: CCBot", ...ROBOTS_RULES,
     "",
     `Sitemap: https://${url.host}/sitemap.xml`,
     // Not a search-ranking signal — no engine ranks on it. It is an
