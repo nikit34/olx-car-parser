@@ -55,6 +55,11 @@ from src.analytics.valuations import _i
 # Page-worthy floor + per-year-cell gate (validated: 271 models clear >=20).
 MIN_MODEL_N = 20
 MIN_YEAR_N = 5
+RETIRE_MODEL_N = 14
+RETIRE_YEAR_N = 3
+MIN_YEAR_PAGE_N = 10
+RETIRE_YEAR_PAGE_N = 7
+RETIRE_FACET_N = 11
 MAX_YEAR_ROWS = 25          # cap emitted year rows (most recent) to bound size
 
 # ── Facet cells (fuel, district) ─────────────────────────────────────────────
@@ -66,6 +71,10 @@ MIN_FACET_N = 15
 MAX_DISTRICT_ROWS = 8       # per model, deepest districts only
 MIN_MATCH_YEAR_N = 5
 MIN_MATCH_YEARS = 3
+_DR_MIN_LISTINGS = 10
+_DR_PARENT_RATIO = 2.0
+_RAW_GAP_LO = 0.70
+_RAW_GAP_HI = 1.40
 
 # Only three fuels get facets. The raw fuel_type vocabulary carries near-
 # duplicates that would slug into competing pages for the same thing
@@ -164,9 +173,24 @@ def _quantiles(prices: pd.Series):
     return _i(q[0]), _i(q[1]), _i(q[2])
 
 
-def _year_cells(grp: pd.DataFrame) -> tuple[list[dict], int]:
+def _year_cells(grp: pd.DataFrame, keep_years: set | None = None,
+                keep_pages: set | None = None) -> tuple[list[dict], int]:
     """Per-year asking-price cells (year DESC), gating thin years and merging
-    consecutive sub-gate years into 2+-year bands. Returns (cells, yrs_thin)."""
+    consecutive sub-gate years into 2+-year bands. Returns (cells, yrs_thin).
+
+    ``keep_years`` are the years this model carried last build; they survive down
+    to RETIRE_YEAR_N instead of MIN_YEAR_N. ``keep_pages`` are the years that had
+    their OWN URL, and they keep the ``pg`` flag down to RETIRE_YEAR_PAGE_N
+    instead of MIN_YEAR_PAGE_N. Both exist because the page set is a function of
+    live inventory: a year sitting on either floor flips between builds and takes
+    an indexed, ranking URL with it — measured at 12% of impression-earning URLs
+    over six days, with 38% of year pages within three listings of the page
+    floor. Entry stays where it was; only leaving got harder.
+
+    ``pg`` is what the Worker reads to decide a /preco/{slug}/{ano} URL exists.
+    It has to be decided here, not there: the Worker has no memory of the
+    previous build. A cell without the key falls back to the Worker's own
+    MIN_YEAR_PAGE_N, which is what an older blob gets."""
     yr = pd.to_numeric(grp.get("year"), errors="coerce")
     g = grp.assign(_y=yr).dropna(subset=["_y"])
     g = g[(g["_y"] >= 1980) & (g["_y"] <= 2026)]
@@ -195,15 +219,19 @@ def _year_cells(grp: pd.DataFrame) -> tuple[list[dict], int]:
             yrs_thin += len(band)
         band.clear()
 
+    keep = keep_years or set()
+    kept_pages = keep_pages or set()
     for y in years_asc:
         sub = by_year[y]
-        if len(sub) >= MIN_YEAR_N:
+        if len(sub) >= MIN_YEAR_N or (y in keep and len(sub) >= RETIRE_YEAR_N):
             flush_band()
             q = _quantiles(sub["price_eur"])
             if not q:
                 yrs_thin += 1
                 continue
             cell = {"y": y, "n": int(len(sub)), "fl": q[0], "fm": q[1], "fh": q[2]}
+            if len(sub) >= MIN_YEAR_PAGE_N or (y in kept_pages and len(sub) >= RETIRE_YEAR_PAGE_N):
+                cell["pg"] = 1
             kmv = pd.to_numeric(sub.get("mileage_km"), errors="coerce").dropna()
             if len(kmv) >= MIN_YEAR_N:
                 cell["km"] = _i(kmv.median())
@@ -281,8 +309,49 @@ def _matched_ratio(a: dict[int, tuple[float, int]],
     return None if r is None else [round(r, 4), len(shared)]
 
 
+def _year_normalized_ratio(sub: pd.DataFrame,
+                           parent: dict[int, tuple[float, int]]) -> list | None:
+    """[ratio, listings_used] for a cut against the whole model, at equal age.
+
+    ``_matched_ratio`` needs MIN_MATCH_YEARS years carrying MIN_MATCH_YEAR_N on
+    BOTH sides, which a 15-35 listing district cell spread over twenty model
+    years almost never reaches - so the cells that most need the age control are
+    the ones that cannot get it, and they fall back to raw medians whose age mix
+    swamps the effect. This estimates the same quantity per LISTING instead of
+    per shared year: each listing is divided by the model's median for its own
+    registration year, and the median of those ratios is the answer.
+
+    A year is skipped unless the model holds ``_DR_PARENT_RATIO`` times the
+    cut's OWN listings in it, counted raw rather than through ``_year_medians``
+    (which drops years under MIN_MATCH_YEAR_N and so would leave the check
+    silently disabled on exactly the thin cuts this exists for). Without it a
+    cut that is most of its own reference year divides itself by itself and the
+    ratio collapses to 1.0 by construction. None below ``_DR_MIN_LISTINGS``
+    usable listings.
+    """
+    if "year" not in sub.columns or "price_eur" not in sub.columns:
+        return None
+    yr = pd.to_numeric(sub["year"], errors="coerce")
+    price = pd.to_numeric(sub["price_eur"], errors="coerce")
+    own_counts = yr.dropna().astype(int).value_counts().to_dict()
+    ratios: list[float] = []
+    for y, p in zip(yr, price):
+        if pd.isna(y) or pd.isna(p) or p <= 0:
+            continue
+        ref = parent.get(int(y))
+        if not ref or ref[0] <= 0:
+            continue
+        if ref[1] < _DR_PARENT_RATIO * own_counts.get(int(y), 0):
+            continue
+        ratios.append(float(p) / ref[0])
+    if len(ratios) < _DR_MIN_LISTINGS:
+        return None
+    return [round(float(np.median(ratios)), 4), len(ratios)]
+
+
 def _facet_cells(grp: pd.DataFrame, col: str, keyer, labeller,
-                 min_n: int, limit: int | None = None) -> list[dict]:
+                 min_n: int, limit: int | None = None,
+                 keep_keys: set | None = None) -> list[dict]:
     """Asking-price cells for one facet dimension (fuel, gearbox or district).
 
     Same shape and same honesty rules as ``_year_cells``: median WITH its
@@ -299,8 +368,10 @@ def _facet_cells(grp: pd.DataFrame, col: str, keyer, labeller,
     keys = grp[col].map(keyer)
     out: list[dict] = []
     by_key: dict[str, dict[int, tuple[float, int]]] = {}
+    sub_of: dict[str, pd.DataFrame] = {}
+    kept = keep_keys or set()
     for key, sub in grp.assign(_k=keys).dropna(subset=["_k"]).groupby("_k"):
-        if len(sub) < min_n:
+        if len(sub) < (RETIRE_FACET_N if str(key) in kept else min_n):
             continue
         q = _quantiles(sub["price_eur"])
         if not q:
@@ -315,18 +386,23 @@ def _facet_cells(grp: pd.DataFrame, col: str, keyer, labeller,
             cell["y0"], cell["y1"] = int(yrs.min()), int(yrs.max())
         out.append(cell)
         by_key[str(key)] = _year_medians(sub)
+        sub_of[str(key)] = sub
     out.sort(key=lambda c: -c["n"])
     out = out[:limit] if limit else out
 
     parent = _year_medians(grp)
-    kept = {c["k"] for c in out}
+    siblings = {c["k"] for c in out}
+    model_median = pd.to_numeric(grp["price_eur"], errors="coerce").dropna().median()
     for cell in out:
         mine = by_key[cell["k"]]
         vsm = _matched_ratio(mine, parent)
         if vsm:
             cell["vsm"] = vsm
+        dr = _year_normalized_ratio(sub_of[cell["k"]], parent)
+        if dr:
+            cell["dr"] = dr
         vs = {}
-        for other in kept:
+        for other in siblings:
             if other == cell["k"]:
                 continue
             r = _matched_ratio(mine, by_key[other])
@@ -334,6 +410,10 @@ def _facet_cells(grp: pd.DataFrame, col: str, keyer, labeller,
                 vs[other] = r
         if vs:
             cell["vs"] = vs
+    if pd.notna(model_median) and model_median > 0:
+        out = [c for c in out
+               if "dr" in c or "vsm" in c
+               or _RAW_GAP_LO <= c["fm"] / model_median <= _RAW_GAP_HI]
     return out
 
 
@@ -394,15 +474,58 @@ def _district_rollup(active: pd.DataFrame, models: dict) -> dict:
     return out
 
 
+def _published_page_set(published: dict | None) -> dict[str, dict]:
+    """What the previous build published, per slug, or empty.
+
+    ``{slug: {"years": {...}, "pages": {...}, "fx"/"tx"/"dt": {keys}}}``. Total
+    by construction: any shape it does not recognise yields no entry, so a
+    malformed or foreign blob degrades to no hysteresis instead of aborting the
+    build.
+    """
+    out: dict[str, dict] = {}
+    if not isinstance(published, dict):
+        return out
+    models = published.get("models")
+    if not isinstance(models, dict):
+        return out
+    for slug, rec in models.items():
+        if not isinstance(rec, dict):
+            continue
+        cells = rec.get("yr") if isinstance(rec.get("yr"), list) else []
+        years, pages = set(), set()
+        for c in cells:
+            if not isinstance(c, dict) or not isinstance(c.get("y"), int):
+                continue
+            years.add(c["y"])
+            if c.get("pg"):
+                pages.add(c["y"])
+        entry = {"years": years, "pages": pages}
+        for kind in ("fx", "tx", "dt"):
+            arr = rec.get(kind)
+            entry[kind] = {str(c["k"]) for c in arr
+                           if isinstance(c, dict) and c.get("k") is not None} \
+                if isinstance(arr, list) else set()
+        out[str(slug)] = entry
+    return out
+
+
 def build_model_pages(
     listings: pd.DataFrame,
     sell_speed: pd.DataFrame | None = None,
     valuator: Callable[[pd.DataFrame], pd.DataFrame] | None = None,
     now_year: int | None = None,
     liquidity: dict | None = None,
+    published: dict | None = None,
 ) -> dict:
     """Return ``{"v":1, "models": {slug: {...}}}`` for models with >=MIN_MODEL_N
     active, asking-priced listings.
+
+    ``published`` is the previous build's own output (the models.json currently
+    live). A model or year-cell it already carries survives down to
+    RETIRE_MODEL_N / RETIRE_YEAR_N instead of the entry floor: the page set is a
+    function of live inventory, so anything sitting on the floor otherwise flips
+    out on a normal dip and takes an indexed, ranking URL with it. Omitted, the
+    entry floors apply to everything, which is the pre-hysteresis behaviour.
 
     ``liquidity`` is ``analytics.liquidity.page_records`` output keyed by
     (brand, model) — the days-on-market curve, its cuts and the relist floor.
@@ -474,10 +597,12 @@ def build_model_pages(
         if _prev is None or int(_rec.get("n", 0)) > int(_prev.get("n", 0)):
             liq_lookup[_key] = _rec
 
+    was_published = _published_page_set(published)
     for (brand, model), grp in active.groupby(["brand", "model"]):
-        if len(grp) < MIN_MODEL_N:
-            continue
         slug = slugify(f"{brand}-{model}")
+        prev = was_published.get(slug)
+        if len(grp) < (RETIRE_MODEL_N if prev else MIN_MODEL_N):
+            continue
         # Collapsing above makes one group per slug, so this can no longer drop
         # a real sample; it stays as a guard against an empty slug.
         if not slug or slug in models:
@@ -485,7 +610,7 @@ def build_model_pages(
         q = _quantiles(grp["price_eur"])
         if not q:
             continue
-        yr_cells, yrs_thin = _year_cells(grp)
+        yr_cells, yrs_thin = _year_cells(grp, prev and prev["years"], prev and prev["pages"])
         years = pd.to_numeric(grp.get("year"), errors="coerce").dropna()
         rec: dict = {
             "b": str(brand), "m": str(model), "n": int(len(grp)),
@@ -514,18 +639,20 @@ def build_model_pages(
         # simply serves no such page while the key is absent, so shipping this
         # ahead of the pages is safe.
         fx = _facet_cells(grp, "fuel_type", _fuel_facet_key,
-                          lambda v: _FUEL_FACETS[_fuel_facet_key(v)], MIN_FACET_N)
+                          lambda v: _FUEL_FACETS[_fuel_facet_key(v)], MIN_FACET_N,
+                          keep_keys=prev and prev["fx"])
         if fx:
             rec["fx"] = fx
         tx = _facet_cells(grp, "transmission", _transmission_facet_key,
                           lambda v: _TRANSMISSION_FACETS[_transmission_facet_key(v)],
-                          MIN_FACET_N)
+                          MIN_FACET_N, keep_keys=prev and prev["tx"])
         if tx:
             rec["tx"] = tx
         rec.update(all_duels(grp, now_year))
         dt = _facet_cells(grp, "district",
                           lambda v: None if pd.isna(v) else (slugify(str(v)) or None),
-                          lambda v: str(v), MIN_FACET_N, limit=MAX_DISTRICT_ROWS)
+                          lambda v: str(v), MIN_FACET_N, limit=MAX_DISTRICT_ROWS,
+                          keep_keys=prev and prev["dt"])
         if dt:
             rec["dt"] = dt
         lq = liq_lookup.get((brand, model))

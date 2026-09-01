@@ -189,14 +189,18 @@ export function yearCells(rec, minN = 1) {
     .sort((a, b) => b.y - a.y);
 }
 
+function hasYearPage(c) {
+  return c.pg !== undefined ? !!c.pg : (c.n || 0) >= MIN_YEAR_PAGE_N;
+}
+
 /** Years of this model that clear the year-page floor. */
 export function yearPageYears(rec) {
-  return yearCells(rec, MIN_YEAR_PAGE_N).map(c => c.y);
+  return yearCells(rec, 1).filter(hasYearPage).map(c => c.y);
 }
 
 /** The one cell for {slug}/{year}, or null when that year has no page. */
 export function yearCell(rec, year) {
-  return yearCells(rec, MIN_YEAR_PAGE_N).find(c => c.y === year) || null;
+  return yearCells(rec, 1).filter(hasYearPage).find(c => c.y === year) || null;
 }
 
 /**

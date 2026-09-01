@@ -102,6 +102,37 @@ def _contributions_to_long(
     return pd.DataFrame(rows)
 
 
+MODELS_RELEASE_URL = ("https://github.com/nikit34/olx-car-parser/releases/"
+                      "download/latest-data/models.json")
+
+
+def _published_models(out_dir: Path) -> dict | None:
+    """The models.json currently live, so a published page can hold its address.
+
+    The page set is a function of live inventory: a model or year-cell sitting on
+    its sample floor drops out on a normal dip and takes an indexed, ranking URL
+    with it. ``build_model_pages`` keeps such a page down to a lower retirement
+    floor, and this is how it learns which pages those are. Prefers the copy this
+    runner wrote last time; falls back to the Release asset the Worker serves.
+    None means no hysteresis for this build, i.e. the old behaviour.
+    """
+    local = out_dir / "models.json"
+    if local.exists():
+        try:
+            return json.loads(local.read_text())
+        except (OSError, ValueError) as e:
+            print(f"[build]   previous models.json unreadable ({e}); "
+                  f"trying the Release", flush=True)
+    try:
+        import urllib.request
+        with urllib.request.urlopen(MODELS_RELEASE_URL, timeout=30) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except Exception as e:
+        print(f"[build]   no previous models.json ({e}); publishing without "
+              f"hysteresis, pages on the sample floor may drop out", flush=True)
+        return None
+
+
 def _build(db_url: str | None, out_dir: Path) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
     # One build timestamp reused by the manifest AND models.json (the public
@@ -330,7 +361,8 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
     else:
         print("[build]   model pages: no fresh price model — shipping asking-only", flush=True)
     model_pages = build_model_pages(listings, sell_speed, valuator=_valuator,
-                                    liquidity=liq_pages)
+                                    liquidity=liq_pages,
+                                    published=_published_models(out_dir))
     if liquidity.get("market"):
         model_pages["lqm"] = liquidity["market"]
     model_pages["built_at"] = built_at   # freshness signal the Worker renders ("atualizado em")
