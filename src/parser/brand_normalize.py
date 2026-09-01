@@ -42,6 +42,8 @@ _ALIASES: dict[str, str] = {
     # SEAT writes its own name in caps; OLX sellers use both. Without this the
     # two spellings stayed separate brands all the way to the dashboard filter.
     "seat": "Seat",
+    "mini": "Mini",
+    "mini cooper": "Mini",
 }
 
 

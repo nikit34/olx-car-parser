@@ -45,3 +45,9 @@ class TestNormalizeBrand:
         assert normalize_brand("") == ""
         assert normalize_brand(None) == ""
         assert normalize_brand("   ") == ""
+
+    def test_mini_caps_canonicalised(self):
+        assert normalize_brand("MINI") == "Mini"
+        assert normalize_brand("mini") == "Mini"
+        assert normalize_brand("Mini") == "Mini"
+        assert normalize_brand("MINI Cooper") == "Mini"
