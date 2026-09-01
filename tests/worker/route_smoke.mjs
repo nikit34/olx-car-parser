@@ -611,6 +611,31 @@ await check("the deal feed carries its own markup, and only on the canonical vie
   }
 });
 
+
+await check("lastmod tells a frozen archive cut apart from a page rebuilt daily", async () => {
+  const kv2 = new Map();
+  const env2 = { ...env, KV: {
+    async get(k, type) { const v = kv2.get(k); return v === undefined ? null : (type === "json" ? JSON.parse(v) : v); },
+    async put(k, v) { kv2.set(k, v); },
+    async list() { return { keys: [] }; },
+    async delete(k) { kv2.delete(k); },
+  } };
+  const frozen = { week: "2026-W10", date: "2026-03-09", builtAt: "2026-03-09T06:00:00Z" };
+  await env2.KV.put("idx:weeks", JSON.stringify([frozen]));
+  const xml = await (await worker.fetch(new Request(`https://${HOST}/sitemap.xml`), env2)).text();
+  const row = re => (xml.match(re) || [""])[0];
+  const archive = row(new RegExp(`<url><loc>https://${HOST}/mercado/indice/2026-w10</loc>[^]*?</url>`));
+  assert(archive.includes("<lastmod>2026-03-09</lastmod>"),
+    `a permanent weekly cut claims it changed today: ${archive}`);
+  const priv = row(new RegExp(`<url><loc>https://${HOST}/privacidade</loc>[^]*?</url>`));
+  assert(!priv.includes("<lastmod>"), `the one static page still dates itself to the build: ${priv}`);
+  const model = row(new RegExp(`<url><loc>https://${HOST}/preco/${deep}</loc>[^]*?</url>`));
+  assert(model.includes(`<lastmod>${String(mdoc.built_at).slice(0, 10)}</lastmod>`),
+    "a page rebuilt every few hours lost its build stamp");
+  assert(model.includes("<changefreq>daily</changefreq>"),
+    "a page rebuilt every few hours still advertises weekly");
+});
+
 // ── KV must not be load-bearing for a render ────────────────────────────────
 // The outage these exist for: KV refused ops, every rendered page answered
 // 1101, and /healthz plus the sitemap stayed green the whole time.

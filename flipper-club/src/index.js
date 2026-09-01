@@ -1133,9 +1133,19 @@ async function handleSitemap(request, env, url) {
   const lastmodSrc = (mdoc && mdoc.built_at) || "";
   const lastmod = lastmodSrc.slice(0, 10);
   const lm = lastmod ? `<lastmod>${lastmod}</lastmod>` : "";
+  const iso = d => {
+    const v = String(d || "").slice(0, 10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+  };
+  const stamp = d => {
+    if (d === null) return "";
+    const v = (Array.isArray(d) ? d : [d]).map(iso).find(Boolean);
+    if (v) return `<lastmod>${v}</lastmod>`;
+    return Array.isArray(d) ? "" : lm;
+  };
   const urls = [];
-  const add = (path, freq, prio) =>
-    urls.push(`<url><loc>${base}${path}</loc>${lm}<changefreq>${freq}</changefreq><priority>${prio}</priority></url>`);
+  const add = (path, freq, prio, when) =>
+    urls.push(`<url><loc>${base}${path}</loc>${when === undefined ? lm : stamp(when)}<changefreq>${freq}</changefreq><priority>${prio}</priority></url>`);
 
   add("/", "daily", "1.0");
   add("/mercado", "daily", "0.9");
@@ -1147,7 +1157,7 @@ async function handleSitemap(request, env, url) {
   add("/sobre", "monthly", "0.6");
   add("/isv", "monthly", "0.6");
   // Consent banner links here, so it has to be crawlable and listed.
-  add("/privacidade", "yearly", "0.2");
+  add("/privacidade", "yearly", "0.2", null);
 
   if (models) {
     add("/depreciacao", "weekly", "0.7");
@@ -1159,27 +1169,27 @@ async function handleSitemap(request, env, url) {
     add("/sobrevalorizados", "weekly", "0.6");
 
     for (const [slug, rec] of Object.entries(models)) {
-      add(`/preco/${encodeURIComponent(slug)}`, "weekly", "0.6");
+      add(`/preco/${encodeURIComponent(slug)}`, "daily", "0.6");
       // Model-year pages — only the ones that clear the publishing floor, which
       // is exactly the set handleModelPage will serve.
       for (const y of publishedYearPages(models, slug, rec, lastmodSrc)) {
-        add(`/preco/${encodeURIComponent(slug)}/${y}`, "weekly", "0.5");
+        add(`/preco/${encodeURIComponent(slug)}/${y}`, "daily", "0.5");
       }
       // Fuel / district facets, where the sample supports them.
       for (const k of publishedFacets(models, slug, rec, lastmodSrc)) {
-        add(`/preco/${encodeURIComponent(slug)}/${encodeURIComponent(k)}`, "weekly", "0.5");
+        add(`/preco/${encodeURIComponent(slug)}/${encodeURIComponent(k)}`, "daily", "0.5");
       }
-      if (publishedDepreciation(models, slug, rec, lastmodSrc)) add(`/depreciacao/${encodeURIComponent(slug)}`, "monthly", "0.5");
+      if (publishedDepreciation(models, slug, rec, lastmodSrc)) add(`/depreciacao/${encodeURIComponent(slug)}`, "weekly", "0.5");
       if (publishedLiquidity(models, slug, rec, lastmodSrc)) add(`/liquidez/${encodeURIComponent(slug)}`, "weekly", "0.5");
       for (const d of Object.values(DUELS)) {
-        if (publishedDuel(models, slug, rec, lastmodSrc, d.kind)) add(`/${d.path}/${encodeURIComponent(slug)}`, "monthly", "0.5");
+        if (publishedDuel(models, slug, rec, lastmodSrc, d.kind)) add(`/${d.path}/${encodeURIComponent(slug)}`, "weekly", "0.5");
       }
     }
     for (const k of Object.keys((mdoc && mdoc.districts) || {})) {
       add(`/precos/${encodeURIComponent(k)}`, "weekly", "0.6");
     }
     for (const [a, b] of publishedPairs(models)) {
-      add(`/comparar/${encodeURIComponent(a)}-vs-${encodeURIComponent(b)}`, "monthly", "0.5");
+      add(`/comparar/${encodeURIComponent(a)}-vs-${encodeURIComponent(b)}`, "weekly", "0.5");
     }
     // Archived index weeks: permanent URLs, so they belong in the sitemap.
     try {
@@ -1191,10 +1201,11 @@ async function handleSitemap(request, env, url) {
         const liveWeek = isoWeek(new Date());
         for (const h of history.slice(-52)) {
           if (h.week === liveWeek) continue;
-          add(`/mercado/indice/${h.week.toLowerCase()}`, "yearly", "0.3");
+          add(`/mercado/indice/${h.week.toLowerCase()}`, "yearly", "0.3", [h.builtAt, h.date]);
         }
         for (const c of monthlyCuts(history, liveWeek).slice(-24)) {
-          add(`/mercado/indice/${c.month}`, "yearly", "0.4");
+          const last = c.rows && c.rows.length ? c.rows[c.rows.length - 1] : null;
+          add(`/mercado/indice/${c.month}`, "yearly", "0.4", [c.builtAt, last && last.date, c.to]);
         }
       }
     } catch (_) { /* archive is optional */ }
