@@ -1,4 +1,211 @@
 {
+  "AC": {
+    "Ace": [
+      {
+        "name": "Gen1",
+        "year_from": 1953,
+        "year_to": 1963
+      }
+    ],
+    "Buckland": [
+      {
+        "name": "Gen1",
+        "year_from": 1947,
+        "year_to": 2026
+      }
+    ],
+    "Cobra": [
+      {
+        "name": "Gen1",
+        "year_from": 1962,
+        "year_to": 2026
+      }
+    ]
+  },
+  "Abarth": {
+    "124 Spider": [
+      {
+        "name": "Gen1",
+        "year_from": 2016,
+        "year_to": 2021
+      }
+    ],
+    "500": [
+      {
+        "name": "Gen1",
+        "year_from": 2008,
+        "year_to": 2016
+      },
+      {
+        "name": "Gen2",
+        "year_from": 2016,
+        "year_to": 2024
+      }
+    ],
+    "500C": [
+      {
+        "name": "Gen1",
+        "year_from": 2010,
+        "year_to": 2016
+      },
+      {
+        "name": "Gen2",
+        "year_from": 2016,
+        "year_to": 2024
+      }
+    ],
+    "500e": [
+      {
+        "name": "Gen1",
+        "year_from": 2023,
+        "year_to": 2026
+      }
+    ],
+    "595": [
+      {
+        "name": "Gen1",
+        "year_from": 2012,
+        "year_to": 2024
+      }
+    ],
+    "600e": [
+      {
+        "name": "Gen1",
+        "year_from": 2024,
+        "year_to": 2026
+      }
+    ],
+    "695": [
+      {
+        "name": "Gen1",
+        "year_from": 2009,
+        "year_to": 2026
+      }
+    ],
+    "Grande Punto": [
+      {
+        "name": "Gen1",
+        "year_from": 2007,
+        "year_to": 2011
+      }
+    ],
+    "Punto Evo": [
+      {
+        "name": "Gen1",
+        "year_from": 2010,
+        "year_to": 2015
+      }
+    ]
+  },
+  "Aiways": {
+    "U5": [
+      {
+        "name": "Gen1",
+        "year_from": 2020,
+        "year_to": 2026
+      }
+    ],
+    "U6": [
+      {
+        "name": "Gen1",
+        "year_from": 2022,
+        "year_to": 2026
+      }
+    ]
+  },
+  "Aixam": {
+    "400": [
+      {
+        "name": "Gen1",
+        "year_from": 1983,
+        "year_to": 2006
+      }
+    ],
+    "500": [
+      {
+        "name": "Gen1",
+        "year_from": 1997,
+        "year_to": 2011
+      }
+    ],
+    "A540": [
+      {
+        "name": "Gen1",
+        "year_from": 1998,
+        "year_to": 2006
+      }
+    ],
+    "A721": [
+      {
+        "name": "Gen1",
+        "year_from": 2005,
+        "year_to": 2010
+      }
+    ],
+    "A741": [
+      {
+        "name": "Gen1",
+        "year_from": 2002,
+        "year_to": 2010
+      }
+    ],
+    "A751": [
+      {
+        "name": "Gen1",
+        "year_from": 2005,
+        "year_to": 2010
+      }
+    ],
+    "City": [
+      {
+        "name": "Gen1",
+        "year_from": 2000,
+        "year_to": 2026
+      }
+    ],
+    "Coupe": [
+      {
+        "name": "Gen1",
+        "year_from": 2010,
+        "year_to": 2026
+      }
+    ],
+    "Crossline": [
+      {
+        "name": "Gen1",
+        "year_from": 2005,
+        "year_to": 2026
+      }
+    ],
+    "Crossover": [
+      {
+        "name": "Gen1",
+        "year_from": 2008,
+        "year_to": 2026
+      }
+    ],
+    "Minauto": [
+      {
+        "name": "Gen1",
+        "year_from": 2012,
+        "year_to": 2026
+      }
+    ],
+    "Roadline": [
+      {
+        "name": "Gen1",
+        "year_from": 2005,
+        "year_to": 2018
+      }
+    ],
+    "Scouty": [
+      {
+        "name": "Gen1",
+        "year_from": 2005,
+        "year_to": 2018
+      }
+    ]
+  },
   "Alfa Romeo": {
     "33 Stradale": [
       {
@@ -85,6 +292,147 @@
         "name": "932",
         "year_from": 1997,
         "year_to": 2007
+      }
+    ]
+  },
+  "Alpine": {
+    "A110": [
+      {
+        "name": "Berlinette",
+        "year_from": 1962,
+        "year_to": 1977
+      },
+      {
+        "name": "Gen2",
+        "year_from": 2017,
+        "year_to": 2026
+      }
+    ],
+    "A290": [
+      {
+        "name": "Gen1",
+        "year_from": 2024,
+        "year_to": 2026
+      }
+    ],
+    "A310": [
+      {
+        "name": "Gen1",
+        "year_from": 1971,
+        "year_to": 1985
+      }
+    ],
+    "A610": [
+      {
+        "name": "Gen1",
+        "year_from": 1991,
+        "year_to": 1995
+      }
+    ]
+  },
+  "Amphicar": {
+    "770": [
+      {
+        "name": "Gen1",
+        "year_from": 1961,
+        "year_to": 1968
+      }
+    ]
+  },
+  "Aston Martin": {
+    "DB11": [
+      {
+        "name": "Gen1",
+        "year_from": 2016,
+        "year_to": 2023
+      }
+    ],
+    "DB12": [
+      {
+        "name": "Gen1",
+        "year_from": 2023,
+        "year_to": 2026
+      }
+    ],
+    "DB7": [
+      {
+        "name": "Gen1",
+        "year_from": 1994,
+        "year_to": 2004
+      }
+    ],
+    "DB9": [
+      {
+        "name": "Gen1",
+        "year_from": 2004,
+        "year_to": 2016
+      }
+    ],
+    "DBS": [
+      {
+        "name": "Gen1",
+        "year_from": 2007,
+        "year_to": 2012
+      },
+      {
+        "name": "Gen2",
+        "year_from": 2018,
+        "year_to": 2026
+      }
+    ],
+    "DBX": [
+      {
+        "name": "Gen1",
+        "year_from": 2020,
+        "year_to": 2026
+      }
+    ],
+    "Rapide": [
+      {
+        "name": "Gen1",
+        "year_from": 2010,
+        "year_to": 2020
+      }
+    ],
+    "Vanquish": [
+      {
+        "name": "Gen1",
+        "year_from": 2001,
+        "year_to": 2007
+      },
+      {
+        "name": "Gen2",
+        "year_from": 2012,
+        "year_to": 2018
+      },
+      {
+        "name": "Gen3",
+        "year_from": 2024,
+        "year_to": 2026
+      }
+    ],
+    "Vantage": [
+      {
+        "name": "Gen1",
+        "year_from": 2005,
+        "year_to": 2018
+      },
+      {
+        "name": "Gen2",
+        "year_from": 2018,
+        "year_to": 2026
+      }
+    ],
+    "Virage": [
+      {
+        "name": "Gen1",
+        "year_from": 1989,
+        "year_to": 2000
+      },
+      {
+        "name": "Gen2",
+        "year_from": 2011,
+        "year_to": 2012
       }
     ]
   },
@@ -357,6 +705,82 @@
         "name": "4M",
         "year_from": 2015,
         "year_to": 2026
+      }
+    ]
+  },
+  "Austin": {
+    "A35": [
+      {
+        "name": "Gen1",
+        "year_from": 1956,
+        "year_to": 1962
+      }
+    ],
+    "Metro": [
+      {
+        "name": "Gen1",
+        "year_from": 1980,
+        "year_to": 1990
+      }
+    ],
+    "Mini": [
+      {
+        "name": "Gen1",
+        "year_from": 1959,
+        "year_to": 2000
+      }
+    ],
+    "Princess": [
+      {
+        "name": "Gen1",
+        "year_from": 1975,
+        "year_to": 1982
+      }
+    ]
+  },
+  "Austin Healey": {
+    "100/4": [
+      {
+        "name": "Gen1",
+        "year_from": 1953,
+        "year_to": 1957
+      }
+    ],
+    "3000": [
+      {
+        "name": "Gen1",
+        "year_from": 1959,
+        "year_to": 1968
+      }
+    ],
+    "Sprite": [
+      {
+        "name": "Gen1",
+        "year_from": 1958,
+        "year_to": 1972
+      }
+    ]
+  },
+  "Autobianchi": {
+    "A112": [
+      {
+        "name": "Gen1",
+        "year_from": 1969,
+        "year_to": 1987
+      }
+    ],
+    "Bianchina": [
+      {
+        "name": "Gen1",
+        "year_from": 1957,
+        "year_to": 1970
+      }
+    ],
+    "Y10": [
+      {
+        "name": "Gen1",
+        "year_from": 1985,
+        "year_to": 1996
       }
     ]
   },
@@ -849,12 +1273,394 @@
       }
     ]
   },
+  "BYD": {
+    "Atto 2": [
+      {
+        "name": "Gen1",
+        "year_from": 2025,
+        "year_to": 2026
+      }
+    ],
+    "Atto 3": [
+      {
+        "name": "Gen1",
+        "year_from": 2022,
+        "year_to": 2026
+      }
+    ],
+    "Dolphin": [
+      {
+        "name": "Gen1",
+        "year_from": 2021,
+        "year_to": 2026
+      }
+    ],
+    "Dolphin Surf": [
+      {
+        "name": "Gen1",
+        "year_from": 2025,
+        "year_to": 2026
+      }
+    ],
+    "Han": [
+      {
+        "name": "Gen1",
+        "year_from": 2020,
+        "year_to": 2026
+      }
+    ],
+    "Seal": [
+      {
+        "name": "Gen1",
+        "year_from": 2022,
+        "year_to": 2026
+      }
+    ],
+    "Seal U": [
+      {
+        "name": "Gen1",
+        "year_from": 2023,
+        "year_to": 2026
+      }
+    ],
+    "Sealion 6": [
+      {
+        "name": "Gen1",
+        "year_from": 2024,
+        "year_to": 2026
+      }
+    ],
+    "Sealion 7": [
+      {
+        "name": "Gen1",
+        "year_from": 2024,
+        "year_to": 2026
+      }
+    ],
+    "Song": [
+      {
+        "name": "Gen1",
+        "year_from": 2016,
+        "year_to": 2026
+      }
+    ],
+    "Tang": [
+      {
+        "name": "Gen1",
+        "year_from": 2018,
+        "year_to": 2026
+      }
+    ],
+    "e6": [
+      {
+        "name": "Gen1",
+        "year_from": 2009,
+        "year_to": 2026
+      }
+    ]
+  },
+  "Bedford": {
+    "CF": [
+      {
+        "name": "Gen1",
+        "year_from": 1969,
+        "year_to": 1992
+      }
+    ],
+    "Rascal": [
+      {
+        "name": "Gen1",
+        "year_from": 1986,
+        "year_to": 1995
+      }
+    ]
+  },
+  "Bellier": {
+    "Docker": [
+      {
+        "name": "Gen1",
+        "year_from": 2016,
+        "year_to": 2026
+      }
+    ],
+    "Jamais Vu": [
+      {
+        "name": "Gen1",
+        "year_from": 2010,
+        "year_to": 2020
+      }
+    ],
+    "VX550": [
+      {
+        "name": "Gen1",
+        "year_from": 2008,
+        "year_to": 2018
+      }
+    ]
+  },
+  "Bentley": {
+    "Arnage": [
+      {
+        "name": "Gen1",
+        "year_from": 1998,
+        "year_to": 2009
+      }
+    ],
+    "Azure": [
+      {
+        "name": "Gen1",
+        "year_from": 1995,
+        "year_to": 2010
+      }
+    ],
+    "Bentayga": [
+      {
+        "name": "Gen1",
+        "year_from": 2015,
+        "year_to": 2026
+      }
+    ],
+    "Brooklands": [
+      {
+        "name": "Gen1",
+        "year_from": 1992,
+        "year_to": 1998
+      },
+      {
+        "name": "Gen2",
+        "year_from": 2008,
+        "year_to": 2011
+      }
+    ],
+    "Continental": [
+      {
+        "name": "Gen1",
+        "year_from": 2003,
+        "year_to": 2026
+      }
+    ],
+    "Eight": [
+      {
+        "name": "Gen1",
+        "year_from": 1984,
+        "year_to": 1992
+      }
+    ],
+    "Flying Spur": [
+      {
+        "name": "Gen1",
+        "year_from": 2005,
+        "year_to": 2026
+      }
+    ],
+    "Mulsanne": [
+      {
+        "name": "Gen1",
+        "year_from": 1980,
+        "year_to": 1992
+      },
+      {
+        "name": "Gen2",
+        "year_from": 2010,
+        "year_to": 2021
+      }
+    ],
+    "Turbo R": [
+      {
+        "name": "Gen1",
+        "year_from": 1985,
+        "year_to": 1997
+      }
+    ]
+  },
+  "Caterham": {
+    "Seven": [
+      {
+        "name": "Gen1",
+        "year_from": 1973,
+        "year_to": 2026
+      }
+    ]
+  },
+  "Chatenet": {
+    "Barooder": [
+      {
+        "name": "Gen1",
+        "year_from": 1996,
+        "year_to": 2009
+      }
+    ],
+    "CH26": [
+      {
+        "name": "Gen1",
+        "year_from": 2001,
+        "year_to": 2017
+      }
+    ],
+    "CH30": [
+      {
+        "name": "Gen1",
+        "year_from": 2012,
+        "year_to": 2021
+      }
+    ],
+    "CH32": [
+      {
+        "name": "Gen1",
+        "year_from": 2016,
+        "year_to": 2026
+      }
+    ],
+    "CH40": [
+      {
+        "name": "Gen1",
+        "year_from": 2018,
+        "year_to": 2026
+      }
+    ],
+    "CH46": [
+      {
+        "name": "Gen1",
+        "year_from": 2021,
+        "year_to": 2026
+      }
+    ],
+    "Media": [
+      {
+        "name": "Gen1",
+        "year_from": 2004,
+        "year_to": 2012
+      }
+    ],
+    "Speedino": [
+      {
+        "name": "Gen1",
+        "year_from": 2008,
+        "year_to": 2016
+      }
+    ]
+  },
+  "Chevrolet": {
+    "Aveo": [
+      {
+        "name": "T200",
+        "year_from": 2002,
+        "year_to": 2011
+      },
+      {
+        "name": "T300",
+        "year_from": 2011,
+        "year_to": 2020
+      }
+    ],
+    "Cruze": [
+      {
+        "name": "J300",
+        "year_from": 2008,
+        "year_to": 2016
+      }
+    ],
+    "Captiva": [
+      {
+        "name": "C100",
+        "year_from": 2006,
+        "year_to": 2018
+      }
+    ],
+    "Spark": [
+      {
+        "name": "M200",
+        "year_from": 2005,
+        "year_to": 2010
+      },
+      {
+        "name": "M300",
+        "year_from": 2010,
+        "year_to": 2015
+      },
+      {
+        "name": "M400",
+        "year_from": 2015,
+        "year_to": 2022
+      }
+    ],
+    "Trax": [
+      {
+        "name": "Mk1",
+        "year_from": 2013,
+        "year_to": 2022
+      }
+    ],
+    "Lacetti": [
+      {
+        "name": "J200",
+        "year_from": 2003,
+        "year_to": 2009
+      }
+    ],
+    "Matiz": [
+      {
+        "name": "M150",
+        "year_from": 2005,
+        "year_to": 2010
+      }
+    ]
+  },
   "Chrysler": {
+    "300 C": [
+      {
+        "name": "Gen1",
+        "year_from": 2004,
+        "year_to": 2011
+      }
+    ],
     "Airflow": [
       {
         "name": "EV",
-        "year_from": 2027,
+        "year_from": 2026,
         "year_to": 2026
+      }
+    ],
+    "Crossfire": [
+      {
+        "name": "Gen1",
+        "year_from": 2003,
+        "year_to": 2008
+      }
+    ],
+    "Grand Voyager": [
+      {
+        "name": "Gen1",
+        "year_from": 1990,
+        "year_to": 2016
+      }
+    ],
+    "Le Baron": [
+      {
+        "name": "Gen1",
+        "year_from": 1977,
+        "year_to": 1995
+      }
+    ],
+    "Neon": [
+      {
+        "name": "Gen1",
+        "year_from": 1994,
+        "year_to": 2006
+      }
+    ],
+    "New Yorker": [
+      {
+        "name": "Gen1",
+        "year_from": 1939,
+        "year_to": 1997
+      }
+    ],
+    "PT Cruiser": [
+      {
+        "name": "Gen1",
+        "year_from": 2000,
+        "year_to": 2011
       }
     ],
     "Pacifica": [
@@ -864,11 +1670,32 @@
         "year_to": 2026
       }
     ],
+    "Sebring": [
+      {
+        "name": "Gen1",
+        "year_from": 1995,
+        "year_to": 2011
+      }
+    ],
+    "Stratus": [
+      {
+        "name": "Gen1",
+        "year_from": 1995,
+        "year_to": 2006
+      }
+    ],
     "Town & Country": [
       {
         "name": "minivan",
         "year_from": 1989,
         "year_to": 2016
+      }
+    ],
+    "Voyager": [
+      {
+        "name": "Gen1",
+        "year_from": 1988,
+        "year_to": 2026
       }
     ]
   },
@@ -1095,6 +1922,46 @@
       }
     ]
   },
+  "DS": {
+    "DS3": [
+      {
+        "name": "Gen1",
+        "year_from": 2010,
+        "year_to": 2019
+      },
+      {
+        "name": "Gen2",
+        "year_from": 2019,
+        "year_to": 2024
+      }
+    ],
+    "DS7": [
+      {
+        "name": "Gen1",
+        "year_from": 2017,
+        "year_to": 2024
+      }
+    ],
+    "DS4": [
+      {
+        "name": "Gen1",
+        "year_from": 2011,
+        "year_to": 2015
+      },
+      {
+        "name": "Gen2",
+        "year_from": 2021,
+        "year_to": 2026
+      }
+    ],
+    "DS5": [
+      {
+        "name": "Gen1",
+        "year_from": 2011,
+        "year_to": 2018
+      }
+    ]
+  },
   "Dacia": {
     "Duster": [
       {
@@ -1176,43 +2043,579 @@
       }
     ]
   },
-  "DS": {
-    "DS3": [
+  "Daewoo": {
+    "Cielo": [
       {
         "name": "Gen1",
-        "year_from": 2010,
-        "year_to": 2019
-      },
+        "year_from": 1994,
+        "year_to": 1997
+      }
+    ],
+    "Espero": [
       {
-        "name": "Gen2",
-        "year_from": 2019,
+        "name": "Gen1",
+        "year_from": 1990,
+        "year_to": 1998
+      }
+    ],
+    "Kalos": [
+      {
+        "name": "Gen1",
+        "year_from": 2002,
+        "year_to": 2006
+      }
+    ],
+    "Korando": [
+      {
+        "name": "Gen1",
+        "year_from": 1996,
+        "year_to": 2005
+      }
+    ],
+    "Lanos": [
+      {
+        "name": "Gen1",
+        "year_from": 1997,
+        "year_to": 2004
+      }
+    ],
+    "Leganza": [
+      {
+        "name": "Gen1",
+        "year_from": 1997,
+        "year_to": 2003
+      }
+    ],
+    "Matiz": [
+      {
+        "name": "Gen1",
+        "year_from": 1998,
+        "year_to": 2006
+      }
+    ],
+    "Musso": [
+      {
+        "name": "Gen1",
+        "year_from": 1996,
+        "year_to": 2005
+      }
+    ],
+    "Nubira": [
+      {
+        "name": "Gen1",
+        "year_from": 1997,
+        "year_to": 2005
+      }
+    ],
+    "Racer": [
+      {
+        "name": "Gen1",
+        "year_from": 1986,
+        "year_to": 1995
+      }
+    ],
+    "Tacuma": [
+      {
+        "name": "Gen1",
+        "year_from": 2000,
+        "year_to": 2009
+      }
+    ],
+    "Tico": [
+      {
+        "name": "Gen1",
+        "year_from": 1991,
+        "year_to": 2002
+      }
+    ]
+  },
+  "Daihatsu": {
+    "Applause": [
+      {
+        "name": "Gen1",
+        "year_from": 1989,
+        "year_to": 2000
+      }
+    ],
+    "Charade": [
+      {
+        "name": "Gen1",
+        "year_from": 1977,
+        "year_to": 2004
+      }
+    ],
+    "Copen": [
+      {
+        "name": "Gen1",
+        "year_from": 2002,
+        "year_to": 2013
+      }
+    ],
+    "Cuore": [
+      {
+        "name": "Gen1",
+        "year_from": 1980,
+        "year_to": 2013
+      }
+    ],
+    "F50": [
+      {
+        "name": "Gen1",
+        "year_from": 1976,
+        "year_to": 1985
+      }
+    ],
+    "Feroza": [
+      {
+        "name": "Gen1",
+        "year_from": 1988,
+        "year_to": 1999
+      }
+    ],
+    "Gran Move": [
+      {
+        "name": "Gen1",
+        "year_from": 1996,
+        "year_to": 2002
+      }
+    ],
+    "Hijet": [
+      {
+        "name": "Gen1",
+        "year_from": 1970,
+        "year_to": 2010
+      }
+    ],
+    "Materia": [
+      {
+        "name": "Gen1",
+        "year_from": 2006,
+        "year_to": 2013
+      }
+    ],
+    "Move": [
+      {
+        "name": "Gen1",
+        "year_from": 1995,
+        "year_to": 2013
+      }
+    ],
+    "Rocky": [
+      {
+        "name": "Gen1",
+        "year_from": 1984,
+        "year_to": 2003
+      }
+    ],
+    "Sirion": [
+      {
+        "name": "Gen1",
+        "year_from": 1998,
+        "year_to": 2017
+      }
+    ],
+    "Terios": [
+      {
+        "name": "Gen1",
+        "year_from": 1997,
+        "year_to": 2018
+      }
+    ],
+    "Trevis": [
+      {
+        "name": "Gen1",
+        "year_from": 2006,
+        "year_to": 2010
+      }
+    ],
+    "YRV": [
+      {
+        "name": "Gen1",
+        "year_from": 2000,
+        "year_to": 2006
+      }
+    ]
+  },
+  "Daimler": {
+    "DS420": [
+      {
+        "name": "Gen1",
+        "year_from": 1968,
+        "year_to": 1992
+      }
+    ],
+    "Double Six": [
+      {
+        "name": "Gen1",
+        "year_from": 1972,
+        "year_to": 1997
+      }
+    ],
+    "Six": [
+      {
+        "name": "Gen1",
+        "year_from": 1993,
+        "year_to": 1997
+      }
+    ],
+    "Sovereign": [
+      {
+        "name": "Gen1",
+        "year_from": 1966,
+        "year_to": 1997
+      }
+    ],
+    "Super Eight": [
+      {
+        "name": "Gen1",
+        "year_from": 2005,
+        "year_to": 2009
+      }
+    ],
+    "V8": [
+      {
+        "name": "Gen1",
+        "year_from": 1962,
+        "year_to": 1969
+      }
+    ]
+  },
+  "Datsun": {
+    "1200": [
+      {
+        "name": "Gen1",
+        "year_from": 1970,
+        "year_to": 1980
+      }
+    ],
+    "120Y": [
+      {
+        "name": "Gen1",
+        "year_from": 1974,
+        "year_to": 1979
+      }
+    ],
+    "180B": [
+      {
+        "name": "Gen1",
+        "year_from": 1972,
+        "year_to": 1981
+      }
+    ],
+    "240 Z": [
+      {
+        "name": "Gen1",
+        "year_from": 1969,
+        "year_to": 1975
+      }
+    ],
+    "510": [
+      {
+        "name": "Gen1",
+        "year_from": 1968,
+        "year_to": 1974
+      }
+    ],
+    "B210": [
+      {
+        "name": "Gen1",
+        "year_from": 1973,
+        "year_to": 1982
+      }
+    ],
+    "Cherry": [
+      {
+        "name": "Gen1",
+        "year_from": 1970,
+        "year_to": 1982
+      }
+    ],
+    "Fairlady": [
+      {
+        "name": "Gen1",
+        "year_from": 1962,
+        "year_to": 1971
+      }
+    ],
+    "Sunny": [
+      {
+        "name": "Gen1",
+        "year_from": 1966,
+        "year_to": 1982
+      }
+    ]
+  },
+  "Dodge": {
+    "Avenger": [
+      {
+        "name": "Gen1",
+        "year_from": 2007,
+        "year_to": 2015
+      }
+    ],
+    "Caliber": [
+      {
+        "name": "Gen1",
+        "year_from": 2006,
+        "year_to": 2013
+      }
+    ],
+    "Challenger": [
+      {
+        "name": "Gen1",
+        "year_from": 2008,
         "year_to": 2024
       }
     ],
-    "DS7": [
+    "Charger": [
+      {
+        "name": "Gen1",
+        "year_from": 2005,
+        "year_to": 2024
+      }
+    ],
+    "Dakota": [
+      {
+        "name": "Gen1",
+        "year_from": 1986,
+        "year_to": 2011
+      }
+    ],
+    "Durango": [
+      {
+        "name": "Gen1",
+        "year_from": 1997,
+        "year_to": 2026
+      }
+    ],
+    "Journey": [
+      {
+        "name": "Gen1",
+        "year_from": 2008,
+        "year_to": 2021
+      }
+    ],
+    "Nitro": [
+      {
+        "name": "Gen1",
+        "year_from": 2006,
+        "year_to": 2013
+      }
+    ],
+    "RAM": [
+      {
+        "name": "Gen1",
+        "year_from": 1994,
+        "year_to": 2026
+      }
+    ],
+    "Viper": [
+      {
+        "name": "Gen1",
+        "year_from": 1991,
+        "year_to": 2018
+      }
+    ]
+  },
+  "Dongfeng": {
+    "Box": [
+      {
+        "name": "Gen1",
+        "year_from": 2024,
+        "year_to": 2026
+      }
+    ],
+    "Nammi 01": [
+      {
+        "name": "Gen1",
+        "year_from": 2024,
+        "year_to": 2026
+      }
+    ]
+  },
+  "Eli": {
+    "ZERO": [
+      {
+        "name": "Gen1",
+        "year_from": 2020,
+        "year_to": 2026
+      }
+    ]
+  },
+  "Ferrari": {
+    "296 GTB": [
+      {
+        "name": "Gen1",
+        "year_from": 2021,
+        "year_to": 2026
+      }
+    ],
+    "308": [
+      {
+        "name": "Gen1",
+        "year_from": 1975,
+        "year_to": 1985
+      }
+    ],
+    "328": [
+      {
+        "name": "Gen1",
+        "year_from": 1985,
+        "year_to": 1989
+      }
+    ],
+    "348": [
+      {
+        "name": "Gen1",
+        "year_from": 1989,
+        "year_to": 1995
+      }
+    ],
+    "360": [
+      {
+        "name": "Gen1",
+        "year_from": 1999,
+        "year_to": 2005
+      }
+    ],
+    "456": [
+      {
+        "name": "Gen1",
+        "year_from": 1992,
+        "year_to": 2004
+      }
+    ],
+    "458": [
+      {
+        "name": "Gen1",
+        "year_from": 2009,
+        "year_to": 2016
+      }
+    ],
+    "488": [
+      {
+        "name": "Gen1",
+        "year_from": 2015,
+        "year_to": 2020
+      }
+    ],
+    "512": [
+      {
+        "name": "Gen1",
+        "year_from": 1991,
+        "year_to": 1996
+      }
+    ],
+    "550": [
+      {
+        "name": "Gen1",
+        "year_from": 1996,
+        "year_to": 2002
+      }
+    ],
+    "575": [
+      {
+        "name": "Gen1",
+        "year_from": 2002,
+        "year_to": 2006
+      }
+    ],
+    "599": [
+      {
+        "name": "Gen1",
+        "year_from": 2006,
+        "year_to": 2013
+      }
+    ],
+    "612": [
+      {
+        "name": "Gen1",
+        "year_from": 2004,
+        "year_to": 2011
+      }
+    ],
+    "812": [
       {
         "name": "Gen1",
         "year_from": 2017,
         "year_to": 2024
       }
     ],
-    "DS4": [
+    "California": [
+      {
+        "name": "Gen1",
+        "year_from": 2008,
+        "year_to": 2017
+      }
+    ],
+    "F355": [
+      {
+        "name": "Gen1",
+        "year_from": 1994,
+        "year_to": 1999
+      }
+    ],
+    "F430": [
+      {
+        "name": "Gen1",
+        "year_from": 2004,
+        "year_to": 2010
+      }
+    ],
+    "F8": [
+      {
+        "name": "Gen1",
+        "year_from": 2019,
+        "year_to": 2023
+      }
+    ],
+    "FF": [
       {
         "name": "Gen1",
         "year_from": 2011,
-        "year_to": 2015
-      },
+        "year_to": 2016
+      }
+    ],
+    "GTC4Lusso": [
       {
-        "name": "Gen2",
-        "year_from": 2021,
+        "name": "Gen1",
+        "year_from": 2016,
+        "year_to": 2020
+      }
+    ],
+    "Portofino": [
+      {
+        "name": "Gen1",
+        "year_from": 2017,
+        "year_to": 2023
+      }
+    ],
+    "Purosangue": [
+      {
+        "name": "Gen1",
+        "year_from": 2022,
         "year_to": 2026
       }
     ],
-    "DS5": [
+    "Roma": [
       {
         "name": "Gen1",
-        "year_from": 2011,
-        "year_to": 2018
+        "year_from": 2020,
+        "year_to": 2026
+      }
+    ],
+    "SF90": [
+      {
+        "name": "Gen1",
+        "year_from": 2019,
+        "year_to": 2026
+      }
+    ],
+    "Testarossa": [
+      {
+        "name": "Gen1",
+        "year_from": 1984,
+        "year_to": 1996
       }
     ]
   },
@@ -2017,6 +3420,29 @@
       }
     ]
   },
+  "Hummer": {
+    "H1": [
+      {
+        "name": "Gen1",
+        "year_from": 1992,
+        "year_to": 2006
+      }
+    ],
+    "H2": [
+      {
+        "name": "Gen1",
+        "year_from": 2002,
+        "year_to": 2010
+      }
+    ],
+    "H3": [
+      {
+        "name": "Gen1",
+        "year_from": 2005,
+        "year_to": 2011
+      }
+    ]
+  },
   "Hyundai": {
     "Tucson": [
       {
@@ -2175,6 +3601,175 @@
         "name": "RB",
         "year_from": 2011,
         "year_to": 2017
+      }
+    ]
+  },
+  "Infiniti": {
+    "EX": [
+      {
+        "name": "Gen1",
+        "year_from": 2007,
+        "year_to": 2013
+      }
+    ],
+    "FX": [
+      {
+        "name": "Gen1",
+        "year_from": 2003,
+        "year_to": 2013
+      }
+    ],
+    "G": [
+      {
+        "name": "Gen1",
+        "year_from": 2006,
+        "year_to": 2013
+      }
+    ],
+    "M": [
+      {
+        "name": "Gen1",
+        "year_from": 2005,
+        "year_to": 2013
+      }
+    ],
+    "Q30": [
+      {
+        "name": "Gen1",
+        "year_from": 2015,
+        "year_to": 2020
+      }
+    ],
+    "Q50": [
+      {
+        "name": "Gen1",
+        "year_from": 2013,
+        "year_to": 2023
+      }
+    ],
+    "Q60": [
+      {
+        "name": "Gen1",
+        "year_from": 2013,
+        "year_to": 2022
+      }
+    ],
+    "QX30": [
+      {
+        "name": "Gen1",
+        "year_from": 2016,
+        "year_to": 2020
+      }
+    ],
+    "QX70": [
+      {
+        "name": "Gen1",
+        "year_from": 2013,
+        "year_to": 2018
+      }
+    ]
+  },
+  "Isuzu": {
+    "Campo": [
+      {
+        "name": "Gen1",
+        "year_from": 1981,
+        "year_to": 1997
+      }
+    ],
+    "D-Max": [
+      {
+        "name": "Gen1",
+        "year_from": 2002,
+        "year_to": 2026
+      }
+    ],
+    "Midi": [
+      {
+        "name": "Gen1",
+        "year_from": 1986,
+        "year_to": 1997
+      }
+    ],
+    "PickUp": [
+      {
+        "name": "Gen1",
+        "year_from": 1972,
+        "year_to": 2003
+      }
+    ],
+    "Rodeo": [
+      {
+        "name": "Gen1",
+        "year_from": 1988,
+        "year_to": 2004
+      }
+    ],
+    "Trooper": [
+      {
+        "name": "Gen1",
+        "year_from": 1981,
+        "year_to": 2005
+      }
+    ]
+  },
+  "Iveco": {
+    "Daily": [
+      {
+        "name": "Gen1",
+        "year_from": 1978,
+        "year_to": 2026
+      }
+    ],
+    "Eurocargo": [
+      {
+        "name": "Gen1",
+        "year_from": 1991,
+        "year_to": 2026
+      }
+    ],
+    "Massif": [
+      {
+        "name": "Gen1",
+        "year_from": 2008,
+        "year_to": 2012
+      }
+    ]
+  },
+  "JDM": {
+    "Abaca": [
+      {
+        "name": "Gen1",
+        "year_from": 2004,
+        "year_to": 2013
+      }
+    ],
+    "Aloes": [
+      {
+        "name": "Gen1",
+        "year_from": 2008,
+        "year_to": 2017
+      }
+    ],
+    "Roxsy": [
+      {
+        "name": "Gen1",
+        "year_from": 2013,
+        "year_to": 2020
+      }
+    ],
+    "Titane": [
+      {
+        "name": "Gen1",
+        "year_from": 2010,
+        "year_to": 2018
+      }
+    ],
+    "Xheos": [
+      {
+        "name": "Gen1",
+        "year_from": 2007,
+        "year_to": 2014
       }
     ]
   },
@@ -2368,6 +3963,50 @@
       }
     ]
   },
+  "KGM": {
+    "Actyon": [
+      {
+        "name": "Gen1",
+        "year_from": 2023,
+        "year_to": 2026
+      }
+    ],
+    "Korando": [
+      {
+        "name": "Gen1",
+        "year_from": 2023,
+        "year_to": 2026
+      }
+    ],
+    "Musso": [
+      {
+        "name": "Gen1",
+        "year_from": 2018,
+        "year_to": 2026
+      }
+    ],
+    "Rexton": [
+      {
+        "name": "Gen1",
+        "year_from": 2023,
+        "year_to": 2026
+      }
+    ],
+    "Tivoli": [
+      {
+        "name": "Gen1",
+        "year_from": 2023,
+        "year_to": 2026
+      }
+    ],
+    "Torres": [
+      {
+        "name": "Gen1",
+        "year_from": 2022,
+        "year_to": 2026
+      }
+    ]
+  },
   "Kia": {
     "Ceed": [
       {
@@ -2545,6 +4184,162 @@
       }
     ]
   },
+  "Lada": {
+    "110": [
+      {
+        "name": "Gen1",
+        "year_from": 1995,
+        "year_to": 2009
+      }
+    ],
+    "2107": [
+      {
+        "name": "Gen1",
+        "year_from": 1982,
+        "year_to": 2012
+      }
+    ],
+    "Granta": [
+      {
+        "name": "Gen1",
+        "year_from": 2011,
+        "year_to": 2026
+      }
+    ],
+    "Kalina": [
+      {
+        "name": "Gen1",
+        "year_from": 2004,
+        "year_to": 2018
+      }
+    ],
+    "Niva": [
+      {
+        "name": "Gen1",
+        "year_from": 1977,
+        "year_to": 2026
+      }
+    ],
+    "Priora": [
+      {
+        "name": "Gen1",
+        "year_from": 2007,
+        "year_to": 2018
+      }
+    ],
+    "Samara": [
+      {
+        "name": "Gen1",
+        "year_from": 1984,
+        "year_to": 2013
+      }
+    ],
+    "Vesta": [
+      {
+        "name": "Gen1",
+        "year_from": 2015,
+        "year_to": 2026
+      }
+    ]
+  },
+  "Lamborghini": {
+    "Aventador": [
+      {
+        "name": "Gen1",
+        "year_from": 2011,
+        "year_to": 2023
+      }
+    ],
+    "Countach": [
+      {
+        "name": "Gen1",
+        "year_from": 1974,
+        "year_to": 1990
+      },
+      {
+        "name": "Gen2",
+        "year_from": 2021,
+        "year_to": 2022
+      }
+    ],
+    "Diablo": [
+      {
+        "name": "Gen1",
+        "year_from": 1990,
+        "year_to": 2001
+      }
+    ],
+    "Gallardo": [
+      {
+        "name": "Gen1",
+        "year_from": 2003,
+        "year_to": 2014
+      }
+    ],
+    "Huracán": [
+      {
+        "name": "Gen1",
+        "year_from": 2014,
+        "year_to": 2025
+      }
+    ],
+    "Murciélago": [
+      {
+        "name": "Gen1",
+        "year_from": 2001,
+        "year_to": 2011
+      }
+    ],
+    "Revuelto": [
+      {
+        "name": "Gen1",
+        "year_from": 2023,
+        "year_to": 2026
+      }
+    ],
+    "Urus": [
+      {
+        "name": "Gen1",
+        "year_from": 2018,
+        "year_to": 2026
+      }
+    ]
+  },
+  "Lancia": {
+    "Delta": [
+      {
+        "name": "Mk2",
+        "year_from": 2008,
+        "year_to": 2014
+      }
+    ],
+    "Ypsilon": [
+      {
+        "name": "Mk2",
+        "year_from": 2003,
+        "year_to": 2011
+      },
+      {
+        "name": "Mk3",
+        "year_from": 2011,
+        "year_to": 2026
+      }
+    ],
+    "Musa": [
+      {
+        "name": "Mk1",
+        "year_from": 2004,
+        "year_to": 2012
+      }
+    ],
+    "Phedra": [
+      {
+        "name": "Mk1",
+        "year_from": 2002,
+        "year_to": 2010
+      }
+    ]
+  },
   "Land Rover": {
     "Discovery": [
       {
@@ -2663,11 +4458,581 @@
       }
     ]
   },
+  "Lexus": {
+    "CT": [
+      {
+        "name": "Gen1",
+        "year_from": 2010,
+        "year_to": 2023
+      }
+    ],
+    "ES": [
+      {
+        "name": "Gen1",
+        "year_from": 1989,
+        "year_to": 2026
+      }
+    ],
+    "GS": [
+      {
+        "name": "Gen1",
+        "year_from": 1993,
+        "year_to": 1997
+      },
+      {
+        "name": "Gen2",
+        "year_from": 1997,
+        "year_to": 2005
+      },
+      {
+        "name": "Gen3",
+        "year_from": 2005,
+        "year_to": 2011
+      },
+      {
+        "name": "Gen4",
+        "year_from": 2011,
+        "year_to": 2020
+      }
+    ],
+    "GX": [
+      {
+        "name": "Gen1",
+        "year_from": 2002,
+        "year_to": 2026
+      }
+    ],
+    "IS": [
+      {
+        "name": "Gen1",
+        "year_from": 1998,
+        "year_to": 2005
+      },
+      {
+        "name": "Gen2",
+        "year_from": 2005,
+        "year_to": 2013
+      },
+      {
+        "name": "Gen3",
+        "year_from": 2013,
+        "year_to": 2020
+      },
+      {
+        "name": "Gen4",
+        "year_from": 2020,
+        "year_to": 2026
+      }
+    ],
+    "LBX": [
+      {
+        "name": "Gen1",
+        "year_from": 2023,
+        "year_to": 2026
+      }
+    ],
+    "LC": [
+      {
+        "name": "Gen1",
+        "year_from": 2017,
+        "year_to": 2026
+      }
+    ],
+    "LM": [
+      {
+        "name": "Gen1",
+        "year_from": 2019,
+        "year_to": 2026
+      }
+    ],
+    "LS": [
+      {
+        "name": "Gen1",
+        "year_from": 1989,
+        "year_to": 2026
+      }
+    ],
+    "LX": [
+      {
+        "name": "Gen1",
+        "year_from": 1995,
+        "year_to": 2026
+      }
+    ],
+    "NX": [
+      {
+        "name": "Gen1",
+        "year_from": 2014,
+        "year_to": 2021
+      },
+      {
+        "name": "Gen2",
+        "year_from": 2021,
+        "year_to": 2026
+      }
+    ],
+    "RC": [
+      {
+        "name": "Gen1",
+        "year_from": 2014,
+        "year_to": 2026
+      }
+    ],
+    "RX": [
+      {
+        "name": "Gen1",
+        "year_from": 1998,
+        "year_to": 2003
+      },
+      {
+        "name": "Gen2",
+        "year_from": 2003,
+        "year_to": 2009
+      },
+      {
+        "name": "Gen3",
+        "year_from": 2009,
+        "year_to": 2015
+      },
+      {
+        "name": "Gen4",
+        "year_from": 2015,
+        "year_to": 2022
+      },
+      {
+        "name": "Gen5",
+        "year_from": 2022,
+        "year_to": 2026
+      }
+    ],
+    "RZ": [
+      {
+        "name": "Gen1",
+        "year_from": 2022,
+        "year_to": 2026
+      }
+    ],
+    "SC": [
+      {
+        "name": "Gen1",
+        "year_from": 1991,
+        "year_to": 2011
+      }
+    ],
+    "UX": [
+      {
+        "name": "Gen1",
+        "year_from": 2018,
+        "year_to": 2026
+      }
+    ]
+  },
   "Ligier": {
     "JS 50": [
       {
         "name": "Gen1",
         "year_from": 2012,
+        "year_to": 2026
+      }
+    ]
+  },
+  "Lotus": {
+    "Elan": [
+      {
+        "name": "Gen1",
+        "year_from": 1962,
+        "year_to": 1995
+      }
+    ],
+    "Eletre": [
+      {
+        "name": "Gen1",
+        "year_from": 2022,
+        "year_to": 2026
+      }
+    ],
+    "Elise": [
+      {
+        "name": "Gen1",
+        "year_from": 1996,
+        "year_to": 2022
+      }
+    ],
+    "Emira": [
+      {
+        "name": "Gen1",
+        "year_from": 2021,
+        "year_to": 2026
+      }
+    ],
+    "Esprit": [
+      {
+        "name": "Gen1",
+        "year_from": 1976,
+        "year_to": 2004
+      }
+    ],
+    "Europa": [
+      {
+        "name": "Gen1",
+        "year_from": 1966,
+        "year_to": 1975
+      },
+      {
+        "name": "Gen2",
+        "year_from": 2006,
+        "year_to": 2010
+      }
+    ],
+    "Evora": [
+      {
+        "name": "Gen1",
+        "year_from": 2009,
+        "year_to": 2022
+      }
+    ],
+    "Exige": [
+      {
+        "name": "Gen1",
+        "year_from": 2000,
+        "year_to": 2022
+      }
+    ],
+    "Seven": [
+      {
+        "name": "Gen1",
+        "year_from": 1957,
+        "year_to": 1973
+      }
+    ]
+  },
+  "Lynk & Co": {
+    "01": [
+      {
+        "name": "Gen1",
+        "year_from": 2017,
+        "year_to": 2026
+      }
+    ],
+    "02": [
+      {
+        "name": "Gen1",
+        "year_from": 2022,
+        "year_to": 2026
+      }
+    ],
+    "03": [
+      {
+        "name": "Gen1",
+        "year_from": 2018,
+        "year_to": 2026
+      }
+    ],
+    "09": [
+      {
+        "name": "Gen1",
+        "year_from": 2021,
+        "year_to": 2026
+      }
+    ]
+  },
+  "MG": {
+    "1100": [
+      {
+        "name": "Gen1",
+        "year_from": 1962,
+        "year_to": 1974
+      }
+    ],
+    "Cyberster": [
+      {
+        "name": "Gen1",
+        "year_from": 2024,
+        "year_to": 2026
+      }
+    ],
+    "EHS": [
+      {
+        "name": "Gen1",
+        "year_from": 2018,
+        "year_to": 2026
+      }
+    ],
+    "HS": [
+      {
+        "name": "Gen1",
+        "year_from": 2018,
+        "year_to": 2026
+      }
+    ],
+    "MG3": [
+      {
+        "name": "Gen1",
+        "year_from": 2013,
+        "year_to": 2026
+      }
+    ],
+    "MG4": [
+      {
+        "name": "Gen1",
+        "year_from": 2022,
+        "year_to": 2026
+      }
+    ],
+    "MG5": [
+      {
+        "name": "Gen1",
+        "year_from": 2020,
+        "year_to": 2026
+      }
+    ],
+    "MG6": [
+      {
+        "name": "Gen1",
+        "year_from": 2010,
+        "year_to": 2026
+      }
+    ],
+    "MGA": [
+      {
+        "name": "Gen1",
+        "year_from": 1955,
+        "year_to": 1963
+      }
+    ],
+    "MGB": [
+      {
+        "name": "Gen1",
+        "year_from": 1962,
+        "year_to": 1981
+      }
+    ],
+    "MGC": [
+      {
+        "name": "Gen1",
+        "year_from": 1967,
+        "year_to": 1970
+      }
+    ],
+    "MGF": [
+      {
+        "name": "Gen1",
+        "year_from": 1995,
+        "year_to": 2003
+      }
+    ],
+    "MGS5 EV": [
+      {
+        "name": "Gen1",
+        "year_from": 2024,
+        "year_to": 2026
+      }
+    ],
+    "Magnette": [
+      {
+        "name": "Gen1",
+        "year_from": 1953,
+        "year_to": 1969
+      }
+    ],
+    "Marvel R": [
+      {
+        "name": "Gen1",
+        "year_from": 2021,
+        "year_to": 2025
+      }
+    ],
+    "Midget": [
+      {
+        "name": "Gen1",
+        "year_from": 1961,
+        "year_to": 1981
+      }
+    ],
+    "TF": [
+      {
+        "name": "Gen1",
+        "year_from": 2002,
+        "year_to": 2006
+      },
+      {
+        "name": "Gen2",
+        "year_from": 2007,
+        "year_to": 2012
+      }
+    ],
+    "ZR": [
+      {
+        "name": "Gen1",
+        "year_from": 2001,
+        "year_to": 2006
+      }
+    ],
+    "ZS": [
+      {
+        "name": "Gen1",
+        "year_from": 2001,
+        "year_to": 2006
+      },
+      {
+        "name": "Gen2",
+        "year_from": 2017,
+        "year_to": 2026
+      }
+    ],
+    "ZT": [
+      {
+        "name": "Gen1",
+        "year_from": 2001,
+        "year_to": 2006
+      }
+    ]
+  },
+  "Man": {
+    "TGE": [
+      {
+        "name": "Gen1",
+        "year_from": 2017,
+        "year_to": 2026
+      }
+    ]
+  },
+  "Maserati": {
+    "3200 GT": [
+      {
+        "name": "Gen1",
+        "year_from": 1998,
+        "year_to": 2003
+      }
+    ],
+    "420": [
+      {
+        "name": "Gen1",
+        "year_from": 1985,
+        "year_to": 1991
+      }
+    ],
+    "Biturbo": [
+      {
+        "name": "Gen1",
+        "year_from": 1981,
+        "year_to": 1995
+      }
+    ],
+    "Coupé": [
+      {
+        "name": "Gen1",
+        "year_from": 2001,
+        "year_to": 2008
+      }
+    ],
+    "Ghibli": [
+      {
+        "name": "Gen1",
+        "year_from": 1966,
+        "year_to": 1974
+      },
+      {
+        "name": "Gen2",
+        "year_from": 1992,
+        "year_to": 1998
+      },
+      {
+        "name": "Gen3",
+        "year_from": 2013,
+        "year_to": 2025
+      }
+    ],
+    "GranCabrio": [
+      {
+        "name": "Gen1",
+        "year_from": 2010,
+        "year_to": 2026
+      }
+    ],
+    "GranTurismo": [
+      {
+        "name": "Gen1",
+        "year_from": 2007,
+        "year_to": 2026
+      }
+    ],
+    "Grecale": [
+      {
+        "name": "Gen1",
+        "year_from": 2022,
+        "year_to": 2026
+      }
+    ],
+    "Levante": [
+      {
+        "name": "Gen1",
+        "year_from": 2016,
+        "year_to": 2025
+      }
+    ],
+    "MC20": [
+      {
+        "name": "Gen1",
+        "year_from": 2020,
+        "year_to": 2026
+      }
+    ],
+    "Quattroporte": [
+      {
+        "name": "Gen1",
+        "year_from": 1963,
+        "year_to": 2026
+      }
+    ],
+    "Spyder": [
+      {
+        "name": "Gen1",
+        "year_from": 2001,
+        "year_to": 2008
+      }
+    ]
+  },
+  "Maxus": {
+    "Deliver 9": [
+      {
+        "name": "Gen1",
+        "year_from": 2020,
+        "year_to": 2026
+      }
+    ],
+    "Euniq 6": [
+      {
+        "name": "Gen1",
+        "year_from": 2020,
+        "year_to": 2026
+      }
+    ],
+    "Mifa 9": [
+      {
+        "name": "Gen1",
+        "year_from": 2022,
+        "year_to": 2026
+      }
+    ],
+    "T90": [
+      {
+        "name": "Gen1",
+        "year_from": 2021,
+        "year_to": 2026
+      }
+    ],
+    "eDeliver 3": [
+      {
+        "name": "Gen1",
+        "year_from": 2020,
+        "year_to": 2026
+      }
+    ],
+    "eDeliver 9": [
+      {
+        "name": "Gen1",
+        "year_from": 2020,
         "year_to": 2026
       }
     ]
@@ -2862,6 +5227,64 @@
         "name": "BJ",
         "year_from": 1998,
         "year_to": 2003
+      }
+    ]
+  },
+  "McLaren": {
+    "12C": [
+      {
+        "name": "Gen1",
+        "year_from": 2011,
+        "year_to": 2015
+      }
+    ],
+    "570": [
+      {
+        "name": "Gen1",
+        "year_from": 2015,
+        "year_to": 2022
+      }
+    ],
+    "600LT": [
+      {
+        "name": "Gen1",
+        "year_from": 2018,
+        "year_to": 2021
+      }
+    ],
+    "650": [
+      {
+        "name": "Gen1",
+        "year_from": 2014,
+        "year_to": 2017
+      }
+    ],
+    "720": [
+      {
+        "name": "Gen1",
+        "year_from": 2017,
+        "year_to": 2024
+      }
+    ],
+    "765LT": [
+      {
+        "name": "Gen1",
+        "year_from": 2020,
+        "year_to": 2023
+      }
+    ],
+    "Artura": [
+      {
+        "name": "Gen1",
+        "year_from": 2021,
+        "year_to": 2026
+      }
+    ],
+    "GT": [
+      {
+        "name": "Gen1",
+        "year_from": 2019,
+        "year_to": 2024
       }
     ]
   },
@@ -3230,6 +5653,57 @@
       }
     ]
   },
+  "Microcar": {
+    "Due": [
+      {
+        "name": "Gen1",
+        "year_from": 2008,
+        "year_to": 2017
+      }
+    ],
+    "Flex": [
+      {
+        "name": "Gen1",
+        "year_from": 2012,
+        "year_to": 2021
+      }
+    ],
+    "Highland": [
+      {
+        "name": "Gen1",
+        "year_from": 2013,
+        "year_to": 2020
+      }
+    ],
+    "M-8": [
+      {
+        "name": "Gen1",
+        "year_from": 2016,
+        "year_to": 2026
+      }
+    ],
+    "M.GO": [
+      {
+        "name": "Gen1",
+        "year_from": 2008,
+        "year_to": 2026
+      }
+    ],
+    "MC": [
+      {
+        "name": "Gen1",
+        "year_from": 1994,
+        "year_to": 2012
+      }
+    ],
+    "Virgo": [
+      {
+        "name": "Gen1",
+        "year_from": 1998,
+        "year_to": 2009
+      }
+    ]
+  },
   "Mini": {
     "Cooper": [
       {
@@ -3474,6 +5948,94 @@
         "name": "Mk3",
         "year_from": 2015,
         "year_to": 2026
+      }
+    ]
+  },
+  "Morgan": {
+    "3 Wheeler": [
+      {
+        "name": "Gen1",
+        "year_from": 2011,
+        "year_to": 2026
+      }
+    ],
+    "4/4": [
+      {
+        "name": "Gen1",
+        "year_from": 1936,
+        "year_to": 2019
+      }
+    ],
+    "Plus 4": [
+      {
+        "name": "Gen1",
+        "year_from": 1950,
+        "year_to": 2021
+      }
+    ],
+    "Plus 6": [
+      {
+        "name": "Gen1",
+        "year_from": 2019,
+        "year_to": 2026
+      }
+    ],
+    "Plus 8": [
+      {
+        "name": "Gen1",
+        "year_from": 1968,
+        "year_to": 2018
+      }
+    ],
+    "Roadster": [
+      {
+        "name": "Gen1",
+        "year_from": 2004,
+        "year_to": 2019
+      }
+    ]
+  },
+  "Morris": {
+    "1300": [
+      {
+        "name": "Gen1",
+        "year_from": 1967,
+        "year_to": 1975
+      }
+    ],
+    "Eight": [
+      {
+        "name": "Gen1",
+        "year_from": 1935,
+        "year_to": 1949
+      }
+    ],
+    "Marina": [
+      {
+        "name": "Gen1",
+        "year_from": 1971,
+        "year_to": 1980
+      }
+    ],
+    "Mini": [
+      {
+        "name": "Gen1",
+        "year_from": 1959,
+        "year_to": 1970
+      }
+    ],
+    "Minor": [
+      {
+        "name": "Gen1",
+        "year_from": 1948,
+        "year_to": 1972
+      }
+    ],
+    "Oxford": [
+      {
+        "name": "Gen1",
+        "year_from": 1948,
+        "year_to": 1971
       }
     ]
   },
@@ -4208,6 +6770,43 @@
       }
     ]
   },
+  "Polestar": {
+    "1": [
+      {
+        "name": "Gen1",
+        "year_from": 2019,
+        "year_to": 2022
+      }
+    ],
+    "2": [
+      {
+        "name": "Gen1",
+        "year_from": 2019,
+        "year_to": 2026
+      }
+    ],
+    "3": [
+      {
+        "name": "Gen1",
+        "year_from": 2022,
+        "year_to": 2026
+      }
+    ],
+    "4": [
+      {
+        "name": "Gen1",
+        "year_from": 2023,
+        "year_to": 2026
+      }
+    ],
+    "5": [
+      {
+        "name": "Gen1",
+        "year_from": 2025,
+        "year_to": 2026
+      }
+    ]
+  },
   "Pontiac": {
     "Trans-Sport": [
       {
@@ -4586,6 +7185,288 @@
       }
     ]
   },
+  "Riley": {
+    "Elf": [
+      {
+        "name": "Gen1",
+        "year_from": 1961,
+        "year_to": 1969
+      }
+    ],
+    "Kestrel": [
+      {
+        "name": "Gen1",
+        "year_from": 1935,
+        "year_to": 1940
+      }
+    ],
+    "One-Point-Five": [
+      {
+        "name": "Gen1",
+        "year_from": 1957,
+        "year_to": 1965
+      }
+    ],
+    "RMA": [
+      {
+        "name": "Gen1",
+        "year_from": 1945,
+        "year_to": 1953
+      }
+    ]
+  },
+  "Rolls Royce": {
+    "Camargue": [
+      {
+        "name": "Gen1",
+        "year_from": 1975,
+        "year_to": 1986
+      }
+    ],
+    "Corniche": [
+      {
+        "name": "Gen1",
+        "year_from": 1971,
+        "year_to": 2003
+      }
+    ],
+    "Cullinan": [
+      {
+        "name": "Gen1",
+        "year_from": 2018,
+        "year_to": 2026
+      }
+    ],
+    "Dawn": [
+      {
+        "name": "Gen1",
+        "year_from": 2015,
+        "year_to": 2024
+      }
+    ],
+    "Ghost": [
+      {
+        "name": "Gen1",
+        "year_from": 2009,
+        "year_to": 2026
+      }
+    ],
+    "Phantom": [
+      {
+        "name": "Gen1",
+        "year_from": 2003,
+        "year_to": 2026
+      }
+    ],
+    "Silver Cloud": [
+      {
+        "name": "Gen1",
+        "year_from": 1955,
+        "year_to": 1966
+      }
+    ],
+    "Silver Seraph": [
+      {
+        "name": "Gen1",
+        "year_from": 1998,
+        "year_to": 2003
+      }
+    ],
+    "Silver Shadow": [
+      {
+        "name": "Gen1",
+        "year_from": 1965,
+        "year_to": 1981
+      }
+    ],
+    "Silver Spirit": [
+      {
+        "name": "Gen1",
+        "year_from": 1980,
+        "year_to": 2000
+      }
+    ],
+    "Spectre": [
+      {
+        "name": "Gen1",
+        "year_from": 2023,
+        "year_to": 2026
+      }
+    ],
+    "Wraith": [
+      {
+        "name": "Gen1",
+        "year_from": 2013,
+        "year_to": 2024
+      }
+    ]
+  },
+  "Rover": {
+    "100": [
+      {
+        "name": "Gen1",
+        "year_from": 1994,
+        "year_to": 1999
+      }
+    ],
+    "200": [
+      {
+        "name": "Gen1",
+        "year_from": 1984,
+        "year_to": 2000
+      }
+    ],
+    "25": [
+      {
+        "name": "Gen1",
+        "year_from": 1999,
+        "year_to": 2006
+      }
+    ],
+    "400": [
+      {
+        "name": "Gen1",
+        "year_from": 1990,
+        "year_to": 2000
+      }
+    ],
+    "45": [
+      {
+        "name": "Gen1",
+        "year_from": 1999,
+        "year_to": 2006
+      }
+    ],
+    "600": [
+      {
+        "name": "Gen1",
+        "year_from": 1993,
+        "year_to": 2000
+      }
+    ],
+    "75": [
+      {
+        "name": "Gen1",
+        "year_from": 1998,
+        "year_to": 2006
+      }
+    ],
+    "800": [
+      {
+        "name": "Gen1",
+        "year_from": 1986,
+        "year_to": 2000
+      }
+    ],
+    "City Rover": [
+      {
+        "name": "Gen1",
+        "year_from": 2003,
+        "year_to": 2006
+      }
+    ],
+    "Metro": [
+      {
+        "name": "Gen1",
+        "year_from": 1980,
+        "year_to": 1999
+      }
+    ],
+    "P6": [
+      {
+        "name": "Gen1",
+        "year_from": 1963,
+        "year_to": 1978
+      }
+    ],
+    "SD1": [
+      {
+        "name": "Gen1",
+        "year_from": 1976,
+        "year_to": 1987
+      }
+    ],
+    "Streetwise": [
+      {
+        "name": "Gen1",
+        "year_from": 2003,
+        "year_to": 2006
+      }
+    ]
+  },
+  "Saab": {
+    "9-3": [
+      {
+        "name": "Gen1",
+        "year_from": 1998,
+        "year_to": 2003
+      },
+      {
+        "name": "Gen2",
+        "year_from": 2002,
+        "year_to": 2015
+      }
+    ],
+    "9-4X": [
+      {
+        "name": "Gen1",
+        "year_from": 2011,
+        "year_to": 2013
+      }
+    ],
+    "9-5": [
+      {
+        "name": "Gen1",
+        "year_from": 1997,
+        "year_to": 2010
+      },
+      {
+        "name": "Gen2",
+        "year_from": 2010,
+        "year_to": 2013
+      }
+    ],
+    "9-7X": [
+      {
+        "name": "Gen1",
+        "year_from": 2005,
+        "year_to": 2009
+      }
+    ],
+    "90": [
+      {
+        "name": "Gen1",
+        "year_from": 1984,
+        "year_to": 1988
+      }
+    ],
+    "900": [
+      {
+        "name": "Gen1",
+        "year_from": 1978,
+        "year_to": 1994
+      },
+      {
+        "name": "Gen2",
+        "year_from": 1993,
+        "year_to": 1999
+      }
+    ],
+    "9000": [
+      {
+        "name": "Gen1",
+        "year_from": 1984,
+        "year_to": 1999
+      }
+    ],
+    "99": [
+      {
+        "name": "Gen1",
+        "year_from": 1968,
+        "year_to": 1985
+      }
+    ]
+  },
   "Seat": {
     "Ibiza": [
       {
@@ -4725,6 +7606,185 @@
       }
     ]
   },
+  "Seres": {
+    "3": [
+      {
+        "name": "Gen1",
+        "year_from": 2019,
+        "year_to": 2026
+      }
+    ],
+    "5": [
+      {
+        "name": "Gen1",
+        "year_from": 2022,
+        "year_to": 2026
+      }
+    ]
+  },
+  "Skoda": {
+    "Fabia": [
+      {
+        "name": "Mk1",
+        "year_from": 1999,
+        "year_to": 2007
+      },
+      {
+        "name": "Mk2",
+        "year_from": 2007,
+        "year_to": 2014
+      },
+      {
+        "name": "Mk3",
+        "year_from": 2014,
+        "year_to": 2021
+      },
+      {
+        "name": "Mk4",
+        "year_from": 2021,
+        "year_to": 2026
+      }
+    ],
+    "Octavia": [
+      {
+        "name": "1959",
+        "year_from": 1959,
+        "year_to": 1971
+      },
+      {
+        "name": "Mk1",
+        "year_from": 1996,
+        "year_to": 2004
+      },
+      {
+        "name": "Mk2",
+        "year_from": 2004,
+        "year_to": 2013
+      },
+      {
+        "name": "Mk3",
+        "year_from": 2013,
+        "year_to": 2020
+      },
+      {
+        "name": "Mk4",
+        "year_from": 2020,
+        "year_to": 2026
+      }
+    ],
+    "Superb": [
+      {
+        "name": "Mk1",
+        "year_from": 2001,
+        "year_to": 2008
+      },
+      {
+        "name": "Mk2",
+        "year_from": 2008,
+        "year_to": 2015
+      },
+      {
+        "name": "Mk3",
+        "year_from": 2015,
+        "year_to": 2024
+      },
+      {
+        "name": "Mk4",
+        "year_from": 2024,
+        "year_to": 2026
+      }
+    ],
+    "Kodiaq": [
+      {
+        "name": "Mk1",
+        "year_from": 2017,
+        "year_to": 2024
+      },
+      {
+        "name": "Mk2",
+        "year_from": 2024,
+        "year_to": 2026
+      }
+    ],
+    "Karoq": [
+      {
+        "name": "Mk1",
+        "year_from": 2017,
+        "year_to": 2026
+      }
+    ],
+    "Yeti": [
+      {
+        "name": "Mk1",
+        "year_from": 2009,
+        "year_to": 2017
+      }
+    ],
+    "Roomster": [
+      {
+        "name": "Mk1",
+        "year_from": 2006,
+        "year_to": 2015
+      }
+    ],
+    "Citigo": [
+      {
+        "name": "Mk1",
+        "year_from": 2011,
+        "year_to": 2020
+      }
+    ],
+    "Rapid": [
+      {
+        "name": "India",
+        "year_from": 2011,
+        "year_to": 2021
+      },
+      {
+        "name": "Mk1",
+        "year_from": 2012,
+        "year_to": 2019
+      },
+      {
+        "name": "2012",
+        "year_from": 2012,
+        "year_to": 2019
+      }
+    ],
+    "Scala": [
+      {
+        "name": "Mk1",
+        "year_from": 2019,
+        "year_to": 2026
+      }
+    ],
+    "Kamiq": [
+      {
+        "name": "China",
+        "year_from": 2018,
+        "year_to": 2026
+      },
+      {
+        "name": "Mk1",
+        "year_from": 2019,
+        "year_to": 2026
+      }
+    ],
+    "Enyaq": [
+      {
+        "name": "Mk1",
+        "year_from": 2020,
+        "year_to": 2026
+      }
+    ],
+    "Felicia": [
+      {
+        "name": "1959–1964",
+        "year_from": 1959,
+        "year_to": 1964
+      }
+    ]
+  },
   "Smart": {
     "ForTwo": [
       {
@@ -4760,6 +7820,76 @@
         "name": "452",
         "year_from": 2003,
         "year_to": 2006
+      }
+    ]
+  },
+  "SsangYong": {
+    "Actyon": [
+      {
+        "name": "Gen1",
+        "year_from": 2005,
+        "year_to": 2019
+      }
+    ],
+    "Korando": [
+      {
+        "name": "Gen1",
+        "year_from": 1983,
+        "year_to": 2026
+      }
+    ],
+    "Kyron": [
+      {
+        "name": "Gen1",
+        "year_from": 2005,
+        "year_to": 2015
+      }
+    ],
+    "Musso": [
+      {
+        "name": "Gen1",
+        "year_from": 1993,
+        "year_to": 2006
+      },
+      {
+        "name": "Gen2",
+        "year_from": 2018,
+        "year_to": 2026
+      }
+    ],
+    "Rexton": [
+      {
+        "name": "Gen1",
+        "year_from": 2001,
+        "year_to": 2026
+      }
+    ],
+    "Rodius": [
+      {
+        "name": "Gen1",
+        "year_from": 2004,
+        "year_to": 2020
+      }
+    ],
+    "Tivoli": [
+      {
+        "name": "Gen1",
+        "year_from": 2015,
+        "year_to": 2026
+      }
+    ],
+    "Turismo": [
+      {
+        "name": "Gen1",
+        "year_from": 2013,
+        "year_to": 2020
+      }
+    ],
+    "XLV": [
+      {
+        "name": "Gen1",
+        "year_from": 2016,
+        "year_to": 2020
       }
     ]
   },
@@ -4969,6 +8099,50 @@
         "name": "SJ",
         "year_from": 1985,
         "year_to": 2004
+      }
+    ]
+  },
+  "Tata": {
+    "Aria": [
+      {
+        "name": "Gen1",
+        "year_from": 2010,
+        "year_to": 2017
+      }
+    ],
+    "Indica": [
+      {
+        "name": "Gen1",
+        "year_from": 1998,
+        "year_to": 2018
+      }
+    ],
+    "Nano": [
+      {
+        "name": "Gen1",
+        "year_from": 2008,
+        "year_to": 2018
+      }
+    ],
+    "Safari": [
+      {
+        "name": "Gen1",
+        "year_from": 1998,
+        "year_to": 2026
+      }
+    ],
+    "Telcoline": [
+      {
+        "name": "Gen1",
+        "year_from": 1988,
+        "year_to": 2005
+      }
+    ],
+    "Xenon": [
+      {
+        "name": "Gen1",
+        "year_from": 2007,
+        "year_to": 2020
       }
     ]
   },
@@ -5361,6 +8535,243 @@
         "name": "H200",
         "year_from": 2004,
         "year_to": 2026
+      }
+    ]
+  },
+  "Triumph": {
+    "2000": [
+      {
+        "name": "Gen1",
+        "year_from": 1963,
+        "year_to": 1978
+      }
+    ],
+    "Acclaim": [
+      {
+        "name": "Gen1",
+        "year_from": 1981,
+        "year_to": 1985
+      }
+    ],
+    "Dolomite": [
+      {
+        "name": "Gen1",
+        "year_from": 1972,
+        "year_to": 1981
+      }
+    ],
+    "GT6": [
+      {
+        "name": "Gen1",
+        "year_from": 1966,
+        "year_to": 1974
+      }
+    ],
+    "Herald": [
+      {
+        "name": "Gen1",
+        "year_from": 1959,
+        "year_to": 1972
+      }
+    ],
+    "Spitfire": [
+      {
+        "name": "Gen1",
+        "year_from": 1962,
+        "year_to": 1981
+      }
+    ],
+    "Stag": [
+      {
+        "name": "Gen1",
+        "year_from": 1970,
+        "year_to": 1978
+      }
+    ],
+    "TR2": [
+      {
+        "name": "Gen1",
+        "year_from": 1953,
+        "year_to": 1956
+      }
+    ],
+    "TR3": [
+      {
+        "name": "Gen1",
+        "year_from": 1955,
+        "year_to": 1962
+      }
+    ],
+    "TR4": [
+      {
+        "name": "Gen1",
+        "year_from": 1961,
+        "year_to": 1968
+      }
+    ],
+    "TR5": [
+      {
+        "name": "Gen1",
+        "year_from": 1967,
+        "year_to": 1969
+      }
+    ],
+    "TR6": [
+      {
+        "name": "Gen1",
+        "year_from": 1968,
+        "year_to": 1977
+      }
+    ],
+    "TR7": [
+      {
+        "name": "Gen1",
+        "year_from": 1974,
+        "year_to": 1982
+      }
+    ],
+    "TR8": [
+      {
+        "name": "Gen1",
+        "year_from": 1978,
+        "year_to": 1982
+      }
+    ],
+    "Vitesse": [
+      {
+        "name": "Gen1",
+        "year_from": 1962,
+        "year_to": 1972
+      }
+    ]
+  },
+  "UMM": {
+    "Alter": [
+      {
+        "name": "Gen1",
+        "year_from": 1978,
+        "year_to": 1996
+      }
+    ],
+    "Alter II": [
+      {
+        "name": "Gen1",
+        "year_from": 1985,
+        "year_to": 1996
+      }
+    ],
+    "Alter Turbo": [
+      {
+        "name": "Gen1",
+        "year_from": 1987,
+        "year_to": 1996
+      }
+    ],
+    "Cournil": [
+      {
+        "name": "Gen1",
+        "year_from": 1977,
+        "year_to": 1986
+      }
+    ]
+  },
+  "Vanderhall": {
+    "Brawley": [
+      {
+        "name": "Gen1",
+        "year_from": 2022,
+        "year_to": 2026
+      }
+    ],
+    "Carmel": [
+      {
+        "name": "Gen1",
+        "year_from": 2019,
+        "year_to": 2026
+      }
+    ],
+    "Venice": [
+      {
+        "name": "Gen1",
+        "year_from": 2016,
+        "year_to": 2026
+      }
+    ]
+  },
+  "Vauxhall": {
+    "Astra": [
+      {
+        "name": "Gen1",
+        "year_from": 1979,
+        "year_to": 2026
+      }
+    ],
+    "Cavalier": [
+      {
+        "name": "Gen1",
+        "year_from": 1975,
+        "year_to": 1995
+      }
+    ],
+    "Corsa": [
+      {
+        "name": "Gen1",
+        "year_from": 1993,
+        "year_to": 2026
+      }
+    ],
+    "Frontera": [
+      {
+        "name": "Gen1",
+        "year_from": 1991,
+        "year_to": 2004
+      }
+    ],
+    "Insignia": [
+      {
+        "name": "Gen1",
+        "year_from": 2008,
+        "year_to": 2023
+      }
+    ],
+    "Mokka": [
+      {
+        "name": "Gen1",
+        "year_from": 2012,
+        "year_to": 2026
+      }
+    ],
+    "Nova": [
+      {
+        "name": "Gen1",
+        "year_from": 1983,
+        "year_to": 1993
+      }
+    ],
+    "Vectra": [
+      {
+        "name": "Gen1",
+        "year_from": 1988,
+        "year_to": 2008
+      }
+    ],
+    "Viva": [
+      {
+        "name": "Gen1",
+        "year_from": 1963,
+        "year_to": 1979
+      },
+      {
+        "name": "Gen2",
+        "year_from": 2015,
+        "year_to": 2019
+      }
+    ],
+    "Zafira": [
+      {
+        "name": "Gen1",
+        "year_from": 1999,
+        "year_to": 2019
       }
     ]
   },
@@ -5886,267 +9297,56 @@
       }
     ]
   },
-  "Skoda": {
-    "Fabia": [
+  "XEV": {
+    "Yoyo": [
       {
-        "name": "Mk1",
-        "year_from": 1999,
-        "year_to": 2007
-      },
+        "name": "Gen1",
+        "year_from": 2021,
+        "year_to": 2026
+      }
+    ]
+  },
+  "Xpeng": {
+    "G3": [
       {
-        "name": "Mk2",
-        "year_from": 2007,
-        "year_to": 2014
-      },
+        "name": "Gen1",
+        "year_from": 2018,
+        "year_to": 2026
+      }
+    ],
+    "G6": [
       {
-        "name": "Mk3",
-        "year_from": 2014,
-        "year_to": 2021
-      },
+        "name": "Gen1",
+        "year_from": 2023,
+        "year_to": 2026
+      }
+    ],
+    "G9": [
       {
-        "name": "Mk4",
+        "name": "Gen1",
+        "year_from": 2022,
+        "year_to": 2026
+      }
+    ],
+    "P5": [
+      {
+        "name": "Gen1",
         "year_from": 2021,
         "year_to": 2026
       }
     ],
-    "Octavia": [
+    "P7": [
       {
-        "name": "1959",
-        "year_from": 1959,
-        "year_to": 1971
-      },
-      {
-        "name": "Mk1",
-        "year_from": 1996,
-        "year_to": 2004
-      },
-      {
-        "name": "Mk2",
-        "year_from": 2004,
-        "year_to": 2013
-      },
-      {
-        "name": "Mk3",
-        "year_from": 2013,
-        "year_to": 2020
-      },
-      {
-        "name": "Mk4",
+        "name": "Gen1",
         "year_from": 2020,
         "year_to": 2026
       }
     ],
-    "Superb": [
+    "X9": [
       {
-        "name": "Mk1",
-        "year_from": 2001,
-        "year_to": 2008
-      },
-      {
-        "name": "Mk2",
-        "year_from": 2008,
-        "year_to": 2015
-      },
-      {
-        "name": "Mk3",
-        "year_from": 2015,
-        "year_to": 2024
-      },
-      {
-        "name": "Mk4",
-        "year_from": 2024,
+        "name": "Gen1",
+        "year_from": 2023,
         "year_to": 2026
-      }
-    ],
-    "Kodiaq": [
-      {
-        "name": "Mk1",
-        "year_from": 2017,
-        "year_to": 2024
-      },
-      {
-        "name": "Mk2",
-        "year_from": 2024,
-        "year_to": 2026
-      }
-    ],
-    "Karoq": [
-      {
-        "name": "Mk1",
-        "year_from": 2017,
-        "year_to": 2026
-      }
-    ],
-    "Yeti": [
-      {
-        "name": "Mk1",
-        "year_from": 2009,
-        "year_to": 2017
-      }
-    ],
-    "Roomster": [
-      {
-        "name": "Mk1",
-        "year_from": 2006,
-        "year_to": 2015
-      }
-    ],
-    "Citigo": [
-      {
-        "name": "Mk1",
-        "year_from": 2011,
-        "year_to": 2020
-      }
-    ],
-    "Rapid": [
-      {
-        "name": "India",
-        "year_from": 2011,
-        "year_to": 2021
-      },
-      {
-        "name": "Mk1",
-        "year_from": 2012,
-        "year_to": 2019
-      },
-      {
-        "name": "2012",
-        "year_from": 2012,
-        "year_to": 2019
-      }
-    ],
-    "Scala": [
-      {
-        "name": "Mk1",
-        "year_from": 2019,
-        "year_to": 2026
-      }
-    ],
-    "Kamiq": [
-      {
-        "name": "China",
-        "year_from": 2018,
-        "year_to": 2026
-      },
-      {
-        "name": "Mk1",
-        "year_from": 2019,
-        "year_to": 2026
-      }
-    ],
-    "Enyaq": [
-      {
-        "name": "Mk1",
-        "year_from": 2020,
-        "year_to": 2026
-      }
-    ],
-    "Felicia": [
-      {
-        "name": "1959–1964",
-        "year_from": 1959,
-        "year_to": 1964
-      }
-    ]
-  },
-  "Chevrolet": {
-    "Aveo": [
-      {
-        "name": "T200",
-        "year_from": 2002,
-        "year_to": 2011
-      },
-      {
-        "name": "T300",
-        "year_from": 2011,
-        "year_to": 2020
-      }
-    ],
-    "Cruze": [
-      {
-        "name": "J300",
-        "year_from": 2008,
-        "year_to": 2016
-      }
-    ],
-    "Captiva": [
-      {
-        "name": "C100",
-        "year_from": 2006,
-        "year_to": 2018
-      }
-    ],
-    "Spark": [
-      {
-        "name": "M200",
-        "year_from": 2005,
-        "year_to": 2010
-      },
-      {
-        "name": "M300",
-        "year_from": 2010,
-        "year_to": 2015
-      },
-      {
-        "name": "M400",
-        "year_from": 2015,
-        "year_to": 2022
-      }
-    ],
-    "Trax": [
-      {
-        "name": "Mk1",
-        "year_from": 2013,
-        "year_to": 2022
-      }
-    ],
-    "Lacetti": [
-      {
-        "name": "J200",
-        "year_from": 2003,
-        "year_to": 2009
-      }
-    ],
-    "Matiz": [
-      {
-        "name": "M150",
-        "year_from": 2005,
-        "year_to": 2010
-      }
-    ]
-  },
-  "Lancia": {
-    "Delta": [
-      {
-        "name": "Mk2",
-        "year_from": 2008,
-        "year_to": 2014
-      }
-    ],
-    "Ypsilon": [
-      {
-        "name": "Mk2",
-        "year_from": 2003,
-        "year_to": 2011
-      },
-      {
-        "name": "Mk3",
-        "year_from": 2011,
-        "year_to": 2026
-      }
-    ],
-    "Musa": [
-      {
-        "name": "Mk1",
-        "year_from": 2004,
-        "year_to": 2012
-      }
-    ],
-    "Phedra": [
-      {
-        "name": "Mk1",
-        "year_from": 2002,
-        "year_to": 2010
       }
     ]
   }

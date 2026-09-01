@@ -639,5 +639,205 @@
     "Qashqai +2": "Qashqai",
     "Pick Up": "Navara",
     "Pick-Up": "Navara"
+  },
+  "Abarth": {
+    "500 C": "500C",
+    "595C": "595",
+    "695C": "695",
+    "Abarth 500": "500",
+    "Abarth 595": "595"
+  },
+  "Aston Martin": {
+    "DB11 Coupé": "DB11",
+    "DB11 Volante": "DB11",
+    "DB12 Coupé": "DB12",
+    "DB7 Vantage Coupé": "DB7",
+    "DB7 Vantage Volante": "DB7",
+    "DB9 Coupé": "DB9",
+    "DB9 Volante": "DB9",
+    "DBS Superleggera": "DBS",
+    "V8 Vantage": "Vantage",
+    "Vantage Coupe": "Vantage",
+    "Vantage Coupé": "Vantage",
+    "Vantage Roadster": "Vantage"
+  },
+  "Austin Healey": {
+    "Sprite Mk II": "Sprite",
+    "Sprite Mk III": "Sprite",
+    "Sprite Mk IV": "Sprite"
+  },
+  "Bedford": {
+    "CF 250": "CF"
+  },
+  "Bentley": {
+    "Continental Cabrio": "Continental",
+    "Continental Flying Spur": "Flying Spur",
+    "Continental GT": "Continental",
+    "Continental GTC": "Continental",
+    "Continental Supersports": "Continental"
+  },
+  "Caterham": {
+    "Seven 270": "Seven",
+    "Seven 360": "Seven",
+    "Seven 485": "Seven",
+    "Seven 620": "Seven"
+  },
+  "Chrysler": {
+    "300C": "300 C",
+    "LeBaron": "Le Baron",
+    "Voyager Grand": "Grand Voyager"
+  },
+  "Daewoo": {
+    "Nubira SW": "Nubira",
+    "Nubira Wagon": "Nubira"
+  },
+  "Ferrari": {
+    "296 GTS": "296 GTB",
+    "458 Italia": "458",
+    "458 Spider": "458",
+    "488 GTB": "488",
+    "488 Spider": "488",
+    "812 Superfast": "812",
+    "California T": "California",
+    "F8 Spider": "F8",
+    "F8 Tributo": "F8",
+    "Portofino M": "Portofino",
+    "SF90 Spider": "SF90",
+    "SF90 Stradale": "SF90"
+  },
+  "KGM": {
+    "Torres EVX": "Torres"
+  },
+  "Lamborghini": {
+    "Aventador Roadster": "Aventador",
+    "Gallardo Spyder": "Gallardo",
+    "Huracán Evo": "Huracán",
+    "Huracán Spyder": "Huracán"
+  },
+  "Lexus": {
+    "CT 200h": "CT",
+    "ES 250": "ES",
+    "ES 300h": "ES",
+    "GS 200t": "GS",
+    "GS 250": "GS",
+    "GS 300": "GS",
+    "GS 300h": "GS",
+    "GS 350": "GS",
+    "GS 430": "GS",
+    "GS 450h": "GS",
+    "GS 460": "GS",
+    "GS F": "GS",
+    "IS 200": "IS",
+    "IS 200d": "IS",
+    "IS 200t": "IS",
+    "IS 220": "IS",
+    "IS 220d": "IS",
+    "IS 250": "IS",
+    "IS 300": "IS",
+    "IS 300h": "IS",
+    "IS 350": "IS",
+    "IS F": "IS",
+    "LC 500": "LC",
+    "LC 500h": "LC",
+    "LS 430": "LS",
+    "LS 460": "LS",
+    "LS 500": "LS",
+    "LS 500h": "LS",
+    "LS 600h": "LS",
+    "NX 200t": "NX",
+    "NX 300": "NX",
+    "NX 300h": "NX",
+    "NX 350h": "NX",
+    "NX 450h": "NX",
+    "RC 200t": "RC",
+    "RC 300h": "RC",
+    "RC 350": "RC",
+    "RC F": "RC",
+    "RX 200t": "RX",
+    "RX 300": "RX",
+    "RX 350": "RX",
+    "RX 350h": "RX",
+    "RX 400": "RX",
+    "RX 400h": "RX",
+    "RX 450h": "RX",
+    "RX 450h+": "RX",
+    "RX 500h": "RX",
+    "SC 430": "SC",
+    "UX 200": "UX",
+    "UX 250h": "UX",
+    "UX 300e": "UX",
+    "UX 300h": "UX"
+  },
+  "Lotus": {
+    "Super Seven": "Seven"
+  },
+  "MG": {
+    "HS PHEV": "HS",
+    "MG ZS": "ZS",
+    "MG4 EV": "MG4",
+    "MG6 Magnette": "MG6",
+    "ZS EV": "ZS"
+  },
+  "Maserati": {
+    "3200": "3200 GT",
+    "4200": "Coupé",
+    "GranTurismo Sport": "GranTurismo",
+    "Grancabrio": "GranCabrio",
+    "Granturismo": "GranTurismo",
+    "Quattroporte S": "Quattroporte"
+  },
+  "McLaren": {
+    "570GT": "570",
+    "570S": "570",
+    "650S": "650",
+    "720S": "720"
+  },
+  "Rover": {
+    "111": "100",
+    "114": "100",
+    "115": "100",
+    "2000": "P6",
+    "213": "200",
+    "214": "200",
+    "214 Cabriolet": "200",
+    "216": "200",
+    "218": "200",
+    "220": "200",
+    "25 Cabriolet": "25",
+    "414": "400",
+    "416": "400",
+    "418": "400",
+    "420": "400",
+    "45 Sedan": "45",
+    "618": "600",
+    "620": "600",
+    "623": "600",
+    "75 Tourer": "75",
+    "820": "800",
+    "825": "800",
+    "827": "800"
+  },
+  "Saab": {
+    "9-3 Cabrio": "9-3",
+    "9-3 Cabriolet": "9-3",
+    "9-3 Sport Hatch": "9-3",
+    "9-3 Sport Sedan": "9-3",
+    "9-3 SportCombi": "9-3",
+    "9-3 SportSedan": "9-3",
+    "9-5 Estate": "9-5",
+    "9-5 SportWagon": "9-5",
+    "900 Cabrio": "900",
+    "900 Cabriolet": "900"
+  },
+  "SsangYong": {
+    "Korando Sports": "Korando",
+    "Musso Grand": "Musso"
+  },
+  "Triumph": {
+    "Spitfire Mk IV": "Spitfire",
+    "TR6 Roadster": "TR6"
+  },
+  "Vanderhall": {
+    "Carmel GT": "Carmel"
   }
 }

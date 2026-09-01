@@ -116,3 +116,38 @@ class TestModelAliases:
         aliases = _get_model_aliases()
         for model in ("C 220", "E 220", "CLA 180"):
             assert model in aliases["Mercedes-Benz"]
+
+
+class TestBrandsBeyondTheOriginalThirtyEight:
+    def test_lexus_trim_names_resolve(self):
+        assert get_generation("Lexus", "IS 220", 2008) is not None
+        assert get_generation("Lexus", "CT 200h", 2015) is not None
+        assert get_generation("Lexus", "RX 450h", 2011) is not None
+
+    def test_mg_split_generations(self):
+        assert get_generation("MG", "ZS", 2004) is not None
+        assert get_generation("MG", "ZS", 2022) is not None
+        assert get_generation("MG", "MG4", 2024) is not None
+
+    def test_rover_numeric_models_fold_into_families(self):
+        assert get_generation("Rover", "214", 1994) is not None
+        assert get_generation("Rover", "620", 1996) is not None
+        assert get_generation("Rover", "75 Tourer", 2002) is not None
+
+    def test_saab_body_variants_resolve(self):
+        assert get_generation("Saab", "9-3 Cabriolet", 2004) is not None
+        assert get_generation("Saab", "9-5 SportWagon", 2001) is not None
+
+    def test_recent_electric_brands_resolve(self):
+        assert get_generation("BYD", "Atto 3", 2023) is not None
+        assert get_generation("Polestar", "2", 2022) is not None
+        assert get_generation("Xpeng", "G6", 2024) is not None
+
+    def test_chrysler_european_line_up_resolves(self):
+        assert get_generation("Chrysler", "Grand Voyager", 2005) is not None
+        assert get_generation("Chrysler", "300 C", 2007) is not None
+        assert get_generation("Chrysler", "PT Cruiser", 2002) is not None
+
+    def test_abarth_is_not_fiat(self):
+        assert get_generation("Abarth", "595", 2019) is not None
+        assert get_generation("Abarth", "500", 2011) is not None
