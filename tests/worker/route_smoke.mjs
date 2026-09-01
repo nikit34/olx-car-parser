@@ -603,7 +603,16 @@ await check("a wave gates the router, the sitemap and the on-page links together
   assert(feed.by_fuel.every(c => c.page === null) && feed.by_transmission.every(c => c.page === null),
     "JSON feed advertises facet pages the wave hides");
   const insideFeed = await (await g(`/preco/${inWave[0]}.json`)).json();
-  for (const c of insideFeed.by_year.filter(x => x.page)) {
+  const advertisedInside = insideFeed.by_year.filter(x => x.page);
+  assert(advertisedInside.length > 0,
+    "the deepest model in the wave advertises no year page at all — the feed lost its link graph");
+  assert(insideFeed.related.depreciation || insideFeed.related.liquidity,
+    "the feed advertises no related page for the deepest model in the wave");
+  assert(insideFeed.related.facets.length > 0,
+    "the feed advertises no facet page for the deepest model in the wave");
+  assert(insideFeed.by_fuel.some(c => c.page) || insideFeed.by_transmission.some(c => c.page),
+    "the feed carries facet breakdowns but no addresses for any of them");
+  for (const c of advertisedInside) {
     assert((await g(new URL(c.page).pathname)).status === 200,
       `JSON feed advertises ${c.page} but it answers otherwise`);
   }

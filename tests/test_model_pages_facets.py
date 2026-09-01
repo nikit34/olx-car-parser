@@ -11,6 +11,7 @@ from __future__ import annotations
 import pandas as pd
 
 from src.analytics.model_pages import (
+    MAX_YEAR_ROWS,
     MIN_DISTRICT_N,
     MIN_FACET_N,
     MIN_MATCH_YEARS,
@@ -275,14 +276,42 @@ class TestPublishHysteresis:
         prev = {"models": {"volkswagen-golf": {"b": "Volkswagen", "m": "Golf", "yr": []}}}
         assert "volkswagen-golf" not in build_model_pages(_listings(rows), published=prev)["models"]
 
-    def test_a_published_year_survives_a_dip(self):
-        rows = _spread([2012, 2014, 2016], 8, price=6000) + _make(n=3, year=2018, start=800)
-        plain = build_model_pages(_listings(rows))["models"]["volkswagen-golf"]
-        assert 2018 not in {c["y"] for c in plain["yr"]}
-        prev = {"models": {"volkswagen-golf": {"yr": [{"y": 2018}]}}}
+    def test_a_thin_row_is_never_retained_at_the_cost_of_its_band(self):
+        """A row under the cell floor carries no URL, so retaining it saves no
+        indexed address - but standing alone breaks the band it would have
+        joined, and a lone leftover neighbour is not published at all. The cell
+        floor therefore gets no hysteresis; only the page floor does."""
+        rows = (_spread([2016, 2018], 20, price=6000)
+                + _make(n=4, year=2003, start=700) + _make(n=4, year=2004, start=800))
+        prev = {"models": {"volkswagen-golf": {"yr": [{"y": 2003, "n": 4}]}}}
         kept = build_model_pages(_listings(rows), published=prev)["models"]["volkswagen-golf"]
-        cell = next((c for c in kept["yr"] if c["y"] == 2018), None)
-        assert cell is not None and cell["n"] == 3
+        years = {str(c["y"]) for c in kept["yr"]}
+        assert "2003-2004" in years, f"band was broken by a retained thin row: {sorted(years)}"
+        assert 2003 not in {c["y"] for c in kept["yr"] if isinstance(c["y"], int)}
+
+    def test_a_row_cap_never_evicts_a_page(self):
+        """Year rows are capped at MAX_YEAR_ROWS. A retained page must not be
+        pushed out by a newer row that has no page of its own."""
+        rows = []
+        for i, y in enumerate(range(1996, 1996 + MAX_YEAR_ROWS)):
+            rows += _make(n=12, year=y, price=5000, start=i * 100)
+        rows += _make(n=8, year=2030, price=9000, start=9000)
+        prev = {"models": {"volkswagen-golf": {
+            "yr": [{"y": y, "n": 12, "pg": 1} for y in range(1996, 1996 + MAX_YEAR_ROWS)]
+                  + [{"y": 2030, "n": 11, "pg": 1}]}}}
+        kept = build_model_pages(_listings(rows), published=prev)["models"]["volkswagen-golf"]
+        pages = {c["y"] for c in kept["yr"] if c.get("pg")}
+        assert 1996 in pages, f"the row cap evicted a live page: {sorted(pages)}"
+
+    def test_the_first_build_after_pg_ships_still_knows_what_was_published(self):
+        """No blob in existence carries `pg` yet. If the builder learned the
+        published set only from that key, the retirement floor would be dead on
+        exactly the build that introduces it."""
+        rows = _spread([2012, 2014], 20, price=6000) + _make(n=8, year=2018, start=800)
+        prev_without_pg = {"models": {"volkswagen-golf": {"yr": [{"y": 2018, "n": 11}]}}}
+        kept = build_model_pages(_listings(rows), published=prev_without_pg)["models"]["volkswagen-golf"]
+        cell = next(c for c in kept["yr"] if c["y"] == 2018)
+        assert cell.get("pg") == 1, "a page served today was forgotten because the blob predates `pg`"
 
     def test_a_year_that_had_its_own_url_keeps_it_through_a_dip(self):
         """The floor that decides a /preco/{slug}/{ano} URL is 10, not 5, and it

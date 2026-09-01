@@ -114,7 +114,9 @@ check("year pages all clear the publishing floor", () => {
   assert(yearPages.length > 0, "no year pages at all");
   for (const [s, y] of yearPages) {
     const c = yearCell(models[s], y);
-    assert(c && c.n >= MIN_YEAR_PAGE_N, `${s}/${y} below the floor`);
+    assert(c, `${s}/${y} has no cell`);
+    assert(c.pg !== undefined ? !!c.pg : c.n >= MIN_YEAR_PAGE_N,
+      `${s}/${y} is served but clears neither its pg flag nor the floor (n=${c.n}, pg=${c.pg})`);
     assert(typeof c.y === "number", `${s}/${y} is a band, not a year`);
   }
 });
@@ -222,16 +224,22 @@ check("model page renders with its new blocks", () => {
     altJson: `https://${HOST}/preco/${deep}.json`,
   });
   assertPage(html, { indexable: true, canonical: `https://${HOST}/preco/${deep}`, label: "model" });
-  assert(/não preços de venda fechados/.test(html),
-    "the model page no longer says these are not closed-sale prices");
-  assert(/preços <b>pedidos<\/b>|preços PEDIDOS/.test(html),
-    "the model page no longer says the prices are asking prices");
-  assert(html.includes('href="/metodologia"'),
-    "the model page cites a method it does not link");
-  assert(/ISV/.test(html),
-    "the model page lost the one caveat it cannot restate elsewhere: an import's unpaid ISV");
-  assert(/anunciados no OLX/.test(html),
-    "the model page claims a population wider than the corpus it measures");
+  const trustBox = (html.match(/Como lemos estes números\.[\s\S]*?<\/span>/) || [])[0] || "";
+  assert(trustBox, "the model page lost the 'Como lemos estes números' disclosure entirely");
+  assert(/não preços de venda fechados/.test(trustBox),
+    "the disclosure no longer says these are not closed-sale prices");
+  assert(/preços <b>pedidos<\/b>/.test(trustBox),
+    "the disclosure no longer says the prices are asking prices");
+  assert(/ISV/.test(trustBox),
+    "the disclosure lost the one caveat the page cannot restate elsewhere: an import's unpaid ISV");
+  assert(trustBox.includes('href="/metodologia"'),
+    "the disclosure cites a method it does not link");
+  const sellerCta = (html.match(/Vais vender o teu[\s\S]{0,600}?<\/section>/) || [])[0] || "";
+  assert(sellerCta, "the model page lost its seller CTA");
+  assert(/anunciados no OLX/.test(sellerCta),
+    "the seller CTA claims a population wider than the corpus it measures");
+  assert(!/à venda pede entre/.test(sellerCta),
+    "the seller CTA is back to claiming every car for sale in the country");
   const types = ldTypes(html);
   for (const t of ["Dataset", "AggregateOffer", "BreadcrumbList", "FAQPage"]) {
     assert(types.has(t), `model page lost its ${t} schema`);
@@ -293,9 +301,14 @@ check("year page renders", () => {
     liveDeals: [], pageYears: yearPageYears(rec), stats, host: HOST, depositCount: 0, builtAt,
   });
   assertPage(html, { indexable: true, canonical: `https://${HOST}/preco/${s}/${y}`, label: "year" });
-  assert(html.includes('href="/metodologia"'),
-    "the year page cites a method it does not link");
-  assert(/preços pedidos/i.test(html), "the year page no longer says what it measures");
+  const yearMain = html.slice(html.indexOf("<main"), html.indexOf("</main>") + 7)
+    .replace(/<script[\s\S]*?<\/script>/g, "").replace(/<footer[\s\S]*?<\/footer>/g, "");
+  assert(yearMain.includes('href="/metodologia"'),
+    "the year page body cites a method it does not link");
+  assert(/preços? pedidos?/i.test(yearMain),
+    "the year page body no longer says what it measures");
+  assert(/Metade dos \d+ anúncios/.test(yearMain),
+    "the year page states the interquartile range as if it were the whole range");
   const types = ldTypes(html);
   for (const t of ["Dataset", "AggregateOffer", "BreadcrumbList", "FAQPage"]) {
     assert(types.has(t), `year page lost its ${t} schema`);
@@ -961,17 +974,20 @@ check("a cut whose gap is entirely age says so instead of printing a percentage"
 
   const flat = renderFacetPage(args({ ...base, dr: [1.0, 17] }));
   assert(!/0% (mais|menos)/.test(flat), "printed a 0% difference as if it were one");
-  assert(flat.includes("pede o mesmo que o modelo no país inteiro"),
-    "a cut in line with the model does not say so");
+  assert(flat.includes("pede o mesmo que o mesmo modelo fora deste distrito"),
+    "a cut in line with its comparison base does not say so");
   assert(!/comparando ano a ano/.test(flat),
     "described a per-listing ratio as a year-by-year comparison");
-  assert(flat.includes("pela mediana do modelo no seu próprio ano"),
+  assert(flat.includes("pela mediana do resto do modelo no seu próprio ano"),
     "did not say how the age-controlled number was computed");
   const flatDesc = (flat.match(/<meta name="description" content="([^"]*)"/) || [])[1] || "";
-  assert(!/% (mais|menos)/.test(flatDesc), "the meta description claims a gap the data does not show");
+  assert(!/(mais|menos) \d+%/.test(flatDesc),
+    "the meta description claims a gap the data does not show");
 
   const real = renderFacetPage(args({ ...base, dr: [1.22, 17] }));
   assert(/mais 22%/.test(real), "a gap big enough to state was not stated");
+  const realDesc = (real.match(/<meta name="description" content="([^"]*)"/) || [])[1] || "";
+  assert(/mais 22%/.test(realDesc), "the meta description dropped a gap the page states");
   assert(real.includes("misturas de idades diferentes"),
     "did not explain why the raw medians are further apart");
 

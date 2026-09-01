@@ -2915,10 +2915,12 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
   const age = matched || normalized;
   const agePct = age ? Math.abs(Math.round(age.pct * 100)) : null;
   const ageMoves = !!(age && Math.abs(age.pct) >= FACET_AGE_GAP_MIN);
-  const refAll = (isFuel || isGear) ? "o modelo todo" : "o modelo no país inteiro";
+  const refAll = matched
+    ? ((isFuel || isGear) ? "o modelo todo" : "o modelo no país inteiro")
+    : ((isFuel || isGear) ? "os restantes cortes deste modelo" : "o mesmo modelo fora deste distrito");
   const ageMethod = matched
     ? `comparando ano a ano, sobre ${matched && matched.years} anos com amostra dos dois lados`
-    : normalized ? `dividindo cada um dos ${normalized.used} anúncios pela mediana do modelo no seu próprio ano de matrícula`
+    : normalized ? `dividindo cada um dos ${normalized.used} anúncios pela mediana do resto do modelo no seu próprio ano de matrícula`
     : "";
   const vsAll = rec.fm > 0 ? (cell.fm - rec.fm) / rec.fm : null;
   const more = x => x >= 0 ? "mais" : "menos";
@@ -2972,7 +2974,7 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
     <section class="section fc-wrap">
       <h2 class="fc-h2">${sibHead}</h2>
       <ul class="fc-insights">
-        ${age ? `<li>Face a todos os ${B} ${M} do país (mediana ${fmtEur(rec.fm)}), este corte ${ageMoves ? `pede <b>${more(age.pct)} ${agePct}%</b>` : "pede <b>o mesmo</b>"}, ${ageMethod}.${Math.abs(cell.fm / rec.fm - 1) >= FACET_AGE_GAP_MIN ? ` As medianas em bruto (${fmtEur(cell.fm)} contra ${fmtEur(rec.fm)}) estão mais afastadas do que isso porque descrevem misturas de idades diferentes.` : ""}</li>`
+        ${age ? `<li>Face ${matched ? `a todos os ${B} ${M} do país (mediana ${fmtEur(rec.fm)})` : `${refAll}`}, este corte ${ageMoves ? `pede <b>${more(age.pct)} ${agePct}%</b>` : "pede <b>o mesmo</b>"}, ${ageMethod}.${Math.abs(cell.fm / rec.fm - 1) >= FACET_AGE_GAP_MIN ? ` As medianas em bruto (${fmtEur(cell.fm)} contra ${fmtEur(rec.fm)}) estão mais afastadas do que isso porque descrevem misturas de idades diferentes.` : ""}</li>`
           : vsAll != null ? `<li>Face a todos os ${B} ${M} do país, este corte pede em mediana ${fmtEur(cell.fm)} contra ${fmtEur(rec.fm)}${cell.y0 && cell.y1 ? `, em anos ${cell.y0}-${cell.y1}` : ""}. Os dois números não se subtraem: descrevem misturas de idades diferentes.</li>` : ""}
         ${compare}
       </ul>

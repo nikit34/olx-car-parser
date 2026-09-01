@@ -56,7 +56,6 @@ from src.analytics.valuations import _i
 MIN_MODEL_N = 20
 MIN_YEAR_N = 5
 RETIRE_MODEL_N = 14
-RETIRE_YEAR_N = 3
 MIN_YEAR_PAGE_N = 10
 RETIRE_YEAR_PAGE_N = 7
 RETIRE_FACET_N = 11
@@ -72,9 +71,9 @@ MAX_DISTRICT_ROWS = 8       # per model, deepest districts only
 MIN_MATCH_YEAR_N = 5
 MIN_MATCH_YEARS = 3
 _DR_MIN_LISTINGS = 10
-_DR_PARENT_RATIO = 2.0
 _RAW_GAP_LO = 0.70
 _RAW_GAP_HI = 1.40
+_FACET_SOLO_MAX_SHARE = 0.85
 
 # Only three fuels get facets. The raw fuel_type vocabulary carries near-
 # duplicates that would slug into competing pages for the same thing
@@ -173,19 +172,22 @@ def _quantiles(prices: pd.Series):
     return _i(q[0]), _i(q[1]), _i(q[2])
 
 
-def _year_cells(grp: pd.DataFrame, keep_years: set | None = None,
-                keep_pages: set | None = None) -> tuple[list[dict], int]:
+def _year_cells(grp: pd.DataFrame, keep_pages: set | None = None) -> tuple[list[dict], int]:
     """Per-year asking-price cells (year DESC), gating thin years and merging
     consecutive sub-gate years into 2+-year bands. Returns (cells, yrs_thin).
 
-    ``keep_years`` are the years this model carried last build; they survive down
-    to RETIRE_YEAR_N instead of MIN_YEAR_N. ``keep_pages`` are the years that had
-    their OWN URL, and they keep the ``pg`` flag down to RETIRE_YEAR_PAGE_N
-    instead of MIN_YEAR_PAGE_N. Both exist because the page set is a function of
-    live inventory: a year sitting on either floor flips between builds and takes
-    an indexed, ranking URL with it — measured at 12% of impression-earning URLs
-    over six days, with 38% of year pages within three listings of the page
-    floor. Entry stays where it was; only leaving got harder.
+    ``keep_pages`` are the years that had their OWN URL last build. They keep the
+    ``pg`` flag down to RETIRE_YEAR_PAGE_N instead of MIN_YEAR_PAGE_N, because the
+    page set is a function of live inventory: a year sitting on that floor flips
+    between builds and takes an indexed, ranking URL with it — measured at 12% of
+    impression-earning URLs over six days, with 38% of year pages within three
+    listings of the floor. Entry stays where it was; only leaving got harder.
+
+    There is deliberately no hysteresis on the CELL floor. A row below
+    MIN_YEAR_N carries no URL, so nothing can churn out of the index; retaining
+    it only breaks the band it would have merged into and strands the neighbour,
+    which omits more years than it saves. RETIRE_YEAR_PAGE_N sits above
+    MIN_YEAR_N, so a retained page always clears the cell floor on its own.
 
     ``pg`` is what the Worker reads to decide a /preco/{slug}/{ano} URL exists.
     It has to be decided here, not there: the Worker has no memory of the
@@ -219,11 +221,10 @@ def _year_cells(grp: pd.DataFrame, keep_years: set | None = None,
             yrs_thin += len(band)
         band.clear()
 
-    keep = keep_years or set()
     kept_pages = keep_pages or set()
     for y in years_asc:
         sub = by_year[y]
-        if len(sub) >= MIN_YEAR_N or (y in keep and len(sub) >= RETIRE_YEAR_N):
+        if len(sub) >= MIN_YEAR_N:
             flush_band()
             q = _quantiles(sub["price_eur"])
             if not q:
@@ -244,7 +245,11 @@ def _year_cells(grp: pd.DataFrame, keep_years: set | None = None,
     flush_band()
 
     cells.sort(key=lambda c: (int(str(c["y"]).split("-")[-1])), reverse=True)
-    return cells[:MAX_YEAR_ROWS], yrs_thin
+    pages = [c for c in cells if c.get("pg")]
+    rest = [c for c in cells if not c.get("pg")]
+    kept = pages + rest[:max(0, MAX_YEAR_ROWS - len(pages))]
+    kept.sort(key=lambda c: (int(str(c["y"]).split("-")[-1])), reverse=True)
+    return kept, yrs_thin
 
 
 def _fuel_facet_key(value) -> str | None:
@@ -309,39 +314,37 @@ def _matched_ratio(a: dict[int, tuple[float, int]],
     return None if r is None else [round(r, 4), len(shared)]
 
 
-def _year_normalized_ratio(sub: pd.DataFrame,
-                           parent: dict[int, tuple[float, int]]) -> list | None:
-    """[ratio, listings_used] for a cut against the whole model, at equal age.
+def _year_normalized_ratio(sub: pd.DataFrame, rest: dict[int, tuple[float, int]]) -> list | None:
+    """[ratio, listings_used] for a cut against the REST of the model, at equal age.
 
     ``_matched_ratio`` needs MIN_MATCH_YEARS years carrying MIN_MATCH_YEAR_N on
     BOTH sides, which a 15-35 listing district cell spread over twenty model
     years almost never reaches - so the cells that most need the age control are
     the ones that cannot get it, and they fall back to raw medians whose age mix
     swamps the effect. This estimates the same quantity per LISTING instead of
-    per shared year: each listing is divided by the model's median for its own
+    per shared year: each listing is divided by the reference median for its own
     registration year, and the median of those ratios is the answer.
 
-    A year is skipped unless the model holds ``_DR_PARENT_RATIO`` times the
-    cut's OWN listings in it, counted raw rather than through ``_year_medians``
-    (which drops years under MIN_MATCH_YEAR_N and so would leave the check
-    silently disabled on exactly the thin cuts this exists for). Without it a
-    cut that is most of its own reference year divides itself by itself and the
-    ratio collapses to 1.0 by construction. None below ``_DR_MIN_LISTINGS``
-    usable listings.
+    The reference is the model MINUS this cut. Dividing by a median the cut
+    itself helped set pulls the answer toward 1 by construction, and capping the
+    cut's share of the year does not fix it - at a 50% cap the attenuation was
+    still about half the true effect, and 28% of cells landed on exactly 1.0000,
+    which the page then printed as "asks the same". Comparing against the rest
+    removes the bias outright rather than bounding it. ``_year_medians`` already
+    refuses a year with fewer than MIN_MATCH_YEAR_N on the reference side, so a
+    year where the cut is nearly everything simply has no reference and does not
+    count. None below ``_DR_MIN_LISTINGS`` usable listings.
     """
     if "year" not in sub.columns or "price_eur" not in sub.columns:
         return None
     yr = pd.to_numeric(sub["year"], errors="coerce")
     price = pd.to_numeric(sub["price_eur"], errors="coerce")
-    own_counts = yr.dropna().astype(int).value_counts().to_dict()
     ratios: list[float] = []
     for y, p in zip(yr, price):
         if pd.isna(y) or pd.isna(p) or p <= 0:
             continue
-        ref = parent.get(int(y))
+        ref = rest.get(int(y))
         if not ref or ref[0] <= 0:
-            continue
-        if ref[1] < _DR_PARENT_RATIO * own_counts.get(int(y), 0):
             continue
         ratios.append(float(p) / ref[0])
     if len(ratios) < _DR_MIN_LISTINGS:
@@ -398,7 +401,8 @@ def _facet_cells(grp: pd.DataFrame, col: str, keyer, labeller,
         vsm = _matched_ratio(mine, parent)
         if vsm:
             cell["vsm"] = vsm
-        dr = _year_normalized_ratio(sub_of[cell["k"]], parent)
+        dr = _year_normalized_ratio(sub_of[cell["k"]],
+                                    _year_medians(grp.drop(index=sub_of[cell["k"]].index)))
         if dr:
             cell["dr"] = dr
         vs = {}
@@ -411,9 +415,15 @@ def _facet_cells(grp: pd.DataFrame, col: str, keyer, labeller,
         if vs:
             cell["vs"] = vs
     if pd.notna(model_median) and model_median > 0:
-        out = [c for c in out
-               if "dr" in c or "vsm" in c
-               or _RAW_GAP_LO <= c["fm"] / model_median <= _RAW_GAP_HI]
+        def explained(c):
+            return ("dr" in c or "vsm" in c or str(c["k"]) in kept
+                    or _RAW_GAP_LO <= c["fm"] / model_median <= _RAW_GAP_HI)
+        survivors = [c for c in out if explained(c)]
+        model_n = len(grp)
+        orphaned = (len(survivors) == 1 and len(out) > 1 and col != "district"
+                    and model_n and survivors[0]["n"] / model_n >= _FACET_SOLO_MAX_SHARE)
+        if not orphaned:
+            out = survivors
     return out
 
 
@@ -477,10 +487,14 @@ def _district_rollup(active: pd.DataFrame, models: dict) -> dict:
 def _published_page_set(published: dict | None) -> dict[str, dict]:
     """What the previous build published, per slug, or empty.
 
-    ``{slug: {"years": {...}, "pages": {...}, "fx"/"tx"/"dt": {keys}}}``. Total
-    by construction: any shape it does not recognise yields no entry, so a
-    malformed or foreign blob degrades to no hysteresis instead of aborting the
-    build.
+    ``{slug: {"pages": {years}, "fx"/"tx"/"dt": {keys}}}``. Total by construction:
+    any shape it does not recognise yields no entry, so a malformed or foreign
+    blob degrades to no hysteresis instead of aborting the build.
+
+    A cell without ``pg`` falls back to the same rule the Worker applies when the
+    key is absent, so the first build after ``pg`` is introduced already knows
+    which years are being served as pages. Without that fallback the retirement
+    floor would be dead on exactly the build that needs it.
     """
     out: dict[str, dict] = {}
     if not isinstance(published, dict):
@@ -492,14 +506,15 @@ def _published_page_set(published: dict | None) -> dict[str, dict]:
         if not isinstance(rec, dict):
             continue
         cells = rec.get("yr") if isinstance(rec.get("yr"), list) else []
-        years, pages = set(), set()
+        pages = set()
         for c in cells:
             if not isinstance(c, dict) or not isinstance(c.get("y"), int):
                 continue
-            years.add(c["y"])
-            if c.get("pg"):
+            n = c.get("n")
+            served = c["pg"] if "pg" in c else (isinstance(n, int) and n >= MIN_YEAR_PAGE_N)
+            if served:
                 pages.add(c["y"])
-        entry = {"years": years, "pages": pages}
+        entry = {"pages": pages}
         for kind in ("fx", "tx", "dt"):
             arr = rec.get(kind)
             entry[kind] = {str(c["k"]) for c in arr
@@ -522,7 +537,7 @@ def build_model_pages(
 
     ``published`` is the previous build's own output (the models.json currently
     live). A model or year-cell it already carries survives down to
-    RETIRE_MODEL_N / RETIRE_YEAR_N instead of the entry floor: the page set is a
+    RETIRE_MODEL_N / RETIRE_YEAR_PAGE_N instead of the entry floor: the page set is a
     function of live inventory, so anything sitting on the floor otherwise flips
     out on a normal dip and takes an indexed, ranking URL with it. Omitted, the
     entry floors apply to everything, which is the pre-hysteresis behaviour.
@@ -610,7 +625,7 @@ def build_model_pages(
         q = _quantiles(grp["price_eur"])
         if not q:
             continue
-        yr_cells, yrs_thin = _year_cells(grp, prev and prev["years"], prev and prev["pages"])
+        yr_cells, yrs_thin = _year_cells(grp, prev and prev["pages"])
         years = pd.to_numeric(grp.get("year"), errors="coerce").dropna()
         rec: dict = {
             "b": str(brand), "m": str(model), "n": int(len(grp)),
