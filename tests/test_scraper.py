@@ -13,6 +13,7 @@ from src.parser.scraper import (
     ScraperParseError,
     StandVirtualScraper,
     _extract_brand_from_title,
+    _year_from_text,
     _fix_mileage,
     _merge_details,
     _offer_to_raw,
@@ -721,3 +722,37 @@ class TestBrandRecoveryWithoutAMakeField:
                 p["value"] = {"key": "200", "label": "200"}
         raw = _offer_to_raw(offer)
         assert raw.brand == "Mercedes-Benz"
+
+
+class TestYearRecoveredFromText:
+    def test_reads_the_year_a_seller_spelled_out(self):
+        assert _year_from_text("Hyundai i30 SW Ano 2019", "") == 2019
+        assert _year_from_text("", "matriculado em 2012, único dono") == 2012
+        assert _year_from_text("", "registo 2008") == 2008
+        assert _year_from_text("Porsche 924 de 1983", "") == 1983
+
+    def test_ignores_a_bare_number_in_the_description(self):
+        assert _year_from_text("", "revisão feita, pneus novos 2019") is None
+        assert _year_from_text("", "carro de 2015") is None
+
+    def test_two_different_years_resolve_to_nothing(self):
+        assert _year_from_text("", "ano 2010 ano 2014") is None
+
+    def test_out_of_range_numbers_are_not_years(self):
+        assert _year_from_text("Ano 2049", "") is None
+        assert _year_from_text("ano 1899", "") is None
+
+    def test_offer_without_a_year_param_recovers_one(self):
+        offer = _olx_offer(
+            title="Golf 7 GTI",
+            url="https://www.olx.pt/d/anuncio/golf-IDQQQ14.html",
+            description="Vendo Golf, ano 2014, nacional",
+        )
+        offer["params"] = [p for p in offer["params"] if p["key"] != "year"]
+        raw = _offer_to_raw(offer)
+        assert raw.year == 2014
+
+    def test_the_offer_field_still_wins(self):
+        offer = _olx_offer(description="proprietário desde o ano 2011")
+        raw = _offer_to_raw(offer)
+        assert raw.year == 2018

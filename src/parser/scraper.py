@@ -1049,6 +1049,42 @@ def _extract_brand_from_title(title: str) -> str:
     return ""
 
 
+_YEAR_TOKEN = r"(?:19[5-9]\d|20[0-2]\d)"
+
+_YEAR_PATTERNS = (
+    re.compile(rf"\bmatricul\w*\s*(?:em|de|:)?\s*({_YEAR_TOKEN})\b", re.I),
+    re.compile(rf"\bano\s*(?:de\s*|:\s*)?({_YEAR_TOKEN})\b", re.I),
+    re.compile(rf"\bregisto\s*(?:em|de|:)?\s*({_YEAR_TOKEN})\b", re.I),
+    re.compile(rf"\b({_YEAR_TOKEN})\s*[/\-]\s*(?:0?[1-9]|1[0-2])\b"),
+)
+
+_YEAR_PATTERNS_TITLE = _YEAR_PATTERNS + (
+    re.compile(rf"\bde\s+({_YEAR_TOKEN})\b", re.I),
+    re.compile(rf"\b(?:0?[1-9]|1[0-2])\s*[/\-.]\s*({_YEAR_TOKEN})\b"),
+)
+
+
+def _year_from_text(title: str, description: str) -> int | None:
+    """Recover the model year a seller left out of the "Ano" field.
+
+    Only the phrasings that name a year outright ("ano 2015", "matriculado
+    em 2015", "2015/03") and only when the text holds exactly one of them:
+    a bare four-digit number is right barely nine times in ten, since
+    descriptions are full of service dates, inspection dates and phone
+    numbers. The looser "de 2015" and "03/2015" are read from the title,
+    where there is no room for that noise, but not from the description.
+    """
+    for text, rules in ((title, _YEAR_PATTERNS_TITLE), (description, _YEAR_PATTERNS)):
+        if not text:
+            continue
+        for rx in rules:
+            hits = {int(h) for h in rx.findall(text)}
+            hits = {h for h in hits if 1950 <= h <= 2026}
+            if len(hits) == 1:
+                return hits.pop()
+    return None
+
+
 def _fix_mileage(km: int | None, year: int | None) -> int | None:
     """Detect and fix mileage entered without thousands (e.g. 150 instead of 150000).
 
@@ -1279,6 +1315,11 @@ def _offer_to_raw(offer: dict) -> RawListing:
     desc = offer.get("description") or ""
     if desc:
         raw.description = _clean_html_description(desc)
+
+    if raw.year is None:
+        raw.year = _year_from_text(title, raw.description or "")
+        if raw.year is not None:
+            raw.mileage_km = _fix_mileage(raw.mileage_km, raw.year)
 
     posted = _parse_iso_dt(offer.get("created_time"))
     if posted:
