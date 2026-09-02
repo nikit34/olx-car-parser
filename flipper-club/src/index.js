@@ -86,6 +86,10 @@ const DEFAULT_CURRENCY = "eur";
 //   /mercado   deal feed (grid)           /reserve   POST → Stripe checkout
 //   /car       single-car detail          /unlocked  Stripe success → claimed
 //   /reservas  my claimed cars
+const ICON_PATHS = new Set([
+  "/favicon.ico", "/icon-96.png", "/icon-192.png", "/apple-touch-icon.png",
+]);
+
 const PRODUCT_PATHS = new Set([
   "/", "/mercado", "/car", "/claim", "/reserve", "/unlocked", "/reservas", "/avaliar",
   "/precos", "/sitemap.xml", "/robots.txt", "/llms.txt",
@@ -312,7 +316,7 @@ const worker = {
         out.headers.set("Cache-Control", "public, max-age=86400");
         return out;
       }
-      if (pathname === "/favicon.ico" && method === "GET") {
+      if (ICON_PATHS.has(pathname) && method === "GET") {
         const res = await env.ASSETS.fetch(request);
         const out = new Response(res.body, res);
         out.headers.set("Cache-Control", "public, max-age=604800");

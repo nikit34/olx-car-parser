@@ -10,7 +10,7 @@
 //
 // Run:  node tests/worker/route_smoke.mjs [path/to/models.json]
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import worker from "../../flipper-club/src/index.js";
 import { yearPageYears, liquidityOk, depreciationSlugs, comparePairs, isoWeek, isoWeekStart, missingWeeks, DUELS, isoWeekMonth, monthlyCuts, importSlugs } from "../../flipper-club/src/seo-pages.js";
 
@@ -51,6 +51,11 @@ const env = {
       const path = new URL(req.url).pathname;
       if (path.startsWith("/fonts/")) return new Response("woff2-bytes", { status: 200, headers: { "content-type": "font/woff2" } });
       if (path.startsWith("/files/") || path.startsWith("/data/")) return new Response("asset", { status: 200 });
+      const onDisk = new URL(`../../dashboard-static${path}`, import.meta.url);
+      if (existsSync(onDisk)) {
+        return new Response(readFileSync(onDisk),
+          { status: 200, headers: { "content-type": path.endsWith(".ico") ? "image/vnd.microsoft.icon" : "image/png" } });
+      }
       return new Response("<html>spa fallback</html>", { status: 200, headers: { "content-type": "text/html" } });
     },
   },
@@ -990,6 +995,20 @@ await check("no data means no row, not a row of nulls", async () => {
     assert([...kv.keys()].filter(k => k.startsWith("idx:week:")).length === 0,
       "wrote a snapshot with no market data behind it");
   } finally { globalThis.fetch = prevFetch; }
+});
+
+await check("every icon the pages link to is served without the auth gate", async () => {
+  const head = await (await worker.fetch(new Request(`https://${HOST}/`), env, {})).text();
+  const linked = [...head.matchAll(/<link rel="(?:icon|apple-touch-icon)"[^>]*href="([^"]+)"/g)]
+    .map(m => m[1]);
+  assert(linked.length >= 2, "the pages stopped linking any icon at all");
+  for (const href of linked) {
+    const res = await worker.fetch(new Request(`https://${HOST}${href}`), env, {});
+    assert(res.status === 200, `${href} answered ${res.status} — a linked icon must never 401 or 404`);
+    const ct = res.headers.get("content-type") || "";
+    assert(!ct.includes("text/html"),
+      `${href} fell through to the SPA fallback and returned HTML instead of an image`);
+  }
 });
 
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall route checks passed");
