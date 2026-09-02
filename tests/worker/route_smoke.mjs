@@ -150,13 +150,45 @@ await check("model, year and JSON routes answer", async () => {
   assert(j.collected_until, "JSON has no collection date");
 });
 
-await check("a year below the publishing floor 404s", async () => {
+await check("a year we hold data for but do not publish points at the model", async () => {
   const rec = models[deep];
   const published = new Set(yearPageYears(rec));
   const thin = (rec.yr || []).find(c => typeof c.y === "number" && !published.has(c.y));
   if (!thin) return;                       // this model has no thin years — fine
   const r = await get(`/preco/${deep}/${thin.y}`);
-  assert(r.status === 404, `thin year ${thin.y} → ${r.status}, should be 404`);
+  assert(r.status === 301, `thin year ${thin.y} → ${r.status}, should redirect to the model`);
+  assert(new URL(r.headers.get("location")).pathname === `/preco/${deep}`,
+    `thin year ${thin.y} redirects to ${r.headers.get("location")}, not to its model`);
+  const j = await get(`/preco/${deep}/${thin.y}.json`);
+  assert(j.status === 301 && new URL(j.headers.get("location")).pathname === `/preco/${deep}.json`,
+    "the JSON twin of a thin year does not point at the model's JSON twin");
+  const never = await get(`/preco/${deep}/1900`);
+  assert(never.status === 404, `a year we never had data for → ${never.status}, should be 404`);
+});
+
+await check("HEAD answers whatever GET answers", async () => {
+  for (const p of ["/", `/preco/${deep}`, "/sitemap.xml", "/robots.txt", "/mercado", "/precos"]) {
+    const g = await get(p);
+    const h = await get(p, "HEAD");
+    assert(h.status === g.status, `HEAD ${p} → ${h.status}, GET → ${g.status}`);
+    assert(h.headers.get("content-type") === g.headers.get("content-type"),
+      `HEAD ${p} answers a different content-type than GET`);
+    assert(!(await h.text()), `HEAD ${p} returned a body`);
+  }
+  const missing = await get("/pagina-que-nao-existe", "HEAD");
+  assert(missing.status === 404, `HEAD on an unknown path → ${missing.status}`);
+});
+
+await check("plain http upgrades to https instead of answering", async () => {
+  const r = await worker.fetch(new Request(`http://${HOST}/preco/${deep}`), env);
+  assert(r.status === 301, `http:// → ${r.status}, should redirect`);
+  assert(r.headers.get("location") === `https://${HOST}/preco/${deep}`,
+    `http:// redirects to ${r.headers.get("location")}`);
+  const viaHeader = await worker.fetch(new Request(`https://${HOST}/preco/${deep}`,
+    { headers: { "cf-visitor": '{"scheme":"http"}' } }), env);
+  assert(viaHeader.status === 301, "a proxied http request was served instead of upgraded");
+  const secure = await get(`/preco/${deep}`);
+  assert(secure.status === 200, "https stopped working");
 });
 
 await check("nonsense under /preco 404s instead of 500ing", async () => {

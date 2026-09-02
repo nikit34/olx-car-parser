@@ -127,11 +127,17 @@ function isInternalAsset(pathname) {
     || INTERNAL_ASSET_PREFIXES.some(pre => pathname.startsWith(pre));
 }
 
-export default {
+const worker = {
   async fetch(request, env) {
     const url = new URL(request.url);
     const { pathname } = url;
     const method = request.method;
+
+    if (method === "HEAD") {
+      const res = await worker.fetch(
+        new Request(url.toString(), { method: "GET", headers: request.headers }), env);
+      return new Response(null, { status: res.status, statusText: res.statusText, headers: res.headers });
+    }
 
     // Measurement ID для GA4. Ставится до любой ветки, потому что сниппет
     // рендерится в общей обёртке страниц. Пусто = аналитики нет вообще.
@@ -182,7 +188,11 @@ export default {
       // the body and silently break deposit confirmation.
       // Dormant until CANONICAL_HOST is set (see wrangler.toml [vars]).
       const canonicalHost = (env.CANONICAL_HOST || "").trim();
-      if (canonicalHost && url.hostname !== canonicalHost && !isLocalHost(url.hostname)) {
+      let visitorScheme = null;
+      try { visitorScheme = JSON.parse(request.headers.get("cf-visitor") || "{}").scheme; } catch (_) { visitorScheme = null; }
+      const insecure = url.protocol === "http:" || visitorScheme === "http";
+      if (canonicalHost && !isLocalHost(url.hostname)
+          && (url.hostname !== canonicalHost || insecure)) {
         const dest = new URL(url);
         dest.hostname = canonicalHost;
         dest.protocol = "https:";
@@ -374,6 +384,8 @@ export default {
     console.log(`index cron ${r.week}: ${r.written ? "written" : "skipped (" + r.reason + ")"}`);
   },
 };
+
+export default worker;
 
 // ── Product handlers ────────────────────────────────────────────────────────
 
@@ -592,8 +604,17 @@ async function handleModelPage(request, env, url) {
 
 // /preco/{slug}/{ano} — one model year.
 async function renderYear({ request, env, url, models, rec, slug, year, builtAt, wantsJson, uid, setCookie }) {
-  const cell = publishedYearPages(models, slug, rec, builtAt).includes(year) ? yearCell(rec, year) : null;
-  if (!cell) return notFoundPage(request, env, url);
+  const published = publishedYearPages(models, slug, rec, builtAt);
+  const cell = published.includes(year) ? yearCell(rec, year) : null;
+  if (!cell) {
+    if (published.length && (rec.yr || []).some(c => c.y === year)) {
+      return new Response(null, {
+        status: 301,
+        headers: { location: `https://${url.host}/preco/${encodeURIComponent(slug)}${wantsJson ? ".json" : ""}` },
+      });
+    }
+    return notFoundPage(request, env, url);
+  }
   if (wantsJson) return jsonResponse(yearJson(rec, slug, year, cell, { host: url.host, builtAt }));
 
   const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
