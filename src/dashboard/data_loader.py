@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+from collections import Counter
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -994,9 +995,12 @@ def compute_signals(
     }
 
     # --- Score each listing ---
+    _dropped: Counter = Counter()
+
     for _, listing in active.iterrows():
         price = listing.get("price_eur")
         if pd.isna(price) or price <= 0:
+            _dropped["no price"] += 1
             continue
 
         year = listing.get("year")
@@ -1030,13 +1034,16 @@ def compute_signals(
         if median is None:
             hit = model_lookup.get((brand, model))
             if hit is None or hit[1] < 5:
+                _dropped["fewer than 5 comparables"] += 1
                 continue
             median, sample, group_year_median, group_mileage_median = hit
 
         if not median or price >= median * 0.85:
+            _dropped["asking price within 15% of the group median"] += 1
             continue
 
         if _blocking_deal_reason(listing):
+            _dropped["blocked by a veto rule"] += 1
             continue
 
         # 1. Undervaluation: gradient boosting predicted price (now includes LLM features).
@@ -1051,15 +1058,18 @@ def compute_signals(
         olx_id = listing.get("olx_id", "")
         predicted = gb_predictions.get(olx_id)
         if not predicted or predicted <= 0:
+            _dropped["no model prediction"] += 1
             continue
         undervaluation_pct = round((1 - price / predicted) * 100, 1)
         if undervaluation_pct <= 0:
+            _dropped["model says it is not underpriced"] += 1
             continue
         # Implausible-discount guard: a band-width gate alone misses
         # *confidently-wrong* floor predictions (the model can be tight-banded
         # and still value a €700 dead car at €3.5k). No genuine private sale
         # sits 60%+ under fair value — treat it as a model artefact, not a deal.
         if undervaluation_pct > _FLIP_UNDERVALUATION_PCT_MAX:
+            _dropped["discount too big to believe"] += 1
             continue
 
         # Severity-2 listings (needs repair / accident history) aren't
@@ -1079,11 +1089,13 @@ def compute_signals(
         profit_after_repair = float(predicted) - float(price) - repair_cost
         adjusted_pct = round(profit_after_repair / float(predicted) * 100, 1)
         if adjusted_pct <= 0:
+            _dropped["repair cost eats the margin"] += 1
             continue
         # Absolute net-€ floor after transaction costs. A relative metric
         # rates a €450 gross gap the same as a €4 500 one; this keeps the
         # ranking honest about what actually clears the fees + a 45-day hold.
         if profit_after_repair - _FLIP_FEES_EUR < _FLIP_NET_EUR_MIN:
+            _dropped["net euro margin below the floor"] += 1
             continue
         discount_pct = round((1 - price / median) * 100, 1)
 
@@ -1172,6 +1184,7 @@ def compute_signals(
         ):
             band_pct = (fair_high - fair_low) / predicted
             if band_pct > _FLIP_BAND_PCT_MAX:
+                _dropped["prediction band too wide"] += 1
                 continue
             if band_pct <= 0.15:
                 band_confidence_mult = 1.15
@@ -1380,6 +1393,10 @@ def compute_signals(
         signals.append(sig)
 
     _cs_step(f"scoring loop (n_active={len(active)}, n_signals={len(signals)})")
+    if _dropped:
+        _funnel = "  ".join(f"{k}: {v:,}" for k, v in _dropped.most_common())
+        print(f"[compute_signals]   dropped {sum(_dropped.values()):,} of "
+              f"{len(active):,} — {_funnel}", flush=True)
     df = pd.DataFrame(signals)
     if not df.empty:
         df = df.sort_values("flip_score", ascending=False)
