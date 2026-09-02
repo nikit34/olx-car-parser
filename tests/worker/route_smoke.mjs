@@ -785,6 +785,42 @@ await check("the liquidity layer is staged on its own knob, not the price wave",
   }
 });
 
+await check("a cacheable page carries nothing that belongs to one visitor", async () => {
+  const PUBLIC = ["/precos", `/preco/${deep}`, `/preco/${deep}/${deepYear}`, "/liquidez",
+    "/depreciacao", "/comparar", "/metodologia", "/sobre", "/isv", "/privacidade",
+    "/sobrevalorizados", "/mercado/indice"];
+  const UID = "deadbeefdeadbeefdeadbeefdeadbeef";
+  const stateful = { ...env, KV: { ...env.KV,
+    async list(arg) {
+      const prefix = (arg && arg.prefix) || "";
+      if (prefix === `unlock:${UID}:`) {
+        return { keys: [{ name: `${prefix}A1` }, { name: `${prefix}A2` }], list_complete: true };
+      }
+      return env.KV.list(arg);
+    } } };
+  const withCookie = p => worker.fetch(new Request(`https://${HOST}${p}`,
+    { headers: { cookie: `fc_uid=${UID}` } }), stateful);
+  const sanity = await (await withCookie("/reservas")).text();
+  assert(/€10 em depósito/.test(sanity),
+    "the stub gives this visitor no deposits, so the comparison below would be vacuous");
+  for (const p of PUBLIC) {
+    const anon = await get(p);
+    if (anon.status !== 200) continue;
+    const cc = anon.headers.get("cache-control") || "";
+    assert(/^public\b/.test(cc), `${p} is not cacheable (${cc})`);
+    assert(!anon.headers.get("set-cookie"),
+      `${p} sets a visitor cookie on a response a shared cache may keep`);
+    const mine = await withCookie(p);
+    assert((await anon.text()) === (await mine.text()),
+      `${p} renders differently for a visitor with a cookie — a shared cache would leak it`);
+  }
+  for (const p of ["/", "/mercado", "/avaliar", "/reservas"]) {
+    const r = await get(p);
+    const cc = r.headers.get("cache-control") || "";
+    assert(/private/.test(cc), `${p} carries per-visitor state but is cacheable (${cc})`);
+  }
+});
+
 // ── KV must not be load-bearing for a render ────────────────────────────────
 // The outage these exist for: KV refused ops, every rendered page answered
 // 1101, and /healthz plus the sitemap stayed green the whole time.

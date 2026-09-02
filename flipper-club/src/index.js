@@ -350,9 +350,7 @@ const worker = {
       // Страница приватности публичная и индексируемая: на неё ссылается баннер
       // согласия, и за Basic-Auth она отдавала бы 401 и Googlebot, и человеку.
       if (pathname === "/privacidade" && method === "GET") {
-        const { uid, setCookie } = ensureUid(request);
-        const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
-        return html(renderPrivacy({ depositCount, host: url.host }), 200, setCookie);
+        return publicHtml(renderPrivacy({ depositCount: null, host: url.host }));
       }
 
       // A known path reached with the wrong method (e.g. GET /reserve).
@@ -497,7 +495,6 @@ function parseOlxId(q) {
 // nobody can reach from the site and nothing links to must not exist just
 // because someone typed it.
 async function handleModelPage(request, env, url) {
-  const { uid, setCookie } = ensureUid(request);
   let rest;
   try {
     // decodeURIComponent throws URIError on a malformed %-escape (/preco/%) —
@@ -529,12 +526,11 @@ async function handleModelPage(request, env, url) {
   if (!rec) return notFoundPage(request, env, url);
   const builtAt = mdoc && mdoc.built_at;
 
-  if (year != null) return renderYear({ request, env, url, models, rec, slug, year, builtAt, wantsJson, uid, setCookie });
-  if (facet != null) return renderFacet({ request, env, url, models, rec, slug, facet, builtAt, wantsJson, uid, setCookie });
+  if (year != null) return renderYear({ request, env, url, models, rec, slug, year, builtAt, wantsJson });
+  if (facet != null) return renderFacet({ request, env, url, models, rec, slug, facet, builtAt, wantsJson });
 
   if (wantsJson) return jsonResponse(modelJson(rec, slug, { host: url.host, builtAt, models }));
 
-  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
   const stats = corpusStats(models, builtAt);
 
   // Conversion bridge: live hot_deals matching this model (already below-fair).
@@ -581,8 +577,8 @@ async function handleModelPage(request, env, url) {
       return { href: `${a}-vs-${b}`, m: `${models[other].b} ${models[other].m}` };
     });
 
-  return html(renderModelPage({
-    rec, slug, liveDeals, siblings, host: url.host, depositCount, builtAt,
+  return publicHtml(renderModelPage({
+    rec, slug, liveDeals, siblings, host: url.host, depositCount: null, builtAt,
     insights: modelInsights(rec, stats),
     yearPages: publishedYearPages(models, slug, rec, builtAt),
     competitors, competitorKind, comparisons,
@@ -599,11 +595,11 @@ async function handleModelPage(request, env, url) {
     duels: duelsFor(models, slug, rec, builtAt).map(d => ({ path: d.path, kind: d.kind })),
     provenanceHtml: provenance({ n: rec.n, builtAt }),
     altJson: `https://${url.host}/preco/${slug}.json`,
-  }), 200, setCookie);
+  }));
 }
 
 // /preco/{slug}/{ano} — one model year.
-async function renderYear({ request, env, url, models, rec, slug, year, builtAt, wantsJson, uid, setCookie }) {
+async function renderYear({ request, env, url, models, rec, slug, year, builtAt, wantsJson }) {
   const published = publishedYearPages(models, slug, rec, builtAt);
   const cell = published.includes(year) ? yearCell(rec, year) : null;
   if (!cell) {
@@ -617,7 +613,6 @@ async function renderYear({ request, env, url, models, rec, slug, year, builtAt,
   }
   if (wantsJson) return jsonResponse(yearJson(rec, slug, year, cell, { host: url.host, builtAt }));
 
-  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
   const stats = corpusStats(models, builtAt);
   // Neighbours come from ALL year cells (n>=5), not only those with pages: the
   // comparison "is 2013 worth the premium over 2012" is still true when 2013 is
@@ -647,12 +642,12 @@ async function renderYear({ request, env, url, models, rec, slug, year, builtAt,
     }
   } catch (_) { /* best-effort */ }
 
-  return html(renderYearPage({
+  return publicHtml(renderYearPage({
     rec, slug, year, cell,
     neighbours: { older, newer, window: win },
     liveDeals, dealsNear, pageYears: publishedYearPages(models, slug, rec, builtAt), stats,
-    host: url.host, depositCount, builtAt,
-  }), 200, setCookie);
+    host: url.host, depositCount: null, builtAt,
+  }));
 }
 
 // Embeddable widget (/widget/preco/{slug}) — a standalone valuation card other
@@ -685,7 +680,7 @@ async function handleModelWidget(request, env, url) {
 // them has run, facetKind() finds nothing and every such URL 404s — which is
 // the correct answer, and means the pages switch on by themselves at the next
 // data build with no deploy.
-async function renderFacet({ request, env, url, models, rec, slug, facet, builtAt, wantsJson, uid, setCookie }) {
+async function renderFacet({ request, env, url, models, rec, slug, facet, builtAt, wantsJson }) {
   const kind = publishedFacets(models, slug, rec, builtAt).includes(facet) ? facetKind(rec, facet) : null;
   if (!kind) {
     if (retiredFacetKind(rec, facet)) {
@@ -694,23 +689,22 @@ async function renderFacet({ request, env, url, models, rec, slug, facet, builtA
         headers: { location: `https://${url.host}/preco/${encodeURIComponent(slug)}` },
       });
     }
-    return notFoundPage(request, env, url, setCookie);
+    return notFoundPage(request, env, url);
   }
   const cell = facetCell(rec, kind, facet);
   if (wantsJson) {
     return jsonResponse(facetJson(rec, slug, kind, cell, publishedCells(rec, kind),
                                  { host: url.host, builtAt }));
   }
-  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
-  return html(renderFacetPage({
+  return publicHtml(renderFacetPage({
     rec, slug, kind, cell, altJson: `https://${url.host}/preco/${slug}/${cell.k}.json`,
     duelSpec: (kind === "fuel" && publishedDuel(models, slug, rec, builtAt, "fuel")) ? DUELS.fuel
             : (kind === "transmission" && publishedDuel(models, slug, rec, builtAt, "gear")) ? DUELS.gear
             : null,
     siblingsCells: publishedCells(rec, kind),
     stats: corpusStats(models, builtAt),
-    host: url.host, depositCount, builtAt,
-  }), 200, setCookie);
+    host: url.host, depositCount: null, builtAt,
+  }));
 }
 
 // /precos/{distrito}
@@ -719,17 +713,15 @@ async function handleDistrict(request, env, url) {
   try {
     key = decodeURIComponent(url.pathname.slice("/precos/".length)).replace(/\/+$/, "").toLowerCase();
   } catch (_) { return notFoundPage(request, env, url); }
-  const { uid, setCookie } = ensureUid(request);
   const mdoc = await getModels(env);
   const models = mdoc && mdoc.models;
   const districts = (mdoc && mdoc.districts) || null;
   const rec = (districts && districts[key]) || null;
-  if (!models || !rec) return notFoundPage(request, env, url, setCookie);
-  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
-  return html(renderDistrictPage({
+  if (!models || !rec) return notFoundPage(request, env, url);
+  return publicHtml(renderDistrictPage({
     key, rec, models, districts, stats: corpusStats(models, mdoc.built_at),
-    host: url.host, depositCount, builtAt: mdoc.built_at,
-  }), 200, setCookie);
+    host: url.host, depositCount: null, builtAt: mdoc.built_at,
+  }));
 }
 
 // ── Second-layer SEO handlers ───────────────────────────────────────────────
@@ -742,18 +734,16 @@ async function handleDistrict(request, env, url) {
 // A page that only makes sense once models.json exists. Degrades to a 503 with
 // an honest message rather than a half-empty page or a 500.
 async function withModels(request, env, url, fn) {
-  const { uid, setCookie } = ensureUid(request);
   const mdoc = await getModels(env);
   const models = mdoc && mdoc.models;
-  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
   if (!models) {
     return html(renderInfo({
-      zone: "all", depositCount, title: "Serviço indisponível",
+      zone: "all", depositCount: null, title: "Serviço indisponível",
       message: "Os dados de mercado estão a ser preparados. Volta dentro de instantes.",
-    }), 503, setCookie);
+    }), 503);
   }
-  return fn({ models, builtAt: mdoc.built_at, depositCount, setCookie, mq: mdoc.mq || null,
-              market: mdoc.lqm || null,
+  return fn({ models, builtAt: mdoc.built_at, depositCount: null, setCookie: null,
+              mq: mdoc.mq || null, market: mdoc.lqm || null,
               stats: corpusStats(models, mdoc.built_at) });
 }
 
@@ -773,11 +763,11 @@ async function handleDepreciation(request, env, url) {
       return jsonResponse(depreciationJson(rec, slug, fit, depreciationAge(rec, fit, builtAt),
                                            { host: url.host, builtAt }));
     }
-    return html(renderDepreciationPage({
+    return publicHtml(renderDepreciationPage({
       rec, slug, fit, stats,
       pageYears: publishedYearPages(models, slug, rec, builtAt),
       host: url.host, depositCount, builtAt,
-    }), 200, setCookie);
+    }));
   });
 }
 
@@ -789,10 +779,10 @@ async function handleDepreciationHub(request, env, url) {
       return { slug, b: r.b, m: r.m, n: r.n, rate: f.rate, span: f.span,
                half: av && av.halfLife, cheapAge: av && av.cheapFrom ? av.cheapFrom.age : null };
     }).sort((a, b) => b.rate - a.rate);
-    return html(renderDepreciationHub({
+    return publicHtml(renderDepreciationHub({
       rows, stats, host: url.host, depositCount, builtAt,
       duelHubs: Object.values(DUELS).filter(d => duelSlugs(models, d.kind, builtAt).length),
-    }), 200, setCookie);
+    }));
   });
 }
 
@@ -809,10 +799,10 @@ async function handleDuel(request, env, url, spec) {
     const av = duel(rec, spec.kind, builtAt);
     if (!av) return notFoundPage(request, env, url, setCookie);
     if (wantsJson) return jsonResponse(duelJson(rec, slug, av, { host: url.host, builtAt }));
-    return html(renderDuelPage({
+    return publicHtml(renderDuelPage({
       rec, slug, av, stats, host: url.host, depositCount, builtAt,
       facetKeys: publishedFacets(models, slug, rec, builtAt),
-    }), 200, setCookie);
+    }));
   });
 }
 
@@ -825,7 +815,7 @@ async function handleDuelHub(request, env, url, spec) {
     if (!rows.length) return notFoundPage(request, env, url, setCookie);
     const other = Object.values(DUELS)
       .find(d => d.kind !== spec.kind && duelSlugs(models, d.kind, builtAt).length) || null;
-    return html(renderDuelHub({ spec, rows, other, stats, host: url.host, depositCount, builtAt }), 200, setCookie);
+    return publicHtml(renderDuelHub({ spec, rows, other, stats, host: url.host, depositCount, builtAt }));
   });
 }
 
@@ -839,17 +829,17 @@ async function handleCompare(request, env, url) {
     const pairSet = new Set(publishedPairs(models).map(([a, b]) => comparePairKey(a, b)));
     const pair = parseComparePath(rest, models, pairSet);
     if (!pair) return notFoundPage(request, env, url, setCookie);
-    return html(renderComparePage({
+    return publicHtml(renderComparePage({
       a: pair.a, b: pair.b, ra: models[pair.a], rb: models[pair.b],
       stats, host: url.host, depositCount, builtAt,
-    }), 200, setCookie);
+    }));
   });
 }
 
 // /comparar
 async function handleCompareHub(request, env, url) {
   return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie }) =>
-    html(renderCompareHub({ pairs: publishedPairs(models), models, host: url.host, depositCount, builtAt }), 200, setCookie));
+    publicHtml(renderCompareHub({ pairs: publishedPairs(models), models, host: url.host, depositCount, builtAt })));
 }
 
 // /liquidez
@@ -868,7 +858,7 @@ async function handleLiquidity(request, env, url) {
         if (b.lq) return 1;
         return (a.sd || 0) - (b.sd || 0);
       });
-    return html(renderLiquidityHub({ rows, market, host: url.host, depositCount, builtAt }), 200, setCookie);
+    return publicHtml(renderLiquidityHub({ rows, market, host: url.host, depositCount, builtAt }));
   });
 }
 
@@ -883,11 +873,11 @@ async function handleLiquidityPage(request, env, url) {
     const rec = models[slug];
     if (!rec || !publishedLiquidity(models, slug, rec, builtAt)) return notFoundPage(request, env, url, setCookie);
     if (wantsJson) return jsonResponse(liquidityJson(rec, slug, { host: url.host, builtAt }));
-    return html(renderLiquidityPage({
+    return publicHtml(renderLiquidityPage({
       rec, slug, market,
       hasDepreciation: publishedDepreciation(models, slug, rec, builtAt),
       host: url.host, depositCount, builtAt,
-    }), 200, setCookie);
+    }));
   });
 }
 
@@ -902,11 +892,11 @@ async function handleValuationGap(request, env, url) {
         page: publishedLiquidity(models, slug, r, builtAt),
       }))
       .sort((a, b) => b.gap - a.gap);
-    return html(renderValuationGap({
+    return publicHtml(renderValuationGap({
       over: withGap.slice(0, 25),
       under: withGap.slice(-25).reverse(),
       market, stats, host: url.host, depositCount, builtAt,
-    }), 200, setCookie);
+    }));
   });
 }
 
@@ -926,19 +916,17 @@ async function getImports(env) {
 }
 
 async function handleImportHub(request, env, url) {
-  const { uid, setCookie } = ensureUid(request);
-  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
   const doc = await getImports(env);
-  if (!doc) return notFoundPage(request, env, url, setCookie);
+  if (!doc) return notFoundPage(request, env, url);
   const rows = importSlugs(doc).map(slug => {
     const r = doc.models[slug];
     return { slug, b: r.b, m: r.m, med_gap: r.med_gap, wins: r.wins,
              cells: (r.yr || []).length, nde: r.nde, npt: r.npt };
   });
-  if (!rows.length) return notFoundPage(request, env, url, setCookie);
-  return html(renderImportHub({
-    rows, costs: doc.costs, host: url.host, depositCount, builtAt: doc.built_at,
-  }), 200, setCookie);
+  if (!rows.length) return notFoundPage(request, env, url);
+  return publicHtml(renderImportHub({
+    rows, costs: doc.costs, host: url.host, depositCount: null, builtAt: doc.built_at,
+  }));
 }
 
 async function handleImportPage(request, env, url) {
@@ -948,24 +936,22 @@ async function handleImportPage(request, env, url) {
   } catch (_) { return notFoundPage(request, env, url); }
   const wantsJson = slug.endsWith(".json");
   if (wantsJson) slug = slug.slice(0, -".json".length);
-  const { uid, setCookie } = ensureUid(request);
   const doc = await getImports(env);
   const rec = doc && doc.models ? doc.models[slug] : null;
-  if (!rec || !importOk(rec)) return notFoundPage(request, env, url, setCookie);
+  if (!rec || !importOk(rec)) return notFoundPage(request, env, url);
   if (wantsJson) return jsonResponse(importJson(rec, slug, doc.costs, { host: url.host, builtAt: doc.built_at }));
-  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
   const mdoc = await getModels(env);
   const hasModelPage = !!(mdoc && mdoc.models && mdoc.models[slug]);
-  return html(renderImportPage({
+  return publicHtml(renderImportPage({
     rec, slug, costs: doc.costs, hasModelPage,
-    host: url.host, depositCount, builtAt: doc.built_at,
-  }), 200, setCookie);
+    host: url.host, depositCount: null, builtAt: doc.built_at,
+  }));
 }
 
 // /metodologia, /sobre, /isv
 async function handleMethodology(request, env, url) {
-  return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, stats, mq }) =>
-    html(renderMethodology({
+  return withModels(request, env, url, ({ models, builtAt, depositCount, stats, mq }) =>
+    publicHtml(renderMethodology({
       stats, mq, host: url.host, depositCount, builtAt,
       duelHubs: Object.values(DUELS).filter(d => duelSlugs(models, d.kind, builtAt).length),
       wave: (() => {
@@ -983,11 +969,11 @@ async function handleMethodology(request, env, url) {
           .map(([s]) => s)[0] || null;
         return { models: w.size, total: Object.keys(models).length, pages, sample };
       })(),
-    }), 200, setCookie));
+    })));
 }
 async function handleAbout(request, env, url) {
   return withModels(request, env, url, ({ builtAt, depositCount, setCookie, stats, mq }) =>
-    html(renderAbout({ stats, mq, host: url.host, depositCount, builtAt }), 200, setCookie));
+    publicHtml(renderAbout({ stats, mq, host: url.host, depositCount, builtAt })));
 }
 async function handleIsv(request, env, url) {
   return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie }) => {
@@ -995,7 +981,7 @@ async function handleIsv(request, env, url) {
       .sort((a, b) => (b[1].n || 0) - (a[1].n || 0)).slice(0, 12)
       .map(([slug, r]) => ({ slug, b: r.b, m: r.m, fm: r.fm }));
     const refYear = parseInt((builtAt || "").slice(0, 4), 10) || null;
-    return html(renderIsv({ topModels, host: url.host, depositCount, builtAt, refYear }), 200, setCookie);
+    return publicHtml(renderIsv({ topModels, host: url.host, depositCount, builtAt, refYear }));
   });
 }
 
@@ -1080,7 +1066,7 @@ async function handleMarketIndex(request, env, url) {
       if (mm) {
         const cut = months.find(c => c.month === tail);
         if (!cut) return notFoundPage(request, env, url, setCookie);
-        return html(renderMarketMonth({ cut, months, host: url.host, depositCount }), 200, setCookie);
+        return publicHtml(renderMarketMonth({ cut, months, host: url.host, depositCount }));
       }
       // An archived week. Only weeks we actually recorded exist — an invented
       // /mercado/indice/1999-w03 is a 404, not an empty page.
@@ -1093,17 +1079,17 @@ async function handleMarketIndex(request, env, url) {
       try { snap = await env.KV.get(`${IDX_WEEK_PREFIX}${wk}`, "json"); } catch (_) {}
       if (!snap) snap = history.find(h => h.week === wk) || null;
       if (!snap) return notFoundPage(request, env, url, setCookie);
-      return html(renderMarketIndex({
+      return publicHtml(renderMarketIndex({
         snapshot: snap, history, host: url.host, depositCount,
         isArchive: true, currentWeek: week, gaps, months,
-      }), 200, setCookie);
+      }));
     }
 
     const current = history.find(h => h.week === week)
       || snapshotFrom(models, builtAt, week, now.toISOString().slice(0, 10), "web");
-    return html(renderMarketIndex({
+    return publicHtml(renderMarketIndex({
       snapshot: current, history, host: url.host, depositCount, currentWeek: week, gaps, months,
-    }), 200, setCookie);
+    }));
   });
 }
 
@@ -1142,13 +1128,11 @@ function jsonResponse(payload, status = 200) {
 
 // Models hub (/precos) — the crawl spine linking every model page.
 async function handleModelsHub(request, env, url) {
-  const { uid, setCookie } = ensureUid(request);
-  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
   const mdoc = await getModels(env);
   const models = mdoc && mdoc.models;
   if (!models) {
     return html(renderInfo({
-      zone: "all", depositCount, title: "Serviço indisponível",
+      zone: "all", depositCount: null, title: "Serviço indisponível",
       message: "Os preços por modelo estão a ser preparados. Volta dentro de instantes.",
     }), 503, setCookie);
   }
@@ -1160,9 +1144,9 @@ async function handleModelsHub(request, env, url) {
   const districts = Object.entries((mdoc && mdoc.districts) || {})
     .map(([k, d]) => ({ k, lbl: d.lbl, n: d.n, fm: d.fm }))
     .sort((a, b) => (b.n || 0) - (a.n || 0));
-  return html(renderModelsHub({
-    models: list, depositCount, builtAt: mdoc.built_at, host: url.host, districts,
-  }), 200, setCookie);
+  return publicHtml(renderModelsHub({
+    models: list, depositCount: null, builtAt: mdoc.built_at, host: url.host, districts,
+  }));
 }
 
 // /sitemap.xml — every indexable URL, generated from the same selection
@@ -2198,6 +2182,16 @@ function ensureUid(request) {
     `Max-Age=${365 * 24 * 3600}`,
   ].join("; ");
   return { uid, setCookie };
+}
+
+function publicHtml(body, status = 200) {
+  return new Response(body, {
+    status,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "public, max-age=0, s-maxage=900, stale-while-revalidate=86400",
+    },
+  });
 }
 
 function html(body, status = 200, setCookie = null) {

@@ -983,6 +983,7 @@ var m=document.cookie.match(/_ga=GA1\.\d+\.(\d+\.\d+)/);if(m)f.value=m[1];})();<
 export function layout({ title, body, zone, nav, depositCount, index = false, description = null,
                  canonical = null, jsonLd = null, host = null, image = null, type = "website",
                  ogUrl: ogUrlOverride = null, altJson = null }) {
+  const personalised = depositCount != null;
   const dep = (depositCount || 0) * 5;
   const navItem = (key, label, href) =>
     `<a href="${href}" class="${nav === key ? "active" : ""}">${label}</a>`;
@@ -1068,10 +1069,10 @@ ${consentBanner()}
       ${navItem("landing", "Como funciona", "/")}
     </nav>
     <div class="fc-right">
-      <a class="fc-deposit" href="/reservas">
+      ${personalised ? `<a class="fc-deposit" href="/reservas">
         <span class="fc-dot"></span>
         <span class="mono">€${dep} em depósito</span>
-      </a>
+      </a>` : ""}
       <a class="fc-cta-dark" href="/mercado">Ver mercado</a>
     </div>
   </div>
