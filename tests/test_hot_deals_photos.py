@@ -115,3 +115,21 @@ class TestZoneFunnelIsCounted:
 
     def test_stages_are_optional(self):
         assert len(bhd._pick_zone_deals(self._frame(), "norte", ["Porto"], 0, 30)) == 1
+
+
+class TestAdAgeGate:
+    def test_the_gate_reads_the_posting_date_not_the_scrape_date(self):
+        import pandas as pd
+        now = pd.Timestamp.now()
+        df = pd.DataFrame([
+            {"olx_id": "a", "is_active": True, "district": "Lisboa", "verdict": "BUY",
+             "first_seen_at": now - pd.Timedelta(days=10)},
+            {"olx_id": "b", "is_active": True, "district": "Lisboa", "verdict": "BUY",
+             "first_seen_at": now - pd.Timedelta(days=100)},
+            {"olx_id": "c", "is_active": True, "district": "Lisboa", "verdict": "BUY",
+             "first_seen_at": now - pd.Timedelta(days=200)},
+        ])
+        stages: dict = {}
+        kept = bhd._pick_zone_deals(df, "all", None, 0, 120, stages)
+        assert stages["fresh"] == 2
+        assert set(kept["olx_id"]) == {"a", "b"}

@@ -47,7 +47,7 @@ ZONE_DISTRICTS = {
 # passes the active + freshness + zone + verdict filters. The feed is already
 # bounded by MAX_LISTING_AGE_DAYS + the BUY/WATCH gate, so no runaway risk.
 TOP_N_PER_ZONE = 0
-MAX_LISTING_AGE_DAYS = 30
+MAX_LISTING_AGE_DAYS = 120
 # Quality gate: only surface deals the production decision engine rates BUY or
 # WATCH (same engine + thresholds the /analytics dashboard uses). SKIP/REJECT/
 # NO_OPINION are dropped — we'd rather show fewer, vetted deals than pad the
@@ -498,7 +498,7 @@ def main() -> None:
         overall_counts[zone] = len(deals)
         print(f"[hot_deals]   {zone:<6} funnel: {stages['signals']} signals"
               f" → {stages['active']} active"
-              f" → {stages['fresh']} seen <={args.max_age_days}d"
+              f" → {stages['fresh']} posted <={args.max_age_days}d ago"
               f" → {stages['in_zone']} in zone"
               f" → {stages['vetted']} BUY/WATCH"
               + (f" → -{dead} dead links" if dead else ""), flush=True)
