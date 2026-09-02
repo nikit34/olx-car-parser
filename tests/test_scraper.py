@@ -672,3 +672,52 @@ class TestOlxDetailPhotoCount:
             "https://www.olx.pt/d/anuncio/test-IDxYz12.html",
         )
         assert "photo_count" not in d
+
+
+class TestBrandRecoveryWithoutAMakeField:
+    def test_bare_mercedes_spelling_is_recognised(self):
+        assert _extract_brand_from_title("mercedes cla 45 amg") == "Mercedes-Benz"
+        assert _extract_brand_from_title("Mercedes Benz Viano 2.2 CDI") == "Mercedes-Benz"
+
+    def test_lexicon_follows_the_generation_table(self):
+        assert _extract_brand_from_title("MG ZS EV 2022") == "MG"
+        assert _extract_brand_from_title("Saab 9-3 Cabriolet") == "Saab"
+        assert _extract_brand_from_title("Polestar 2 Long Range") == "Polestar"
+
+    def test_range_rover_is_a_land_rover(self):
+        assert _extract_brand_from_title("Range Rover Classic") == "Land Rover"
+        assert _extract_brand_from_title("Rover 620 Si") == "Rover"
+
+    def test_title_without_a_brand_falls_back_to_the_model(self):
+        offer = _olx_offer(
+            title="GOLF 6 GTI 2.0 TSI Manual",
+            url="https://www.olx.pt/d/anuncio/golf-6-gti-IDQQQ11.html",
+        )
+        for p in offer["params"]:
+            if p["key"] == "modelo":
+                p["value"] = {"key": "golf", "label": "Golf"}
+        raw = _offer_to_raw(offer)
+        assert raw.model == "Golf"
+        assert raw.brand == "Volkswagen"
+
+    def test_a_shared_model_name_stays_blank(self):
+        offer = _olx_offer(
+            title="Corsa 1.2 5 portas",
+            url="https://www.olx.pt/d/anuncio/corsa-IDQQQ12.html",
+        )
+        for p in offer["params"]:
+            if p["key"] == "modelo":
+                p["value"] = {"key": "corsa", "label": "Corsa"}
+        raw = _offer_to_raw(offer)
+        assert raw.brand == ""
+
+    def test_the_title_wins_over_the_model_field(self):
+        offer = _olx_offer(
+            title="Mercedes w123 200D",
+            url="https://www.olx.pt/d/anuncio/w123-IDQQQ13.html",
+        )
+        for p in offer["params"]:
+            if p["key"] == "modelo":
+                p["value"] = {"key": "200", "label": "200"}
+        raw = _offer_to_raw(offer)
+        assert raw.brand == "Mercedes-Benz"

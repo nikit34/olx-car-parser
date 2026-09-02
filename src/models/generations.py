@@ -194,3 +194,50 @@ def infer_model_from_title(
         if fallback is None:
             fallback = m
     return fallback
+
+
+_model_owner_src: dict | None = None
+_model_owner: dict[str, str] = {}
+
+
+def _model_owners(data: dict) -> dict[str, str]:
+    """Map a normalized model name to the single brand that owns it.
+
+    Names shared by two brands ("Corsa" is both an Opel and a Vauxhall) are
+    left out — a shared name carries no brand evidence. Rebuilt when the
+    generations table changes, same as ``_normalized_index``.
+    """
+    global _model_owner_src, _model_owner
+    if data is _model_owner_src:
+        return _model_owner
+
+    from src.parser.brand_normalize import normalize_brand
+
+    canonical = {brand: normalize_brand(brand) for brand in data}
+    known = set(canonical.values())
+    owners: dict[str, set[str]] = {}
+    for brand, models in data.items():
+        for model in models:
+            owners.setdefault(_norm_key(model), set()).add(canonical[brand])
+    for brand, aliases in _get_model_aliases().items():
+        canon_brand = normalize_brand(brand)
+        if canon_brand not in known:
+            continue
+        for alias in aliases:
+            owners.setdefault(_norm_key(alias), set()).add(canon_brand)
+
+    _model_owner_src = data
+    _model_owner = {k: next(iter(v)) for k, v in owners.items() if len(v) == 1}
+    return _model_owner
+
+
+def brand_for_model(model: str) -> str | None:
+    """Return the only brand that lists *model*, or None if it is shared.
+
+    The OLX offer JSON carries ``modelo`` but no make at all, so when the
+    seller left the make out of the title the model name is the only
+    structured brand evidence the listing has.
+    """
+    if not model:
+        return None
+    return _model_owners(load_generations()).get(_norm_key(model))

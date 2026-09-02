@@ -996,6 +996,42 @@ def _parse_eur_price(text: str) -> float | None:
         return None
 
 
+_BRAND_TITLE_SPELLINGS = {
+    "Mercedes": "Mercedes-Benz",
+    "Mercedes Benz": "Mercedes-Benz",
+    "Range Rover": "Land Rover",
+    "Land-Rover": "Land Rover",
+    "Alfa": "Alfa Romeo",
+    "VW": "Volkswagen",
+    "Škoda": "Skoda",
+    "Citroën": "Citroën",
+}
+
+_BRAND_TITLE_SKIP = frozenset({"AC", "Alpine", "Eli", "JDM", "KGM", "Man",
+                               "Seres", "XEV"})
+
+_brand_lexicon_cache: list[tuple[str, str]] | None = None
+
+
+def _brand_lexicon() -> list[tuple[str, str]]:
+    """(spelling, canonical brand) pairs to scan a title with, longest first.
+
+    Driven by the generation table so the two never drift apart: a brand the
+    table knows but this lexicon does not is a brand no OLX listing can ever
+    be tagged with, because the offer JSON carries no make of its own.
+    """
+    global _brand_lexicon_cache
+    if _brand_lexicon_cache is None:
+        from src.models.generations import load_generations
+        from src.parser.brand_normalize import normalize_brand
+        names = {b: normalize_brand(b) for b in KNOWN_BRANDS}
+        names.update({b: normalize_brand(b) for b in load_generations()
+                      if b not in _BRAND_TITLE_SKIP})
+        names.update(_BRAND_TITLE_SPELLINGS)
+        _brand_lexicon_cache = sorted(names.items(), key=lambda kv: -len(kv[0]))
+    return _brand_lexicon_cache
+
+
 def _extract_brand_from_title(title: str) -> str:
     # Word-boundary match: "ds" used to substring-match in "DSG" (the dual-
     # clutch transmission), and since DS is a real brand sorted at the end
@@ -1003,8 +1039,8 @@ def _extract_brand_from_title(title: str) -> str:
     # brand=DS. We saw "DS Formentor" / "DS Passat Variant" etc. piling up
     # in unmatched_listings as a result.
     title_lower = title.lower()
-    for brand in sorted(KNOWN_BRANDS, key=len, reverse=True):
-        if re.search(rf"\b{re.escape(brand.lower())}\b", title_lower):
+    for spelling, brand in _brand_lexicon():
+        if re.search(rf"\b{re.escape(spelling.lower())}\b", title_lower):
             return brand
     abbrevs = {"vw": "Volkswagen", "merc": "Mercedes-Benz", "mb": "Mercedes-Benz"}
     for abbrev, brand in abbrevs.items():
@@ -1236,6 +1272,10 @@ def _offer_to_raw(offer: dict) -> RawListing:
     raw.mileage_km = _fix_mileage(raw.mileage_km, raw.year)
     raw.origin = _norm_origin(raw.origin)  # OLX value.key national/imported → canonical
 
+    if not raw.brand and raw.model:
+        from src.models.generations import brand_for_model
+        raw.brand = brand_for_model(raw.model) or ""
+
     desc = offer.get("description") or ""
     if desc:
         raw.description = _clean_html_description(desc)
@@ -1428,6 +1468,9 @@ def _sv_node_to_raw(node: dict) -> RawListing | None:
         source="standvirtual",
     )
     raw.mileage_km = _fix_mileage(raw.mileage_km, raw.year)
+    if not raw.brand and raw.model:
+        from src.models.generations import brand_for_model
+        raw.brand = brand_for_model(raw.model) or ""
     posted = _parse_iso_dt(node.get("createdAt"))
     if posted:
         raw._posted_at = posted

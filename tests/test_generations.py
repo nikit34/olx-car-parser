@@ -3,6 +3,7 @@
 from unittest.mock import patch
 
 from src.models.generations import (
+    brand_for_model,
     get_generation,
     infer_model_from_title,
     _get_model_aliases,
@@ -210,3 +211,22 @@ class TestModelsInsideKnownBrands:
         assert get_generation("Jaguar", "F-Type", 2016) is not None
         assert get_generation("Hyundai", "Galloper", 1999) is not None
         assert get_generation("Jeep", "Avenger", 2024) is not None
+
+
+class TestBrandForModel:
+    def test_a_model_owned_by_one_brand_names_it(self):
+        assert brand_for_model("Golf") == "Volkswagen"
+        assert brand_for_model("Sprinter") == "Mercedes-Benz"
+        assert brand_for_model("C5 Aircross") == "Citroën"
+
+    def test_a_model_name_two_brands_share_stays_unresolved(self):
+        assert brand_for_model("Corsa") is None
+        assert brand_for_model("Ibiza") is None
+        assert brand_for_model("220") is None
+
+    def test_empty_input(self):
+        assert brand_for_model("") is None
+
+    def test_spelling_of_the_model_does_not_matter(self):
+        assert brand_for_model("c5 aircross") == "Citroën"
+        assert brand_for_model("C5-Aircross") == "Citroën"
