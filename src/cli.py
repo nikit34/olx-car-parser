@@ -78,7 +78,7 @@ def _db_worker(db_queue: Queue, result: dict):
         # ("Peugeot 308 SW 1.6 HDi …") still carries the model — recover it
         # via the brand→known-models lexicon before generation lookup.
         if not raw.model and raw.brand and raw.title:
-            inferred = infer_model_from_title(raw.brand, raw.title)
+            inferred = infer_model_from_title(raw.brand, raw.title, raw.year)
             if inferred:
                 raw.model = inferred
 
@@ -108,7 +108,7 @@ def _db_worker(db_queue: Queue, result: dict):
 
         generation = get_generation(raw.brand, raw.model or "", raw.year)
         if generation is None and raw.brand and raw.title:
-            inferred = infer_model_from_title(raw.brand, raw.title)
+            inferred = infer_model_from_title(raw.brand, raw.title, raw.year)
             if inferred and inferred != raw.model:
                 retry = get_generation(raw.brand, inferred, raw.year)
                 if retry:

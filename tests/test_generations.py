@@ -2,7 +2,11 @@
 
 from unittest.mock import patch
 
-from src.models.generations import get_generation, _get_model_aliases
+from src.models.generations import (
+    get_generation,
+    infer_model_from_title,
+    _get_model_aliases,
+)
 
 
 class TestGetGeneration:
@@ -151,3 +155,58 @@ class TestBrandsBeyondTheOriginalThirtyEight:
     def test_abarth_is_not_fiat(self):
         assert get_generation("Abarth", "595", 2019) is not None
         assert get_generation("Abarth", "500", 2011) is not None
+
+
+class TestYearAwareTitleInference:
+    def test_price_digits_do_not_win_over_the_real_model(self):
+        assert infer_model_from_title("Audi", "Audi A4 1.9 TDI m63.100 €", 2001) == "A4"
+        assert infer_model_from_title("BMW", "Bmw 316 i gasolina3.700 €", 2002) == "316"
+
+    def test_year_in_the_title_does_not_win_over_the_real_model(self):
+        assert infer_model_from_title("BMW", "BMW 320 D 2000 DIESEL", 2000) == "320"
+
+    def test_numeric_classic_still_wins_inside_its_own_range(self):
+        assert infer_model_from_title("BMW", "BMW 700 Coupé - restauro", 1961) == "700"
+
+    def test_without_a_year_the_first_match_is_returned(self):
+        assert infer_model_from_title("Audi", "Audi A4 1.9 TDI m63.100 €") == "100"
+
+    def test_falls_back_when_no_candidate_resolves(self):
+        assert infer_model_from_title("Audi", "Audi A4 1.9 TDI", 1890) == "A4"
+
+
+class TestModelsInsideKnownBrands:
+    def test_mercedes_trim_designations_resolve(self):
+        assert get_generation("Mercedes-Benz", "A 45 AMG", 2016) is not None
+        assert get_generation("Mercedes-Benz", "ML 320", 2005) is not None
+        assert get_generation("Mercedes-Benz", "Classe M", 2009) is not None
+        assert get_generation("Mercedes-Benz", "W124 (1984-1997)", 1990) is not None
+
+    def test_mercedes_vans_are_their_own_models(self):
+        assert get_generation("Mercedes-Benz", "Sprinter", 2015) is not None
+        assert get_generation("Mercedes-Benz", "Citan", 2016) is not None
+        assert get_generation("Mercedes-Benz", "Viano", 2008) is not None
+
+    def test_c5_aircross_is_not_a_c5(self):
+        assert get_generation("Citroën", "C5 Aircross", 2020) is not None
+        assert get_generation("Citroën", "C5 Aircross", 2005) is None
+
+    def test_classics_resolve_only_inside_their_production_years(self):
+        assert get_generation("Renault", "19", 1994) is not None
+        assert get_generation("Renault", "19", 2016) is None
+        assert get_generation("Fiat", "127", 1978) is not None
+        assert get_generation("Opel", "Kadett", 1990) is not None
+        assert get_generation("Volkswagen", "Carocha", 1968) is not None
+
+    def test_truncated_ranges_reach_the_first_generation(self):
+        assert get_generation("Toyota", "Corolla", 1974) is not None
+        assert get_generation("Volvo", "S80", 2001) is not None
+        assert get_generation("Hyundai", "Tucson", 2006) is not None
+        assert get_generation("Suzuki", "Ignis", 2003) is not None
+
+    def test_newly_covered_models_resolve(self):
+        assert get_generation("Porsche", "Cayman", 2010) is not None
+        assert get_generation("Porsche", "718 Cayman", 2018) is not None
+        assert get_generation("Jaguar", "F-Type", 2016) is not None
+        assert get_generation("Hyundai", "Galloper", 1999) is not None
+        assert get_generation("Jeep", "Avenger", 2024) is not None

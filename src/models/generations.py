@@ -165,16 +165,32 @@ def get_known_models_for_brand(brand: str) -> list[str]:
     return out
 
 
-def infer_model_from_title(brand: str, title: str) -> str | None:
+def infer_model_from_title(
+    brand: str, title: str, year: int | None = None
+) -> str | None:
     """Return a known *brand* model name found in *title*, or None.
 
     Word-boundary match so short model codes like ``"320"`` don't fire
     inside ``"2.0"`` or ``"3000"``. Longest-first so ``"Mégane Sport
     Tourer"`` wins over ``"Mégane"``.
+
+    With *year* given, a candidate that has no generation covering that
+    year loses to the next one. Numeric model names collide with prices
+    and displacements written in the title ("3.100 €" carries "100",
+    "BMW 320 D 2000" carries "2000"), and returning the first raw match
+    handed the caller a name it could not resolve — the listing was then
+    dropped even though a later candidate would have matched.
     """
     if not brand or not title:
         return None
+    fallback = None
     for m in get_known_models_for_brand(brand):
-        if re.search(rf"\b{re.escape(m)}\b", title, flags=re.IGNORECASE):
+        if not re.search(rf"\b{re.escape(m)}\b", title, flags=re.IGNORECASE):
+            continue
+        if year is None:
             return m
-    return None
+        if get_generation(brand, m, year):
+            return m
+        if fallback is None:
+            fallback = m
+    return fallback
