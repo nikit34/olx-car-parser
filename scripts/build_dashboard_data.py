@@ -106,6 +106,30 @@ MODELS_RELEASE_URL = ("https://github.com/nikit34/olx-car-parser/releases/"
                       "download/latest-data/models.json")
 
 
+PRE_HYSTERESIS_PUBLISHED = ("ford-ka", "citroen-c-elysee")
+PRE_HYSTERESIS_UNTIL = "2026-10-15"
+
+
+def _seed_pre_hysteresis(doc: dict | None) -> dict | None:
+    """Treat as published the pages we served before the blob could record it.
+
+    ``_published_page_set`` learns what was published from the previous blob, so
+    anything that dropped out BEFORE that memory existed is invisible to it and
+    has to re-clear the entry floor — even though the published rule keeps such
+    a page down to the retirement floor. These two were live and ranking, still
+    clear the retirement floor, and are locked out only by the ratchet. Inert
+    after ``PRE_HYSTERESIS_UNTIL``, by which they have either re-earned the
+    entry floor on their own or genuinely gone.
+    """
+    if time.strftime("%Y-%m-%d") > PRE_HYSTERESIS_UNTIL or not PRE_HYSTERESIS_PUBLISHED:
+        return doc
+    out = doc if isinstance(doc, dict) else {}
+    models = out.setdefault("models", {})
+    for slug in PRE_HYSTERESIS_PUBLISHED:
+        models.setdefault(slug, {"yr": []})
+    return out
+
+
 def _published_models(out_dir: Path) -> dict | None:
     """The models.json currently live, so a published page can hold its address.
 
@@ -119,18 +143,18 @@ def _published_models(out_dir: Path) -> dict | None:
     local = out_dir / "models.json"
     if local.exists():
         try:
-            return json.loads(local.read_text())
+            return _seed_pre_hysteresis(json.loads(local.read_text()))
         except (OSError, ValueError) as e:
             print(f"[build]   previous models.json unreadable ({e}); "
                   f"trying the Release", flush=True)
     try:
         import urllib.request
         with urllib.request.urlopen(MODELS_RELEASE_URL, timeout=30) as r:
-            return json.loads(r.read().decode("utf-8"))
+            return _seed_pre_hysteresis(json.loads(r.read().decode("utf-8")))
     except Exception as e:
         print(f"[build]   no previous models.json ({e}); publishing without "
               f"hysteresis, pages on the sample floor may drop out", flush=True)
-        return None
+        return _seed_pre_hysteresis(None)
 
 
 def _build(db_url: str | None, out_dir: Path) -> dict:

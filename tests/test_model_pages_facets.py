@@ -352,3 +352,42 @@ class TestPublishHysteresis:
     def test_no_previous_blob_means_the_old_behaviour(self):
         rows = _make(n=16, price=5000)
         assert build_model_pages(_listings(rows), published=None)["models"] == {}
+
+
+class TestPreHysteresisSeed:
+    """Pages that were live before the blob could remember them are invisible to
+    the hysteresis and have to re-clear the entry floor, even though the
+    published rule keeps a published page down to the retirement floor. The seed
+    closes that window; it must not do anything else."""
+
+    def test_the_seed_marks_the_named_slugs_as_published(self):
+        from scripts.build_dashboard_data import _seed_pre_hysteresis, PRE_HYSTERESIS_PUBLISHED
+        out = _seed_pre_hysteresis({"models": {"volkswagen-golf": {"yr": [{"y": 2012}]}}})
+        for slug in PRE_HYSTERESIS_PUBLISHED:
+            assert slug in out["models"], f"{slug} was not seeded"
+        assert out["models"]["volkswagen-golf"]["yr"] == [{"y": 2012}], \
+            "the seed overwrote a record the previous build actually published"
+
+    def test_the_seed_survives_having_no_previous_blob(self):
+        from scripts.build_dashboard_data import _seed_pre_hysteresis, PRE_HYSTERESIS_PUBLISHED
+        out = _seed_pre_hysteresis(None)
+        assert set(PRE_HYSTERESIS_PUBLISHED) <= set(out["models"])
+
+    def test_a_seeded_model_publishes_at_the_retirement_floor_and_not_below(self):
+        from src.analytics.model_pages import RETIRE_MODEL_N
+        rows = _make(n=RETIRE_MODEL_N + 5, price=3500)
+        seed = {"models": {"volkswagen-golf": {"yr": []}}}
+        assert "volkswagen-golf" in build_model_pages(_listings(rows), published=seed)["models"]
+        thin = _make(n=RETIRE_MODEL_N - 1, price=3500)
+        assert "volkswagen-golf" not in build_model_pages(_listings(thin), published=seed)["models"], \
+            "the seed published a model below the floor the methodology promises"
+
+    def test_the_seed_expires(self):
+        import scripts.build_dashboard_data as b
+        keep = b.PRE_HYSTERESIS_UNTIL
+        try:
+            b.PRE_HYSTERESIS_UNTIL = "2000-01-01"
+            assert b._seed_pre_hysteresis({"models": {}})["models"] == {}, \
+                "the seed still fires after its expiry date"
+        finally:
+            b.PRE_HYSTERESIS_UNTIL = keep
