@@ -180,12 +180,17 @@ def infer_model_from_title(
     "BMW 320 D 2000" carries "2000"), and returning the first raw match
     handed the caller a name it could not resolve — the listing was then
     dropped even though a later candidate would have matched.
+
+    The space inside a model name is optional: sellers write "E270",
+    "ml320" and "B180d" for what the table calls "E 270", "ML 320" and
+    "B 180".
     """
     if not brand or not title:
         return None
     fallback = None
     for m in get_known_models_for_brand(brand):
-        if not re.search(rf"\b{re.escape(m)}\b", title, flags=re.IGNORECASE):
+        pattern = r"\s*".join(re.escape(part) for part in m.split())
+        if not re.search(rf"\b{pattern}\b", title, flags=re.IGNORECASE):
             continue
         if year is None:
             return m

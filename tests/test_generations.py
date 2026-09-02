@@ -230,3 +230,16 @@ class TestBrandForModel:
     def test_spelling_of_the_model_does_not_matter(self):
         assert brand_for_model("c5 aircross") == "Citroën"
         assert brand_for_model("C5-Aircross") == "Citroën"
+
+
+class TestSpacelessModelNames:
+    def test_the_space_inside_a_model_name_is_optional(self):
+        assert infer_model_from_title("Mercedes-Benz", "Mercedes E270 Avantgard", 2004) == "E 270"
+        assert infer_model_from_title("Mercedes-Benz", "Mercedes ml320 cdi", 2005) == "ML 320"
+        assert infer_model_from_title("Mercedes-Benz", "Mercedes A200 cdi", 2010) == "A 200"
+
+    def test_the_spelled_out_name_still_matches(self):
+        assert infer_model_from_title("Mercedes-Benz", "Mercedes E 270 CDI", 2004) == "E 270"
+
+    def test_it_does_not_match_across_a_word_boundary(self):
+        assert infer_model_from_title("Mercedes-Benz", "SE270 qualquer coisa", 2004) is None
