@@ -2189,7 +2189,7 @@ function publicHtml(body, status = 200) {
     status,
     headers: {
       "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "public, max-age=0, s-maxage=900, stale-while-revalidate=86400",
+      "Cache-Control": "public, max-age=300, stale-while-revalidate=86400",
     },
   });
 }
