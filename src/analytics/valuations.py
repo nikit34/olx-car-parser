@@ -22,6 +22,8 @@ import unicodedata
 
 import pandas as pd
 
+_PRICE_TRACK_MAX = 6
+
 
 def _strip_accents(s: str) -> str:
     s = (s or "").lower()
@@ -77,8 +79,54 @@ def _s(v):
     return s or None
 
 
+def _price_track(snapshots: pd.DataFrame | None, now: pd.Timestamp,
+                 wanted: set[str]) -> dict[str, list[list[int]]]:
+    """Per-listing price track as ``[[days_ago, price], ...]``, oldest first.
+
+    Snapshots are written on change only, so a listing that never moved has a
+    single row and is left out entirely — the track is shipped precisely for
+    the ads whose seller has already come down, which is the one fact about an
+    ad that the ad's own page does not show.
+    """
+    if snapshots is None or snapshots.empty or not wanted:
+        return {}
+    need = ["olx_id", "price_eur", "scraped_at"]
+    if not set(need).issubset(snapshots.columns):
+        return {}
+    snap = snapshots[need].dropna()
+    snap = snap[snap["olx_id"].astype(str).isin(wanted)]
+    if snap.empty:
+        return {}
+    snap = snap.copy()
+    snap["olx_id"] = snap["olx_id"].astype(str)
+    snap["scraped_at"] = pd.to_datetime(snap["scraped_at"], errors="coerce", utc=True)
+    snap = snap.dropna(subset=["scraped_at"])
+    counts = snap["olx_id"].value_counts()
+    snap = snap[snap["olx_id"].isin(counts[counts >= 2].index)]
+    if snap.empty:
+        return {}
+    snap = snap.sort_values(["olx_id", "scraped_at"])
+    snap = snap.groupby("olx_id", sort=False).tail(_PRICE_TRACK_MAX)
+    days = (now - snap["scraped_at"]).dt.days.astype("int64").to_numpy()
+    prices = snap["price_eur"].to_numpy()
+    ids = snap["olx_id"].to_numpy()
+    out: dict[str, list[list[int]]] = {}
+    for oid, day, price in zip(ids, days, prices):
+        if day < 0:
+            continue
+        value = _i(price)
+        if value is None:
+            continue
+        pts = out.setdefault(oid, [])
+        if pts and pts[-1][1] == value:
+            continue
+        pts.append([int(day), value])
+    return {k: v for k, v in out.items() if len(v) >= 2}
+
+
 def build_valuations(listings: pd.DataFrame, predictions: pd.DataFrame,
-                     sell_speed: pd.DataFrame | None = None) -> dict:
+                     sell_speed: pd.DataFrame | None = None,
+                     snapshots: pd.DataFrame | None = None) -> dict:
     """Return ``{"v":1, "cars": {olx_id: {...}}}`` for active, priced listings.
 
     - ``listings``: enriched listings DataFrame (needs olx_id, is_active, title,
@@ -86,12 +134,17 @@ def build_valuations(listings: pd.DataFrame, predictions: pd.DataFrame,
     - ``predictions``: per-olx_id ``predicted_price`` + ``fair_price_{low,high}``.
     - ``sell_speed``: optional output of ``compute_sell_speed_by_model`` for the
       median days-to-sell per (brand, model).
+    - ``snapshots``: optional price-snapshot frame; supplies the per-ad price
+      track and, with it, the "the seller has already come down" line.
     """
     cars: dict[str, dict] = {}
     if listings.empty or predictions.empty:
         return {"v": 1, "cars": cars}
 
+    now = pd.Timestamp.now(tz="UTC")
     pred = predictions.set_index("olx_id")
+    track = _price_track(snapshots, now, set(pred.index.astype(str)))
+
     sell_lookup: dict[tuple, int] = {}
     if sell_speed is not None and not sell_speed.empty:
         sell_lookup = {(r.brand, r.model): int(r.sell_days)
@@ -136,6 +189,23 @@ def build_valuations(listings: pd.DataFrame, predictions: pd.DataFrame,
         if brand and model:
             from src.analytics.model_pages import slugify
             rec["ms"] = slugify(f"{brand}-{model}")
+        posted = getattr(r, "first_seen_at", None)
+        if posted is not None and pd.notna(posted):
+            posted_ts = pd.Timestamp(posted)
+            if posted_ts.tzinfo is None:
+                posted_ts = posted_ts.tz_localize("UTC")
+            dom = int((now - posted_ts).days)
+            if 0 <= dom <= 3650:
+                rec["dom"] = dom
+        pts = track.get(str(oid))
+        if pts:
+            rec["ph"] = pts
+        fault = _s(getattr(r, "text_minor_fault", None))
+        if fault:
+            rec["mf"] = fault[:40]
+        blocker = _s(getattr(r, "text_hard_block_phrase", None))
+        if blocker:
+            rec["hb"] = blocker[:40]
         # Drop None values to keep the blob small.
         cars[str(oid)] = {k: v for k, v in rec.items() if v is not None}
 

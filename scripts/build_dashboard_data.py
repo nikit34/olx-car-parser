@@ -352,7 +352,8 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
     sell_speed = sell_speed_frame(liquidity)
     print(f"[build]   liquidity: {len(liquidity.get('models', {})):>6} models  "
           f"({len(liq_pages)} deep enough for a page)", flush=True)
-    valuations = build_valuations(listings, predictions, sell_speed)
+    valuations = build_valuations(listings, predictions, sell_speed,
+                                  snapshots=snapshots)
     val_path = out_dir / "valuations.json"
     # allow_nan=False: a non-finite value (pandas NaN leaking through) emits the
     # literal `NaN`, which is valid for Python's json.load but breaks the Worker's

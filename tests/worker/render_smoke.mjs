@@ -1033,6 +1033,37 @@ check("the valuation event still fires on both /avaliar paths", () => {
   assert(!bare.includes("valuation_result"), "valuation event fired with no result and no measurement id");
 });
 
+check("the negotiation facts show up on a pasted listing", () => {
+  const rec = { t: "VW Golf 1.6 TDI", y: 2015, km: 150000, fu: "Diesel", p: 9000,
+                fl: 9500, fm: 11000, fh: 12500, ct: "Porto", sd: 29, dom: 68,
+                ph: [[68, 10500], [40, 9900], [6, 9000]], mf: "fuga de óleo" };
+  const out = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models,
+                              spec: null, depositCount: 0, host: HOST, builtAt });
+  assert(out.includes("baixou o preço"), "the price track is not rendered");
+  assert(out.includes("2 vezes"), "the number of cuts is wrong");
+  assert(out.includes("−14%"), "the size of the cut is wrong");
+  assert(out.includes("68 dias"), "days on market are not rendered");
+  assert(out.includes("fuga de óleo"), "the seller's own words are not quoted");
+});
+
+check("a listing sold for parts says so instead of quoting a fair price", () => {
+  const rec = { t: "VW Golf", y: 2015, p: 900, fl: 9500, fm: 11000, fh: 12500,
+                hb: "para peças" };
+  const out = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models,
+                              spec: null, depositCount: 0, host: HOST, builtAt });
+  assert(out.includes("para peças"), "the blocking phrase is not quoted");
+  assert(out.includes("não se aplica"), "the fair band is not disclaimed");
+});
+
+check("a listing with no history at all still renders", () => {
+  const rec = { t: "VW Golf", y: 2015, p: 9000, fl: 9500, fm: 11000, fh: 12500 };
+  const out = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models,
+                              spec: null, depositCount: 0, host: HOST, builtAt });
+  assert(out.includes("Preço pedido"), "the card broke without the optional facts");
+  assert(!out.includes("baixou o preço"), "invented a price cut out of nothing");
+  assert(!out.includes("Anúncio online"), "invented an age out of nothing");
+});
+
 check("analytics stays off unless a measurement id is set", () => {
   setAnalyticsId("");
   const off = renderMethodology({ stats, host: HOST, depositCount: 0, builtAt });

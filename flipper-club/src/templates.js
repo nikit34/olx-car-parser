@@ -1825,6 +1825,46 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
           </span>
         </div>` : "";
     const sellLine = rec.sd != null ? `<div style="font-size:12px;color:#8A8F98;margin-top:14px;line-height:1.5;">Carros deste modelo vendem, em mediana, em <b style="color:#16181D;">~${rec.sd} dias</b> no mercado.</div>` : "";
+    const track = Array.isArray(rec.ph) ? rec.ph : null;
+    let cutBlock = "";
+    if (track && track.length >= 2) {
+      const first = track[0][1], last = track[track.length - 1][1];
+      const cuts = track.length - 1;
+      const drop = first > 0 ? Math.round((1 - last / first) * 100) : 0;
+      const lastDays = track[track.length - 1][0];
+      if (drop > 0) {
+        cutBlock = `
+        <div class="exclusive" style="background:${g.bg};border:1px solid ${g.br};align-items:flex-start;margin-top:16px;">
+          <span style="font-size:15px;">📉</span>
+          <span class="x" style="color:#1B5E3A;">
+            <b style="color:${g.fg};">O vendedor já baixou o preço ${cuts === 1 ? "uma vez" : `${cuts} vezes`}.</b>
+            De ${fmtEur(first)} para ${fmtEur(last)} (−${drop}%)${lastDays === 0 ? ", a última descida foi hoje" : `, a última há ${lastDays} ${lastDays === 1 ? "dia" : "dias"}`}.
+            <span style="display:block;margin-top:6px;">Há margem para negociar.</span>
+          </span>
+        </div>`;
+      }
+    }
+    let stallBlock = "";
+    if (rec.dom != null) {
+      const stalled = rec.sd != null && rec.dom > rec.sd * 1.5;
+      const c = stalled ? amber : null;
+      stallBlock = stalled
+        ? `<div style="font-size:12.5px;color:#6B4E12;background:${c.bg};border:1px solid ${c.br};border-radius:10px;padding:10px 12px;margin-top:12px;line-height:1.5;">
+             Anúncio online há <b>${rec.dom} dias</b> — carros deste modelo costumam vender em ~${rec.sd}. Quem está há tanto tempo à espera tende a aceitar menos.
+           </div>`
+        : `<div style="font-size:12px;color:#8A8F98;margin-top:12px;">Anúncio online há <b style="color:#16181D;">${rec.dom} ${rec.dom === 1 ? "dia" : "dias"}</b>.</div>`;
+    }
+    const quote = v => typeof v === "string" && v.trim() ? `«${escapeHtml(v.trim())}»` : "";
+    const faultBlock = rec.hb
+      ? `<div class="exclusive" style="background:${rd.bg};border:1px solid ${rd.br};align-items:flex-start;margin-top:16px;">
+           <span style="font-size:15px;">🛑</span>
+           <span class="x" style="color:#7A1B1B;"><b style="color:${rd.fg};">O próprio anúncio diz ${quote(rec.hb)}.</b> O intervalo justo acima é de um carro em condições normais e não se aplica a esta viatura.</span>
+         </div>`
+      : (rec.mf
+        ? `<div style="font-size:12.5px;color:#6B4E12;background:${amber.bg};border:1px solid ${amber.br};border-radius:10px;padding:10px 12px;margin-top:12px;line-height:1.5;">
+             O texto do anúncio menciona ${quote(rec.mf)}. Desconta o custo da reparação antes de comparar com o intervalo justo.
+           </div>`
+        : "");
     // Use the pasted URL when present. Only reconstruct an OLX URL for OLX-style
     // ids (SV ids start "8P" and live on standvirtual.com — a reconstructed
     // olx.pt URL would 404), otherwise omit the button.
@@ -1852,7 +1892,10 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
           <div class="gauge-track"><div class="gauge-pin" style="left:${gaugePos}%;"></div></div>
         </div>
         ${importBanner}
+        ${cutBlock}
+        ${faultBlock}
         ${sellLine}
+        ${stallBlock}
         ${olxHref ? `<a class="olx-btn" style="display:block;margin-top:18px;" href="${escapeHtml(olxHref)}" target="_blank" rel="noopener nofollow">Ver anúncio original&nbsp;&nbsp;↗</a>` : ""}
         ${modelHref ? `<a href="${modelHref}" style="display:block;text-align:center;margin-top:12px;font-size:13.5px;color:#177A47;font-weight:600;">Ver preços deste modelo por ano&nbsp;→</a>` : ""}
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;">
