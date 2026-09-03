@@ -24,6 +24,7 @@ WATCH_SENDERS = (
     "venderomeucarro.pt", "flexicar.pt", "autohub.pt", "idrivemobile.pt", "standcapelo.com",
     "caautomoveis.com", "auto1.com", "via-everflow.io", "everflow", "carvertical",
     "danielautosite@gmail.com", "serieoriginalvendas@gmail.com", "notify.cloudflare.com",
+    "dekra", "verificar.pt",
 )
 YEAR_PAGE = re.compile(r"^https://carsbuyer\.org/preco/[^/]+/\d{4}$")
 
