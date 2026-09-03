@@ -111,7 +111,7 @@ CANONICAL_HOST = "carsbuyer.org"
 # these in and both pages grow the block; leave them and both render the
 # brand-level version with no author and no mailto.
 SITE_AUTHOR = "Nikita Permiakov"
-SITE_CONTACT_EMAIL = "permikov134@yandex.ru"
+SITE_CONTACT_EMAIL = "ola@carsbuyer.org"
 
 # Staged rollout of the per-model second SEO layer (model-year, depreciation and
 # facet pages: fuel, gearbox, district). Caps it to the N deepest-sampled models;
