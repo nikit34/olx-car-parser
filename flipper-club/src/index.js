@@ -67,6 +67,7 @@ import {
   depreciationAge, depreciationJson,
   renderFacetPage, renderDistrictPage, facetCell, facetKind, facetJson, publishedCells, retiredFacetKind,
   renderLiquidityPage, liquidityJson, publishedLiquidity, setLiqWave, liqWaveSlugs,
+  renderVenderPage, renderVenderHub, venderJson, publishedVender, setVenderWave,
   renderImportPage, renderImportHub, importJson, importOk, importSlugs,
   isoWeek, missingWeeks, monthlyCuts, renderMarketMonth, breadcrumbLd,
   setWave, waveSlugs, publishedYearPages, publishedDepreciation, publishedPairs, publishedFacets,
@@ -101,7 +102,7 @@ const PRODUCT_PATHS = new Set([
   // Second-layer SEO pages (seo-pages.js). Hubs are exact paths; their per-item
   // children (/depreciacao/{slug}, /comparar/{a}-vs-{b}, /mercado/indice/{week|month})
   // are prefix-routed above the asset gate.
-  "/depreciacao", "/comparar", "/liquidez", "/sobrevalorizados", "/importar",
+  "/depreciacao", "/comparar", "/liquidez", "/sobrevalorizados", "/importar", "/vender",
   "/metodologia", "/sobre", "/isv",
   ...Object.values(DUELS).map(d => `/${d.path}`),
 ]);
@@ -214,6 +215,7 @@ const worker = {
       // Staged rollout of the second SEO layer. Empty ⇒ everything is live.
       setWave(env.SEO_WAVE_MODELS);
       setLiqWave(env.LIQ_WAVE_MODELS);
+      setVenderWave(env.VENDER_WAVE_MODELS);
 
       // Internal stlite dashboard + its assets — Basic-Auth gated, fail-closed.
       if (pathname === "/analytics/leads.json") {
@@ -280,6 +282,9 @@ const worker = {
       if (pathname.startsWith("/liquidez/") && method === "GET") {
         return handleLiquidityPage(request, env, url);
       }
+      if (pathname.startsWith("/vender/") && method === "GET") {
+        return handleVenderPage(request, env, url);
+      }
       if (pathname.startsWith("/importar/") && method === "GET") {
         return handleImportPage(request, env, url);
       }
@@ -339,6 +344,7 @@ const worker = {
       const duelHub = Object.values(DUELS).find(d => pathname === `/${d.path}`);
       if (duelHub && method === "GET") return handleDuelHub(request, env, url, duelHub);
       if (pathname === "/liquidez" && method === "GET") return handleLiquidity(request, env, url);
+      if (pathname === "/vender" && method === "GET") return handleVenderHub(request, env, url);
       if (pathname === "/sobrevalorizados" && method === "GET") return handleValuationGap(request, env, url);
       if (pathname === "/importar" && method === "GET") return handleImportHub(request, env, url);
       if (pathname === "/metodologia" && method === "GET") return handleMethodology(request, env, url);
@@ -461,7 +467,8 @@ async function handleAvaliar(request, env, url) {
   let spec = null;
   if (!rec && modelo && models && models[modelo]) {
     const mrec = models[modelo];
-    spec = { rec: mrec, slug: modelo, year: ano, cell: pickYearCell(mrec, ano) };
+    spec = { rec: mrec, slug: modelo, year: ano, cell: pickYearCell(mrec, ano),
+             vender: publishedVender(models, modelo, mrec, mdoc.built_at) };
   }
   return html(renderAvaliar({
     rec, olxId, sourceUrl, query, models, spec, depositCount,
@@ -603,6 +610,7 @@ async function handleModelPage(request, env, url) {
     }),
     hasDepreciation: publishedDepreciation(models, slug, rec, builtAt),
     hasLiquidity: publishedLiquidity(models, slug, rec, builtAt),
+    hasVender: publishedVender(models, slug, rec, builtAt),
     duels: duelsFor(models, slug, rec, builtAt).map(d => ({ path: d.path, kind: d.kind })),
     provenanceHtml: provenance({ n: rec.n, builtAt }),
     altJson: `https://${url.host}/preco/${slug}.json`,
@@ -1213,6 +1221,7 @@ async function handleSitemap(request, env, url) {
       if (duelSlugs(models, d.kind, lastmodSrc).length) add(`/${d.path}`, "weekly", "0.7");
     }
     add("/liquidez", "weekly", "0.7");
+    add("/vender", "weekly", "0.7");
     add("/sobrevalorizados", "weekly", "0.6");
 
     for (const [slug, rec] of Object.entries(models)) {
@@ -1228,6 +1237,7 @@ async function handleSitemap(request, env, url) {
       }
       if (publishedDepreciation(models, slug, rec, lastmodSrc)) add(`/depreciacao/${encodeURIComponent(slug)}`, "weekly", "0.5");
       if (publishedLiquidity(models, slug, rec, lastmodSrc)) add(`/liquidez/${encodeURIComponent(slug)}`, "weekly", "0.5");
+      if (publishedVender(models, slug, rec, lastmodSrc)) add(`/vender/${encodeURIComponent(slug)}`, "weekly", "0.6");
       for (const d of Object.values(DUELS)) {
         if (publishedDuel(models, slug, rec, lastmodSrc, d.kind)) add(`/${d.path}/${encodeURIComponent(slug)}`, "weekly", "0.5");
       }
@@ -1397,6 +1407,7 @@ async function handleLlmsTxt(request, env, url) {
     `- [Índice do mercado, com arquivo semanal e mensal permanente](${base}/mercado/indice)`,
     `- [Desvalorização por modelo](${base}/depreciacao)`,
     `- [Quanto tempo demora a vender cada modelo](${base}/liquidez)`,
+    `- [Vender: quanto pedir por modelo e em quantos dias vende](${base}/vender)`,
     `- [Comparações diretas entre modelos](${base}/comparar)`,
     ...duelHubs.map(d => `- [${d.hubTitle}](${base}/${d.path})`),
     `- [Preço pedido vs. valor justo estimado](${base}/sobrevalorizados)`,
@@ -2353,5 +2364,41 @@ async function leadsJson(env) {
   return new Response(JSON.stringify({ count: out.length, leads: out }, null, 2), {
     status: 200,
     headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
+  });
+}
+
+async function handleVenderHub(request, env, url) {
+  return withModels(request, env, url, ({ models, builtAt, depositCount, market }) => {
+    const rows = Object.entries(models)
+      .filter(([slug, r]) => publishedVender(models, slug, r, builtAt))
+      .map(([slug, r]) => ({
+        slug, b: r.b, m: r.m, n: r.n, fm: r.fm, fl: r.fl, fh: r.fh, sd: r.sd,
+        s30: (r.lq && r.lq.s30 != null) ? r.lq.s30 : null,
+        cu: (r.lq && r.lq.cu != null) ? r.lq.cu : null,
+        cp: (r.lq && r.lq.cp != null) ? r.lq.cp : null,
+      }))
+      .sort((a, b) => b.n - a.n || (a.slug < b.slug ? -1 : 1));
+    return publicHtml(renderVenderHub({ rows, market, host: url.host, depositCount, builtAt }));
+  });
+}
+
+async function handleVenderPage(request, env, url) {
+  let slug;
+  try {
+    slug = decodeURIComponent(url.pathname.slice("/vender/".length)).replace(/\/+$/, "").toLowerCase();
+  } catch (_) { return notFoundPage(request, env, url); }
+  const wantsJson = slug.endsWith(".json");
+  if (wantsJson) slug = slug.slice(0, -".json".length);
+  return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, market }) => {
+    const rec = models[slug];
+    if (!rec || !publishedVender(models, slug, rec, builtAt)) return notFoundPage(request, env, url, setCookie);
+    if (wantsJson) return jsonResponse(venderJson(rec, slug, { host: url.host, builtAt }));
+    return publicHtml(renderVenderPage({
+      rec, slug, market,
+      pageYears: publishedYearPages(models, slug, rec, builtAt),
+      hasLiquidity: publishedLiquidity(models, slug, rec, builtAt),
+      hasDepreciation: publishedDepreciation(models, slug, rec, builtAt),
+      host: url.host, depositCount, builtAt,
+    }));
   });
 }

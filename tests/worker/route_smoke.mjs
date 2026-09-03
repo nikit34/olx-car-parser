@@ -12,7 +12,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import worker from "../../flipper-club/src/index.js";
-import { yearPageYears, liquidityOk, depreciationSlugs, comparePairs, isoWeek, isoWeekStart, missingWeeks, DUELS, isoWeekMonth, monthlyCuts, importSlugs } from "../../flipper-club/src/seo-pages.js";
+import { yearPageYears, liquidityOk, depreciationSlugs, comparePairs, isoWeek, isoWeekStart, missingWeeks, DUELS, isoWeekMonth, monthlyCuts, importSlugs, venderOk } from "../../flipper-club/src/seo-pages.js";
 
 const HOST = "carsbuyer.org";
 const RELEASE = "https://github.com/nikit34/olx-car-parser/releases/download/latest-data/models.json";
@@ -1041,6 +1041,25 @@ await check("seller lead POST stores the lead and answers with the thanks page",
   assert(admin.status === 401, `leads.json without auth → ${admin.status}`);
   const robots = await (await get("/robots.txt")).text();
   assert(robots.includes("Disallow: /lead"), "robots does not block /lead");
+});
+
+await check("seller pages resolve, the hub links them and the sitemap lists them", async () => {
+  const hub = await get("/vender");
+  assert(hub.status === 200, `/vender → ${hub.status}`);
+  const hubBody = await hub.text();
+  const eligible = slugs.filter(s => venderOk(models[s]));
+  assert(eligible.length > 0, "no eligible seller model in the fixture");
+  const s = eligible[0];
+  assert(hubBody.includes(`/vender/${s}`), "hub does not link an eligible model");
+  const page = await get(`/vender/${s}`);
+  assert(page.status === 200, `/vender/${s} → ${page.status}`);
+  const j = await get(`/vender/${s}.json`);
+  assert(j.status === 200 && (j.headers.get("content-type") || "").includes("json"), "seller JSON twin is not served");
+  const miss = await get("/vender/modelo-que-nao-existe");
+  assert(miss.status === 404, `unknown seller page → ${miss.status}`);
+  const sm = await (await get("/sitemap.xml")).text();
+  assert(sm.includes(`/vender/${s}<`) || sm.includes(`/vender/${s}</loc>`), "sitemap does not list the seller page");
+  assert(sm.includes(`https://${HOST}/vender</loc>`), "sitemap does not list the seller hub");
 });
 
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall route checks passed");

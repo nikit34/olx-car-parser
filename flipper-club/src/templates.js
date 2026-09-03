@@ -1084,7 +1084,7 @@ ${consentBanner()}
 <footer class="footer">
   <div class="footer-in">
     <span class="mono">AVALIAÇÃO INDEPENDENTE&nbsp;· dados de anúncios públicos OLX&nbsp;· estimativas indicativas, não vinculativas&nbsp;· não somos stand nem intermediário</span>
-    <span class="mono"><a href="/precos" style="color:#5B606B;">Preços por modelo</a>&nbsp;· <a href="/depreciacao" style="color:#5B606B;">Desvalorização</a>&nbsp;· <a href="/comparar" style="color:#5B606B;">Comparar</a>&nbsp;· <a href="/liquidez" style="color:#5B606B;">Tempo de venda</a>&nbsp;· <a href="/mercado/indice" style="color:#5B606B;">Índice de mercado</a>&nbsp;· <a href="/avaliar" style="color:#5B606B;">Avaliar o meu carro</a></span>
+    <span class="mono"><a href="/precos" style="color:#5B606B;">Preços por modelo</a>&nbsp;· <a href="/depreciacao" style="color:#5B606B;">Desvalorização</a>&nbsp;· <a href="/comparar" style="color:#5B606B;">Comparar</a>&nbsp;· <a href="/liquidez" style="color:#5B606B;">Tempo de venda</a>&nbsp;· <a href="/mercado/indice" style="color:#5B606B;">Índice de mercado</a>&nbsp;· <a href="/avaliar" style="color:#5B606B;">Avaliar o meu carro</a>&nbsp;· <a href="/vender" style="color:#5B606B;">Vender o meu carro</a></span>
     <span class="mono"><a href="/metodologia" style="color:#5B606B;">Metodologia</a>&nbsp;· <a href="/sobre" style="color:#5B606B;">Quem somos</a>&nbsp;· <a href="/isv" style="color:#5B606B;">Simulador ISV</a>&nbsp;· <a href="/importar" style="color:#5B606B;">Importar da Alemanha</a>&nbsp;· Portugal&nbsp;🇵🇹</span>
   </div>
 </footer>
@@ -1142,7 +1142,7 @@ export function renderLanding({ stats, featured, depositEur, depositCount, host 
             <div class="chips">
               <a class="chip active" href="/mercado?view=comprar">🛒 Comprar bem</a>
               <a class="chip" href="/mercado?view=revender">📈 Revender com margem</a>
-              <a class="chip" href="/avaliar#escolher">Vender o meu carro</a>
+              <a class="chip" href="/vender">Vender o meu carro</a>
             </div>
           </div>
           <div class="hero-stats">
@@ -1963,6 +1963,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
           <a class="btn-outline" style="padding:11px 16px;font-size:14px;" href="/preco/${encodeURIComponent(spec.slug)}">Ver preço por ano&nbsp;→</a>
           <a class="btn-dark" style="padding:11px 16px;font-size:14px;" href="/avaliar">Tens o anúncio? Cola o link</a>
         </div>
+        ${spec.vender ? `<a href="/vender/${encodeURIComponent(spec.slug)}" style="display:block;text-align:center;margin-top:12px;font-size:13.5px;color:#177A47;font-weight:600;">Quanto pedir e em quantos dias vende&nbsp;→</a>` : ""}
       </div>
       <div class="side-foot">Preços PEDIDOS em anúncios ativos do OLX — estimativa indicativa, não o valor da tua viatura concreta.</div>
       ${leadFormBlock({
@@ -2134,7 +2135,7 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
                                   insights = [], yearPages = [], competitors = [],
                                   competitorKind = "price", comparisons = [],
                                   facets = [], hasDepreciation = false, duels = [],
-                                  hasLiquidity = false,
+                                  hasLiquidity = false, hasVender = false,
                                   provenanceHtml = "", altJson = null }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
   const FM = fmtEur(rec.fm), FL = fmtEur(rec.fl), FH = fmtEur(rec.fh);
@@ -2352,6 +2353,14 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
       </div>
     </section>` : "";
 
+  const venderLink = hasVender ? `
+    <section class="section" style="padding:26px 22px 0;max-width:680px;">
+      <div class="exclusive" style="background:#F4F6FB;border:1px solid #D9E0F0;align-items:flex-start;">
+        <span style="font-size:15px;">🏷️</span>
+        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">Vais vender o teu ${B} ${M}?</b> Quanto pedir por ano, em quantos dias sai e quantos vendedores acabam por baixar o preço — e propostas de compra sem compromisso. <a href="/vender/${slug}" style="color:#177A47;font-weight:600;">Ver quanto pedir&nbsp;→</a></span>
+      </div>
+    </section>` : "";
+
   const liqLink = hasLiquidity ? `
     <section class="section" style="padding:26px 22px 0;max-width:680px;">
       <div class="exclusive" style="background:#F6FBF8;border:1px solid #DDEBE1;align-items:flex-start;">
@@ -2390,7 +2399,7 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
   // internal links back to / and /precos (reinforcing the crawl spine).
   const crumb = `<nav class="section" aria-label="Breadcrumb" style="max-width:680px;padding:22px 22px 0;font-size:12.5px;color:#8A8F98;">`
     + `<a href="/" style="color:#8A8F98;">Início</a> › <a href="/precos" style="color:#8A8F98;">Preços</a> › <span style="color:#16181D;">${B} ${M}</span></nav>`;
-  const body = `${crumb}<div style="padding-top:14px;">${hero}</div>${gbmCard}${insightBlock}${bridge1}${table}${facetBlock}${duelLink}${depLink}${liqLink}${bridge2}${trust}${rivals}${sellerCta}${sib}`;
+  const body = `${crumb}<div style="padding-top:14px;">${hero}</div>${gbmCard}${insightBlock}${bridge1}${table}${facetBlock}${duelLink}${depLink}${liqLink}${venderLink}${bridge2}${trust}${rivals}${sellerCta}${sib}`;
 
   const canonical = `https://${host}/preco/${slug}`;
   const faq = (q, a) => ({

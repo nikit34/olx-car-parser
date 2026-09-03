@@ -29,7 +29,7 @@
 
 import {
   layout, escapeHtml, fmtEur, fmtKm, fmtNum, fmtBuilt, slugify,
-  present, thumbBlock, gradeChip, historyCheckBlock,
+  present, thumbBlock, gradeChip, historyCheckBlock, leadFormBlock,
 } from "./templates.js";
 
 // ── Publishing thresholds ────────────────────────────────────────────────────
@@ -3772,6 +3772,236 @@ export function renderDuelHub({ spec, rows, other, stats, host, depositCount, bu
           "variableMeasured": ["Desvalorização anual (%)", S.kind === "fuel" ? "Combustível" : "Caixa"],
         },
         breadcrumbLd(host, [{ name: "Início", href: "/" }, { name: S.crumb }]),
+      ],
+    },
+  });
+}
+
+let VENDER_WAVE = 0;
+export function setVenderWave(n) {
+  const v = parseInt(n, 10);
+  VENDER_WAVE = Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+export function venderOk(rec) {
+  return !!(rec && rec.fm > 0 && rec.n >= 20 && ((rec.sd != null && rec.sn >= 8) || liquidityOk(rec)));
+}
+
+let _venderKey = null, _venderVal = null;
+export function venderWaveSlugs(models, builtAt) {
+  if (!VENDER_WAVE) return null;
+  const key = `${builtAt || ""}:${Object.keys(models).length}:${VENDER_WAVE}`;
+  if (_venderKey === key && _venderVal) return _venderVal;
+  _venderVal = new Set(Object.entries(models)
+    .filter(([, r]) => venderOk(r))
+    .sort((a, b) => (b[1].n || 0) - (a[1].n || 0) || (a[0] < b[0] ? -1 : 1))
+    .slice(0, VENDER_WAVE)
+    .map(([slug]) => slug));
+  _venderKey = key;
+  return _venderVal;
+}
+
+export function publishedVender(models, slug, rec, builtAt) {
+  const wave = venderWaveSlugs(models, builtAt);
+  if (wave && !wave.has(slug)) return false;
+  return venderOk(rec);
+}
+
+function venderFacts(rec, market) {
+  const lq = liquidityOk(rec) ? rec.lq : null;
+  const mkt = market || {};
+  const pick = k => (lq && lq[k] != null) ? lq[k] : null;
+  return {
+    lq,
+    days: (lq && lq.md != null) ? lq.md : (rec.sd != null ? rec.sd : null),
+    s30: pick("s30"), s60: pick("s60"), s90: pick("s90"),
+    cu: pick("cu"), cp: pick("cp"), cd: pick("cd"), hd: pick("hd"),
+    mktS30: mkt.s30 != null ? mkt.s30 : null,
+    mktCu: mkt.cu != null ? mkt.cu : null,
+    mktCp: mkt.cp != null ? mkt.cp : null,
+  };
+}
+
+export function venderJson(rec, slug, { host, builtAt } = {}) {
+  const f = venderFacts(rec, null);
+  return {
+    source: "Carsbuyer",
+    licence: "Citação permitida com atribuição a Carsbuyer e indicação da data.",
+    url: host ? `https://${host}/vender/${slug}` : undefined,
+    built_at: builtAt || undefined,
+    brand: rec.b, model: rec.m, listings: rec.n,
+    asking: { median: rec.fm, p25: rec.fl, p75: rec.fh },
+    days_to_sell_median: f.days,
+    sold_within: { d30: f.s30, d60: f.s60, d90: f.s90 },
+    price_cut: { share: f.cu, median_pct: f.cp },
+    years: yearCells(rec, 1).map(c => ({ year: c.y, median: c.fm, p25: c.fl, p75: c.fh, listings: c.n })),
+  };
+}
+
+const VENDER_CHECKLIST = [
+  ["Fotografias à luz do dia, carro lavado, os quatro cantos e o interior", "os anúncios sem fotos do interior são os primeiros a ser ignorados."],
+  ["Quilómetros, ano, combustível e caixa no título", "é o que o comprador filtra antes de abrir o anúncio."],
+  ["Inspeção em dia e livro de revisões à mão", "um comprador que vê papéis negoceia menos."],
+  ["Diz o que tem de errado", "quem esconde um risco perde o comprador na inspeção, quem o diz fecha o negócio com desconto menor."],
+  ["Responde no próprio dia", "o comprador que pergunta hoje compra amanhã, a outro."],
+];
+
+export function renderVenderPage({ rec, slug, market, pageYears = [], hasLiquidity = false, hasDepreciation = false,
+                                   host, depositCount, builtAt }) {
+  const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
+  const FM = fmtEur(rec.fm), FL = fmtEur(rec.fl), FH = fmtEur(rec.fh);
+  const canonical = `https://${host}/vender/${slug}`;
+  const f = venderFacts(rec, market);
+  const years = yearCells(rec, 1);
+
+  const yearRows = years.map(c => {
+    const y = pageYears.includes(c.y) ? `<a href="/preco/${slug}/${c.y}">${c.y}</a>` : String(c.y);
+    return `<tr><td>${y}</td><td><b>${fmtEur(c.fm)}</b></td><td class="mut">${fmtEur(c.fl)} – ${fmtEur(c.fh)}</td><td class="mut">${c.n}</td></tr>`;
+  }).join("");
+
+  const vsMkt = (f.s30 != null && f.mktS30 != null)
+    ? (f.s30 >= f.mktS30 * 1.12 ? "acima" : f.s30 <= f.mktS30 * 0.88 ? "abaixo" : "media")
+    : null;
+  const speedRows = [["30", f.s30], ["60", f.s60], ["90", f.s90]].filter(([, v]) => v != null)
+    .map(([d, v]) => `<tr><td>${d} dias</td><td><b>${liqPct(v)} em cada 100</b></td><td class="mut">${liqPct(1 - v)} ainda à venda</td></tr>`).join("");
+  const speedLead = f.days != null
+    ? `Metade dos ${B} ${M} que saem do OLX sai em <b>${f.days} dias</b>.`
+    : "";
+  const speedMkt = f.s30 != null
+    ? ` No primeiro mês saem <b>${liqPct(f.s30)} em cada 100</b>${
+        vsMkt === "acima" ? `, mais do que a média do mercado (${liqPct(f.mktS30)})`
+        : vsMkt === "abaixo" ? `, menos do que a média do mercado (${liqPct(f.mktS30)})`
+        : vsMkt === "media" ? `, o ritmo médio do mercado` : ""}.`
+    : "";
+  const speedAdvice = vsMkt === "acima"
+    ? `Tens pouca razão para começar abaixo da mediana: um ${B} ${M} ao preço certo vende no primeiro ciclo do anúncio.`
+    : vsMkt === "abaixo"
+      ? `Conta com um segundo ciclo de 30 dias e com ter de ceder. Começar acima de ${FH} é pedir para ficar parado.`
+      : `O preço a que o pões decide em que metade ficas.`;
+
+  const cutBlock = f.cu != null ? `
+      <h2 class="fc-h2">Quanto costumam baixar o preço</h2>
+      <p class="fc-p"><b>${liqPct(f.cu)} em cada 100</b> anúncios de ${B} ${M} baixaram o preço antes de sair${f.mktCu != null ? ` (no mercado, ${liqPct(f.mktCu)})` : ""}.${f.cp != null ? ` Quando baixam, a descida mediana é de <b>${liqPct(f.cp)}%</b>${f.mktCp != null ? ` (mercado: ${liqPct(f.mktCp)}%)` : ""} — é a margem que o comprador costuma conseguir, e por isso é a folga que faz sentido deixar entre o preço que pedes e o que aceitas.` : ""}</p>
+      ${(f.cd != null && f.hd != null) ? `<p class="fc-p">Os que baixaram estiveram <b>${f.cd} dias</b> no ar; os que aguentaram o preço, <b>${f.hd}</b>. Não é a descida que atrasa a venda: baixa-se porque o carro não está a sair.</p>` : ""}` : "";
+
+  const dt = (f.lq && Array.isArray(f.lq.dt)) ? f.lq.dt.filter(d => d.s30 != null).slice().sort((a, b) => b.s30 - a.s30) : [];
+  const dtBlock = dt.length >= 3 ? `
+      <h2 class="fc-h2">Onde vende mais depressa</h2>
+      <p class="fc-p">Entre os distritos com amostra, um ${B} ${M} sai mais depressa em <b>${escapeHtml(dt[0].lbl)}</b> (${liqPct(dt[0].s30)} em cada 100 no primeiro mês${dt[0].md != null ? `, mediana ${dt[0].md} dias` : ""}) e mais devagar em <b>${escapeHtml(dt[dt.length - 1].lbl)}</b> (${liqPct(dt[dt.length - 1].s30)}${dt[dt.length - 1].md != null ? `, ${dt[dt.length - 1].md} dias` : ""}). Um anúncio vê-se em todo o país; o comprador que se desloca é o que já decidiu.</p>` : "";
+
+  const pb = (f.lq && Array.isArray(f.lq.pb)) ? f.lq.pb.filter(p => p.s30 != null) : [];
+  const pbBlock = pb.length >= 2 ? `
+      <h2 class="fc-h2">O preço muda o comprador</h2>
+      <div class="fc-scroll"><table class="fc-tbl">
+        <thead><tr><th>Faixa de preço</th><th>Sai em 30 dias</th><th>Mediana</th><th>Anúncios</th></tr></thead>
+        <tbody>${pb.map(p => `<tr><td>${escapeHtml(p.lbl)}</td><td><b>${liqPct(p.s30)} em cada 100</b></td><td class="mut">${p.md != null ? `${p.md} dias` : "—"}</td><td class="mut">${fmtNum(p.n)}</td></tr>`).join("")}</tbody>
+      </table></div>` : "";
+
+  const check = VENDER_CHECKLIST.map(([t, d]) => `<li class="fc-li"><b>${t}</b> — ${d}</li>`).join("");
+
+  const body = crumbs([{ name: "Início", href: "/" }, { name: "Vender", href: "/vender" }, { name: `${rec.b} ${rec.m}` }]) + `
+    <section class="section fc-wrap" style="padding-top:16px;">
+      <h1 class="fc-h1">Vender um ${B} ${M}: quanto pedir e em quantos dias vende</h1>
+      <p class="fc-p">Nos <b>${rec.n} anúncios ativos</b> de ${B} ${M} no OLX, metade pede entre <b>${FL}</b> e <b>${FH}</b>, com mediana de <b>${FM}</b>. ${speedLead}${speedMkt} Estes são os números contra os quais o teu anúncio vai ser lido.</p>
+      ${provenance({ n: rec.n, builtAt, measure: `Preço pedido, ${B} ${M} (mediana e P25-P75); dias até sair do OLX` })}
+
+      <h2 class="fc-h2">Quanto pedir</h2>
+      <p class="fc-p">Acima de ${FH} ficas na quarta parte mais cara dos anúncios e competes com carros mais novos ou com menos quilómetros. Abaixo de ${FL} estás na quarta parte mais barata, onde o comprador desconfia antes de perguntar. O ponto de partida mais comum é a mediana do teu ano:</p>
+      <div class="fc-scroll"><table class="fc-tbl">
+        <thead><tr><th>Ano</th><th>Mediana pedida</th><th>Metade pede entre</th><th>Anúncios</th></tr></thead>
+        <tbody>${yearRows}</tbody>
+      </table></div>
+      <p class="fc-p">Preços <b>pedidos</b> em anúncios ativos, não preços de venda fechados: quem vende cede em média o que está na secção seguinte. Para o teu carro concreto, com os teus quilómetros, usa a <a href="/avaliar?modelo=${encodeURIComponent(slug)}">avaliação por modelo e ano</a>.</p>
+
+      <h2 class="fc-h2">Em quantos dias vende</h2>
+      <p class="fc-p">${speedLead}${speedMkt} ${speedAdvice}</p>
+      ${speedRows ? `<div class="fc-scroll"><table class="fc-tbl"><thead><tr><th>Ao fim de</th><th>Já saíram</th><th>Ainda à venda</th></tr></thead><tbody>${speedRows}</tbody></table></div>` : ""}
+      <p class="fc-p mut" style="font-size:13.5px;">Um anúncio do OLX corre em ciclos de 30 dias; contamos como saída o último ciclo em que o vimos no ar, e a conta inclui os que ainda estão à venda, que é o que a impede de ficar curta.${hasLiquidity ? ` Detalhe por preço, idade e distrito: <a href="/liquidez/${slug}">tempo de venda do ${B} ${M}</a>.` : ""}</p>
+      ${cutBlock}
+      ${dtBlock}
+      ${pbBlock}
+
+      <h2 class="fc-h2">O anúncio que vende</h2>
+      <ul class="fc-ul">${check}</ul>
+    </section>
+    <section class="section" style="padding:0 22px;max-width:680px;margin:0 auto;">
+      ${leadFormBlock({ slug, name: `${rec.b} ${rec.m}`, year: null, median: rec.fm })}
+    </section>
+    <section class="section fc-wrap" style="padding-bottom:70px;">
+      <p class="fc-p"><a href="/preco/${slug}">Preços de ${B} ${M} por ano</a>${hasDepreciation ? ` · <a href="/depreciacao/${slug}">Desvalorização</a>` : ""}${hasLiquidity ? ` · <a href="/liquidez/${slug}">Tempo de venda</a>` : ""} · <a href="/vender">Outros modelos</a> · <a href="/metodologia">Como medimos</a> · <a href="${canonical}.json">Dados em JSON</a></p>
+    </section>`;
+
+  const faqs = [
+    [`Quanto pedir por um ${rec.b} ${rec.m} usado?`,
+     `A mediana pedida nos ${rec.n} anúncios ativos do OLX é ${FM}; metade dos anúncios pede entre ${FL} e ${FH}. O ano concreto muda o número: a tabela desta página tem a mediana de cada ano.`],
+    ...(f.days != null ? [[`Em quantos dias se vende um ${rec.b} ${rec.m}?`,
+     `Metade dos ${rec.b} ${rec.m} que saem do OLX sai em ${f.days} dias${f.s30 != null ? `; no primeiro mês saem ${liqPct(f.s30)} em cada 100` : ""}. Medido em anúncios reais acompanhados até saírem.`]] : []),
+    ...(f.cu != null ? [[`Vale a pena baixar o preço de um ${rec.b} ${rec.m}?`,
+     `${liqPct(f.cu)} em cada 100 anúncios deste modelo baixaram o preço antes de sair${f.cp != null ? `, em mediana ${liqPct(f.cp)}%` : ""}. Baixa-se porque o carro não está a sair; começar perto da mediana do ano evita a descida.`]] : []),
+  ];
+
+  return layout({
+    title: `Vender ${rec.b} ${rec.m}: quanto pedir (${FM}) e em quantos dias vende`,
+    description: `${rec.b} ${rec.m} usado: mediana pedida ${FM} (${FL}–${FH}) em ${rec.n} anúncios${f.days != null ? `, vende em ~${f.days} dias` : ""}${f.cu != null ? `, ${liqPct(f.cu)}% baixam o preço` : ""}. Quanto pedir por ano e propostas de compra sem compromisso.`,
+    canonical, body, zone: "all", nav: "avaliar", depositCount, index: true, host,
+    altJson: `${canonical}.json`,
+    jsonLd: {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
+          "name": `Vender ${rec.b} ${rec.m}: preço pedido e tempo de venda em Portugal`,
+          "description": `Mediana e intervalo do preço pedido por ano, dias até sair do OLX e frequência de descidas de preço para ${rec.b} ${rec.m}.`,
+          "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
+          "isAccessibleForFree": true, "dateModified": builtAt || undefined,
+          "variableMeasured": ["Preço pedido (EUR)", "Dias até sair do OLX", "Anúncios com descida de preço (%)"],
+          "distribution": [{ "@type": "DataDownload", "encodingFormat": "application/json", "contentUrl": `${canonical}.json` }],
+        },
+        breadcrumbLd(host, [{ name: "Início", href: "/" }, { name: "Vender", href: "/vender" }, { name: `${rec.b} ${rec.m}` }]),
+        faqLd(faqs),
+      ],
+    },
+  });
+}
+
+export function renderVenderHub({ rows, market, host, depositCount, builtAt }) {
+  const canonical = `https://${host}/vender`;
+  const mkt = market || {};
+  const tr = rows.map(r => `<tr>
+      <td><a href="/vender/${r.slug}" style="color:#177A47;font-weight:600;">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a></td>
+      <td><b>${fmtEur(r.fm)}</b></td>
+      <td class="mut">${fmtEur(r.fl)} – ${fmtEur(r.fh)}</td>
+      <td class="mut">${r.s30 != null ? `${liqPct(r.s30)} em cada 100` : (r.sd != null ? `~${r.sd} dias` : "—")}</td>
+      <td class="mut">${r.cu != null ? `${liqPct(r.cu)}%${r.cp != null ? ` · −${liqPct(r.cp)}%` : ""}` : "—"}</td>
+      <td class="mut">${fmtNum(r.n)}</td></tr>`).join("");
+  const body = crumbs([{ name: "Início", href: "/" }, { name: "Vender" }]) + `
+    <section class="section fc-wrap" style="padding-top:16px;">
+      <h1 class="fc-h1">Vender carro usado em Portugal: quanto pedir por modelo</h1>
+      <p class="fc-p">Para cada modelo com amostra suficiente no OLX: o que os outros vendedores estão a pedir, em quantos dias os anúncios saem e quantos acabam por baixar o preço. É a referência contra a qual o teu anúncio vai ser comparado — e a que usas para ler uma proposta de compra.</p>
+      ${mkt.s30 != null ? `<p class="fc-p">No conjunto do mercado saem <b>${liqPct(mkt.s30)} em cada 100</b> anúncios no primeiro mês${mkt.md != null ? `, com mediana de <b>${mkt.md} dias</b>` : ""}${mkt.cu != null ? `, e <b>${liqPct(mkt.cu)} em cada 100</b> baixam o preço antes de sair${mkt.cp != null ? ` (em mediana ${liqPct(mkt.cp)}%)` : ""}` : ""}.</p>` : ""}
+      <div class="fc-scroll"><table class="fc-tbl">
+        <thead><tr><th>Modelo</th><th>Mediana pedida</th><th>Metade pede entre</th><th>Sai em 30 dias</th><th>Baixam o preço</th><th>Anúncios</th></tr></thead>
+        <tbody>${tr}</tbody></table></div>
+      <p class="fc-p" style="margin-top:18px;">O teu modelo não está na lista? <a href="/avaliar#escolher">Escolhe-o na avaliação por modelo e ano</a>: mostra a mediana e deixa-te pedir propostas de compra.</p>
+      ${provenance({ n: rows.reduce((s, r) => s + (r.n || 0), 0), builtAt, measure: "Preço pedido em anúncios ativos (mediana e P25-P75); dias até sair do OLX" })}
+      <p class="fc-p" style="margin-top:18px;"><a href="/precos">Preços por modelo</a> · <a href="/liquidez">Tempo de venda</a> · <a href="/depreciacao">Desvalorização</a> · <a href="/metodologia">Como medimos</a></p>
+    </section>
+    <div style="height:60px;"></div>`;
+  return layout({
+    title: "Vender carro usado: quanto pedir e em quantos dias vende, por modelo",
+    description: `Quanto pedir por um carro usado em Portugal, modelo a modelo: mediana pedida no OLX, em quantos dias os anúncios saem e quantos baixam o preço. ${rows.length} modelos.`,
+    canonical, body, zone: "all", nav: "avaliar", depositCount, index: true, host,
+    jsonLd: {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
+          "name": "Quanto pedir por um carro usado, por modelo (Portugal)",
+          "description": "Mediana do preço pedido, dias até sair e frequência de descidas de preço por modelo, no OLX Portugal.",
+          "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
+          "isAccessibleForFree": true, "dateModified": builtAt || undefined,
+        },
+        breadcrumbLd(host, [{ name: "Início", href: "/" }, { name: "Vender" }]),
       ],
     },
   });

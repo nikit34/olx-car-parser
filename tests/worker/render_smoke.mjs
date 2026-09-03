@@ -29,6 +29,7 @@ import {
   renderFacetPage, renderDuelPage, renderDuelHub, duel, duelJson, DUELS, withPrep,
   renderLiquidityPage, liquidityJson, liquidityOk, districtRanking,
   renderImportPage, renderImportHub, importJson, importOk, importSlugs,
+  renderVenderPage, renderVenderHub, venderJson, venderOk,
 } from "../../flipper-club/src/seo-pages.js";
 
 const HOST = "carsbuyer.org";
@@ -1093,7 +1094,7 @@ check("brand and revenue copy: Carsbuyer everywhere, no single-revenue claim", (
   const landing = renderLanding({ stats: { deals: 1, avgDisc: "17%", totalProfit: "€1 500" }, featured: deal,
                                   depositEur: 5, depositCount: 0, host: HOST });
   assert(!landing.includes("única receita"), "landing still says the deposit is the only revenue");
-  assert(landing.includes("/avaliar#escolher"), "landing seller chip does not lead to the model picker");
+  assert(landing.includes('href="/vender"'), "landing seller chip does not lead to the seller hub");
   assert(!landing.includes("em breve"), "seller path is still a placeholder");
 });
 
@@ -1140,6 +1141,31 @@ check("the seller lead form and the history block render on /avaliar", () => {
   const noUrl = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models, spec: null,
                                 depositCount: 0, host: HOST, builtAt });
   assert(!noUrl.includes("sponsored"), "history block rendered with no partner url configured");
+});
+
+check("seller pages render with the numbers, the form and the JSON twin", () => {
+  const eligible = slugs.filter(s => venderOk(models[s]));
+  assert(eligible.length > 0, "no model is eligible for a seller page");
+  const s = eligible.includes(deep) ? deep : eligible[0];
+  const rec = models[s];
+  const page = renderVenderPage({ rec, slug: s, market: mdoc.lqm || null, pageYears: yearPageYears(rec),
+                                  hasLiquidity: liquidityOk(rec), hasDepreciation: false,
+                                  host: HOST, depositCount: 0, builtAt });
+  assertPage(page, { indexable: true, canonical: `https://${HOST}/vender/${s}`, label: "vender" });
+  const t = page.match(/<title>([^<]*)<\/title>/)[1];
+  assert(t.includes("€") && /^Vender /.test(t), `seller title is off: ${t}`);
+  assert(page.includes('action="/lead"') && page.includes('id="vender"'), "seller page has no lead form");
+  assert(page.includes(`/preco/${s}`), "seller page does not link the price page");
+  assert(page.includes("Quanto pedir"), "seller page lost its main section");
+  const types = ldTypes(page);
+  for (const want of ["Dataset", "BreadcrumbList", "FAQPage"]) assert(types.has(want), `seller page is missing ${want}`);
+  const j = venderJson(rec, s, { host: HOST, builtAt });
+  assert(j.asking.median === rec.fm && Array.isArray(j.years), "seller JSON twin is malformed");
+  const hub = renderVenderHub({ rows: eligible.slice(0, 5).map(x => ({ slug: x, b: models[x].b, m: models[x].m, n: models[x].n,
+    fm: models[x].fm, fl: models[x].fl, fh: models[x].fh, sd: models[x].sd, s30: null, cu: null, cp: null })),
+    market: mdoc.lqm || null, host: HOST, depositCount: 0, builtAt });
+  assertPage(hub, { indexable: true, canonical: `https://${HOST}/vender`, label: "vender hub" });
+  assert(hub.includes(`/vender/${eligible[0]}`), "hub does not link the seller pages");
 });
 
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall render checks passed");

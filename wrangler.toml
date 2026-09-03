@@ -146,6 +146,7 @@ LIQ_WAVE_MODELS = "60"
 
 HISTORY_REPORT_URL = "https://www.carvertical.com/pt"
 LEADS_TELEGRAM_CHAT_ID = "604665081"
+VENDER_WAVE_MODELS = "80"
 
 # Cron. Records the weekly market cut for /mercado/indice.
 #
