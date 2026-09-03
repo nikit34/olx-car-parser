@@ -669,6 +669,7 @@ async function renderYear({ request, env, url, models, rec, slug, year, builtAt,
     liveDeals, dealsNear, pageYears: publishedYearPages(models, slug, rec, builtAt), stats,
     host: url.host, depositCount: null, builtAt,
     historyUrl: env.HISTORY_REPORT_URL || null,
+    hasVender: publishedVender(models, slug, rec, builtAt),
   }));
 }
 

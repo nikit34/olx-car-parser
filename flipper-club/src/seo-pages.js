@@ -838,7 +838,7 @@ export function yearGap(a, b) {
 // Thinner years stay as a row in the parent table — visible, linked, honest, and
 // not a URL asking to be indexed on four data points.
 export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, dealsNear, pageYears,
-                                 stats, host, depositCount, builtAt, historyUrl = null }) {
+                                 stats, host, depositCount, builtAt, historyUrl = null, hasVender = false }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
   const FM = fmtEur(cell.fm), FL = fmtEur(cell.fl), FH = fmtEur(cell.fh);
   const canonical = `https://${host}/preco/${slug}/${year}`;
@@ -994,10 +994,23 @@ export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, d
     ],
   })}</section>` : "";
 
+  const sellHref = hasVender ? `/vender/${slug}#vender` : `/avaliar?modelo=${encodeURIComponent(slug)}&ano=${year}#vender`;
+  const sellBlock = `
+    <section class="section" style="padding:18px 22px 0;max-width:680px;margin:0 auto;">
+      <div class="exclusive" style="background:#F4F6FB;border:1px solid #D9E0F0;align-items:flex-start;">
+        <span style="font-size:15px;">🏷️</span>
+        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">Vais vender o teu ${B} ${M} de ${year}?</b> Metade dos anúncios deste ano pede entre ${FL} e ${FH}${rec.sd != null ? `, e um ${B} ${M} sai do OLX em ~${rec.sd} dias` : ""}. Pede propostas de compra a compradores profissionais, sem compromisso. <a href="${sellHref}" style="color:#177A47;font-weight:600;">Receber propostas&nbsp;→</a></span>
+      </div>
+    </section>`;
+  const sellForm = `
+    <section class="section" style="padding:0 22px;max-width:680px;margin:0 auto;">
+      ${leadFormBlock({ slug, name: `${rec.b} ${rec.m}`, year, median: cell.fm })}
+    </section>`;
+
   const body = crumbs([
     { name: "Início", href: "/" }, { name: "Preços", href: "/precos" },
     { name: `${rec.b} ${rec.m}`, href: `/preco/${slug}` }, { name: String(year) },
-  ]) + `<div style="padding-top:14px;">${hero}</div>${histBlock}${stepBlock}${table}${yearNav}${deals}${cta}${links}`;
+  ]) + `<div style="padding-top:14px;">${hero}</div>${sellBlock}${histBlock}${stepBlock}${table}${yearNav}${deals}${cta}${sellForm}${links}`;
 
   const faqs = [[
     `Quanto vale um ${rec.b} ${rec.m} de ${year} em Portugal?`,

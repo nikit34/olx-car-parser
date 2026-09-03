@@ -1206,5 +1206,19 @@ check("the bare /avaliar page carries the valuation guide with real numbers", ()
   assert(!withQuery.includes("Quanto vale um carro usado por idade"), "guide leaked onto a noindex result page");
 });
 
+check("year pages carry the seller path and a prefilled lead form", () => {
+  const [s, y] = yearPages[0];
+  const rec = models[s];
+  const cell = yearCell(rec, y);
+  const base = { rec, slug: s, year: y, cell, neighbours: { older: null, newer: null, window: [cell] },
+                 liveDeals: [], pageYears: [y], stats, host: HOST, depositCount: 0, builtAt };
+  const withVender = renderYearPage({ ...base, hasVender: true });
+  assert(withVender.includes(`/vender/${s}#vender`), "year page does not link the seller page");
+  assert(withVender.includes('action="/lead"') && withVender.includes(`name="ano" min="1980" max="2027" required value="${y}"`),
+    "year page lead form is missing or not prefilled with the year");
+  const without = renderYearPage({ ...base, hasVender: false });
+  assert(without.includes(`/avaliar?modelo=${encodeURIComponent(s)}&ano=${y}#vender`), "fallback seller path missing");
+});
+
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall render checks passed");
 process.exit(failures ? 1 : 0);
