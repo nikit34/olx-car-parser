@@ -29,7 +29,7 @@
 
 import {
   layout, escapeHtml, fmtEur, fmtKm, fmtNum, fmtBuilt, slugify,
-  present, thumbBlock, gradeChip,
+  present, thumbBlock, gradeChip, historyCheckBlock,
 } from "./templates.js";
 
 // ── Publishing thresholds ────────────────────────────────────────────────────
@@ -86,6 +86,7 @@ const MODEL_CLASS = new Map(Object.entries({
   "skoda-octavia-break": "c-estate", "volvo-v50": "c-estate",
   "bmw-316": "d", "bmw-318": "d", "bmw-320": "d", "bmw-330": "d", "audi-a4": "d",
   "mercedes-benz-c-200": "d", "mercedes-benz-c-220": "d", "mercedes-benz-c-300": "d",
+  "mercedes-benz-220": "ambiguo",
   "volkswagen-passat": "d", "citroen-c5": "d", "tesla-model-3": "d",
   "audi-a4-avant": "d-estate", "volkswagen-passat-variant": "d-estate",
   "peugeot-508-sw": "d-estate", "volvo-v60": "d-estate",
@@ -837,7 +838,7 @@ export function yearGap(a, b) {
 // Thinner years stay as a row in the parent table — visible, linked, honest, and
 // not a URL asking to be indexed on four data points.
 export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, dealsNear, pageYears,
-                                 stats, host, depositCount, builtAt }) {
+                                 stats, host, depositCount, builtAt, historyUrl = null }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
   const FM = fmtEur(cell.fm), FL = fmtEur(cell.fl), FH = fmtEur(cell.fh);
   const canonical = `https://${host}/preco/${slug}/${year}`;
@@ -981,10 +982,19 @@ export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, d
       <p class="fc-p"><a href="/preco/${slug}">Preços de ${B} ${M} por ano</a>${depreciationOk(rec) ? ` · <a href="/depreciacao/${slug}">Curva de desvalorização</a>` : ""} · <a href="/metodologia">Como calculamos</a> · <a href="/precos">Todos os modelos</a></p>
     </section>`;
 
+  const histBlock = historyUrl ? `<section class="section fc-wrap" style="padding-top:0;">${historyCheckBlock({
+    url: historyUrl,
+    title: `Antes de pagar ${FM} por um ${rec.b} ${rec.m} de ${year}, verifica o histórico`,
+    reasons: [
+      cell.km != null ? `Um ${B} ${M} de ${year} anda em mediana com ${fmtKm(cell.km)}: bem abaixo disso, confirma o conta-quilómetros nas inspeções anteriores.` : "",
+      "Sinistros, número de donos e importação não aparecem no anúncio; aparecem no relatório pela matrícula.",
+    ],
+  })}</section>` : "";
+
   const body = crumbs([
     { name: "Início", href: "/" }, { name: "Preços", href: "/precos" },
     { name: `${rec.b} ${rec.m}`, href: `/preco/${slug}` }, { name: String(year) },
-  ]) + `<div style="padding-top:14px;">${hero}</div>${stepBlock}${table}${yearNav}${deals}${cta}${links}`;
+  ]) + `<div style="padding-top:14px;">${hero}</div>${histBlock}${stepBlock}${table}${yearNav}${deals}${cta}${links}`;
 
   const faqs = [[
     `Quanto vale um ${rec.b} ${rec.m} de ${year} em Portugal?`,
@@ -1018,7 +1028,7 @@ export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, d
         "license": licenseUrl(host),
         "name": `Preços de ${rec.b} ${rec.m} de ${year} em Portugal`,
         "description": `Mediana e intervalo interquartil dos preços pedidos em ${cell.n} anúncios ativos de ${rec.b} ${rec.m} do ano ${year} no OLX Portugal.`,
-        "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
+        "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
         "isAccessibleForFree": true,
         "temporalCoverage": String(year),
         "variableMeasured": hasG ? ["Preço pedido (EUR)", "Valor justo estimado (EUR)"] : "Preço pedido (EUR)",
@@ -1057,7 +1067,7 @@ export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, d
   };
 
   return layout({
-    title: `Quanto vale um ${rec.b} ${rec.m} de ${year}? Preço em Portugal`,
+    title: `${rec.b} ${rec.m} ${year} usado: ${FM} (${cell.n} anúncios) · quanto vale`,
     description: `${rec.b} ${rec.m} de ${year} usado: preço mediano ${FM} (${FL}–${FH}) em ${cell.n} anúncios ativos do OLX Portugal${cell.km != null ? `, ${fmtKm(cell.km)} medianos` : ""}. Avaliação independente.`,
     canonical, jsonLd, body, zone: "all", nav: "precos", depositCount, index: true, host,
     altJson: `${canonical}.json`,
@@ -1242,7 +1252,7 @@ export function renderDepreciationPage({ rec, slug, fit, stats, pageYears, host,
         "license": licenseUrl(host),
         "name": `Desvalorização de ${rec.b} ${rec.m} em Portugal`,
         "description": `Preço pedido mediano de ${rec.b} ${rec.m} por ano de fabrico (${oldest.y}-${newest.y}), taxa de desvalorização anual de ${ratePct}% e custo em euros de cada ano de idade, a partir de ${rec.n} anúncios ativos do OLX Portugal.`,
-        "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
+        "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
         "isAccessibleForFree": true,
         "temporalCoverage": `${oldest.y}/${newest.y}`,
         "variableMeasured": ["Preço pedido (EUR)", "Desvalorização anual (%)", "Custo de um ano de idade (EUR)"],
@@ -1762,7 +1772,7 @@ export function renderLiquidityPage({ rec, slug, market, hasDepreciation = false
           "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
           "name": `Tempo até vender de ${rec.b} ${rec.m} em Portugal`,
           "description": `Dias que um anúncio de ${rec.b} ${rec.m} fica no OLX Portugal antes de sair, estimado por Kaplan-Meier sobre ${lq.n} anúncios terminados${lq.cn ? ` e ${lq.cn} ainda ativos` : ""}, com cortes por faixa de preço, idade e distrito.`,
-          "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
+          "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true, "dateModified": builtAt || undefined,
           "variableMeasured": ["Dias até o anúncio sair (mediana)", "Percentagem que sai em 30 dias"],
           "distribution": [{ "@type": "DataDownload", "encodingFormat": "application/json", "contentUrl": `${canonical}.json` }],
@@ -1822,7 +1832,7 @@ export function renderLiquidityHub({ rows, market, host, depositCount, builtAt }
           "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
           "name": "Tempo até vender, por modelo (Portugal)",
           "description": "Percentagem de anúncios que saem no primeiro mês e dias medianos até sair, por modelo, no OLX Portugal.",
-          "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
+          "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true, "dateModified": builtAt || undefined,
           "variableMeasured": ["Percentagem que sai em 30 dias", "Dias até sair (mediana)"],
         },
@@ -2113,7 +2123,7 @@ export function renderMarketIndex({ snapshot, history, host, depositCount, isArc
           "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
           "name": `Índice do mercado de carros usados em Portugal — ${wk}`,
           "description": "Preço pedido mediano, número de anúncios ativos, quilometragem mediana e dias medianos até vender no mercado português de carros usados.",
-          "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
+          "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true,
           "temporalCoverage": snapshot.date || undefined,
           "dateModified": snapshot.builtAt || undefined,
@@ -2194,7 +2204,7 @@ export function renderMarketMonth({ cut, months = [], host, depositCount }) {
           "@type": "Dataset", "license": licenseUrl(host), "url": permalink, "inLanguage": "pt-PT",
           "name": `Índice do mercado de carros usados em Portugal — ${label}`,
           "description": "Preço pedido mediano, número de anúncios ativos, quilometragem mediana e dias medianos até vender no mercado português de carros usados, agregados por mês a partir dos cortes semanais.",
-          "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
+          "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true,
           "temporalCoverage": cut.from && cut.to ? `${cut.from}/${cut.to}` : undefined,
           "dateModified": cut.builtAt || undefined,
@@ -2364,7 +2374,7 @@ export function renderMethodology({ stats, mq, host, depositCount, builtAt, duel
         {
           "@type": "TechArticle", "headline": "Como calculamos os preços de carros usados em Portugal",
           "url": canonical, "inLanguage": "pt-PT", "dateModified": builtAt || undefined,
-          "publisher": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
+          "publisher": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           ...(SITE_AUTHOR ? { "author": { "@type": "Person", "name": SITE_AUTHOR } } : {}),
         },
         breadcrumbLd(host, [{ name: "Início", href: "/" }, { name: "Metodologia" }]),
@@ -2419,7 +2429,7 @@ export function renderAbout({ stats, mq, host, depositCount, builtAt }) {
         {
           "@type": "AboutPage", "url": canonical, "inLanguage": "pt-PT", "name": "Quem somos",
           "mainEntity": {
-            "@type": "Organization", "name": "Flipper Club", "alternateName": "Carsbuyer",
+            "@type": "Organization", "name": "Carsbuyer", "alternateName": "Flipper Club",
             "url": `https://${host}/`, "areaServed": "PT",
             "description": "Avaliação independente de carros usados em Portugal a partir de anúncios ativos do OLX.",
             ...(SITE_CONTACT ? { "email": SITE_CONTACT } : {}),
@@ -3018,7 +3028,7 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
   }
 
   return layout({
-    title: `Quanto vale um ${titlePhrase} usado?`,
+    title: `${titlePhrase} usado: ${fmtEur(cell.fm)} (${cell.n} anúncios) · quanto vale`,
     description: `${titlePhrase}: preço mediano ${fmtEur(cell.fm)} (${fmtEur(cell.fl)}–${fmtEur(cell.fh)}) em ${cell.n} anúncios ativos do OLX Portugal.${ageMoves ? ` Ajustado pela idade, o corte pede ${more(age.pct)} ${agePct}% do que ${refAll}.` : ""}`,
     canonical, body, zone: "all", nav: "precos", depositCount, index: true, host, altJson,
     jsonLd: {
@@ -3029,7 +3039,7 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
         "license": licenseUrl(host),
           "name": `Preços de ${titlePhrase} em Portugal`,
           "description": `Mediana e intervalo interquartil dos preços pedidos em ${cell.n} anúncios ativos de ${titlePhrase} no OLX Portugal.`,
-          "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
+          "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true, "dateModified": builtAt || undefined,
           "variableMeasured": "Preço pedido (EUR)", "url": canonical,
           "distribution": [{ "@type": "DataDownload", "encodingFormat": "application/json", "contentUrl": `${canonical}.json` }],
@@ -3148,7 +3158,7 @@ export function renderDistrictPage({ key, rec, models, districts, stats, host, d
           "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
           "name": `Preços de carros usados ${emDistrito(key, rec.lbl)}`,
           "description": `Preço pedido mediano e intervalo interquartil em ${rec.n} anúncios ativos de carros usados com localização ${emDistrito(key, rec.lbl)}, OLX Portugal.`,
-          "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
+          "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true, "dateModified": builtAt || undefined,
           "spatialCoverage": { "@type": "Place", "name": rec.lbl, "containedInPlace": { "@type": "Country", "name": "Portugal" } },
           "variableMeasured": "Preço pedido (EUR)",
@@ -3211,7 +3221,7 @@ export function importJson(rec, slug, costs, { host, builtAt } = {}) {
 }
 
 export function renderImportPage({ rec, slug, costs, stats, hasModelPage = true,
-                                  host, depositCount, builtAt }) {
+                                  host, depositCount, builtAt, historyUrl = null }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
   const canonical = `https://${host}/importar/${slug}`;
   const v = importVerdict(rec);
@@ -3292,6 +3302,14 @@ export function renderImportPage({ rec, slug, costs, stats, hasModelPage = true,
         <li class="fc-li"><b>O ISV é a nossa estimativa</b>, a partir do CO2 e da cilindrada que o vendedor alemão declarou. Para carros de 2018 e 2019 o ciclo de medição é ambíguo, o que mexe no valor.</li>
       </ul>
     </section>
+    ${historyUrl ? `<section class="section fc-wrap">${historyCheckBlock({
+      url: historyUrl,
+      title: `Num importado, o histórico é a parte que mais importa`,
+      reasons: [
+        "Um carro vindo de fora chega sem o registo português de inspeções e donos; o relatório internacional é a única forma de ver quilómetros e sinistros anteriores.",
+        "Pede o VIN ao vendedor antes da viagem: o relatório custa menos do que uma ida à Alemanha.",
+      ],
+    })}</section>` : ""}
     <section class="section fc-wide">
       <div class="cta-banner">
         <div style="flex:1 1 360px;">
@@ -3328,7 +3346,7 @@ export function renderImportPage({ rec, slug, costs, stats, hasModelPage = true,
           "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
           "name": `Importar ${rec.b} ${rec.m} da Alemanha: custo total contra o preço português`,
           "description": `Preço pedido mediano de ${rec.b} ${rec.m} na Alemanha por ano de matrícula, ISV estimado por anúncio, custos de legalização e a diferença para o preço pedido em Portugal.`,
-          "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
+          "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true, "dateModified": builtAt || undefined,
           "variableMeasured": ["Preço pedido na Alemanha (EUR)", "ISV estimado (EUR)", "Custo total à porta (EUR)", "Preço pedido em Portugal (EUR)"],
           "distribution": [{ "@type": "DataDownload", "encodingFormat": "application/json", "contentUrl": `${canonical}.json` }],
@@ -3379,7 +3397,7 @@ export function renderImportHub({ rows, costs, host, depositCount, builtAt }) {
           "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
           "name": "Custo total de importar da Alemanha, por modelo",
           "description": "Preço pedido mediano na Alemanha, ISV estimado, custos de legalização e a diferença para o preço pedido em Portugal, por modelo.",
-          "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
+          "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true, "dateModified": builtAt || undefined,
           "variableMeasured": ["Custo total à porta (EUR)", "Preço pedido em Portugal (EUR)"],
         },
@@ -3673,7 +3691,7 @@ export function renderDuelPage({ rec, slug, av, stats, host, depositCount, built
           "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
           "name": `Desvalorização de ${rec.b} ${rec.m} por ${S.kind === "fuel" ? "combustível" : "caixa"}`,
           "description": `Taxa de desvalorização anual de ${rec.b} ${rec.m} em ${S.a.low} (${aPct}%) e em ${S.b.low} (${bPct}%), ajustada à quilometragem, sobre ${av.n} anúncios ativos do OLX Portugal entre ${av.y0} e ${av.y1}.`,
-          "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
+          "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true, "dateModified": builtAt || undefined,
           "temporalCoverage": `${av.y0}/${av.y1}`,
           "variableMeasured": ["Desvalorização anual (%)", "Preço pedido (EUR)", "Quilometragem (km)"],
@@ -3749,7 +3767,7 @@ export function renderDuelHub({ spec, rows, other, stats, host, depositCount, bu
           "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
           "name": `Desvalorização por ${S.kind === "fuel" ? "combustível" : "caixa"}, modelo a modelo (Portugal)`,
           "description": `Taxa de desvalorização anual em ${S.a.low} e em ${S.b.low} para ${rows.length} modelos, ajustada à quilometragem, a partir de anúncios ativos do OLX Portugal.`,
-          "creator": { "@type": "Organization", "name": "Flipper Club", "url": `https://${host}/` },
+          "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true, "dateModified": builtAt || undefined,
           "variableMeasured": ["Desvalorização anual (%)", S.kind === "fuel" ? "Combustível" : "Caixa"],
         },

@@ -12,7 +12,7 @@
 import { readFileSync } from "node:fs";
 import {
   renderLanding, renderGrid, renderAvaliar, renderModelPage, renderModelsHub,
-  renderModelWidget, renderInfo, slugify, setAnalyticsId,
+  renderModelWidget, renderInfo, slugify, setAnalyticsId, renderPrivacy,
 } from "../../flipper-club/src/templates.js";
 import {
   renderYearPage, renderNotFound, renderDepreciationPage, renderDepreciationHub,
@@ -1075,6 +1075,71 @@ check("analytics stays off unless a measurement id is set", () => {
   assert(on.indexOf("consent','default'") < on.indexOf("googletagmanager"),
     "consent declared after the gtag loader");
   setAnalyticsId("");
+});
+
+check("brand and revenue copy: Carsbuyer everywhere, no single-revenue claim", () => {
+  const priv = renderPrivacy({ depositCount: 0, host: HOST, contact: "x@y.pt" });
+  assert(priv.includes('og:site_name" content="Carsbuyer"'), "og:site_name is not Carsbuyer");
+  assert(!priv.includes("Flipper Club"), "Flipper Club still leaks into a public page");
+  assert(priv.includes("mailto:x@y.pt"), "privacy page does not use the configured contact");
+  assert(priv.includes("90 dias"), "privacy page does not state the lead retention");
+  const deal = {
+    olx_id: "ID1", brand: models[deep].b, model: models[deep].m, title: "Carro de teste",
+    price_eur: 7000, fair_median: 8500, fair_low: 7600, fair_high: 9400, discount_pct: 0.17,
+    est_profit_eur: 1500, year: 2014, mileage_km: 180000, fuel_type: "Diesel",
+    district: "Porto", photo_urls: [], days_on_market: 12, first_seen_at: "2026-08-01T00:00:00Z",
+    seller_type: "Particular",
+  };
+  const landing = renderLanding({ stats: { deals: 1, avgDisc: "17%", totalProfit: "€1 500" }, featured: deal,
+                                  depositEur: 5, depositCount: 0, host: HOST });
+  assert(!landing.includes("única receita"), "landing still says the deposit is the only revenue");
+  assert(landing.includes("/avaliar#escolher"), "landing seller chip does not lead to the model picker");
+  assert(!landing.includes("em breve"), "seller path is still a placeholder");
+});
+
+check("titles lead with the number", () => {
+  const rec = models[deep];
+  const page = renderModelPage({ rec, slug: deep, liveDeals: [], siblings: [], host: HOST, depositCount: 0, builtAt });
+  const t = page.match(/<title>([^<]*)<\/title>/)[1];
+  assert(t.includes("€") && t.includes("anúncios"), `model title has no number: ${t}`);
+  const [s, y] = yearPages[0];
+  const yrec = models[s];
+  const all = yearCells(yrec, 1).slice().sort((a, b) => a.y - b.y);
+  const i = all.findIndex(c => c.y === y);
+  const yp = renderYearPage({
+    rec: yrec, slug: s, year: y, cell: yearCell(yrec, y),
+    neighbours: { older: i > 0 ? all[i - 1] : null, newer: i < all.length - 1 ? all[i + 1] : null,
+                  window: all.slice(Math.max(0, i - 3), i + 4).sort((a, b) => b.y - a.y) },
+    liveDeals: [], pageYears: yearPageYears(yrec), stats, host: HOST, depositCount: 0, builtAt,
+    historyUrl: "https://example.test/h",
+  });
+  const yt = yp.match(/<title>([^<]*)<\/title>/)[1];
+  assert(yt.includes("€") && yt.includes(String(y)), `year title has no number: ${yt}`);
+  assert(yp.includes('rel="nofollow sponsored noopener"'), "year page history link is not marked sponsored");
+  assert(yp.includes("https://example.test/h"), "year page lost the partner link");
+});
+
+check("the seller lead form and the history block render on /avaliar", () => {
+  const slug = deep;
+  const withSpec = renderAvaliar({ rec: null, olxId: null, sourceUrl: null, query: "", models,
+    spec: { rec: models[slug], slug, year: 2016, cell: null }, depositCount: 0, host: HOST, builtAt,
+    historyUrl: "https://example.test/h" });
+  assert(withSpec.includes('action="/lead"'), "no lead form on the spec estimate");
+  assert(withSpec.includes('name="consent"'), "lead form has no consent box");
+  assert(withSpec.includes('id="vender"'), "lead form lost its anchor");
+  assert(withSpec.includes('id="escolher"'), "model picker lost its anchor");
+  const rec = { t: "VW Golf", y: 2015, km: 40000, fu: "Diesel", p: 9000, fl: 9500, fm: 11000, fh: 12500,
+                imp: 1, ms: slug, sd: 20, dom: 70, ph: [[60, 11000], [30, 10000], [3, 9000]] };
+  const pasted = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models, spec: null,
+                                 depositCount: 0, host: HOST, builtAt, historyUrl: "https://example.test/h" });
+  assert(pasted.includes('rel="nofollow sponsored noopener"'), "partner link is not marked sponsored");
+  assert(pasted.includes("https://example.test/h"), "history link is missing");
+  assert(pasted.includes("importação"), "import reason not listed");
+  assert(pasted.includes("baixou 2 vezes"), "price-cut reason not listed");
+  assert(pasted.includes("#vender"), "no path from a pasted listing to the seller form");
+  const noUrl = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models, spec: null,
+                                depositCount: 0, host: HOST, builtAt });
+  assert(!noUrl.includes("sponsored"), "history block rendered with no partner url configured");
 });
 
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall render checks passed");

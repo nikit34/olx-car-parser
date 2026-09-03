@@ -144,6 +144,9 @@ SITE_CONTACT_EMAIL = "permikov134@yandex.ru"
 SEO_WAVE_MODELS = "25"
 LIQ_WAVE_MODELS = "60"
 
+HISTORY_REPORT_URL = "https://www.carvertical.com/pt"
+LEADS_TELEGRAM_CHAT_ID = "604665081"
+
 # Cron. Records the weekly market cut for /mercado/indice.
 #
 # Daily, not weekly, and the handler writes only when the current ISO week has

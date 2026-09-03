@@ -1011,5 +1011,37 @@ await check("every icon the pages link to is served without the auth gate", asyn
   }
 });
 
+await check("seller lead POST stores the lead and answers with the thanks page", async () => {
+  const stored = () => [...kv.keys()].filter(k => k.startsWith("lead:")).length;
+  const before = stored();
+  const post = (params, origin = `https://${HOST}`) => worker.fetch(new Request(`https://${HOST}/lead`, {
+    method: "POST", body: params,
+    headers: { Origin: origin, "Content-Type": "application/x-www-form-urlencoded" },
+  }), env);
+  const full = () => new URLSearchParams({ modelo: deep, nome_modelo: "Carro Teste", ano: "2016", km: "120000",
+                                           distrito: "Porto", contacto: "912345678", nome: "Ana", consent: "1" });
+  const r = await post(full());
+  assert(r.status === 200, `POST /lead → ${r.status}`);
+  const t = await r.text();
+  assert(t.includes("Pedido recebido"), "thanks page missing");
+  assert(t.includes("noindex"), "thanks page is indexable");
+  assert(stored() === before + 1, "lead was not stored");
+  const noConsent = await post(new URLSearchParams({ ano: "2016", contacto: "912345678" }));
+  assert(noConsent.status === 400, `missing consent → ${noConsent.status}`);
+  const badContact = await post(new URLSearchParams({ ano: "2016", contacto: "ola", consent: "1" }));
+  assert(badContact.status === 400, `bad contact → ${badContact.status}`);
+  const trap = await post(new URLSearchParams({ ano: "2016", contacto: "912345678", consent: "1", website: "http://spam" }));
+  assert(trap.status === 200, `honeypot → ${trap.status}`);
+  assert(stored() === before + 1, "honeypot submission was stored");
+  const foreign = await post(full(), "https://evil.example");
+  assert(foreign.status === 403, `cross-origin POST → ${foreign.status}`);
+  const g = await get("/lead");
+  assert(g.status === 302, `GET /lead → ${g.status}`);
+  const admin = await get("/analytics/leads.json");
+  assert(admin.status === 401, `leads.json without auth → ${admin.status}`);
+  const robots = await (await get("/robots.txt")).text();
+  assert(robots.includes("Disallow: /lead"), "robots does not block /lead");
+});
+
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall route checks passed");
 process.exit(failures ? 1 : 0);

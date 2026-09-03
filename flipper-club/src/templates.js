@@ -1006,7 +1006,7 @@ export function layout({ title, body, zone, nav, depositCount, index = false, de
   const ogImage = image || (origin ? `${origin}/og-default.png` : null);
   const usingDefaultImage = !image; // only the default card is known 1200×630
   const social = origin ? [
-    `<meta property="og:site_name" content="Flipper Club">`,
+    `<meta property="og:site_name" content="Carsbuyer">`,
     `<meta property="og:locale" content="pt_PT">`,
     `<meta property="og:type" content="${escapeHtml(type)}">`,
     `<meta property="og:title" content="${escapeHtml(title)}">`,
@@ -1037,7 +1037,7 @@ export function layout({ title, body, zone, nav, depositCount, index = false, de
 
   // Keep the SERP title under ~60 chars: append the brand suffix only when it
   // still fits, so keyword-led titles aren't truncated by " · Flipper Club".
-  const suffix = " · Flipper Club";
+  const suffix = " · Carsbuyer";
   const fullTitle = (title.length + suffix.length <= 60) ? title + suffix : title;
   return `<!doctype html>
 <html lang="pt-PT">
@@ -1062,7 +1062,7 @@ ${consentBanner()}
   <div class="fc-header-in">
     <a class="fc-brand" href="/">
       <div class="fc-logo">€</div>
-      <span class="fc-word">Flipper Club</span>
+      <span class="fc-word">Carsbuyer</span>
     </a>
     <nav class="fc-nav">
       ${navItem("feed", "Mercado", "/mercado")}
@@ -1142,7 +1142,7 @@ export function renderLanding({ stats, featured, depositEur, depositCount, host 
             <div class="chips">
               <a class="chip active" href="/mercado?view=comprar">🛒 Comprar bem</a>
               <a class="chip" href="/mercado?view=revender">📈 Revender com margem</a>
-              <a class="chip" href="/avaliar">Vender o meu carro (em breve)</a>
+              <a class="chip" href="/avaliar#escolher">Vender o meu carro</a>
             </div>
           </div>
           <div class="hero-stats">
@@ -1178,10 +1178,10 @@ export function renderLanding({ stats, featured, depositEur, depositCount, host 
       <div class="cta-banner">
         <div style="flex:1 1 360px;">
           <h2>A independência é o produto.</h2>
-          <p>O OLX nunca te vai dizer que o anúncio está caro, nem que aquele preço baixo é de um carro ainda por legalizar. Nós dizemos. Reservar um carro (${fmtEur(depositEur)} reembolsáveis) desbloqueia o contacto do vendedor e esconde-o dos outros membros durante 24h — e o depósito volta para a tua carteira assim que falas com o vendedor.</p>
+          <p>O OLX nunca te vai dizer que o anúncio está caro, nem que aquele preço baixo é de um carro ainda por legalizar. Nós dizemos — e mostramos o que o vendedor não escreve: quantas vezes já baixou o preço e há quanto tempo o carro está à venda. Reservar um carro (${fmtEur(depositEur)} reembolsáveis) desbloqueia o contacto do vendedor durante 24h.</p>
           <details class="indep-note">
-            <summary>Como ganhamos dinheiro — e porque é que a avaliação é independente</summary>
-            <p>Não cobramos comissão ao vendedor nem somos pagos pelos stands. A nossa única receita é o depósito reembolsável de ${fmtEur(depositEur)} que reservas um carro para ti. Por isso não temos incentivo em dizer-te que um carro vale mais do que vale — a avaliação trabalha para o comprador, não para quem está a vender.</p>
+            <summary>Como ganhamos dinheiro — e porque é que a avaliação não muda por isso</summary>
+            <p>Não cobramos comissão ao vendedor e ninguém paga para aparecer melhor avaliado. Ganhamos de duas formas: quando um vendedor pede propostas de compra e um comprador profissional paga por esse contacto, e quando um comprador encomenda um relatório de histórico através da nossa ligação de parceiro. Se um dia houver publicidade nas páginas de preços, estará assinalada como tal. Nenhuma destas receitas depende do valor que mostramos — a avaliação sai dos anúncios e do modelo, não de quem paga.</p>
           </details>
         </div>
         <a class="btn-bright" href="/mercado">Ver os carros avaliados&nbsp;&nbsp;→</a>
@@ -1195,7 +1195,7 @@ export function renderLanding({ stats, featured, depositEur, depositCount, host 
       {
         "@type": "Organization",
         "@id": `${origin}/#org`,
-        "name": "Flipper Club",
+        "name": "Carsbuyer",
         "url": `${origin}/`,
         "description": "Avaliação independente de carros usados em Portugal a partir de anúncios ativos do OLX.",
         "logo": `${origin}/og-default.png`,
@@ -1203,7 +1203,7 @@ export function renderLanding({ stats, featured, depositEur, depositCount, host 
       {
         "@type": "WebSite",
         "@id": `${origin}/#site`,
-        "name": "Flipper Club",
+        "name": "Carsbuyer",
         "url": `${origin}/`,
         "inLanguage": "pt-PT",
         "publisher": { "@id": `${origin}/#org` },
@@ -1572,7 +1572,7 @@ export function renderCarPage({ deal, zone, view, unlocked, justReserved, deposi
 export function renderClaim({ deal, zone, depositEur, stripeReady, depositCount }) {
   const p = present(deal);
   const benefits = [
-    { t: "Exclusividade de 24 horas", d: "Escondemos este carro de todos os outros membros do Flipper Club enquanto decides." },
+    { t: "Exclusividade de 24 horas", d: "Escondemos este carro de todos os outros utilizadores enquanto decides." },
     { t: "Contacto e link desbloqueados", d: "Nome, telefone e link direto ao anúncio OLX, mais a galeria completa." },
     ...(p.importFlag ? [{ t: "Aviso de importação", d: "Este anúncio parece ser um carro importado — dizemos-te se falta pagar ISV antes de avançares." }] : []),
     { t: "Totalmente reembolsável", d: "O depósito volta para a tua carteira ao contactar o vendedor, ou auto-devolução em 48h." },
@@ -1726,12 +1726,16 @@ export function renderReservations({ claims, depositEur, depositCount }) {
 // токен без персональных данных, в KV лежит только «этот псевдоним разблокировал
 // это объявление», email и имя сайт не собирает, платёж целиком у Stripe.
 // Если поведение изменится, эту страницу надо править вместе с кодом.
-export function renderPrivacy({ depositCount, host }) {
+export function renderPrivacy({ depositCount, host, contact = null }) {
   const origin = host ? `https://${host}` : "";
+  const to = (contact || "").trim();
+  const contactHtml = to
+    ? `<a href="mailto:${escapeHtml(to)}">${escapeHtml(to)}</a>`
+    : `o contacto indicado em <a href="/sobre">Quem somos</a>`;
   const body = `
     <section class="fc-doc">
       <h1>Privacidade</h1>
-      <p>Esta página descreve exatamente o que o Flipper Club guarda. Está escrita a
+      <p>Esta página descreve exatamente o que o Carsbuyer guarda. Está escrita a
       partir do código do site, não de um modelo genérico.</p>
 
       <h2>O que guardamos sempre</h2>
@@ -1755,17 +1759,31 @@ export function renderPrivacy({ depositCount, host }) {
 
       <h2>Anúncios de carros</h2>
       <p>Os anúncios mostrados são públicos e recolhidos de portais como o OLX e o
-      StandVirtual. Não pertencem ao Flipper Club e não contêm dados teus.</p>
+      StandVirtual. Não pertencem ao Carsbuyer e não contêm dados teus.</p>
+
+      <h2>Pedidos de propostas de compra</h2>
+      <p>Se pedires propostas para o teu carro, guardamos o que escreves no formulário:
+      modelo, ano, quilómetros, distrito, o teu contacto e, se o deres, o nome. Servem
+      para um fim só: enviá-los a compradores profissionais — stands e serviços de compra
+      de carros — que te apresentam uma proposta. O pedido fica guardado 90 dias e é
+      apagado depois. Não o usamos para publicidade nem o cedemos a mais ninguém. Podes
+      pedir a eliminação antes do prazo pelo contacto em baixo.</p>
+
+      <h2>Ligações de parceiros</h2>
+      <p>Nas páginas de preços há ligações para um serviço de relatórios de histórico de
+      veículos. Se comprares um relatório por essa ligação, o Carsbuyer recebe uma
+      comissão; o preço para ti é o mesmo, e não enviamos ao parceiro nenhum dado teu —
+      só a ligação que carregas.</p>
 
       <h2>Os teus direitos</h2>
       <p>Podes apagar o cookie <code>fc_uid</code> no teu navegador a qualquer momento —
       perdes o acesso às reservas antigas, e mais nada. Para pedir a eliminação do que
-      está associado ao teu identificador, escreve para
-      <a href="mailto:ola@carsbuyer.org">ola@carsbuyer.org</a>.</p>
+      está associado ao teu identificador ou de um pedido de propostas, escreve para
+      ${contactHtml}.</p>
     </section>`;
   return layout({
     title: "Privacidade",
-    description: "O que o Flipper Club guarda: cookie técnico de reserva, estatísticas anónimas só com consentimento, pagamentos processados pela Stripe.",
+    description: "O que o Carsbuyer guarda: cookie técnico de reserva, estatísticas anónimas só com consentimento, pedidos de propostas guardados 90 dias, pagamentos processados pela Stripe.",
     body, zone: "all", nav: null, depositCount, index: true,
     host, canonical: origin ? `${origin}/privacidade` : null,
   });
@@ -1789,7 +1807,7 @@ export function renderInfo({ zone, title, message, depositCount }) {
 // rec = the valuations.json record for the looked-up olx_id (or null). query =
 // the raw user input (URL or id). The verdict is derived from where the asking
 // price sits in the model's fair band [fl, fh].
-export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depositCount, host, builtAt, contact }) {
+export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depositCount, host, builtAt, contact, historyUrl = null }) {
   const to = (contact || "").trim();
   const mailto = to
     ? `mailto:${encodeURIComponent(to)}?subject=Avaliar%20o%20meu%20carro`
@@ -1875,6 +1893,10 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
     // Contextual link into the model SEO page, when this model has one.
     const modelHref = (rec.ms && models && models[rec.ms]) ? `/preco/${encodeURIComponent(rec.ms)}` : null;
     const sub = `${rec.y ?? "—"} · ${rec.km != null ? fmtKm(rec.km) : "—"} · ${escapeHtml(rec.fu || "—")}`;
+    const hist = historyCheckBlock({ url: historyUrl, reasons: historyReasons(rec, models), price });
+    const sellHref = (rec.ms && models && models[rec.ms])
+      ? `/avaliar?modelo=${encodeURIComponent(rec.ms)}${rec.y ? `&ano=${encodeURIComponent(rec.y)}` : ""}#vender`
+      : "/avaliar#escolher";
     result = `
     <div class="detail" style="max-width:640px;margin:0 auto;padding-top:0;">
       <div class="side-card">
@@ -1899,8 +1921,10 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
         ${faultBlock}
         ${sellLine}
         ${stallBlock}
+        ${hist}
         ${olxHref ? `<a class="olx-btn" style="display:block;margin-top:18px;" href="${escapeHtml(olxHref)}" target="_blank" rel="noopener nofollow">Ver anúncio original&nbsp;&nbsp;↗</a>` : ""}
         ${modelHref ? `<a href="${modelHref}" style="display:block;text-align:center;margin-top:12px;font-size:13.5px;color:#177A47;font-weight:600;">Ver preços deste modelo por ano&nbsp;→</a>` : ""}
+        <a href="${sellHref}" style="display:block;text-align:center;margin-top:10px;font-size:13.5px;color:#5B606B;">É o teu carro? Recebe propostas de compra&nbsp;→</a>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;">
           <a class="btn-outline" style="flex:1 1 auto;padding:11px 14px;font-size:13.5px;text-align:center;" href="/avaliar">Avaliar outro carro</a>
           <a class="btn-dark" style="flex:1 1 auto;padding:11px 14px;font-size:13.5px;text-align:center;" href="/mercado">Ver carros abaixo do preço&nbsp;→</a>
@@ -1941,6 +1965,11 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
         </div>
       </div>
       <div class="side-foot">Preços PEDIDOS em anúncios ativos do OLX — estimativa indicativa, não o valor da tua viatura concreta.</div>
+      ${leadFormBlock({
+        slug: spec.slug, name: `${mr.b} ${mr.m}`,
+        year: spec.year || (cell && typeof cell.y === "number" ? cell.y : null),
+        median: sfm,
+      })}
     </div>`;
   }
 
@@ -1955,7 +1984,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
           `<option value="${escapeHtml(slug)}"${spec && spec.slug === slug ? " selected" : ""}>${escapeHtml(m)}</option>`).join("")
       + `</optgroup>`).join("");
     specForm = `
-    <section class="section" style="padding:10px 22px 0;max-width:620px;">
+    <section id="escolher" class="section" style="padding:10px 22px 0;max-width:620px;">
       <div class="side-card">
         <div class="panel-title" style="font-size:16px;margin-bottom:12px;">Não tens anúncio? Escolhe o teu carro</div>
         <form action="/avaliar" method="get" style="display:flex;gap:10px;flex-wrap:wrap;">
@@ -2002,9 +2031,9 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
       <div class="cta-banner">
         <div style="flex:1 1 360px;">
           <h2>Vais vender o teu carro?</h2>
-          <p>Cola o teu anúncio acima para veres por quanto está face ao mercado${mailto ? " — ou, se ainda não anunciaste, pede uma avaliação por email com o modelo e o ano" : ", mesmo que ainda não o tenhas anunciado"}.</p>
+          <p>Escolhe o modelo e o ano acima: vês o que o mercado está a pedir e podes pedir propostas de compra a compradores profissionais, sem compromisso${mailto ? " — ou pede uma avaliação por email" : ""}.</p>
         </div>
-        ${mailto ? `<a class="btn-bright" href="${mailto}">Pedir avaliação por email&nbsp;&nbsp;→</a>` : ""}
+        ${mailto ? `<a class="btn-bright" href="${mailto}">Pedir avaliação por email&nbsp;&nbsp;→</a>` : `<a class="btn-bright" href="#escolher">Escolher o meu carro&nbsp;&nbsp;→</a>`}
       </div>
     </section>`}`;
   const origin = host ? `https://${host}` : "";
@@ -2045,7 +2074,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
         "inLanguage": "pt-PT",
         "isAccessibleForFree": true,
         "offers": { "@type": "Offer", "price": "0", "priceCurrency": "EUR" },
-        "provider": { "@type": "Organization", "name": "Flipper Club", "url": `${origin}/` },
+        "provider": { "@type": "Organization", "name": "Carsbuyer", "url": `${origin}/` },
         "description": "Cola o link de um anúncio de carro usado do OLX Portugal e recebe o preço justo estimado, o desvio face ao mercado e o aviso de importação por legalizar.",
         "featureList": [
           "Preço justo estimado para o anúncio concreto",
@@ -2418,7 +2447,7 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
         "license": `https://${host}/metodologia#licenca`,
         "name": `Preços de ${rec.b} ${rec.m} usado em Portugal`,
         "description": `Resumo estatístico (mediana, P25–P75) de ${rec.n} anúncios ativos de ${rec.b} ${rec.m} no OLX Portugal, por ano.`,
-        "creator": { "@type": "Organization", "name": "Flipper Club" },
+        "creator": { "@type": "Organization", "name": "Carsbuyer" },
         "isAccessibleForFree": true,
         "temporalCoverage": yrRange ? `${yr0}/${yr1}` : undefined,
         "variableMeasured": hasG ? ["Preço pedido (EUR)", "Valor justo estimado (EUR)"] : "Preço pedido (EUR)",
@@ -2474,7 +2503,7 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
     ],
   };
   return layout({
-    title: `Quanto vale um ${rec.b} ${rec.m} usado? Preço em Portugal`,
+    title: `${rec.b} ${rec.m} usado: ${FM} (${rec.n} anúncios) · quanto vale em Portugal`,
     description: `${rec.b} ${rec.m} usado em Portugal: preço mediano ${FM} (intervalo ${FL}–${FH}), com base em ${rec.n} anúncios ativos no OLX. Preços por ano e avaliação independente grátis.`,
     canonical, jsonLd, body, zone: "all", nav: "precos", depositCount, index: true, host, altJson,
   });
@@ -2567,7 +2596,7 @@ export function renderModelWidget({ rec, slug, host }) {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,follow">
 <link rel="canonical" href="${full}">
-<title>${B} ${M}: quanto vale · Flipper Club</title>
+<title>${B} ${M}: quanto vale · Carsbuyer</title>
 <style>
 *{box-sizing:border-box;margin:0}
 body{font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#16181D;background:#fff;padding:14px}
@@ -2595,8 +2624,92 @@ body{font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-seri
   ${fairRow}
   ${sellRow}
   <a class="w-cta" href="${full}" target="_blank" rel="noopener">Ver avaliação completa&nbsp;&nbsp;→</a>
-  <div class="w-credit">via <a href="${full}" target="_blank" rel="noopener">Flipper Club</a></div>
+  <div class="w-credit">via <a href="${full}" target="_blank" rel="noopener">Carsbuyer</a></div>
   <div class="w-note">Preços pedidos em anúncios ativos do OLX — estimativa indicativa, não vinculativa.</div>
 </div>
 </body></html>`;
+}
+
+export const PT_DISTRICTS = [
+  "Aveiro", "Beja", "Braga", "Bragança", "Castelo Branco", "Coimbra", "Évora", "Faro",
+  "Guarda", "Leiria", "Lisboa", "Portalegre", "Porto", "Santarém", "Setúbal",
+  "Viana do Castelo", "Vila Real", "Viseu", "Açores", "Madeira",
+];
+
+export function leadFormBlock({ slug = "", name = "", year = null, median = null, district = "" }) {
+  const opts = PT_DISTRICTS.map(d =>
+    `<option value="${escapeHtml(d)}"${d === district ? " selected" : ""}>${escapeHtml(d)}</option>`).join("");
+  const inp = "padding:12px;border:1px solid #E2DFD8;border-radius:11px;font-size:15px;background:#fff;color:#16181D;min-width:0;";
+  return `
+      <section id="vender" class="side-card" style="margin-top:16px;">
+        <div class="panel-title" style="font-size:16px;margin-bottom:6px;">Queres vender${name ? ` o teu ${escapeHtml(name)}` : " este carro"}?</div>
+        <p style="font-size:14px;color:#5B606B;margin:0 0 14px;line-height:1.5;">Deixa o contacto e recebes propostas de compra de compradores profissionais — stands e serviços de compra imediata — normalmente em 24 a 48 horas. Sem compromisso: comparas com ${median != null ? `a mediana de ${fmtEur(median)}` : "o valor acima"} e decides.</p>
+        <form action="/lead" method="post" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">
+          <input type="hidden" name="modelo" value="${escapeHtml(slug)}">
+          <input type="hidden" name="nome_modelo" value="${escapeHtml(name)}">
+          <input type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;">
+          <input type="number" name="ano" min="1980" max="2027" required value="${year ? escapeHtml(String(year)) : ""}" placeholder="Ano" style="${inp}">
+          <input type="number" name="km" min="0" max="1500000" step="1000" placeholder="Quilómetros" style="${inp}">
+          <select name="distrito" style="${inp}"><option value="">Distrito…</option>${opts}</select>
+          <input type="text" name="contacto" required minlength="5" maxlength="120" placeholder="Telemóvel ou email" autocomplete="tel" style="${inp}">
+          <input type="text" name="nome" maxlength="80" placeholder="Nome (opcional)" autocomplete="name" style="${inp}grid-column:1 / -1;">
+          <label style="grid-column:1 / -1;display:flex;gap:9px;align-items:flex-start;font-size:13px;color:#5B606B;line-height:1.45;">
+            <input type="checkbox" name="consent" value="1" required style="margin-top:3px;">
+            <span>Autorizo o Carsbuyer a guardar estes dados durante 90 dias e a enviá-los a compradores profissionais para me apresentarem propostas. <a href="/privacidade">Privacidade</a>.</span>
+          </label>
+          <button type="submit" class="btn-dark" style="grid-column:1 / -1;padding:13px 20px;font-size:15px;">Receber propostas de compra&nbsp;&nbsp;→</button>
+        </form>
+        <div class="mono" style="font-size:11px;color:#9A9FA8;margin-top:10px;line-height:1.5;">Não vendemos o teu contacto para publicidade. Um comprador profissional paga ao Carsbuyer por este contacto — é assim que o site se financia, e a avaliação não muda por isso.</div>
+      </section>`;
+}
+
+export function historyCheckBlock({ url, reasons = [], price = null, title = null }) {
+  if (!url) return "";
+  const items = reasons.filter(Boolean).map(r => `<li style="margin:0 0 4px;">${r}</li>`).join("");
+  const head = title || `Antes de pagar${price != null ? ` ${fmtEur(price)}` : ""}, verifica o histórico`;
+  return `
+        <div style="background:#F4F6FB;border:1px solid #D9E0F0;border-radius:12px;margin-top:16px;padding:14px 16px;">
+          <div style="font-weight:600;color:#16181D;font-size:14.5px;">${escapeHtml(head)}</div>
+          <p style="font-size:13.5px;color:#5B606B;margin:6px 0 0;line-height:1.5;">Quilómetros reais, sinistros, número de donos e se veio do estrangeiro: o anúncio não diz, o relatório pela matrícula ou pelo VIN diz.${items ? " Neste caso há motivos concretos:" : ""}</p>
+          ${items ? `<ul style="margin:8px 0 0;padding-left:18px;font-size:13.5px;color:#16181D;line-height:1.5;">${items}</ul>` : ""}
+          <a href="${escapeHtml(url)}" target="_blank" rel="nofollow sponsored noopener" class="btn-outline" style="display:inline-block;margin-top:12px;padding:10px 16px;font-size:13.5px;">Verificar o histórico do carro&nbsp;&nbsp;↗</a>
+          <div class="mono" style="font-size:11px;color:#9A9FA8;margin-top:8px;line-height:1.5;">Ligação de parceiro: se comprares um relatório, o Carsbuyer recebe uma comissão. O preço para ti é o mesmo e a avaliação não muda.</div>
+        </div>`;
+}
+
+export function historyReasons(rec, models) {
+  if (!rec) return [];
+  const out = [];
+  if (rec.imp && !rec.il) out.push("Há indícios de importação e não está claro se o ISV foi pago: confirma a origem e a data de entrada em Portugal.");
+  else if (rec.imp) out.push("Carro importado: o que aconteceu antes de entrar em Portugal só aparece num relatório internacional.");
+  const mr = (rec.ms && models) ? models[rec.ms] : null;
+  let refKm = null, refYear = false;
+  if (mr && Array.isArray(mr.yr) && typeof rec.y === "number") {
+    const c = mr.yr.find(x => x.y === rec.y);
+    if (c && c.km != null) { refKm = c.km; refYear = true; }
+  }
+  if (refKm == null && mr && mr.kmm != null) refKm = mr.kmm;
+  if (refKm != null && rec.km != null && rec.km > 0 && rec.km < refKm * 0.6) {
+    out.push(`Marca ${fmtKm(rec.km)}, bem abaixo do habitual para este modelo${refYear ? " e ano" : ""} (${fmtKm(refKm)}): confirma o conta-quilómetros nas inspeções anteriores.`);
+  }
+  const track = Array.isArray(rec.ph) ? rec.ph : null;
+  if (track && track.length >= 3) out.push(`O preço já baixou ${track.length - 1} vezes: pergunta porquê antes de aceitar a descida.`);
+  if (rec.dom != null && rec.sd != null && rec.dom > rec.sd * 1.5) {
+    out.push(`Está à venda há ${rec.dom} dias, mais do que o normal para o modelo (~${rec.sd}): um carro que não sai costuma ter uma razão.`);
+  }
+  return out;
+}
+
+export function renderLeadThanks({ name = "", year = null, depositCount = null, host = null }) {
+  const car = [name, year].filter(Boolean).join(" ");
+  const body = `
+    <div class="info">
+      <div class="ic">✅</div>
+      <h1>Pedido recebido</h1>
+      <p>${car ? `Vamos apresentar o teu ${escapeHtml(car)} a compradores profissionais. ` : ""}Se houver interesse, recebes propostas em 24 a 48 horas pelo contacto que deixaste. Não há compromisso: aceitas só se a proposta te servir.</p>
+      <p style="font-size:13.5px;color:#5B606B;">Entretanto, vê <a href="/avaliar">o que o mercado pede por carros como o teu</a> — é a referência para comparar as propostas.</p>
+      <a class="btn-dark" href="/avaliar">Voltar à avaliação</a>
+    </div>
+    ${analyticsEvent("generate_lead", { model: car })}`;
+  return layout({ title: "Pedido recebido", body, zone: "all", nav: "avaliar", depositCount, index: false, host });
 }
