@@ -953,8 +953,7 @@ box.hidden=true;});})();</script>`;
 function analyticsEvent(name, params = {}) {
   if (!GA4_MEASUREMENT_ID) return "";
   const payload = JSON.stringify(params).replace(/</g, "\\u003c");
-  return `<script>window.dataLayer=window.dataLayer||[];` +
-    `dataLayer.push(['event',${JSON.stringify(name)},${payload}]);</script>`;
+  return `<script>if(typeof gtag==='function')gtag('event',${JSON.stringify(name)},${payload});</script>`;
 }
 
 // То же, но по отправке формы: событие должно уйти ДО ухода на Stripe.
