@@ -12,7 +12,7 @@
 import { readFileSync } from "node:fs";
 import {
   renderLanding, renderGrid, renderAvaliar, renderModelPage, renderModelsHub,
-  renderModelWidget, renderInfo, slugify, setAnalyticsId, renderPrivacy,
+  renderModelWidget, renderInfo, slugify, setAnalyticsId, renderPrivacy, ageTable,
 } from "../../flipper-club/src/templates.js";
 import {
   renderYearPage, renderNotFound, renderDepreciationPage, renderDepreciationHub,
@@ -1187,6 +1187,23 @@ check("a six-month window cell is labelled honestly on the year page and the JSO
     liveDeals: [], pageYears: [2009], stats, host: HOST, depositCount: 0, builtAt,
   });
   assert(active.includes("anúncios ativos</b>"), "active cell lost its wording");
+});
+
+check("the bare /avaliar page carries the valuation guide with real numbers", () => {
+  const bare = renderAvaliar({ rec: null, olxId: null, sourceUrl: null, query: "", models, spec: null,
+                               depositCount: 0, host: HOST, builtAt, market: mdoc.lqm || { s30: 0.6, md: 29, cu: 0.35, cp: 0.08 },
+                               stats: corpusStats(models, builtAt) });
+  assert(bare.includes("Como se calcula o valor de um carro usado"), "guide section missing");
+  assert(bare.includes("Quanto vale um carro usado por idade"), "age table missing");
+  assert(bare.includes("Perguntas frequentes"), "visible FAQ missing");
+  assert((bare.match(/<details class="indep-note"/g) || []).length >= 4, "FAQ entries are not rendered");
+  assert(ldTypes(bare).has("FAQPage"), "FAQ schema lost");
+  assert(bare.includes("/vender") && bare.includes("/depreciacao"), "guide does not link the seller and depreciation layers");
+  const rows = ageTable(models, builtAt);
+  assert(rows.length >= 3 && rows.every(r => r.med > 0 && r.n >= 50), "age table rows are malformed");
+  const withQuery = renderAvaliar({ rec: null, olxId: null, sourceUrl: null, query: "abc", models, spec: null,
+                                    depositCount: 0, host: HOST, builtAt, market: null, stats: null });
+  assert(!withQuery.includes("Quanto vale um carro usado por idade"), "guide leaked onto a noindex result page");
 });
 
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall render checks passed");

@@ -87,3 +87,10 @@ def test_digest_puts_warnings_first_and_stays_under_telegram_limit():
     assert text.startswith("⚠️")
     assert "sitemap мал" in text.splitlines()[1]
     assert len(text) <= 4000
+
+
+def test_press_reminder_only_inside_its_window():
+    assert md.press_reminder(dt.date(2026, 9, 27)) == []
+    assert md.press_reminder(dt.date(2026, 9, 28))
+    assert md.press_reminder(dt.date(2026, 10, 4))
+    assert md.press_reminder(dt.date(2026, 10, 5)) == []

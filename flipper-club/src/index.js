@@ -475,6 +475,8 @@ async function handleAvaliar(request, env, url) {
     host: url.host, builtAt: mdoc && mdoc.built_at,
     contact: env.SITE_CONTACT_EMAIL,
     historyUrl: env.HISTORY_REPORT_URL || null,
+    market: (mdoc && mdoc.lqm) || null,
+    stats: models ? corpusStats(models, mdoc.built_at) : null,
   }), 200, setCookie);
 }
 

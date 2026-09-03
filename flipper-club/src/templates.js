@@ -1807,7 +1807,18 @@ export function renderInfo({ zone, title, message, depositCount }) {
 // rec = the valuations.json record for the looked-up olx_id (or null). query =
 // the raw user input (URL or id). The verdict is derived from where the asking
 // price sits in the model's fair band [fl, fh].
-export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depositCount, host, builtAt, contact, historyUrl = null }) {
+const AVALIAR_FAQ = [
+          ["Quanto vale o meu carro usado em Portugal?",
+           "Cola o link do anúncio do teu carro no OLX e devolvemos o valor justo estimado para essa viatura concreta, com os seus quilómetros, ano e versão, além do preço mediano pedido pelo mesmo modelo no mercado. Se ainda não tens anúncio, escolhe o modelo e o ano para veres a mediana do mercado."],
+          ["A avaliação é grátis?",
+           "Sim. A avaliação de um anúncio e os preços por modelo são gratuitos e sem registo. Só se paga um depósito reembolsável de 5 € para desbloquear o contacto de um vendedor no mercado de negócios, e esse depósito é devolvido."],
+          ["Esta avaliação serve para vender ao meu stand ou ao seguro?",
+           "É uma estimativa independente a partir de anúncios reais e serve para saber por quanto anunciar ou quanto oferecer. Não é uma avaliação oficial para efeitos de seguro, sinistro ou fiscais, e não somos stand nem intermediário."],
+          ["De onde vêm os valores?",
+           "De anúncios ativos de carros no OLX Portugal, recolhidos diariamente. Trabalhamos com preços pedidos, com a mediana e o intervalo interquartil, e com um modelo estatístico para o valor justo. O método completo está publicado na página de metodologia."],
+        ];
+
+export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depositCount, host, builtAt, contact, historyUrl = null, market = null, stats = null }) {
   const to = (contact || "").trim();
   const mailto = to
     ? `mailto:${encodeURIComponent(to)}?subject=Avaliar%20o%20meu%20carro`
@@ -2030,6 +2041,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
     ${result}
     ${specResult}
     ${!rec ? specForm : ""}
+    ${(!rec && !spec && !query) ? avaliarHub({ models, market, stats, builtAt }) : ""}
     ${rec ? "" : `
     <section class="section" style="padding:18px 22px 70px;">
       <div class="cta-banner">
@@ -2096,16 +2108,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
       },
       {
         "@type": "FAQPage",
-        "mainEntity": [
-          ["Quanto vale o meu carro usado em Portugal?",
-           "Cola o link do anúncio do teu carro no OLX e devolvemos o valor justo estimado para essa viatura concreta, com os seus quilómetros, ano e versão, além do preço mediano pedido pelo mesmo modelo no mercado. Se ainda não tens anúncio, escolhe o modelo e o ano para veres a mediana do mercado."],
-          ["A avaliação é grátis?",
-           "Sim. A avaliação de um anúncio e os preços por modelo são gratuitos e sem registo. Só se paga um depósito reembolsável de 5 € para desbloquear o contacto de um vendedor no mercado de negócios, e esse depósito é devolvido."],
-          ["Esta avaliação serve para vender ao meu stand ou ao seguro?",
-           "É uma estimativa independente a partir de anúncios reais e serve para saber por quanto anunciar ou quanto oferecer. Não é uma avaliação oficial para efeitos de seguro, sinistro ou fiscais, e não somos stand nem intermediário."],
-          ["De onde vêm os valores?",
-           "De anúncios ativos de carros no OLX Portugal, recolhidos diariamente. Trabalhamos com preços pedidos, com a mediana e o intervalo interquartil, e com um modelo estatístico para o valor justo. O método completo está publicado na página de metodologia."],
-        ].map(([q, a]) => ({
+        "mainEntity": AVALIAR_FAQ.map(([q, a]) => ({
           "@type": "Question", "name": q,
           "acceptedAnswer": { "@type": "Answer", "text": a },
         })),
@@ -2725,4 +2728,88 @@ export function renderLeadThanks({ name = "", year = null, depositCount = null, 
     </div>
     ${analyticsEvent("generate_lead", { model: car })}`;
   return layout({ title: "Pedido recebido", body, zone: "all", nav: "avaliar", depositCount, index: false, host });
+}
+
+const AGE_BUCKETS = [[0, 2, "até 2 anos"], [3, 5, "3 a 5 anos"], [6, 9, "6 a 9 anos"], [10, 14, "10 a 14 anos"], [15, 99, "15 anos ou mais"]];
+
+export function weightedMedian(pairs) {
+  const v = pairs.filter(p => p[0] != null && isFinite(p[0]) && p[1] > 0).sort((a, b) => a[0] - b[0]);
+  const total = v.reduce((s, p) => s + p[1], 0);
+  if (!total) return null;
+  let acc = 0;
+  for (const [value, w] of v) {
+    acc += w;
+    if (acc >= total / 2) return value;
+  }
+  return v[v.length - 1][0];
+}
+
+export function ageTable(models, builtAt) {
+  const refYear = parseInt((builtAt || "").slice(0, 4), 10) || new Date().getUTCFullYear();
+  const rows = [];
+  for (const [lo, hi, label] of AGE_BUCKETS) {
+    const pairs = [];
+    let n = 0, modelsIn = new Set();
+    for (const [slug, r] of Object.entries(models || {})) {
+      for (const c of (Array.isArray(r.yr) ? r.yr : [])) {
+        if (typeof c.y !== "number" || !(c.fm > 0) || !(c.n > 0)) continue;
+        const age = refYear - c.y;
+        if (age < lo || age > hi) continue;
+        pairs.push([c.fm, c.n]);
+        n += c.n;
+        modelsIn.add(slug);
+      }
+    }
+    const med = weightedMedian(pairs);
+    if (med != null && n >= 50) rows.push({ label, med, n, models: modelsIn.size });
+  }
+  return rows;
+}
+
+export function avaliarHub({ models, market, stats, builtAt }) {
+  if (!models) return "";
+  const pct = x => Math.round(x * 100);
+  const rows = ageTable(models, builtAt);
+  const tableN = rows.reduce((s, r) => s + r.n, 0);
+  const st = stats || {};
+  const mk = market || {};
+  const ageRows = rows.map(r => `<tr><td>${r.label}</td><td><b>${fmtEur(r.med)}</b></td><td class="mut">${fmtNum(r.n)}</td><td class="mut">${r.models}</td></tr>`).join("");
+  const top = Object.entries(models).filter(([, r]) => r.n > 0).sort((a, b) => b[1].n - a[1].n).slice(0, 12)
+    .map(([slug, r]) => `<a href="/preco/${encodeURIComponent(slug)}">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a>`).join(" · ");
+  const faq = AVALIAR_FAQ.map(([q, a]) => `<details class="indep-note" style="margin:0 0 8px;"><summary>${escapeHtml(q)}</summary><p style="margin:8px 0 0;">${escapeHtml(a)}</p></details>`).join("");
+  return `
+    <section class="section fc-wrap" style="padding-top:34px;">
+      <h2 class="fc-h2">Como se calcula o valor de um carro usado em Portugal</h2>
+      <p class="fc-p">Não há tabela oficial de valores. O valor de mercado é o que os compradores estão dispostos a pagar por carros como o teu, e a melhor aproximação disponível são os anúncios: o que pedem hoje os vendedores do mesmo modelo e ano, e a que preço esses anúncios acabam por sair. É isso que medimos todos os dias${st.listings ? ` em <b>${fmtNum(st.listings)} anúncios ativos</b> de <b>${st.models} modelos</b>` : ""} no OLX Portugal.</p>
+      <ul class="fc-ul">
+        <li class="fc-li"><b>Comparáveis.</b> Para cada modelo e ano, a mediana pedida e o intervalo onde fica metade dos anúncios (P25–P75). É o número das <a href="/precos">páginas de preços</a> e da estimativa por modelo e ano acima.</li>
+        <li class="fc-li"><b>Valor justo estimado.</b> Um modelo estatístico que corrige a mediana pelos quilómetros, combustível, caixa e região do carro concreto. Só o publicamos quando passa nos nossos testes de confiança; caso contrário ficas com a mediana e dizemos porquê.</li>
+        <li class="fc-li"><b>O que o anúncio não diz.</b> Quantas vezes o preço já baixou, há quantos dias está à venda, se o texto fala de avarias, se há indícios de importação com ISV por pagar. É a diferença entre saber o preço e saber quanto pagar.</li>
+      </ul>
+
+      ${ageRows ? `<h2 class="fc-h2">Quanto vale um carro usado por idade</h2>
+      <p class="fc-p">Mediana dos preços pedidos por ano de matrícula em todos os modelos com página, ${fmtNum(tableN)} anúncios. É uma régua, não uma avaliação: o teu carro vale mais ou menos consoante o modelo, os quilómetros e o estado.</p>
+      <div class="fc-scroll"><table class="fc-tbl">
+        <thead><tr><th>Idade</th><th>Mediana pedida</th><th>Anúncios</th><th>Modelos</th></tr></thead>
+        <tbody>${ageRows}</tbody>
+      </table></div>` : ""}
+      ${st.depMed ? `<p class="fc-p">Por cada ano de idade um carro perde, em mediana, <b>${pct(st.depMed)}%</b> do valor que ainda tem, e o ritmo não abranda com os anos: a percentagem é a mesma aos 4 e aos 12, só os euros são menos. <a href="/depreciacao">Desvalorização por modelo</a>.</p>` : ""}
+
+      <h2 class="fc-h2">O que faz o preço subir ou descer</h2>
+      <ul class="fc-ul">
+        <li class="fc-li"><b>Quilómetros.</b> ${st.kmMed ? `A mediana do mercado anda nos ${fmtKm(st.kmMed)}; ` : ""}um carro bem abaixo do habitual para a idade vale mais, e um relatório de histórico confirma que o conta-quilómetros diz a verdade.</li>
+        <li class="fc-li"><b>Combustível e caixa.</b> Diesel e gasolina, manual e automática seguram o valor de forma diferente consoante o modelo: <a href="/diesel-ou-gasolina">diesel ou gasolina</a>, <a href="/manual-ou-automatica">manual ou automática</a>.</li>
+        <li class="fc-li"><b>Importação.</b> Um carro com matrícula estrangeira vale menos o ISV que falta pagar: <a href="/isv">simulador de ISV</a> e <a href="/importar">quando compensa importar</a>.</li>
+        <li class="fc-li"><b>Estado e histórico.</b> Sinistros, número de donos e manutenção não estão no anúncio. Um dano visível desconta mais do que custa a reparar, porque o comprador desconfia do resto.</li>
+        ${st.spreadMed ? `<li class="fc-li"><b>A versão e o estado pesam tanto como o modelo.</b> Metade dos anúncios de um mesmo modelo fica numa faixa de cerca de ±${Math.round(st.spreadMed * 50)}% à volta da mediana: é a margem que os quilómetros, a versão e o estado decidem.</li>` : ""}
+      </ul>
+
+      ${mk.s30 != null ? `<h2 class="fc-h2">Vais vender? Quanto pedir e quanto tempo demora</h2>
+      <p class="fc-p">No conjunto do mercado saem <b>${pct(mk.s30)} em cada 100</b> anúncios no primeiro mês${mk.md != null ? `, com mediana de <b>${mk.md} dias</b>` : ""}${mk.cu != null ? `; <b>${pct(mk.cu)} em cada 100</b> baixam o preço antes de sair${mk.cp != null ? `, em mediana ${pct(mk.cp)}%` : ""}` : ""}. Começar perto da mediana do teu ano evita a descida. <a href="/vender">Quanto pedir, modelo a modelo</a> · <a href="/liquidez">tempo de venda por modelo</a>.</p>` : ""}
+
+      ${top ? `<p class="fc-p"><b>Modelos mais anunciados:</b> ${top}.</p>` : ""}
+
+      <h2 class="fc-h2">Perguntas frequentes</h2>
+      ${faq}
+    </section>`;
 }
