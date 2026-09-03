@@ -1,0 +1,44 @@
+name: Monitors
+
+on:
+  schedule:
+    - cron: "15 7 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Send the full digest even if nothing is new"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: monitors
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build and send the digest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          MONITOR_TELEGRAM_CHAT_ID: ${{ secrets.MONITOR_TELEGRAM_CHAT_ID }}
+          ANALYTICS_USER: ${{ secrets.ANALYTICS_USER }}
+          ANALYTICS_PASS: ${{ secrets.ANALYTICS_PASS }}
+          MAIL_IMAP_USER: ${{ secrets.MAIL_IMAP_USER }}
+          MAIL_IMAP_PASSWORD: ${{ secrets.MAIL_IMAP_PASSWORD }}
+          GSC_ADC_JSON: ${{ secrets.GSC_ADC_JSON }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.force }}" = "true" ]; then
+            python scripts/monitor_digest.py --force
+          else
+            python scripts/monitor_digest.py
+          fi
