@@ -1083,7 +1083,7 @@ ${consentBanner()}
 <footer class="footer">
   <div class="footer-in">
     <span class="mono">AVALIAÇÃO INDEPENDENTE&nbsp;· dados de anúncios públicos OLX&nbsp;· estimativas indicativas, não vinculativas&nbsp;· não somos stand nem intermediário</span>
-    <span class="mono"><a href="/precos" style="color:#5B606B;">Preços por modelo</a>&nbsp;· <a href="/depreciacao" style="color:#5B606B;">Desvalorização</a>&nbsp;· <a href="/comparar" style="color:#5B606B;">Comparar</a>&nbsp;· <a href="/liquidez" style="color:#5B606B;">Tempo de venda</a>&nbsp;· <a href="/mercado/indice" style="color:#5B606B;">Índice de mercado</a>&nbsp;· <a href="/avaliar" style="color:#5B606B;">Avaliar o meu carro</a>&nbsp;· <a href="/vender" style="color:#5B606B;">Vender o meu carro</a></span>
+    <span class="mono"><a href="/precos" style="color:#5B606B;">Preços por modelo</a>&nbsp;· <a href="/depreciacao" style="color:#5B606B;">Desvalorização</a>&nbsp;· <a href="/comparar" style="color:#5B606B;">Comparar</a>&nbsp;· <a href="/liquidez" style="color:#5B606B;">Tempo de venda</a>&nbsp;· <a href="/mercado/indice" style="color:#5B606B;">Índice de mercado</a>&nbsp;· <a href="/avaliar" style="color:#5B606B;">Avaliar o meu carro</a>&nbsp;· <a href="/vender" style="color:#5B606B;">Vender o meu carro</a>&nbsp;· <a href="/guias" style="color:#5B606B;">Guias para vender</a></span>
     <span class="mono"><a href="/metodologia" style="color:#5B606B;">Metodologia</a>&nbsp;· <a href="/sobre" style="color:#5B606B;">Quem somos</a>&nbsp;· <a href="/isv" style="color:#5B606B;">Simulador ISV</a>&nbsp;· <a href="/importar" style="color:#5B606B;">Importar da Alemanha</a>&nbsp;· Portugal&nbsp;🇵🇹</span>
   </div>
 </footer>
@@ -2653,17 +2653,17 @@ export const PT_DISTRICTS = [
   "Viana do Castelo", "Vila Real", "Viseu", "Açores", "Madeira",
 ];
 
-export function leadFormBlock({ slug = "", name = "", year = null, median = null, district = "" }) {
+export function leadFormBlock({ slug = "", name = "", year = null, median = null, district = "", heading = null }) {
   const opts = PT_DISTRICTS.map(d =>
     `<option value="${escapeHtml(d)}"${d === district ? " selected" : ""}>${escapeHtml(d)}</option>`).join("");
   const inp = "padding:12px;border:1px solid #E2DFD8;border-radius:11px;font-size:15px;background:#fff;color:#16181D;min-width:0;";
   return `
       <section id="vender" class="side-card" style="margin-top:16px;">
-        <div class="panel-title" style="font-size:16px;margin-bottom:6px;">Queres vender${name ? ` o teu ${escapeHtml(name)}` : " este carro"}?</div>
+        <div class="panel-title" style="font-size:16px;margin-bottom:6px;">${heading ? escapeHtml(heading) : `Queres vender${name ? ` o teu ${escapeHtml(name)}` : " este carro"}?`}</div>
         <p style="font-size:14px;color:#5B606B;margin:0 0 14px;line-height:1.5;">Deixa o contacto e recebes propostas de compra de compradores profissionais — stands e serviços de compra imediata — normalmente em 24 a 48 horas. Sem compromisso: comparas com ${median != null ? `a mediana de ${fmtEur(median)}` : "o valor acima"} e decides.</p>
         <form action="/lead" method="post" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">
           <input type="hidden" name="modelo" value="${escapeHtml(slug)}">
-          <input type="hidden" name="nome_modelo" value="${escapeHtml(name)}">
+          ${slug ? `<input type="hidden" name="nome_modelo" value="${escapeHtml(name)}">` : `<input type="text" name="nome_modelo" required maxlength="80" placeholder="Marca e modelo" style="${inp}grid-column:1 / -1;">`}
           <input type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;">
           <input type="number" name="ano" min="1980" max="2027" required value="${year ? escapeHtml(String(year)) : ""}" placeholder="Ano" style="${inp}">
           <input type="number" name="km" min="0" max="1500000" step="1000" placeholder="Quilómetros" style="${inp}">

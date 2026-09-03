@@ -3948,7 +3948,7 @@ export function renderVenderPage({ rec, slug, market, pageYears = [], hasLiquidi
       ${leadFormBlock({ slug, name: `${rec.b} ${rec.m}`, year: null, median: rec.fm })}
     </section>
     <section class="section fc-wrap" style="padding-bottom:70px;">
-      <p class="fc-p"><a href="/preco/${slug}">Preços de ${B} ${M} por ano</a>${hasDepreciation ? ` · <a href="/depreciacao/${slug}">Desvalorização</a>` : ""}${hasLiquidity ? ` · <a href="/liquidez/${slug}">Tempo de venda</a>` : ""} · <a href="/vender">Outros modelos</a> · <a href="/metodologia">Como medimos</a> · <a href="${canonical}.json">Dados em JSON</a></p>
+      <p class="fc-p"><a href="/preco/${slug}">Preços de ${B} ${M} por ano</a>${hasDepreciation ? ` · <a href="/depreciacao/${slug}">Desvalorização</a>` : ""}${hasLiquidity ? ` · <a href="/liquidez/${slug}">Tempo de venda</a>` : ""} · <a href="/vender">Outros modelos</a> · <a href="/guias">Guias para vender</a> · <a href="/metodologia">Como medimos</a> · <a href="${canonical}.json">Dados em JSON</a></p>
     </section>`;
 
   const faqs = [

@@ -74,6 +74,7 @@ import {
   DUELS, duel, duelByPath, duelJson, duelSlugs, duelsFor, publishedDuel,
   renderDuelPage, renderDuelHub,
 } from "./seo-pages.js";
+import { GUIDES, guideBySlug, renderGuide, renderGuidesHub } from "./guides.js";
 
 const ZONES = ["norte", "centro", "sul", "all"];
 const COOKIE_UID = "fc_uid";
@@ -102,7 +103,7 @@ const PRODUCT_PATHS = new Set([
   // Second-layer SEO pages (seo-pages.js). Hubs are exact paths; their per-item
   // children (/depreciacao/{slug}, /comparar/{a}-vs-{b}, /mercado/indice/{week|month})
   // are prefix-routed above the asset gate.
-  "/depreciacao", "/comparar", "/liquidez", "/sobrevalorizados", "/importar", "/vender",
+  "/depreciacao", "/comparar", "/liquidez", "/sobrevalorizados", "/importar", "/vender", "/guias",
   "/metodologia", "/sobre", "/isv",
   ...Object.values(DUELS).map(d => `/${d.path}`),
 ]);
@@ -285,6 +286,9 @@ const worker = {
       if (pathname.startsWith("/vender/") && method === "GET") {
         return handleVenderPage(request, env, url);
       }
+      if (pathname.startsWith("/guias/") && method === "GET") {
+        return handleGuide(request, env, url);
+      }
       if (pathname.startsWith("/importar/") && method === "GET") {
         return handleImportPage(request, env, url);
       }
@@ -345,6 +349,7 @@ const worker = {
       if (duelHub && method === "GET") return handleDuelHub(request, env, url, duelHub);
       if (pathname === "/liquidez" && method === "GET") return handleLiquidity(request, env, url);
       if (pathname === "/vender" && method === "GET") return handleVenderHub(request, env, url);
+      if (pathname === "/guias" && method === "GET") return handleGuidesHub(request, env, url);
       if (pathname === "/sobrevalorizados" && method === "GET") return handleValuationGap(request, env, url);
       if (pathname === "/importar" && method === "GET") return handleImportHub(request, env, url);
       if (pathname === "/metodologia" && method === "GET") return handleMethodology(request, env, url);
@@ -1225,6 +1230,8 @@ async function handleSitemap(request, env, url) {
     }
     add("/liquidez", "weekly", "0.7");
     add("/vender", "weekly", "0.7");
+    add("/guias", "monthly", "0.6");
+    for (const g of GUIDES) add(`/guias/${g.slug}`, "monthly", "0.6");
     add("/sobrevalorizados", "weekly", "0.6");
 
     for (const [slug, rec] of Object.entries(models)) {
@@ -1411,6 +1418,7 @@ async function handleLlmsTxt(request, env, url) {
     `- [Desvalorização por modelo](${base}/depreciacao)`,
     `- [Quanto tempo demora a vender cada modelo](${base}/liquidez)`,
     `- [Vender: quanto pedir por modelo e em quantos dias vende](${base}/vender)`,
+    `- [Guias para vender um carro usado: documentos, registo, crédito, importados, burlas](${base}/guias)`,
     `- [Comparações diretas entre modelos](${base}/comparar)`,
     ...duelHubs.map(d => `- [${d.hubTitle}](${base}/${d.path})`),
     `- [Preço pedido vs. valor justo estimado](${base}/sobrevalorizados)`,
@@ -2404,4 +2412,20 @@ async function handleVenderPage(request, env, url) {
       host: url.host, depositCount, builtAt,
     }));
   });
+}
+
+async function handleGuidesHub(request, env, url) {
+  return withModels(request, env, url, ({ builtAt, depositCount, stats, market }) =>
+    publicHtml(renderGuidesHub({ market, stats, host: url.host, depositCount, builtAt })));
+}
+
+async function handleGuide(request, env, url) {
+  let slug;
+  try {
+    slug = decodeURIComponent(url.pathname.slice("/guias/".length)).replace(/\/+$/, "").toLowerCase();
+  } catch (_) { return notFoundPage(request, env, url); }
+  const guide = guideBySlug(slug);
+  if (!guide) return notFoundPage(request, env, url);
+  return withModels(request, env, url, ({ models, builtAt, depositCount, stats, market }) =>
+    publicHtml(renderGuide({ guide, models, market, stats, host: url.host, depositCount, builtAt })));
 }

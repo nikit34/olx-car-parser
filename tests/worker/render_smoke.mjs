@@ -31,6 +31,7 @@ import {
   renderImportPage, renderImportHub, importJson, importOk, importSlugs,
   renderVenderPage, renderVenderHub, venderJson, venderOk,
 } from "../../flipper-club/src/seo-pages.js";
+import { GUIDES, renderGuide, renderGuidesHub } from "../../flipper-club/src/guides.js";
 
 const HOST = "carsbuyer.org";
 const RELEASE = "https://github.com/nikit34/olx-car-parser/releases/download/latest-data/models.json";
@@ -1232,6 +1233,25 @@ check("valuation results offer a WhatsApp share link back to the page", () => {
   assert(spec.includes(encodeURIComponent(`https://${HOST}/avaliar?modelo=${slug}&ano=2016`)), "spec result share link is wrong");
   const noHost = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models, spec: null, depositCount: 0, host: null, builtAt });
   assert(!noHost.includes("wa.me"), "share link rendered without a host to point at");
+});
+
+check("every seller guide renders as an indexable article with FAQ, sources and the lead form", () => {
+  assert(GUIDES.length >= 6, "guide registry is too small");
+  const st = corpusStats(models, builtAt);
+  for (const guide of GUIDES) {
+    const page = renderGuide({ guide, models, market: mdoc.lqm || { s30: 0.6, md: 29, cu: 0.35, cp: 0.08 }, stats: st,
+                               host: HOST, depositCount: 0, builtAt });
+    assertPage(page, { indexable: true, canonical: `https://${HOST}/guias/${guide.slug}`, label: `guia ${guide.slug}` });
+    const t = ldTypes(page);
+    for (const want of ["Article", "FAQPage", "BreadcrumbList"]) assert(t.has(want), `${guide.slug} is missing ${want}`);
+    assert(page.includes('action="/lead"') && page.includes('name="nome_modelo" required'), `${guide.slug} has no free-text lead form`);
+    assert(!page.includes("undefined") && !page.includes("NaN"), `${guide.slug} leaks undefined/NaN`);
+    const words = page.replace(/<script[\s\S]*?<\/script>/g, "").replace(/<[^>]+>/g, " ").split(/\s+/).filter(Boolean).length;
+    assert(words >= 450, `${guide.slug} is thin: ${words} words`);
+  }
+  const hub = renderGuidesHub({ market: mdoc.lqm || null, stats: st, host: HOST, depositCount: 0, builtAt });
+  assertPage(hub, { indexable: true, canonical: `https://${HOST}/guias`, label: "guias hub" });
+  for (const guide of GUIDES) assert(hub.includes(`/guias/${guide.slug}`), `hub does not link ${guide.slug}`);
 });
 
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall render checks passed");

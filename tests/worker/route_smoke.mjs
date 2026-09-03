@@ -13,6 +13,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import worker from "../../flipper-club/src/index.js";
 import { yearPageYears, liquidityOk, depreciationSlugs, comparePairs, isoWeek, isoWeekStart, missingWeeks, DUELS, isoWeekMonth, monthlyCuts, importSlugs, venderOk } from "../../flipper-club/src/seo-pages.js";
+import { GUIDES } from "../../flipper-club/src/guides.js";
 
 const HOST = "carsbuyer.org";
 const RELEASE = "https://github.com/nikit34/olx-car-parser/releases/download/latest-data/models.json";
@@ -1060,6 +1061,18 @@ await check("seller pages resolve, the hub links them and the sitemap lists them
   const sm = await (await get("/sitemap.xml")).text();
   assert(sm.includes(`/vender/${s}<`) || sm.includes(`/vender/${s}</loc>`), "sitemap does not list the seller page");
   assert(sm.includes(`https://${HOST}/vender</loc>`), "sitemap does not list the seller hub");
+});
+
+await check("seller guides resolve and are listed in the sitemap", async () => {
+  const hub = await get("/guias");
+  assert(hub.status === 200, `/guias → ${hub.status}`);
+  const first = GUIDES[0].slug;
+  const page = await get(`/guias/${first}`);
+  assert(page.status === 200, `/guias/${first} → ${page.status}`);
+  const miss = await get("/guias/guia-que-nao-existe");
+  assert(miss.status === 404, `unknown guide → ${miss.status}`);
+  const sm = await (await get("/sitemap.xml")).text();
+  for (const g of GUIDES) assert(sm.includes(`/guias/${g.slug}</loc>`), `sitemap does not list ${g.slug}`);
 });
 
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall route checks passed");
