@@ -1220,5 +1220,19 @@ check("year pages carry the seller path and a prefilled lead form", () => {
   assert(without.includes(`/avaliar?modelo=${encodeURIComponent(s)}&ano=${y}#vender`), "fallback seller path missing");
 });
 
+check("valuation results offer a WhatsApp share link back to the page", () => {
+  const rec = { t: "VW Golf 1.6 TDI", y: 2015, km: 150000, fu: "Diesel", p: 9000, fl: 9500, fm: 11000, fh: 12500 };
+  const pasted = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models, spec: null,
+                                 depositCount: 0, host: HOST, builtAt });
+  assert(pasted.includes("https://wa.me/?text="), "no WhatsApp link on the pasted result");
+  assert(pasted.includes(encodeURIComponent(`https://${HOST}/avaliar?q=JqGTZ`)), "share link does not point back to the result");
+  const slug = deep;
+  const spec = renderAvaliar({ rec: null, olxId: null, sourceUrl: null, query: "", models,
+                               spec: { rec: models[slug], slug, year: 2016, cell: null }, depositCount: 0, host: HOST, builtAt });
+  assert(spec.includes(encodeURIComponent(`https://${HOST}/avaliar?modelo=${slug}&ano=2016`)), "spec result share link is wrong");
+  const noHost = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models, spec: null, depositCount: 0, host: null, builtAt });
+  assert(!noHost.includes("wa.me"), "share link rendered without a host to point at");
+});
+
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall render checks passed");
 process.exit(failures ? 1 : 0);

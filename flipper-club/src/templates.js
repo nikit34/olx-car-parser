@@ -1933,6 +1933,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
         ${stallBlock}
         ${hist}
         ${olxHref ? `<a class="olx-btn" style="display:block;margin-top:18px;" href="${escapeHtml(olxHref)}" target="_blank" rel="noopener nofollow">Ver anúncio original&nbsp;&nbsp;↗</a>` : ""}
+        ${whatsappShare(`${rec.t || "Viatura"}: pedido ${fmtEur(price)}, justo ${fmtEur(fm)} (${fmtEur(fl)}–${fmtEur(fh)}). Avaliação independente:`, host ? `https://${host}/avaliar?q=${encodeURIComponent(olxId || "")}` : "")}
         ${modelHref ? `<a href="${modelHref}" style="display:block;text-align:center;margin-top:12px;font-size:13.5px;color:#177A47;font-weight:600;">Ver preços deste modelo por ano&nbsp;→</a>` : ""}
         <a href="${sellHref}" style="display:block;text-align:center;margin-top:10px;font-size:13.5px;color:#5B606B;">É o teu carro? Recebe propostas de compra&nbsp;→</a>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;">
@@ -1976,6 +1977,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
           <a class="btn-outline" style="padding:11px 16px;font-size:14px;" href="/preco/${encodeURIComponent(spec.slug)}">Ver preço por ano&nbsp;→</a>
           <a class="btn-dark" style="padding:11px 16px;font-size:14px;" href="/avaliar">Tens o anúncio? Cola o link</a>
         </div>
+        ${whatsappShare(`${mr.b} ${mr.m}${cell ? ` ${cell.y}` : ""}: mediana pedida ${fmtEur(sfm)} (${fmtEur(sfl)}–${fmtEur(sfh)}) no OLX. Avaliação independente:`, host ? `https://${host}/avaliar?modelo=${encodeURIComponent(spec.slug)}${spec.year ? `&ano=${encodeURIComponent(spec.year)}` : ""}` : "")}
         ${spec.vender ? `<a href="/vender/${encodeURIComponent(spec.slug)}" style="display:block;text-align:center;margin-top:12px;font-size:13.5px;color:#177A47;font-weight:600;">Quanto pedir e em quantos dias vende&nbsp;→</a>` : ""}
       </div>
       <div class="side-foot">Preços PEDIDOS em anúncios ativos do OLX — estimativa indicativa, não o valor da tua viatura concreta.</div>
@@ -2811,4 +2813,11 @@ export function avaliarHub({ models, market, stats, builtAt }) {
       <h2 class="fc-h2">Perguntas frequentes</h2>
       ${faq}
     </section>`;
+}
+
+export function whatsappShare(text, url) {
+  if (!url) return "";
+  const msg = `${text} ${url}`.replace(/[\u202f\u00a0]/g, " ");
+  const href = "https://wa.me/?text=" + encodeURIComponent(msg);
+  return `<a href="${href}" target="_blank" rel="noopener" onclick="if(window.gtag){gtag('event','share',{method:'whatsapp',content_type:'valuation'})}" style="display:block;text-align:center;margin-top:12px;padding:10px 14px;border:1px solid #CFE8D8;border-radius:11px;background:#F1FAF4;color:#1B5E3A;font-weight:600;font-size:13.5px;">Partilhar no WhatsApp&nbsp;&nbsp;↗</a>`;
 }
