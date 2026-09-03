@@ -60,6 +60,9 @@ MIN_YEAR_PAGE_N = 10
 RETIRE_YEAR_PAGE_N = 7
 RETIRE_FACET_N = 11
 MAX_YEAR_ROWS = 25          # cap emitted year rows (most recent) to bound size
+WINDOW_DAYS = 180
+MIN_WINDOW_PAGE_N = 20
+RETIRE_WINDOW_PAGE_N = 14
 
 # ── Facet cells (fuel, district) ─────────────────────────────────────────────
 # Higher floor than a year row: a facet page is a page, and "quanto vale um Golf
@@ -172,7 +175,8 @@ def _quantiles(prices: pd.Series):
     return _i(q[0]), _i(q[1]), _i(q[2])
 
 
-def _year_cells(grp: pd.DataFrame, keep_pages: set | None = None) -> tuple[list[dict], int]:
+def _year_cells(grp: pd.DataFrame, keep_pages: set | None = None,
+                exclude: set | None = None, trim: bool = True) -> tuple[list[dict], int]:
     """Per-year asking-price cells (year DESC), gating thin years and merging
     consecutive sub-gate years into 2+-year bands. Returns (cells, yrs_thin).
 
@@ -199,6 +203,10 @@ def _year_cells(grp: pd.DataFrame, keep_pages: set | None = None) -> tuple[list[
     if g.empty:
         return [], 0
     by_year = {int(y): sub for y, sub in g.groupby("_y")}
+    if exclude:
+        by_year = {y: sub for y, sub in by_year.items() if y not in exclude}
+    if not by_year:
+        return [], 0
     years_asc = sorted(by_year)
 
     cells: list[dict] = []
@@ -245,11 +253,61 @@ def _year_cells(grp: pd.DataFrame, keep_pages: set | None = None) -> tuple[list[
     flush_band()
 
     cells.sort(key=lambda c: (int(str(c["y"]).split("-")[-1])), reverse=True)
+    return (_trim_year_rows(cells) if trim else cells), yrs_thin
+
+
+def _trim_year_rows(cells: list[dict]) -> list[dict]:
     pages = [c for c in cells if c.get("pg")]
     rest = [c for c in cells if not c.get("pg")]
     kept = pages + rest[:max(0, MAX_YEAR_ROWS - len(pages))]
     kept.sort(key=lambda c: (int(str(c["y"]).split("-")[-1])), reverse=True)
-    return kept, yrs_thin
+    return kept
+
+
+def _recent_frame(listings: pd.DataFrame, now: pd.Timestamp) -> pd.DataFrame:
+    df = listings[pd.to_numeric(listings.get("price_eur"), errors="coerce").notna()]
+    df = df[df.get("brand").notna() & df.get("model").notna()]
+    if "is_active" not in df.columns or df.empty:
+        return df.copy()
+    cutoff = now - pd.Timedelta(days=WINDOW_DAYS)
+    stamp = None
+    for col in ("last_seen_at", "deactivated_at"):
+        if col in df.columns:
+            ts = pd.to_datetime(df[col], errors="coerce", utc=True)
+            stamp = ts if stamp is None else stamp.fillna(ts)
+    recent = df["is_active"] == True  # noqa: E712
+    if stamp is not None:
+        recent = recent | (stamp >= cutoff)
+    return df[recent.fillna(False)].copy()
+
+
+def _window_year_cells(recent: pd.DataFrame, active: pd.DataFrame,
+                       kept_pages: set, skip: set) -> dict[int, dict]:
+    yr = pd.to_numeric(recent.get("year"), errors="coerce")
+    g = recent.assign(_y=yr).dropna(subset=["_y"])
+    g = g[(g["_y"] >= 1980) & (g["_y"] <= 2026)]
+    if g.empty:
+        return {}
+    ay = pd.to_numeric(active.get("year"), errors="coerce").dropna().astype(int)
+    active_counts = ay.value_counts().to_dict()
+    out: dict[int, dict] = {}
+    for y, sub in g.groupby("_y"):
+        y = int(y)
+        if y in skip:
+            continue
+        floor = RETIRE_WINDOW_PAGE_N if y in kept_pages else MIN_WINDOW_PAGE_N
+        if len(sub) < floor:
+            continue
+        q = _quantiles(sub["price_eur"])
+        if not q:
+            continue
+        cell = {"y": y, "n": int(len(sub)), "fl": q[0], "fm": q[1], "fh": q[2],
+                "pg": 1, "w": WINDOW_DAYS, "na": int(active_counts.get(y, 0))}
+        kmv = pd.to_numeric(sub.get("mileage_km"), errors="coerce").dropna()
+        if len(kmv) >= MIN_YEAR_N:
+            cell["km"] = _i(kmv.median())
+        out[y] = cell
+    return out
 
 
 def _fuel_facet_key(value) -> str | None:
@@ -594,6 +652,16 @@ def build_model_pages(
         active["brand"] = [p[0] for p in _pairs]
         active["model"] = [p[1] for p in _pairs]
 
+    recent = _recent_frame(listings, pd.Timestamp.now(tz="UTC"))
+    if _canon and not recent.empty:
+        _rk = (recent["brand"].astype(str) + "-" + recent["model"].astype(str)).map(slugify)
+        _rp = [_canon.get(k, (b, m)) for k, b, m
+               in zip(_rk, recent["brand"].astype(str), recent["model"].astype(str))]
+        recent["brand"] = [p[0] for p in _rp]
+        recent["model"] = [p[1] for p in _rp]
+    recent_groups = ({k: g for k, g in recent.groupby(["brand", "model"])}
+                     if not recent.empty else {})
+
     sell_lookup: dict[tuple, tuple[int, int]] = {}
     if sell_speed is not None and not sell_speed.empty:
         # Keys come from the pre-collapse frame, so map them through the same
@@ -625,7 +693,15 @@ def build_model_pages(
         q = _quantiles(grp["price_eur"])
         if not q:
             continue
-        yr_cells, yrs_thin = _year_cells(grp, prev and prev["pages"])
+        kept_pages = (prev and prev["pages"]) or set()
+        yr_cells, yrs_thin = _year_cells(grp, kept_pages, trim=False)
+        paged = {c["y"] for c in yr_cells if c.get("pg") and isinstance(c["y"], int)}
+        rgrp = recent_groups.get((brand, model))
+        win = _window_year_cells(rgrp, grp, kept_pages, paged) if rgrp is not None else {}
+        if win:
+            yr_cells, yrs_thin = _year_cells(grp, kept_pages, exclude=set(win), trim=False)
+            yr_cells = yr_cells + list(win.values())
+        yr_cells = _trim_year_rows(yr_cells)
         years = pd.to_numeric(grp.get("year"), errors="coerce").dropna()
         rec: dict = {
             "b": str(brand), "m": str(model), "n": int(len(grp)),

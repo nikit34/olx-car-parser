@@ -1944,7 +1944,10 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
     const yLabel = cell ? escapeHtml(String(cell.y)) : "";
     let pin = 50; if (sfh > sfl) pin = Math.max(6, Math.min(94, Math.round((sfm - sfl) / (sfh - sfl) * 100)));
     const caveat = (!cell && spec.year)
-      ? `<div style="font-size:12.5px;color:#9A6B12;margin-top:10px;">Sem amostra suficiente para ${spec.year} — mostramos a mediana do modelo (todos os anos).</div>` : "";
+      ? `<div style="font-size:12.5px;color:#9A6B12;margin-top:10px;">Sem amostra suficiente para ${spec.year} — mostramos a mediana do modelo (todos os anos).</div>`
+      : (cell && cell.w
+        ? `<div style="font-size:12.5px;color:#9A6B12;margin-top:10px;">Poucos anúncios ativos deste ano: mediana dos últimos ${Math.max(1, Math.round(cell.w / 30))} meses, ativos e já fechados.</div>`
+        : "");
     const sl = mr.sd != null ? `<div style="font-size:12px;color:#8A8F98;margin-top:14px;">Vende, em mediana, em ~${mr.sd} dias no OLX.</div>` : "";
     specResult = `
     <div class="detail" style="max-width:640px;margin:0 auto;padding-top:0;">
@@ -2250,7 +2253,7 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
       <td>${(typeof c.y === "number" && yearPages.includes(c.y))
         ? `<a href="${yearHref(c.y)}" style="color:#177A47;font-weight:600;">${c.y}</a>`
         : escapeHtml(String(c.y))}</td>
-      <td>${c.n}</td>
+      <td>${c.n}${c.w ? "*" : ""}</td>
       <td>${fmtEur(c.fm)}</td>
       <td class="mut">${c.gm != null ? fmtEur(c.gm) : "—"}</td>
       <td class="mut">${fmtEur(c.fl)}&nbsp;–&nbsp;${fmtEur(c.fh)}</td>
@@ -2263,6 +2266,7 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
         <thead><tr><th>Ano</th><th>Anúncios</th><th>Mediano (pedido)</th><th>Valor justo</th><th>Intervalo (P25–P75)</th><th>Km mediano</th></tr></thead>
         <tbody>${yrRows}</tbody>
       </table></div>
+      ${(rec.yr || []).some(c => c.w) ? `<div class="mono" style="font-size:11.5px;color:#9A9FA8;margin-top:10px;">* anos com poucos anúncios ativos: mediana dos anúncios dos últimos 6 meses, ativos e já fechados.</div>` : ""}
       ${rec.yt ? `<div class="mono" style="font-size:11.5px;color:#9A9FA8;margin-top:10px;">Mais ${rec.yt} ano(s) com poucos anúncios para mostrar um preço fiável.</div>` : ""}
       <div style="font-size:13px;color:#5B606B;margin-top:12px;">Tens um ${B} ${M}${yrRange ? " de " + yrRange : ""}? <a href="/avaliar" style="color:#177A47;font-weight:600;">Avalia o teu&nbsp;→</a></div>
     </section>` : "";

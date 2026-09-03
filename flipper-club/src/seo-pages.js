@@ -846,6 +846,9 @@ export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, d
   const refYear = parseInt((builtAt || "").slice(0, 4), 10) || null;
   const age = refYear ? refYear - year : null;
   const share = rec.n ? Math.round((cell.n / rec.n) * 100) : null;
+  const win = cell.w ? Math.max(1, Math.round(cell.w / 30)) : null;
+  const sample = win ? `anúncios dos últimos ${win} meses` : "anúncios ativos";
+  const sampleNote = win ? " São preços pedidos em anúncios ativos e já fechados, não preços de venda." : "";
 
   let pin = 50;
   if (cell.fh > cell.fl) pin = Math.max(6, Math.min(94, Math.round((cell.fm - cell.fl) / (cell.fh - cell.fl) * 100)));
@@ -854,9 +857,9 @@ export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, d
     <div class="side-card" style="max-width:680px;margin:0 auto;">
       <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">${B.toUpperCase()} ${M.toUpperCase()} · ${year} · OLX PORTUGAL</span></div>
       <h1 class="fc-h1">Quanto vale um ${B} ${M} de ${year}?</h1>
-      <p class="lede" style="font-size:16px;margin:0 0 20px;">Nos <b>${cell.n} anúncios ativos</b> de ${B} ${M} do ano ${year} no OLX, o preço pedido mediano é <b>${FM}</b>${cell.km != null ? `, com ${fmtKm(cell.km)} de quilometragem mediana` : ""}. É o que o mercado pede hoje por este ano concreto, não uma avaliação da tua viatura.</p>
+      <p class="lede" style="font-size:16px;margin:0 0 20px;">Nos <b>${cell.n} ${sample}</b> de ${B} ${M} do ano ${year} no OLX${win && cell.na ? ` (${cell.na} ainda ativos)` : ""}, o preço pedido mediano é <b>${FM}</b>${cell.km != null ? `, com ${fmtKm(cell.km)} de quilometragem mediana` : ""}. É o que o mercado pede hoje por este ano concreto, não uma avaliação da tua viatura.</p>
       <div class="side-prices">
-        <div><div class="cap">Preço mediano (pedido) · ${year}</div><div class="big">${FM}</div></div>
+        <div><div class="cap">Preço mediano (pedido) · ${year}${win ? ` · últimos ${win} meses` : ""}</div><div class="big">${FM}</div></div>
         <div class="side-fair"><div class="cap">${cell.n} anúncios${age != null ? ` · ${age} ano${age === 1 ? "" : "s"}` : ""}</div><div class="v">${cell.km != null ? fmtKm(cell.km) : "—"}</div></div>
       </div>
       <div style="margin-top:16px;">
@@ -864,7 +867,7 @@ export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, d
         <div class="gauge-track"><div class="gauge-pin" style="left:${pin}%;"></div></div>
       </div>
       ${hasG ? `<div style="margin-top:16px;padding-top:14px;border-top:1px solid #EFECE6;"><div class="cap">Valor justo estimado para ${year}</div><div class="mono" style="font-weight:700;font-size:20px;color:#177A47;">${fmtEur(cell.gm)}</div><div class="mono" style="font-size:12px;color:#5B606B;">intervalo ${fmtEur(cell.gl)} – ${fmtEur(cell.gh)}</div></div>` : ""}
-      ${provenance({ n: cell.n, builtAt, measure: `Preço pedido, ${B} ${M} do ano ${year} (mediana e P25-P75)` })}
+      ${provenance({ n: cell.n, builtAt, measure: `Preço pedido, ${B} ${M} do ano ${year} (mediana e P25-P75)${win ? `, anúncios ativos e já fechados dos últimos ${win} meses` : ""}`, unit: win ? "anúncios (ativos e fechados)" : "anúncios ativos" })}
     </div>`;
 
   // The one comparison a buyer on this page is actually making: is the next year
@@ -998,7 +1001,7 @@ export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, d
 
   const faqs = [[
     `Quanto vale um ${rec.b} ${rec.m} de ${year} em Portugal?`,
-    `Nos ${cell.n} anúncios ativos de ${rec.b} ${rec.m} do ano ${year} no OLX Portugal, o preço pedido mediano é ${FM}, com metade dos anúncios entre ${FL} e ${FH}. São preços pedidos em anúncios ativos, não preços de venda fechados.`,
+    `Nos ${cell.n} ${sample} de ${rec.b} ${rec.m} do ano ${year} no OLX Portugal, o preço pedido mediano é ${FM}, com metade dos anúncios entre ${FL} e ${FH}.${sampleNote} São preços pedidos em anúncios ativos, não preços de venda fechados.`,
   ]];
   if (cell.km != null) faqs.push([
     `Qual é a quilometragem típica de um ${rec.b} ${rec.m} de ${year}?`,
@@ -1027,7 +1030,7 @@ export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, d
         "@type": "Dataset",
         "license": licenseUrl(host),
         "name": `Preços de ${rec.b} ${rec.m} de ${year} em Portugal`,
-        "description": `Mediana e intervalo interquartil dos preços pedidos em ${cell.n} anúncios ativos de ${rec.b} ${rec.m} do ano ${year} no OLX Portugal.`,
+        "description": `Mediana e intervalo interquartil dos preços pedidos em ${cell.n} ${sample} de ${rec.b} ${rec.m} do ano ${year} no OLX Portugal.`,
         "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
         "isAccessibleForFree": true,
         "temporalCoverage": String(year),
@@ -1068,7 +1071,7 @@ export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, d
 
   return layout({
     title: `${rec.b} ${rec.m} ${year} usado: ${FM} (${cell.n} anúncios) · quanto vale`,
-    description: `${rec.b} ${rec.m} de ${year} usado: preço mediano ${FM} (${FL}–${FH}) em ${cell.n} anúncios ativos do OLX Portugal${cell.km != null ? `, ${fmtKm(cell.km)} medianos` : ""}. Avaliação independente.`,
+    description: `${rec.b} ${rec.m} de ${year} usado: preço mediano ${FM} (${FL}–${FH}) em ${cell.n} ${sample} do OLX Portugal${cell.km != null ? `, ${fmtKm(cell.km)} medianos` : ""}. Avaliação independente.`,
     canonical, jsonLd, body, zone: "all", nav: "precos", depositCount, index: true, host,
     altJson: `${canonical}.json`,
   });
@@ -2832,12 +2835,16 @@ export function yearJson(rec, slug, year, cell, { host, builtAt }) {
     source_url: `${base}/preco/${slug}/${year}`,
     licence: "Citação permitida com atribuição a Carsbuyer e indicação da data.",
     measured: "asking_price",
-    measured_note: "Preços PEDIDOS em anúncios ativos do OLX Portugal, não preços de venda fechados.",
+    measured_note: cell.w
+      ? `Preços PEDIDOS em anúncios do OLX Portugal dos últimos ${cell.w} dias, ativos e já fechados, não preços de venda.`
+      : "Preços PEDIDOS em anúncios ativos do OLX Portugal, não preços de venda fechados.",
     collected_until: (builtAt || "").slice(0, 10) || null,
     updated_at: builtAt || null,
     market: "PT", currency: "EUR",
     brand: rec.b, model: rec.m, slug, year,
     sample_size: cell.n,
+    window_days: cell.w || null,
+    active_in_sample: cell.na != null ? cell.na : null,
     asking_price: { median: cell.fm, p25: cell.fl, p75: cell.fh },
     fair_value_estimate: cell.gm != null ? { median: cell.gm, low: cell.gl, high: cell.gh } : null,
     mileage_km_median: cell.km != null ? cell.km : null,

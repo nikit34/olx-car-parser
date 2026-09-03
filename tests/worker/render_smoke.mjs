@@ -1168,5 +1168,26 @@ check("seller pages render with the numbers, the form and the JSON twin", () => 
   assert(hub.includes(`/vender/${eligible[0]}`), "hub does not link the seller pages");
 });
 
+check("a six-month window cell is labelled honestly on the year page and the JSON twin", () => {
+  const [s] = yearPages[0];
+  const rec = models[s];
+  const cell = { y: 2009, n: 23, fl: 2500, fm: 3200, fh: 4100, km: 190000, pg: 1, w: 180, na: 4 };
+  const page = renderYearPage({
+    rec, slug: s, year: 2009, cell, neighbours: { older: null, newer: null, window: [cell] },
+    liveDeals: [], pageYears: [2009], stats, host: HOST, depositCount: 0, builtAt,
+  });
+  assert(page.includes("últimos 6 meses"), "window label missing on the year page");
+  assert(page.includes("4 ainda ativos"), "active share of the window sample missing");
+  assert(!page.includes("<b>23 anúncios ativos</b>"), "window cell still called active listings");
+  const twin = yearJson(rec, s, 2009, cell, { host: HOST, builtAt });
+  assert(twin.window_days === 180 && twin.active_in_sample === 4, "JSON twin does not carry the window");
+  assert(/fechados/.test(twin.measured_note), "JSON twin note does not mention closed listings");
+  const active = renderYearPage({
+    rec, slug: s, year: 2009, cell: { ...cell, w: undefined, na: undefined }, neighbours: { older: null, newer: null, window: [] },
+    liveDeals: [], pageYears: [2009], stats, host: HOST, depositCount: 0, builtAt,
+  });
+  assert(active.includes("anúncios ativos</b>"), "active cell lost its wording");
+});
+
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall render checks passed");
 process.exit(failures ? 1 : 0);
