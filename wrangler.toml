@@ -141,7 +141,7 @@ SITE_CONTACT_EMAIL = "ola@carsbuyer.org"
 # The gate is read by the router, the sitemap AND the year links on the model
 # page, so a page outside the wave is unreachable and unlinked — never a link to
 # a 404. Widening is only this number: no code deploy, no data rebuild.
-SEO_WAVE_MODELS = "25"
+SEO_WAVE_MODELS = "60"
 LIQ_WAVE_MODELS = "60"
 
 HISTORY_REPORT_URL = "https://www.carvertical.com/pt"
