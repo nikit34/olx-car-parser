@@ -2,6 +2,7 @@ import { layout, escapeHtml, fmtEur, fmtNum, leadFormBlock } from "./templates.j
 import { crumbs, breadcrumbLd, faqLd, provenance } from "./seo-pages.js";
 
 const UPDATED = "2026-09-04";
+export const GUIDES_UPDATED = UPDATED;
 const pct = x => Math.round(x * 100);
 
 const SRC = {

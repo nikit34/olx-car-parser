@@ -1075,5 +1075,21 @@ await check("seller guides resolve and are listed in the sitemap", async () => {
   for (const g of GUIDES) assert(sm.includes(`/guias/${g.slug}</loc>`), `sitemap does not list ${g.slug}`);
 });
 
+await check("sitemap lastmod follows the page's own change stamp when the blob carries one", async () => {
+  const rec = models[deep];
+  const had = rec.u;
+  rec.u = "2026-01-02";
+  try {
+    kv.delete("cache:models");
+    const sm = await (await get("/sitemap.xml")).text();
+    const line = sm.split("<url>").find(x => x.includes(`/preco/${deep}</loc>`)) || "";
+    assert(line.includes("<lastmod>2026-01-02</lastmod>"), `model page lastmod ignores rec.u: ${line.slice(0, 160)}`);
+    const guide = sm.split("<url>").find(x => x.includes(`/guias/${GUIDES[0].slug}</loc>`)) || "";
+    assert(/<lastmod>\d{4}-\d{2}-\d{2}<\/lastmod>/.test(guide), "guide lastmod missing");
+  } finally {
+    if (had === undefined) delete rec.u; else rec.u = had;
+  }
+});
+
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall route checks passed");
 process.exit(failures ? 1 : 0);

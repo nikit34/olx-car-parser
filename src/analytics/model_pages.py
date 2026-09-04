@@ -589,6 +589,7 @@ def build_model_pages(
     now_year: int | None = None,
     liquidity: dict | None = None,
     published: dict | None = None,
+    today: str | None = None,
 ) -> dict:
     """Return ``{"v":1, "models": {slug: {...}}}`` for models with >=MIN_MODEL_N
     active, asking-priced listings.
@@ -757,6 +758,8 @@ def build_model_pages(
     if valuator is not None and models:
         _apply_gbm_bands(models, page_groups, valuator)
 
+    _stamp_changes(models, published, today or time.strftime("%Y-%m-%d", time.gmtime()))
+
     doc = {"v": 1, "models": models}
     districts = _district_rollup(active, models)
     if districts:
@@ -824,3 +827,39 @@ def _apply_gbm_bands(
             if ca and _gbm_passes(ca[0], ca[3], ca[4],
                                   cell.get("fm"), cell.get("fl"), cell.get("fh")):
                 cell["gl"], cell["gm"], cell["gh"] = _i(ca[1]), _i(ca[0]), _i(ca[2])
+
+
+def _page_signature(rec: dict) -> tuple:
+    cells = tuple(sorted((str(c.get("y")), c.get("fm"), c.get("fl"), c.get("fh"))
+                         for c in (rec.get("yr") or []) if isinstance(c, dict)))
+    facets = tuple(sorted((kind, str(c.get("k")), c.get("fm"))
+                          for kind in ("fx", "tx", "dt")
+                          for c in (rec.get(kind) or []) if isinstance(c, dict)))
+    return (rec.get("fm"), rec.get("fl"), rec.get("fh"), rec.get("kmm"), rec.get("sd"), cells, facets)
+
+
+def _cell_signature(cell: dict) -> tuple:
+    return (cell.get("fm"), cell.get("fl"), cell.get("fh"), cell.get("km"))
+
+
+def _stamp_changes(models: dict, published: dict | None, today: str) -> None:
+    prev_models = published.get("models") if isinstance(published, dict) else None
+    if not isinstance(prev_models, dict):
+        prev_models = {}
+    for slug, rec in models.items():
+        prev = prev_models.get(slug)
+        if not isinstance(prev, dict):
+            prev = None
+        if prev is None or _page_signature(rec) != _page_signature(prev):
+            rec["u"] = today
+        else:
+            rec["u"] = prev.get("u") or today
+        prev_cells = {c.get("y"): c for c in (prev.get("yr") or []) if isinstance(c, dict)} if prev else {}
+        for cell in rec.get("yr", []):
+            if not cell.get("pg"):
+                continue
+            pc = prev_cells.get(cell.get("y"))
+            if pc is None or _cell_signature(cell) != _cell_signature(pc):
+                cell["u"] = today
+            else:
+                cell["u"] = pc.get("u") or today

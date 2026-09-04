@@ -74,7 +74,7 @@ import {
   DUELS, duel, duelByPath, duelJson, duelSlugs, duelsFor, publishedDuel,
   renderDuelPage, renderDuelHub,
 } from "./seo-pages.js";
-import { GUIDES, guideBySlug, renderGuide, renderGuidesHub } from "./guides.js";
+import { GUIDES, GUIDES_UPDATED, guideBySlug, renderGuide, renderGuidesHub } from "./guides.js";
 
 const ZONES = ["norte", "centro", "sul", "all"];
 const COOKIE_UID = "fc_uid";
@@ -1231,32 +1231,34 @@ async function handleSitemap(request, env, url) {
     add("/liquidez", "weekly", "0.7");
     add("/vender", "weekly", "0.7");
     add("/guias", "monthly", "0.6");
-    for (const g of GUIDES) add(`/guias/${g.slug}`, "monthly", "0.6");
+    for (const g of GUIDES) add(`/guias/${g.slug}`, "monthly", "0.6", GUIDES_UPDATED);
     add("/sobrevalorizados", "weekly", "0.6");
 
     for (const [slug, rec] of Object.entries(models)) {
-      add(`/preco/${encodeURIComponent(slug)}`, "daily", "0.6");
+      add(`/preco/${encodeURIComponent(slug)}`, "daily", "0.6", rec.u);
       // Model-year pages — only the ones that clear the publishing floor, which
       // is exactly the set handleModelPage will serve.
       for (const y of publishedYearPages(models, slug, rec, lastmodSrc)) {
-        add(`/preco/${encodeURIComponent(slug)}/${y}`, "daily", "0.5");
+        const c = yearCell(rec, y);
+        add(`/preco/${encodeURIComponent(slug)}/${y}`, "daily", "0.5", (c && c.u) || rec.u);
       }
       // Fuel / district facets, where the sample supports them.
       for (const k of publishedFacets(models, slug, rec, lastmodSrc)) {
-        add(`/preco/${encodeURIComponent(slug)}/${encodeURIComponent(k)}`, "daily", "0.5");
+        add(`/preco/${encodeURIComponent(slug)}/${encodeURIComponent(k)}`, "daily", "0.5", rec.u);
       }
-      if (publishedDepreciation(models, slug, rec, lastmodSrc)) add(`/depreciacao/${encodeURIComponent(slug)}`, "weekly", "0.5");
-      if (publishedLiquidity(models, slug, rec, lastmodSrc)) add(`/liquidez/${encodeURIComponent(slug)}`, "weekly", "0.5");
-      if (publishedVender(models, slug, rec, lastmodSrc)) add(`/vender/${encodeURIComponent(slug)}`, "weekly", "0.6");
+      if (publishedDepreciation(models, slug, rec, lastmodSrc)) add(`/depreciacao/${encodeURIComponent(slug)}`, "weekly", "0.5", rec.u);
+      if (publishedLiquidity(models, slug, rec, lastmodSrc)) add(`/liquidez/${encodeURIComponent(slug)}`, "weekly", "0.5", rec.u);
+      if (publishedVender(models, slug, rec, lastmodSrc)) add(`/vender/${encodeURIComponent(slug)}`, "weekly", "0.6", rec.u);
       for (const d of Object.values(DUELS)) {
-        if (publishedDuel(models, slug, rec, lastmodSrc, d.kind)) add(`/${d.path}/${encodeURIComponent(slug)}`, "weekly", "0.5");
+        if (publishedDuel(models, slug, rec, lastmodSrc, d.kind)) add(`/${d.path}/${encodeURIComponent(slug)}`, "weekly", "0.5", rec.u);
       }
     }
     for (const k of Object.keys((mdoc && mdoc.districts) || {})) {
       add(`/precos/${encodeURIComponent(k)}`, "weekly", "0.6");
     }
     for (const [a, b] of publishedPairs(models)) {
-      add(`/comparar/${encodeURIComponent(a)}-vs-${encodeURIComponent(b)}`, "weekly", "0.5");
+      const pairStamp = [models[a] && models[a].u, models[b] && models[b].u].filter(Boolean).sort().pop();
+      add(`/comparar/${encodeURIComponent(a)}-vs-${encodeURIComponent(b)}`, "weekly", "0.5", pairStamp);
     }
     // Archived index weeks: permanent URLs, so they belong in the sitemap.
     try {
