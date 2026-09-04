@@ -2411,7 +2411,7 @@ export function renderAbout({ stats, mq, host, depositCount, builtAt }) {
       <p class="fc-p">Não somos stand, não somos intermediário e não representamos nenhum vendedor. Não temos carros para colocar, por isso não temos motivo para inflacionar nem para desvalorizar nenhum modelo. Os números que publicamos são os mesmos que usamos para as nossas próprias decisões — se estivessem enviesados, seríamos os primeiros prejudicados.</p>
 
       <h2 class="fc-h2">Como nos pagamos</h2>
-      <p class="fc-p">As avaliações e os preços por modelo são gratuitos e ficam gratuitos. O que se paga é outra coisa: no <a href="/mercado">mercado</a> listamos anúncios que estão abaixo do valor justo, e um depósito reembolsável de 5 € desbloqueia o contacto do vendedor de um desses carros e reserva-o durante 24 horas. O depósito volta para ti. Não vendemos os teus dados, não temos publicidade paga por marcas e não aceitamos pagamento para mexer numa avaliação.</p>
+      <p class="fc-p">As avaliações e os preços por modelo são gratuitos e ficam gratuitos: ver um anúncio avaliado, o <a href="/mercado">mercado</a> ou os preços por modelo não custa nada e não exige registo. O site paga-se de duas formas: quando um vendedor pede propostas de compra e um comprador profissional paga por esse contacto, e com ligações de parceiros para relatórios de histórico do veículo. Não vendemos os teus dados, não temos publicidade paga por marcas e não aceitamos pagamento para mexer numa avaliação — nenhuma destas receitas muda os números que mostramos.</p>
 
       <h2 class="fc-h2">O que temos hoje</h2>
       <ul class="fc-ul">

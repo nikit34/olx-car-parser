@@ -6,13 +6,7 @@
 // signal accent (amber/red for risk grades). Type: Space Grotesk (display),
 // Hanken Grotesk (UI), JetBrains Mono (all prices/metrics). Portuguese UI.
 //
-// Screens: Landing (/) → Mercado feed (/mercado) → Car detail (/car) → Claim
-// confirm (/claim) → Unlocked success (/unlocked) → Reservas (/reservas).
-//
-// The €5 deposit is reframed as a refundable "claim" that buys 24h exclusivity —
-// the deal is presented as hidden from other members while you decide. (The
-// exclusivity copy is product-vision framing; the backend records a per-visitor
-// unlock of the seller's OLX link, which is what the deposit actually buys.)
+// Screens: Landing (/) → Mercado feed (/mercado) → Car detail (/car).
 
 const ZONE_LABEL = {
   norte: "Norte",
@@ -304,9 +298,7 @@ img{max-width:100%;}
 .fc-nav a{font-family:'Hanken Grotesk',sans-serif;font-weight:500;font-size:13px;padding:7px 12px;border-radius:9px;border:none;background:none;color:#5B606B;cursor:pointer;white-space:nowrap;}
 .fc-nav a.active{font-weight:600;background:#ECEAE4;color:#16181D;}
 .fc-right{margin-left:auto;display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:11px;}
-.fc-deposit{display:flex;align-items:center;gap:7px;padding:6px 11px;border-radius:999px;border:1px solid #E0DDD6;background:#fff;cursor:pointer;}
 .fc-dot{width:7px;height:7px;border-radius:50%;background:#177A47;flex-shrink:0;}
-.fc-deposit span.mono{font-size:12px;font-weight:500;color:#3A3F47;white-space:nowrap;}
 .fc-cta-dark{font-family:'Hanken Grotesk',sans-serif;font-weight:600;font-size:13px;padding:8px 15px;border-radius:10px;border:none;background:#16181D;color:#fff;cursor:pointer;white-space:nowrap;}
 
 /* Buttons */
@@ -403,7 +395,6 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .tile-foot .sep{color:#D8D5CE;}
 .tile-foot > span{white-space:nowrap;}
 .tile-foot .seller{margin-left:auto;color:#16181D;font-weight:500;}
-.badge-unlocked{position:absolute;bottom:10px;left:12px;font-family:var(--mono);font-size:10px;font-weight:700;color:#fff;background:#177A47;padding:3px 8px;border-radius:6px;}
 
 /* Detail */
 .detail{max-width:1180px;margin:0 auto;padding:22px 22px 70px;}
@@ -447,30 +438,17 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .gauge-pin{position:absolute;top:-3px;width:14px;height:14px;border-radius:50%;background:#177A47;border:3px solid #fff;box-shadow:0 2px 6px rgba(20,24,29,0.3);transform:translateX(-50%);}
 .side-foot{text-align:center;font-size:12px;color:#9A9FA8;margin-top:12px;line-height:1.5;}
 
-/* Claim module (locked) */
-.claim-mod{margin-top:22px;border:1px solid #E8E6E1;border-radius:16px;overflow:hidden;}
-.claim-mod-head{padding:16px 17px;background:#FAFAF8;border-bottom:1px solid #EFECE6;display:flex;align-items:center;gap:10px;}
-.claim-mod-head .t{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:15px;}
-.claim-mod-head .d{font-size:12px;color:#8A8F98;margin-top:2px;}
-.claim-mod-body{padding:16px 17px;}
-.unlock-item{display:flex;align-items:flex-start;gap:10px;margin-bottom:11px;}
-.tick{flex-shrink:0;width:18px;height:18px;border-radius:50%;background:#E4F2E9;color:#177A47;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;margin-top:1px;}
-.unlock-item .t{font-size:13.5px;font-weight:600;color:#16181D;}
-.unlock-item .d{font-size:13.5px;color:#5B606B;}
 .exclusive{display:flex;align-items:center;gap:9px;margin:14px 0 4px;padding:11px 13px;border-radius:11px;background:#16181D;}
 .exclusive .x{font-size:12.5px;color:#D6DAE0;line-height:1.4;}
 .exclusive .x b{color:#fff;font-weight:600;}
-.claim-mod .btn-green{width:100%;margin-top:14px;font-size:15px;padding:14px;box-shadow:0 8px 20px -8px rgba(23,122,71,0.5);display:block;text-align:center;}
-.claim-fine{text-align:center;font-size:11.5px;color:#9A9FA8;margin-top:10px;line-height:1.4;}
-.claim-mod[disabled] .btn-disabled,.btn-disabled{width:100%;margin-top:14px;font-size:15px;padding:14px;border-radius:12px;border:none;background:#D8D5CE;color:#fff;cursor:not-allowed;text-align:center;}
 
-/* Claimed module (unlocked) */
-.claimed-mod{margin-top:22px;border:1px solid #C9E7D5;border-radius:16px;overflow:hidden;background:#F4FBF6;}
-.claimed-head{padding:16px 17px;display:flex;align-items:center;gap:11px;border-bottom:1px solid #DCEFE3;}
-.claimed-check{width:30px;height:30px;border-radius:50%;background:#177A47;color:#fff;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;}
-.claimed-head .t{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:15px;color:#0F5C35;}
-.claimed-head .d{font-size:12px;color:#3F7A5B;margin-top:2px;}
-.claimed-body{padding:16px 17px;}
+/* Seller / OLX link module */
+.seller-mod{margin-top:22px;border:1px solid #C9E7D5;border-radius:16px;overflow:hidden;background:#F4FBF6;}
+.seller-head{padding:16px 17px;display:flex;align-items:center;gap:11px;border-bottom:1px solid #DCEFE3;}
+.seller-check{width:30px;height:30px;border-radius:50%;background:#177A47;color:#fff;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;}
+.seller-head .t{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:15px;color:#0F5C35;}
+.seller-head .d{font-size:12px;color:#3F7A5B;margin-top:2px;}
+.seller-body{padding:16px 17px;}
 .contact-label{font-family:var(--mono);font-size:11px;color:#8A8F98;letter-spacing:0.04em;margin-bottom:9px;}
 .contact-card{display:flex;align-items:center;gap:11px;padding:12px 14px;border-radius:12px;background:#fff;border:1px solid #E2EFE7;}
 .avatar{width:34px;height:34px;border-radius:50%;background:#16181D;color:#fff;display:flex;align-items:center;justify-content:center;font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:14px;flex-shrink:0;}
@@ -479,73 +457,7 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .olx-row{display:flex;gap:9px;margin-top:12px;}
 .olx-btn{flex:1;font-family:'Hanken Grotesk',sans-serif;font-weight:600;font-size:14px;padding:12px;border-radius:11px;border:none;background:#177A47;color:#fff;cursor:pointer;text-align:center;display:block;}
 .olx-btn:hover{background:#13633a;}
-.claimed-note{display:flex;align-items:center;gap:8px;margin-top:13px;font-size:12px;color:#3F7A5B;}
-
-/* Claim confirm page */
-.claim-page{max-width:560px;margin:0 auto;padding:42px 22px 70px;}
-.claim-card{background:#fff;border:1px solid #E8E6E1;border-radius:22px;overflow:hidden;box-shadow:0 24px 50px -28px rgba(20,24,29,0.24);}
-.claim-card-head{padding:26px 26px 22px;border-bottom:1px solid #EFECE6;}
-.claim-card-head .eb{font-family:var(--mono);font-size:11px;color:#8A8F98;letter-spacing:0.06em;margin-bottom:12px;}
-.claim-card-head .t{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:26px;letter-spacing:-0.025em;text-wrap:balance;}
-.claim-summary .pair{display:inline-flex;align-items:baseline;gap:7px;white-space:nowrap;}
-.claim-summary{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin-top:14px;padding:12px 14px;border-radius:12px;background:#FAFAF8;border:1px solid #EFECE6;}
-.claim-summary .mono{font-family:var(--mono);font-weight:700;font-size:14px;}
-.claim-summary .cap{font-size:12px;color:#8A8F98;}
-.claim-summary .prof{margin-left:auto;font-family:var(--mono);font-weight:700;font-size:14px;color:#177A47;white-space:nowrap;}
-.claim-card-body{padding:24px 26px;}
-.dep-row{display:flex;justify-content:space-between;align-items:baseline;}
-.dep-row .l{font-size:15px;color:#3A3F47;}
-.dep-row .r{font-family:var(--mono);font-weight:700;font-size:24px;}
-.hr{height:1px;background:#EFECE6;margin:18px 0;}
-.benefit{display:flex;align-items:flex-start;gap:11px;margin-bottom:13px;}
-.benefit .tick{width:20px;height:20px;}
-.benefit .t{font-size:14px;font-weight:600;}
-.benefit .d{font-size:13px;color:#5B606B;margin-top:1px;text-wrap:pretty;}
-.claim-card-body .btn-green{width:100%;margin-top:8px;font-size:15px;padding:15px;border-radius:13px;box-shadow:0 10px 24px -10px rgba(23,122,71,0.55);}
-.cancel-btn{width:100%;margin-top:9px;font-family:'Hanken Grotesk',sans-serif;font-weight:500;font-size:14px;padding:12px;border-radius:13px;border:none;background:none;color:#8A8F98;cursor:pointer;display:block;text-align:center;}
-.secure{display:flex;align-items:center;justify-content:center;gap:7px;margin-top:14px;font-size:12px;color:#9A9FA8;}
-
-/* Unlocked success */
-.success{max-width:560px;margin:0 auto;padding:42px 22px 70px;}
-.success-top{text-align:center;padding:14px 0 6px;}
-.success-check{width:62px;height:62px;border-radius:50%;background:#177A47;color:#fff;display:flex;align-items:center;justify-content:center;font-size:30px;margin:0 auto 18px;box-shadow:0 12px 30px -10px rgba(23,122,71,0.5);}
-.success-top h1{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:28px;letter-spacing:-0.025em;margin:0 0 8px;}
-.success-top p{font-size:15px;color:#5B606B;margin:0 auto;max-width:380px;text-wrap:pretty;}
-.cd-banner{background:#16181D;border-radius:18px;padding:20px 24px;margin:24px 0 16px;display:flex;align-items:center;gap:16px;}
-.cd-banner .cap{font-size:12px;color:#A8ADB6;}
-.cd-banner .big{font-family:var(--mono);font-weight:700;font-size:34px;color:#23C268;letter-spacing:0.02em;line-height:1.1;}
-.cd-banner .dep{text-align:right;}
-.cd-banner .dep .v{font-family:var(--mono);font-weight:700;font-size:20px;color:#fff;}
-.cd-banner .dep .s{font-size:11px;color:#7E848C;}
-.next-steps .step{display:flex;align-items:flex-start;gap:11px;margin-bottom:11px;}
-.next-steps .n{flex-shrink:0;font-family:var(--mono);font-weight:700;font-size:12px;color:#177A47;width:18px;}
-.next-steps .tx{font-size:14px;color:#3A3F47;text-wrap:pretty;}
-.success .btn-outline{width:100%;margin-top:16px;font-size:15px;padding:14px;border-radius:13px;display:block;text-align:center;}
-
-/* Reservas */
-.res{max-width:900px;margin:0 auto;padding:30px 22px 70px;}
-.res h1{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:30px;letter-spacing:-0.03em;margin:0;}
-.res .lead{font-size:14px;color:#8A8F98;margin:5px 0 24px;}
-.res-list{display:flex;flex-direction:column;gap:14px;}
-.res-card{background:#fff;border:1px solid #E8E6E1;border-radius:18px;padding:17px;display:flex;flex-wrap:wrap;gap:16px;align-items:center;}
-.res-thumb{width:104px;height:74px;border-radius:12px;flex-shrink:0;overflow:hidden;}
-.res-thumb img{width:100%;height:100%;object-fit:cover;display:block;}
-.res-mid{flex:1;min-width:180px;}
-.res-mid .t{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;letter-spacing:-0.01em;}
-.res-mid .s{font-family:var(--mono);font-size:11.5px;color:#8A8F98;margin-top:4px;}
-.res-prices{display:flex;gap:7px;margin-top:9px;align-items:center;}
-.res-prices .p{font-family:var(--mono);font-weight:700;font-size:13px;}
-.res-prices .pr{font-family:var(--mono);font-weight:700;font-size:12px;color:#177A47;background:#E4F2E9;padding:3px 8px;border-radius:7px;white-space:nowrap;}
-.res-right{text-align:right;min-width:130px;margin-left:auto;}
-.cd-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;background:#F4FBF6;border:1px solid #C9E7D5;margin-bottom:8px;}
-.cd-pill .mono{font-family:var(--mono);font-size:12px;font-weight:700;color:#0F5C35;}
-.res-right .ex{font-size:11px;color:#8A8F98;margin-bottom:9px;}
-.res-right .btn-dark{font-size:13px;padding:9px 15px;border-radius:10px;white-space:nowrap;display:inline-block;}
-.empty-card{background:#fff;border:1px dashed #DAD7D0;border-radius:18px;padding:54px 24px;text-align:center;}
-.empty-card .ic{font-size:30px;margin-bottom:12px;opacity:0.5;}
-.empty-card .t{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:18px;margin-bottom:6px;}
-.empty-card p{font-size:14px;color:#8A8F98;margin:0 auto 20px;max-width:340px;text-wrap:pretty;}
-.empty-card .btn-green{font-size:14px;padding:12px 22px;display:inline-block;}
+.seller-note{display:flex;align-items:center;gap:8px;margin-top:13px;font-size:12px;color:#3F7A5B;}
 
 /* Per-model year table (SEO model pages) */
 .year-tbl{width:100%;border-collapse:collapse;font-size:14px;margin-top:4px;white-space:nowrap;}
@@ -607,14 +519,12 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
   .hero{padding:40px 22px 28px;}
   .cta-banner{padding:30px;}
   .cta-banner h2{font-size:26px;}
-  /* Compact header so logo + deposit + CTA fit 390px (was overflowing → page-wide
+  /* Compact header so logo + CTA fit 390px (was overflowing → page-wide
      horizontal scroll). Nav links drop on mobile; destinations stay reachable via
-     logo (home), the deposit pill (→ reservas) and the CTA (→ mercado). */
+     the logo (home) and the CTA (→ mercado). */
   .fc-nav{display:none;}
   .fc-word{font-size:16px;}
   .fc-header-in{gap:10px;padding:11px 16px;}
-  .fc-deposit{padding:5px 9px;}
-  .fc-deposit span.mono{font-size:11px;}
   .fc-cta-dark{padding:7px 12px;font-size:12px;}
 }
 /* A half-visible cell shows a plausible wrong number, so below 760px a table
@@ -663,8 +573,6 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
   .fc-word{font-size:16px;}
   .fc-nav{margin-left:0;}
   .fc-nav a{font-size:12.5px;padding:7px 8px;}
-  .fc-deposit{padding:5px 9px;}
-  .fc-deposit span.mono{font-size:11px;}
   .fc-cta-dark{font-size:12px;padding:7px 12px;}
 }
 @media (max-width:400px){
@@ -672,7 +580,6 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
   .mchip{font-size:11.5px;padding:7px 7px;}
   .fc-word{display:none;}
   .fc-header-in{gap:8px;padding:11px 12px;}
-  .fc-deposit span.mono{font-size:10.5px;}
   .fc-cta-dark{font-size:11.5px;padding:7px 10px;}
 }
 
@@ -761,8 +668,8 @@ background-attachment:local,local,scroll,scroll;}
 .fc-404{max-width:640px;padding:56px 22px 70px;margin:0 auto;text-align:center;}
 `;
 
-// Live 24h-exclusivity countdown + detail gallery. Both guard on their own
-// elements, so it's safe to ship on every page.
+// Detail gallery and table labelling. Each guards on its own elements, so it is
+// safe to ship on every page.
 
 
 const PAGE_SCRIPT = `
@@ -779,18 +686,6 @@ const PAGE_SCRIPT = `
     });
     t.classList.add('tbl-labelled');
   });
-  function pad(x){return (x<10?'0':'')+x;}
-  function tick(){
-    var now=Date.now();
-    document.querySelectorAll('.fc-countdown').forEach(function(el){
-      var start=parseInt(el.getAttribute('data-claimed-at'),10);
-      if(!start){return;}
-      var ms=start+86400000-now; if(ms<0){ms=0;}
-      var h=Math.floor(ms/3600000),m=Math.floor(ms/60000)%60,s=Math.floor(ms/1000)%60;
-      el.textContent=pad(h)+':'+pad(m)+':'+pad(s);
-    });
-  }
-  if(document.querySelector('.fc-countdown')){tick();setInterval(tick,1000);}
   document.querySelectorAll('.gallery').forEach(function(g){
     var track=g.querySelector('.gallery-track');
     var counter=g.querySelector('.gallery-counter');
@@ -885,7 +780,7 @@ function netIsvNote(p, base) {
 export function thumbBlock(p, h, labelSize, eager = false) {
   if (p.cover) {
     // eager+high-priority for above-the-fold LCP images (landing featured card);
-    // lazy everywhere else (grid tiles, model-page live deals, reservas).
+    // lazy everywhere else (grid tiles, model-page live deals).
     const load = eager ? `loading="eager" fetchpriority="high"` : `loading="lazy"`;
     return `<img ${load} src="${escapeHtml(p.cover)}" alt="${escapeHtml(p.name)}">`;
   }
@@ -926,8 +821,8 @@ gtag('js',new Date());
 }
 
 // Баннер согласия. Отказ такой же простой, как согласие - это требование, а не
-// вежливость. Скрыт, если выбор уже сделан. Технический cookie fc_uid баннер не
-// касается: без него не работает резервация, согласия он не требует.
+// вежливость. Скрыт, если выбор уже сделан. Своих кук у сайта больше нет,
+// поэтому речь идёт только про аналитику.
 function consentBanner() {
   if (!GA4_MEASUREMENT_ID) return "";
   return `<div id="fc-consent" hidden class="fc-consent">
@@ -956,34 +851,10 @@ function analyticsEvent(name, params = {}) {
   return `<script>if(typeof gtag==='function')gtag('event',${JSON.stringify(name)},${payload});</script>`;
 }
 
-// То же, но по отправке формы: событие должно уйти ДО ухода на Stripe.
-// transport_type beacon, потому что обычный запрос браузер отменяет при
-// навигации, и begin_checkout терялся бы ровно у тех, кто дошёл до оплаты.
-function analyticsFormEvent(formSelector, name, params = {}) {
-  if (!GA4_MEASUREMENT_ID) return "";
-  const payload = JSON.stringify(params).replace(/</g, "\\u003c");
-  return `<script>(function(){var f=document.querySelector(${JSON.stringify(formSelector)});` +
-    `if(!f)return;f.addEventListener('submit',function(){` +
-    `if(typeof gtag==='function')gtag('event',${JSON.stringify(name)},` +
-    `Object.assign(${payload},{transport_type:'beacon'}));},{once:true});})();</script>`;
-}
-
-// Подставляет client_id GA4 в скрытое поле формы. Нужен вебхуку Stripe, чтобы
-// серверное событие purchase легло в ту же сессию, а не создало отдельного
-// «пользователя». Куки _ga есть только у согласившегося, поэтому у остальных
-// поле остаётся пустым - и это правильно: без согласия отправлять нечего.
-function gaClientIdFiller() {
-  if (!GA4_MEASUREMENT_ID) return "";
-  return `<script>(function(){var f=document.querySelector('input[name="ga_cid"]');if(!f)return;
-var m=document.cookie.match(/_ga=GA1\.\d+\.(\d+\.\d+)/);if(m)f.value=m[1];})();</script>`;
-}
-
 // ── Shell ─────────────────────────────────────────────────────────────────────
 export function layout({ title, body, zone, nav, depositCount, index = false, description = null,
                  canonical = null, jsonLd = null, host = null, image = null, type = "website",
                  ogUrl: ogUrlOverride = null, altJson = null }) {
-  const personalised = depositCount != null;
-  const dep = (depositCount || 0) * 5;
   const navItem = (key, label, href) =>
     `<a href="${href}" class="${nav === key ? "active" : ""}">${label}</a>`;
   // Public valuation pages are indexable (SEO). Everything else is noindex but
@@ -1067,14 +938,9 @@ ${consentBanner()}
       ${navItem("feed", "Mercado", "/mercado")}
       ${navItem("precos", "Preços", "/precos")}
       ${navItem("avaliar", "Avaliar", "/avaliar")}
-      ${navItem("reservas", "Reservas", "/reservas")}
       ${navItem("landing", "Como funciona", "/")}
     </nav>
     <div class="fc-right">
-      ${personalised ? `<a class="fc-deposit" href="/reservas">
-        <span class="fc-dot"></span>
-        <span class="mono">€${dep} em depósito</span>
-      </a>` : ""}
       <a class="fc-cta-dark" href="/mercado">Ver mercado</a>
     </div>
   </div>
@@ -1092,7 +958,7 @@ ${consentBanner()}
 }
 
 // ── Landing (/) ───────────────────────────────────────────────────────────────
-export function renderLanding({ stats, featured, depositEur, depositCount, host }) {
+export function renderLanding({ stats, featured, depositCount, host }) {
   const f = featured ? present(featured) : null;
   const featureCard = f ? `
     <div class="feature-wrap">
@@ -1121,7 +987,7 @@ export function renderLanding({ stats, featured, depositEur, depositCount, host 
     { n: "01", t: "Varremos o OLX", d: "Milhares de anúncios de carros em Portugal, recolhidos e atualizados ao longo do dia." },
     { n: "02", t: "Calculamos o preço justo", d: "Cada carro é comparado com anúncios semelhantes para estimar a mediana de mercado." },
     { n: "03", t: "Avisamos-te dos riscos", d: "Importação por legalizar (ISV em falta), indícios de dano nas fotos, e há quanto tempo o carro está parado. Cada carro leva uma nota de A+ a C." },
-    { n: "04", t: "Compras com confiança — ou revendes", d: `${fmtEur(depositEur)} reembolsáveis bloqueiam o contacto do vendedor para ti durante 24h. Falas, negoceias, e o depósito volta para a tua carteira.` },
+    { n: "04", t: "Compras com confiança", d: "Vais ao anúncio com o preço justo, o histórico de descidas e os riscos já na mão." },
   ];
 
   const body = `
@@ -1149,7 +1015,7 @@ export function renderLanding({ stats, featured, depositEur, depositCount, host 
             <div class="stat-div"></div>
             <div><div class="stat-num green">${stats.totalProfit}</div><div class="stat-cap">poupança total detetada</div></div>
             <div class="stat-div"></div>
-            <div><div class="stat-num">${fmtEur(depositEur)}</div><div class="stat-cap">para reservar · reembolsável</div></div>
+            <div><div class="stat-num">0 €</div><div class="stat-cap">sem registo, sem comissão</div></div>
           </div>
         </div>
         ${featureCard}
@@ -1177,7 +1043,7 @@ export function renderLanding({ stats, featured, depositEur, depositCount, host 
       <div class="cta-banner">
         <div style="flex:1 1 360px;">
           <h2>A independência é o produto.</h2>
-          <p>O OLX nunca te vai dizer que o anúncio está caro, nem que aquele preço baixo é de um carro ainda por legalizar. Nós dizemos — e mostramos o que o vendedor não escreve: quantas vezes já baixou o preço e há quanto tempo o carro está à venda. Reservar um carro (${fmtEur(depositEur)} reembolsáveis) desbloqueia o contacto do vendedor durante 24h.</p>
+          <p>O OLX nunca te vai dizer que o anúncio está caro, nem que aquele preço baixo é de um carro ainda por legalizar. Nós dizemos — e mostramos o que o vendedor não escreve: quantas vezes já baixou o preço e há quanto tempo o carro está à venda.</p>
           <details class="indep-note">
             <summary>Como ganhamos dinheiro — e porque é que a avaliação não muda por isso</summary>
             <p>Não cobramos comissão ao vendedor e ninguém paga para aparecer melhor avaliado. Ganhamos de duas formas: quando um vendedor pede propostas de compra e um comprador profissional paga por esse contacto, e quando um comprador encomenda um relatório de histórico através da nossa ligação de parceiro. Se um dia houver publicidade nas páginas de preços, estará assinalada como tal. Nenhuma destas receitas depende do valor que mostramos — a avaliação sai dos anúncios e do modelo, não de quem paga.</p>
@@ -1226,7 +1092,7 @@ export function renderLanding({ stats, featured, depositEur, depositCount, host 
 // `view` is the intent lens: "comprar" (default, buyer-first) or "revender"
 // (importer/flipper). It only RELABELS the same decision_score-ranked feed —
 // never re-sorts or filters — so we never imply a precision the ranking lacks.
-export function renderGrid({ deals, zone, sort, view, unlockedSet, depositEur, depositCount,
+export function renderGrid({ deals, zone, sort, view, depositCount,
                              zoneCounts, host, modelLinks = [], builtAt = null,
                              yearLinks = [], contextLinks = [], districtLinks = [],
                              jsonLd = null, feedBuiltAt = null }) {
@@ -1245,10 +1111,8 @@ export function renderGrid({ deals, zone, sort, view, unlockedSet, depositEur, d
 
   const tiles = deals.map(deal => {
     const p = present(deal);
-    const unlocked = unlockedSet && unlockedSet.has(deal.olx_id);
     const href = `/car?zone=${zone}&view=${lens}&olx_id=${encodeURIComponent(deal.olx_id)}`;
     const photoCount = p.photos.length ? `<span class="photo-count">FOTO 1/${p.photos.length}</span>` : "";
-    const unlockedBadge = unlocked ? `<span class="badge-unlocked">✓ RESERVADO</span>` : "";
     // Buyer cares "how much under fair" (poupas); reseller cares raw margin
     // (which a flagged import overstates → asterisk + footnote, never a fake cut).
     const pill = lens === "comprar"
@@ -1263,7 +1127,6 @@ export function renderGrid({ deals, zone, sort, view, unlockedSet, depositEur, d
         ${gradeChip(p)}
         ${riskChip(p)}
         ${photoCount}
-        ${unlockedBadge}
       </div>
       <div class="tbody">
         <div class="tile-title">${escapeHtml(p.name)}</div>
@@ -1357,7 +1220,7 @@ export function renderGrid({ deals, zone, sort, view, unlockedSet, depositEur, d
 }
 
 // ── Car detail (/car) ───────────────────────────────────────────────────────────
-export function renderCarPage({ deal, zone, view, unlocked, justReserved, depositEur, stripeReady, claimedAtMs, depositCount, modelHref, host }) {
+export function renderCarPage({ deal, zone, view, depositCount, modelHref, host }) {
   const p = present(deal);
   const lens = view === "revender" ? "revender" : "comprar";
   const photos = p.photos;
@@ -1432,62 +1295,32 @@ export function renderCarPage({ deal, zone, view, unlocked, justReserved, deposi
     : `${p.profitStr}${p.importFlag ? "*" : ""}`;
   const verdictFootnote = netIsvNote(p, lens === "comprar" ? p.saving : p.profit);
 
-  // Claim / claimed module.
-  let module;
-  if (unlocked) {
-    const cdAttr = claimedAtMs ? ` data-claimed-at="${claimedAtMs}"` : "";
-    module = `
-      <div class="claimed-mod">
-        <div class="claimed-head">
-          <div class="claimed-check">✓</div>
+  const originNote = p.importFlag
+    ? `<div class="seller-note"><span class="fc-dot"></span><span>${p.importLegalized
+        ? "Carro importado, já legalizado — confirma a documentação com o vendedor."
+        : "Carro importado ainda por legalizar — ao preço pedido falta somar o ISV."}</span></div>`
+    : "";
+  const module = `
+      <div class="seller-mod">
+        <div class="seller-head">
+          <div class="seller-check">↗</div>
           <div style="flex:1;">
-            <div class="t">Negócio reivindicado</div>
-            <div class="d">Exclusivo para ti durante <span class="mono fc-countdown" style="font-weight:700;"${cdAttr}>24:00:00</span></div>
+            <div class="t">Anúncio original no OLX</div>
+            <div class="d">Falas direto com o vendedor — não somos stand nem intermediário</div>
           </div>
         </div>
-        <div class="claimed-body">
-          <div class="contact-label">CONTACTO DO VENDEDOR</div>
+        <div class="seller-body">
+          <div class="contact-label">VENDEDOR</div>
           <div class="contact-card">
             <div class="avatar">${escapeHtml(p.sellerInitial)}</div>
-            <div><div class="nm">${escapeHtml(p.sellerType)}</div><div class="meta">Anúncio OLX desbloqueado</div></div>
+            <div><div class="nm">${escapeHtml(p.sellerType)}</div><div class="meta">Anúncio público no OLX</div></div>
           </div>
           <div class="olx-row">
-            <a class="olx-btn" href="${escapeHtml(deal.url || "#")}" target="_blank" rel="noopener">Abrir anúncio no OLX&nbsp;&nbsp;↗</a>
+            <a class="olx-btn" href="${escapeHtml(deal.url || "#")}" target="_blank" rel="noopener nofollow">Abrir anúncio no OLX&nbsp;&nbsp;↗</a>
           </div>
-          <div class="claimed-note"><span class="fc-dot"></span><span>${fmtEur(depositEur)} em depósito · reembolsado ao contactar o vendedor</span></div>
+          ${originNote}
         </div>
       </div>`;
-  } else if (stripeReady) {
-    const unlockItems = [
-      { t: "Link direto ao anúncio OLX", d: "sem intermediários" },
-      { t: "Contacto do vendedor", d: "nome e telefone" },
-      { t: "Galeria completa + verificação de matrícula", d: "todas as fotos e matrícula" },
-      { t: "24h de exclusividade", d: "escondido dos outros membros" },
-      ...(p.importFlag ? [{ t: "Aviso de importação incluído", d: "dizemos-te se falta pagar ISV antes de contactares o vendedor" }] : []),
-    ];
-    module = `
-      <div class="claim-mod">
-        <div class="claim-mod-head">
-          <span style="font-size:18px;">🔒</span>
-          <div><div class="t">Reivindicar este negócio</div><div class="d">Depósito de ${fmtEur(depositEur)} · 100% reembolsável</div></div>
-        </div>
-        <div class="claim-mod-body">
-          ${unlockItems.map(u => `<div class="unlock-item"><span class="tick">✓</span><div><span class="t">${u.t}</span><span class="d"> — ${u.d}</span></div></div>`).join("")}
-          <div class="exclusive"><span style="font-size:15px;">⏳</span><span class="x"><b>24h exclusivo.</b> Escondemos este negócio dos outros membros enquanto decides.</span></div>
-          <a class="btn-green" href="/claim?zone=${zone}&olx_id=${encodeURIComponent(deal.olx_id)}">Desbloquear contacto do vendedor — ${fmtEur(depositEur)}</a>
-          <div class="claim-fine"><b style="color:#3A3F47;">Pagas ${fmtEur(depositEur)} para falar direto com o vendedor — não é sinal do carro.</b> Reembolsado assim que o contactares (ou devolução automática em 48h).</div>
-        </div>
-      </div>`;
-  } else {
-    module = `
-      <div class="claim-mod">
-        <div class="claim-mod-head">
-          <span style="font-size:18px;">🔒</span>
-          <div><div class="t">Reivindicar este negócio</div><div class="d">As reservas por depósito estarão disponíveis em breve.</div></div>
-        </div>
-        <div class="claim-mod-body"><div class="btn-disabled">Reservas em breve</div></div>
-      </div>`;
-  }
 
   const locBits = [p.loc, p.firstSeenDays != null ? `há ${p.firstSeenDays}d` : null, p.sellerType].filter(Boolean).join(" · ");
 
@@ -1567,163 +1400,9 @@ export function renderCarPage({ deal, zone, view, unlocked, justReserved, deposi
   });
 }
 
-// ── Claim confirm (/claim) ────────────────────────────────────────────────────
-export function renderClaim({ deal, zone, depositEur, stripeReady, depositCount }) {
-  const p = present(deal);
-  const benefits = [
-    { t: "Exclusividade de 24 horas", d: "Escondemos este carro de todos os outros utilizadores enquanto decides." },
-    { t: "Contacto e link desbloqueados", d: "Nome, telefone e link direto ao anúncio OLX, mais a galeria completa." },
-    ...(p.importFlag ? [{ t: "Aviso de importação", d: "Este anúncio parece ser um carro importado — dizemos-te se falta pagar ISV antes de avançares." }] : []),
-    { t: "Totalmente reembolsável", d: "O depósito volta para a tua carteira ao contactar o vendedor, ou auto-devolução em 48h." },
-  ];
-  const cta = stripeReady
-    ? `<button type="submit" class="btn-green">Desbloquear contacto — ${fmtEur(depositEur)}</button>`
-    : `<div class="btn-disabled">Reservas em breve</div>`;
-
-  const body = `
-    <div class="claim-page">
-      <div class="claim-card">
-        <div class="claim-card-head">
-          <div class="eb">DEPÓSITO REEMBOLSÁVEL</div>
-          <div class="t">Reivindicar ${escapeHtml(p.name)}</div>
-          <div class="claim-summary">
-            <span class="pair"><span class="mono">${p.priceStr}</span><span class="cap">pedido</span></span>
-            <span class="pair"><span class="prof">${p.profitStr}</span><span class="cap">margem</span></span>
-          </div>
-        </div>
-        <form class="claim-card-body" action="/reserve" method="post">
-          <input type="hidden" name="olx_id" value="${escapeHtml(deal.olx_id)}">
-          <input type="hidden" name="zone" value="${escapeHtml(zone)}">
-          <!-- Идентификатор клиента GA4. Существует только у согласившегося на
-               аналитику: без согласия куки _ga нет, поле уходит пустым, и
-               серверное событие не отправляется вовсе. -->
-          <input type="hidden" name="ga_cid" value="">
-          <div class="dep-row"><span class="l">${fmtEur(depositEur)} para falar com o vendedor</span><span class="r">${fmtEur(depositEur)}</span></div>
-          <div style="font-size:12px;color:#8A8F98;margin-top:4px;">Não é sinal do carro — é o que pagas para desbloquear o contacto. Reembolsável.</div>
-          <div class="hr"></div>
-          ${benefits.map(b => `<div class="benefit"><span class="tick">✓</span><div><div class="t">${b.t}</div><div class="d">${b.d}</div></div></div>`).join("")}
-          ${cta}
-          <a class="cancel-btn" href="/car?zone=${zone}&olx_id=${encodeURIComponent(deal.olx_id)}">Cancelar</a>
-          <div class="secure"><span>🔒</span><span>Pagamento seguro · depósito devolvido automaticamente em 48h</span></div>
-        </form>
-      </div>
-    </div>`;
-  return layout({
-    title: `Reivindicar ${p.name}`,
-    body: body + gaClientIdFiller() + analyticsFormEvent('form[action="/reserve"]', "begin_checkout", {
-      currency: "EUR",
-      value: depositEur,
-      items: [{ item_id: deal.olx_id, item_name: p.name }],
-    }),
-    zone, nav: "feed", depositCount,
-  });
-}
-
-// ── Unlocked success (/unlocked) ──────────────────────────────────────────────
-export function renderClaimSuccess({ deal, zone, depositEur, claimedAtMs, depositCount, txnId }) {
-  const p = present(deal);
-  const cdAttr = claimedAtMs ? ` data-claimed-at="${claimedAtMs}"` : "";
-  const nextSteps = [
-    { n: "1", t: "Liga ao vendedor e confirma estado, documentos e margem de negociação." },
-    { n: "2", t: "Agenda uma inspeção presencial antes de qualquer pagamento." },
-    { n: "3", t: `Fecha o negócio — o teu depósito de ${fmtEur(depositEur)} é devolvido automaticamente.` },
-  ];
-  const body = `
-    <div class="success">
-      <div class="success-top">
-        <div class="success-check">✓</div>
-        <h1>Negócio reivindicado</h1>
-        <p>É todo teu. Mais nenhum membro vê este carro durante as próximas 24h.</p>
-      </div>
-      <div class="cd-banner">
-        <div style="flex:1;">
-          <div class="cap">Exclusividade termina em</div>
-          <div class="big mono fc-countdown"${cdAttr}>24:00:00</div>
-        </div>
-        <div class="dep">
-          <div class="cap">Depósito</div>
-          <div class="v">${fmtEur(depositEur)}</div>
-          <div class="s">reembolsável</div>
-        </div>
-      </div>
-      <div class="panel" style="margin-top:0;">
-        <div class="contact-label">CONTACTO DESBLOQUEADO</div>
-        <div style="display:flex;align-items:center;gap:12px;">
-          <div class="avatar" style="width:42px;height:42px;font-size:16px;">${escapeHtml(p.sellerInitial)}</div>
-          <div style="flex:1;"><div class="nm" style="font-weight:600;font-size:15px;">${escapeHtml(p.sellerType)}</div><div class="meta">Anúncio OLX desbloqueado</div></div>
-        </div>
-        <a class="olx-btn" style="margin-top:16px;padding:14px;border-radius:12px;font-size:15px;" href="${escapeHtml(deal.url || "#")}" target="_blank" rel="noopener">Abrir anúncio no OLX&nbsp;&nbsp;↗</a>
-        <div class="hr"></div>
-        <div class="contact-label">PRÓXIMOS PASSOS</div>
-        <div class="next-steps">
-          ${nextSteps.map(n => `<div class="step"><span class="n">${n.n}</span><span class="tx">${n.t}</span></div>`).join("")}
-        </div>
-      </div>
-      <a class="btn-outline" href="/reservas">Ver as minhas reservas</a>
-    </div>`;
-  // purchase на странице после оплаты. transaction_id приходит из обработчика и
-  // склеен из объявления и id сессии Stripe: он стабилен при обновлении
-  // страницы и совпадает с тем, что шлёт вебхук, поэтому одна оплата не
-  // посчитается дважды. Клиентское событие теряется, если человек закрыл
-  // вкладку на редиректе Stripe - для этого и нужен серверный дубль.
-  const purchase = analyticsEvent("purchase", {
-    transaction_id: txnId || `${deal.olx_id}-${claimedAtMs || 0}`,
-    currency: "EUR",
-    value: depositEur,
-    items: [{ item_id: deal.olx_id, item_name: p.name }],
-  });
-  return layout({ title: "Negócio reivindicado", body: body + purchase, zone, nav: "reservas", depositCount });
-}
-
-// ── Reservas (/reservas) ────────────────────────────────────────────────────────
-export function renderReservations({ claims, depositEur, depositCount }) {
-  // claims: [{ deal, claimedAtMs }]
-  const hasClaims = claims && claims.length > 0;
-  let inner;
-  if (hasClaims) {
-    inner = `<div class="res-list">${claims.map(({ deal, claimedAtMs }) => {
-      const p = present(deal);
-      const cdAttr = claimedAtMs ? ` data-claimed-at="${claimedAtMs}"` : "";
-      const thumb = p.cover
-        ? `<div class="res-thumb"><img loading="lazy" src="${escapeHtml(p.cover)}" alt="${escapeHtml(p.name)}"></div>`
-        : `<div class="res-thumb striped"><span class="striped-label" style="font-size:15px;">${escapeHtml(p.make)}</span></div>`;
-      return `<div class="res-card">
-        ${thumb}
-        <div class="res-mid">
-          <div class="t">${escapeHtml(p.name)}</div>
-          <div class="s">${escapeHtml(p.sub)}</div>
-          ${importTag(p)}
-          <div class="res-prices"><span class="p">${p.priceStr}</span><span class="pr">${p.profitStr}${p.importFlag ? "*" : ""}</span></div>
-          ${p.importFlag ? `<div style="font-size:11px;color:${GRADE_COLORS.amber.fg};margin-top:5px;">* margem antes do ISV${p.isvEur ? ` (~${fmtEur(p.isvEur)})` : ""}</div>` : ""}
-        </div>
-        <div class="res-right">
-          <div class="cd-pill"><span class="fc-dot"></span><span class="mono fc-countdown"${cdAttr}>24:00:00</span></div>
-          <div class="ex">exclusivo · ${fmtEur(depositEur)} em depósito</div>
-          <a class="btn-dark" href="/car?olx_id=${encodeURIComponent(deal.olx_id)}">Ver contacto</a>
-        </div>
-      </div>`;
-    }).join("")}</div>`;
-  } else {
-    inner = `<div class="empty-card">
-      <div class="ic">🗝️</div>
-      <div class="t">Ainda não reivindicaste nenhum negócio</div>
-      <p>Reivindica um carro no mercado para o esconder dos outros membros e desbloquear o contacto do vendedor.</p>
-      <a class="btn-green" href="/mercado">Explorar o mercado</a>
-    </div>`;
-  }
-  const body = `
-    <div class="res">
-      <h1>As minhas reservas</h1>
-      <p class="lead">€${(depositCount || 0) * 5} em depósito retido · reembolsado ao contactar cada vendedor</p>
-      ${inner}
-    </div>`;
-  return layout({ title: "As minhas reservas", body, zone: "all", nav: "reservas", depositCount });
-}
-
 // ── Generic info / degraded page ──────────────────────────────────────────────
-// Страница приватности. Содержание сверено с кодом: fc_uid это случайный
-// токен без персональных данных, в KV лежит только «этот псевдоним разблокировал
-// это объявление», email и имя сайт не собирает, платёж целиком у Stripe.
+// Страница приватности. Содержание сверено с кодом: своих кук сайт не ставит,
+// аккаунтов нет, из личного хранится только заявка продавца на предложения.
 // Если поведение изменится, эту страницу надо править вместе с кодом.
 export function renderPrivacy({ depositCount, host, contact = null }) {
   const origin = host ? `https://${host}` : "";
@@ -1738,23 +1417,14 @@ export function renderPrivacy({ depositCount, host, contact = null }) {
       partir do código do site, não de um modelo genérico.</p>
 
       <h2>O que guardamos sempre</h2>
-      <p>Um cookie técnico <code>fc_uid</code> com um número aleatório. Serve para saber
-      que reservas são tuas quando voltas ao site. Não contém nome, email nem
-      qualquer dado que te identifique, e sem ele a reserva não funciona — por isso
-      não depende de consentimento.</p>
-      <p>Ligado a esse número aleatório guardamos apenas que anúncios desbloqueaste.
-      Nada mais.</p>
+      <p>Nada. O site não põe cookies próprios, não tem contas nem registo, e navegar
+      aqui não deixa nenhum identificador teu do nosso lado.</p>
 
       <h2>O que só guardamos com o teu consentimento</h2>
       <p>Estatísticas anónimas de utilização através do Google Analytics: que páginas
       são vistas e por que caminho. Até aceitares, o Google Analytics corre sem
       cookies e sem identificadores — recolhe apenas contagens agregadas. Podes
       recusar no aviso em baixo da página, e recusar é tão simples como aceitar.</p>
-
-      <h2>Pagamentos</h2>
-      <p>O depósito é processado pela Stripe na página da própria Stripe. Os dados do
-      cartão nunca passam por este site nem ficam guardados aqui. Recebemos da Stripe
-      apenas a confirmação de que o pagamento foi feito.</p>
 
       <h2>Anúncios de carros</h2>
       <p>Os anúncios mostrados são públicos e recolhidos de portais como o OLX e o
@@ -1775,14 +1445,12 @@ export function renderPrivacy({ depositCount, host, contact = null }) {
       só a ligação que carregas.</p>
 
       <h2>Os teus direitos</h2>
-      <p>Podes apagar o cookie <code>fc_uid</code> no teu navegador a qualquer momento —
-      perdes o acesso às reservas antigas, e mais nada. Para pedir a eliminação do que
-      está associado ao teu identificador ou de um pedido de propostas, escreve para
-      ${contactHtml}.</p>
+      <p>Para pedir a eliminação de um pedido de propostas antes do prazo, ou saber o que
+      está guardado sobre ele, escreve para ${contactHtml}.</p>
     </section>`;
   return layout({
     title: "Privacidade",
-    description: "O que o Carsbuyer guarda: cookie técnico de reserva, estatísticas anónimas só com consentimento, pedidos de propostas guardados 90 dias, pagamentos processados pela Stripe.",
+    description: "O que o Carsbuyer guarda: nenhum cookie próprio, estatísticas anónimas só com consentimento e pedidos de propostas guardados 90 dias.",
     body, zone: "all", nav: null, depositCount, index: true,
     host, canonical: origin ? `${origin}/privacidade` : null,
   });
@@ -1810,7 +1478,7 @@ const AVALIAR_FAQ = [
           ["Quanto vale o meu carro usado em Portugal?",
            "Cola o link do anúncio do teu carro no OLX e devolvemos o valor justo estimado para essa viatura concreta, com os seus quilómetros, ano e versão, além do preço mediano pedido pelo mesmo modelo no mercado. Se ainda não tens anúncio, escolhe o modelo e o ano para veres a mediana do mercado."],
           ["A avaliação é grátis?",
-           "Sim. A avaliação de um anúncio e os preços por modelo são gratuitos e sem registo. Só se paga um depósito reembolsável de 5 € para desbloquear o contacto de um vendedor no mercado de negócios, e esse depósito é devolvido."],
+           "Sim. A avaliação de um anúncio, os preços por modelo e os guias são gratuitos e sem registo. O site financia-se quando um vendedor pede propostas de compra e um comprador profissional paga por esse contacto, e com ligações de parceiros para relatórios de histórico; nada disso muda o valor que mostramos."],
           ["Esta avaliação serve para vender ao meu stand ou ao seguro?",
            "É uma estimativa independente a partir de anúncios reais e serve para saber por quanto anunciar ou quanto oferecer. Não é uma avaliação oficial para efeitos de seguro, sinistro ou fiscais, e não somos stand nem intermediário."],
           ["De onde vêm os valores?",

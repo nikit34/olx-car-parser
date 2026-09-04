@@ -1,6 +1,6 @@
 # Unified Cloudflare Worker — serves both:
-#   1. The public flip-deal product (one car at a time, Stripe deposit per
-#      listing) — main Worker script under flipper-club/src/. This is the public
+#   1. The public car-valuation product (deal feed, per-model prices, guides) —
+#      main Worker script under flipper-club/src/. This is the public
 #      entry point at https://carsbuyer.org/ (also reachable at the
 #      original olx-car-parser.permikov134.workers.dev).
 #   2. The internal stlite analytics dashboard at /analytics/* — gated by HTTP
@@ -17,8 +17,6 @@
 #      [assets] directory, registers the KV binding, and deploys the Worker.
 #
 # Secrets (set once per environment, NEVER committed — `wrangler secret put X`):
-#   STRIPE_SECRET_KEY      sk_live_… / sk_test_…  — required for the deposit flow
-#   STRIPE_WEBHOOK_SECRET  whsec_…                — required to verify webhooks
 #   ANALYTICS_USER         Basic-Auth user for /analytics + raw data assets
 #   ANALYTICS_PASS         Basic-Auth password    (both unset ⇒ analytics denied)
 
@@ -31,12 +29,9 @@ account_id = "6545f93bd664df2dfebb147bda85a191"
 # already in this account and `custom_domain = true` lets the deploy create
 # both the Custom Domain and its DNS record — no dashboard step.
 #
-# The workers.dev hostname stays live on purpose: the Stripe webhook is
-# registered against it, and pSEO pages have been indexed there since July.
-# It no longer serves content though: CANONICAL_HOST below redirects it to the
-# apex. The webhook is unaffected: the redirect guard sits after the
-# /webhook/stripe branch, so Stripe's signed POST still reaches this origin
-# intact and the endpoint does NOT need repointing in the Stripe dashboard.
+# The workers.dev hostname stays live on purpose: pSEO pages have been indexed
+# there since July. It no longer serves content though: CANONICAL_HOST below
+# redirects it to the apex.
 #
 # www is bound so that typing it resolves at all; it is not the canonical host,
 # so the same guard 301s it to the apex. No duplicate content: exactly one
@@ -47,14 +42,13 @@ routes = [
 ]
 # MUST stay true while routes are configured. Wrangler turns the workers.dev
 # subdomain OFF as soon as a route exists unless this is set, and that hostname
-# is not disposable: the Stripe webhook is registered against it and ~243 pSEO
-# URLs are indexed on it. Dropping it took the whole product down for the
-# minutes between the deploy and the apex resolving.
+# is not disposable: ~243 pSEO URLs are indexed on it. Dropping it took the
+# whole product down for the minutes between the deploy and the apex resolving.
 workers_dev = true
 
 # Assets are served via env.ASSETS.fetch() — the Worker chooses which paths
 # get to them (Basic-Auth-gated /analytics dashboard + /files /data assets)
-# vs. which are the public product routes (/, /reserve, /unlocked).
+# vs. which are the public product routes (/, /mercado, /car, /avaliar).
 [assets]
 binding = "ASSETS"
 directory = "./dashboard-static"
@@ -69,34 +63,24 @@ not_found_handling = "single-page-application"
 # which then chooses when to delegate to env.ASSETS.fetch().
 run_worker_first = true
 
-# Single KV namespace. Holds the deals cache ("cache:deals:{zone}") and the
-# per-visitor unlock records ("unlock:{uid}:{olx_id}") written after a paid
-# deposit. (The old "pin:" / "session:" PIN apparatus is gone.) Run once:
+# Single KV namespace. Holds the deals cache ("cache:deals:{zone}"), the weekly
+# market index cuts and the seller lead requests ("lead:…"). Run once:
 # ``npx wrangler kv namespace create KV`` and paste the returned id below.
 [[kv_namespaces]]
 binding = "KV"
 id = "5ae27bd650e94beeb2de2adf5ac2108c"
 
 [vars]
-# Deposit charged to reserve one car + unlock its seller contact. Amount is in
-# the currency's smallest unit (cents): 500 = €5.00. Override per environment.
-DEPOSIT_AMOUNT_CENTS = "500"
-CURRENCY = "eur"
-
 # GA4. Пусто = аналитика выключена целиком, ни одного запроса наружу, что и
 # нужно в dev. Сниппет объявляет Consent Mode v2 с запретом хранилища по
 # умолчанию: аудитория в ЕЭЗ, поэтому до согласия GA4 шлёт обезличенные пинги
 # без кук. Сам ID публичный, он и так виден в исходнике страницы.
 GA4_MEASUREMENT_ID = "G-2RSXJHJJYP"
 
-# GA4_API_SECRET хранится в СЕКРЕТАХ воркера, не здесь: с ним можно писать
-# события в ресурс от чужого имени. Без него серверное событие purchase из
-# вебхука Stripe просто не отправляется, всё остальное работает.
-
 # Canonical public hostname. When set, every request to any OTHER hostname
 # (i.e. the workers.dev subdomain) is permanently redirected here, so the two
-# hostnames stop splitting ranking signals. /healthz and /webhook/stripe are
-# never redirected — see the guard in flipper-club/src/index.js.
+# hostnames stop splitting ranking signals. /healthz is never redirected — see
+# the guard in flipper-club/src/index.js.
 #
 # Verified live before enabling: .org delegation published, Custom Domain
 # bound, and the edge serving 200 under a valid CN=carsbuyer.org certificate.

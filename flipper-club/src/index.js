@@ -1,16 +1,10 @@
-// Cloudflare Worker entry — public, one-car-at-a-time flip-deal feed with a
-// Stripe deposit gate on each listing.
+// Cloudflare Worker entry — public car-valuation site over live OLX listings.
 //
-// Product model (no auth, no PINs):
+// Product model (no auth, no accounts, nothing to pay for):
 //   GET  /                  → one car at a time (top-ranked by decision_score).
-//                             Photos/specs/signals are public; the seller's OLX
-//                             link is paywalled until a deposit is paid.
-//   POST /reserve           → create a Stripe Checkout Session for one car's
-//                             deposit, 303 → Stripe-hosted checkout.
-//   GET  /unlocked          → Stripe success redirect; verify the session was
-//                             paid, record the unlock, reveal the contact.
-//   POST /webhook/stripe    → async checkout.session.completed → record unlock
-//                             authoritatively (survives a closed success tab).
+//                             Photos, specs, signals and the seller's own OLX
+//                             link are all public.
+//   POST /lead              → a seller asks professional buyers for offers.
 //   GET  /healthz           → unauthenticated liveness.
 //
 // Public valuation surface (indexable; seo-pages.js renders it):
@@ -38,24 +32,17 @@
 //   secrets ANALYTICS_USER / ANALYTICS_PASS. Fail-closed: if those secrets are
 //   unset, access is denied — raw parquets/model internals never go public.
 //
-// What we sell: the *find* (an unlocked seller contact for one specific car),
-// never the car. The deposit unlocks one olx_id's contact link, nothing else.
-//
 // Data source: getDeals() fetches hot_deals_{zone}.json from the latest-data
 // GitHub Release and caches it in KV for 15 min. A missing/broken feed renders a
 // degraded banner (no fake data).
 
 import {
   renderGrid, renderCarPage, renderInfo,
-  renderLanding, renderClaim, renderClaimSuccess, renderReservations,
+  renderLanding,
   renderAvaliar, renderModelPage, renderModelsHub, renderModelWidget, slugify,
   setAnalyticsId,
   renderPrivacy, renderLeadThanks,
 } from "./templates.js";
-import {
-  stripeConfigured, createCheckoutSession,
-  retrieveCheckoutSession, verifyWebhookSignature,
-} from "./stripe.js";
 import {
   renderYearPage, renderNotFound, renderDepreciationPage, renderDepreciationHub,
   renderComparePage, renderCompareHub, renderLiquidityHub, renderValuationGap,
@@ -77,23 +64,13 @@ import {
 import { GUIDES, GUIDES_UPDATED, guideBySlug, renderGuide, renderGuidesHub } from "./guides.js";
 
 const ZONES = ["norte", "centro", "sul", "all"];
-const COOKIE_UID = "fc_uid";
-const UNLOCK_TTL_SEC = 90 * 24 * 3600; // a paid reservation stays unlocked 90d
-const DEFAULT_DEPOSIT_CENTS = 500;     // €5 — overridable via env.DEPOSIT_AMOUNT_CENTS
-const DEFAULT_CURRENCY = "eur";
 
-// Product routes the Worker owns directly. Everything else (that isn't
-// /analytics or /webhook) is treated as an internal asset request.
-//   /          landing (marketing)        /claim     claim-confirm interstitial
-//   /mercado   deal feed (grid)           /reserve   POST → Stripe checkout
-//   /car       single-car detail          /unlocked  Stripe success → claimed
-//   /reservas  my claimed cars
 const ICON_PATHS = new Set([
   "/favicon.ico", "/icon-96.png", "/icon-192.png", "/apple-touch-icon.png",
 ]);
 
 const PRODUCT_PATHS = new Set([
-  "/", "/mercado", "/car", "/claim", "/reserve", "/unlocked", "/reservas", "/avaliar", "/lead",
+  "/", "/mercado", "/car", "/avaliar", "/lead",
   "/precos", "/sitemap.xml", "/robots.txt", "/llms.txt",
   // Приватность обязана быть здесь: гейт стоит ВЫШЕ её обработчика, и без
   // записи в этом списке Basic-Auth отдавал бы 401 и Googlebot, и человеку,
@@ -162,7 +139,6 @@ const worker = {
             ok: true,
             ga4_tag: Boolean((env.GA4_MEASUREMENT_ID || "").trim()),
             ga4_mp_secret: Boolean((env.GA4_API_SECRET || "").trim()),
-            stripe: stripeConfigured(env),
           }, null, 2), {
             status: 200,
             headers: {
@@ -180,18 +156,11 @@ const worker = {
       // what the fallthrough does) makes it answer 401 to its only caller.
       if (pathname === "/_olx" && method === "GET") return handleOlxRelay(request, env, url);
 
-      if (pathname === "/webhook/stripe") {
-        if (method !== "POST") return notFound();
-        return handleWebhook(request, env);
-      }
-
       // Canonical host — the product answers on both carsbuyer.org and the
       // workers.dev subdomain, and identical content on two hostnames splits
       // ranking signals. Send everything to CANONICAL_HOST, preserving path and
-      // query. Deliberately placed AFTER /healthz and /webhook/stripe so neither
-      // can ever be redirected: Stripe's signed POST has to reach the exact
-      // origin the endpoint was registered against, and a redirect would drop
-      // the body and silently break deposit confirmation.
+      // query. Deliberately placed AFTER /healthz, which must answer 200 on
+      // every hostname a monitor may be pinned to rather than a redirect.
       // Dormant until CANONICAL_HOST is set (see wrangler.toml [vars]).
       const canonicalHost = (env.CANONICAL_HOST || "").trim();
       let visitorScheme = null;
@@ -362,19 +331,15 @@ const worker = {
       if (pathname === "/avaliar" && method === "GET") return handleAvaliar(request, env, url);
       if (pathname === "/mercado" && method === "GET") return handleFeed(request, env, url);
       if (pathname === "/car" && method === "GET") return handleCar(request, env, url);
-      if (pathname === "/claim" && method === "GET") return handleClaim(request, env, url);
-      if (pathname === "/reserve" && method === "POST") return handleReserve(request, env, url);
       if (pathname === "/lead" && method === "POST") return handleLead(request, env, url);
       if (pathname === "/lead" && method === "GET") return redirect("/avaliar#escolher", 302);
-      if (pathname === "/unlocked" && method === "GET") return handleUnlocked(request, env, url);
-      if (pathname === "/reservas" && method === "GET") return handleReservas(request, env, url);
       // Страница приватности публичная и индексируемая: на неё ссылается баннер
       // согласия, и за Basic-Auth она отдавала бы 401 и Googlebot, и человеку.
       if (pathname === "/privacidade" && method === "GET") {
         return publicHtml(renderPrivacy({ depositCount: null, host: url.host, contact: env.SITE_CONTACT_EMAIL || null }));
       }
 
-      // A known path reached with the wrong method (e.g. GET /reserve).
+      // A known path reached with a method it does not answer.
       return notFoundPage(request, env, url);
     } catch (err) {
       console.error("worker error", err && err.stack || err);
@@ -410,16 +375,14 @@ export default worker;
 
 // Landing (/) — marketing hero with live market stats + a featured top deal.
 async function handleLanding(request, env, url) {
-  const { uid, setCookie } = ensureUid(request);
   const { deals, degraded } = await getDeals(env, "all");
-  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
 
   if (degraded || !Array.isArray(deals) || deals.length === 0) {
     return html(renderInfo({
-      zone: "all", depositCount,
+      zone: "all", depositCount: null,
       title: "Serviço indisponível",
       message: "Não foi possível carregar os negócios neste momento. Tenta novamente dentro de instantes.",
-    }), degraded ? 503 : 200, setCookie);
+    }), degraded ? 503 : 200);
   }
 
   const sorted = sortDeals(deals, "score");
@@ -437,9 +400,8 @@ async function handleLanding(request, env, url) {
       totalProfit: "€" + Math.round(totalProfit).toLocaleString("pt-PT"),
     },
     featured: sorted[0],
-    depositEur: depositCents(env) / 100,
-    depositCount, host: url.host,
-  }), 200, setCookie);
+    depositCount: null, host: url.host,
+  }), 200);
 }
 
 // Avaliar (/avaliar) — paste-a-link valuation of ANY OLX listing (Tier-2).
@@ -447,8 +409,6 @@ async function handleLanding(request, env, url) {
 // precomputed valuations blob, and render a fair-price verdict (or a graceful
 // "not found / ask by email" fallback). No q ⇒ just the lookup form + teaser.
 async function handleAvaliar(request, env, url) {
-  const { uid, setCookie } = ensureUid(request);
-  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
   const query = (url.searchParams.get("q") || "").toString().trim();
   const modelo = (url.searchParams.get("modelo") || "").toString().trim().toLowerCase();
   const anoRaw = parseInt(url.searchParams.get("ano") || "", 10);
@@ -476,13 +436,13 @@ async function handleAvaliar(request, env, url) {
              vender: publishedVender(models, modelo, mrec, mdoc.built_at) };
   }
   return html(renderAvaliar({
-    rec, olxId, sourceUrl, query, models, spec, depositCount,
+    rec, olxId, sourceUrl, query, models, spec, depositCount: null,
     host: url.host, builtAt: mdoc && mdoc.built_at,
     contact: env.SITE_CONTACT_EMAIL,
     historyUrl: env.HISTORY_REPORT_URL || null,
     market: (mdoc && mdoc.lqm) || null,
     stats: models ? corpusStats(models, mdoc.built_at) : null,
-  }), 200, setCookie);
+  }), 200);
 }
 
 // Find the per-year cell for `ano` in a model record: exact year, or a band
@@ -1163,7 +1123,7 @@ async function handleModelsHub(request, env, url) {
     return html(renderInfo({
       zone: "all", depositCount: null, title: "Serviço indisponível",
       message: "Os preços por modelo estão a ser preparados. Volta dentro de instantes.",
-    }), 503, setCookie);
+    }), 503);
   }
   const list = Object.entries(models)
     .map(([s, r]) => ({ slug: s, b: r.b, m: r.m, fm: r.fm, n: r.n }))
@@ -1503,8 +1463,7 @@ async function handleLlmsTxt(request, env, url) {
 // /robots.txt — allow public, block transactional/internal, point at the sitemap.
 const ROBOTS_RULES = [
   "Allow: /",
-  "Disallow: /analytics", "Disallow: /claim", "Disallow: /reserve",
-  "Disallow: /unlocked", "Disallow: /reservas", "Disallow: /_olx", "Disallow: /lead",
+  "Disallow: /analytics", "Disallow: /_olx", "Disallow: /lead",
 ];
 
 async function handleRobots(request, env, url) {
@@ -1543,7 +1502,6 @@ async function handleRobots(request, env, url) {
 async function handleFeed(request, env, url) {
   const zone = pickZone(url.searchParams.get("zone"));
   const view = pickView(url.searchParams.get("view"));
-  const { uid, setCookie } = ensureUid(request);
   // Fetch every zone in parallel so the filter chips can show live per-zone
   // counts ("Norte (12)"). Each getDeals call is edge/KV-cached, so the extra
   // three fetches are cheap. The current zone's result drives the feed itself.
@@ -1560,25 +1518,23 @@ async function handleFeed(request, env, url) {
     zoneCounts[z] = (r && !r.degraded && Array.isArray(r.deals)) ? r.deals.length : null;
   }
   const { deals, degraded, builtAt: feedBuiltAt } = zoneResults[zone] || { deals: [], degraded: true, builtAt: null };
-  const unlockedSet = await listUnlocked(env, uid, { fresh: !!setCookie });
-  const depositCount = unlockedSet.size;
 
   if (degraded) {
     return html(renderInfo({
-      zone, depositCount,
+      zone, depositCount: null,
       title: "Serviço indisponível",
       message: "Não foi possível carregar os negócios neste momento. Tenta novamente dentro de instantes.",
-    }), 503, setCookie);
+    }), 503);
   }
 
   const sort = url.searchParams.get("sort") || "score";
   const sorted = sortDeals(deals, sort);
   if (sorted.length === 0) {
     return html(renderInfo({
-      zone, depositCount,
+      zone, depositCount: null,
       title: "Sem negócios quentes",
       message: "Sem carros abaixo do preço nesta zona agora — a lista renova ao longo do dia. Entretanto, cola o link de qualquer anúncio em /avaliar para saber se está bem cotado.",
-    }), 200, setCookie);
+    }), 200);
   }
 
   // Model links for the models on offer right now.
@@ -1671,12 +1627,11 @@ async function handleFeed(request, env, url) {
   } : null;
 
   return html(renderGrid({
-    deals: sorted, zone, sort, view, unlockedSet, depositCount, zoneCounts,
-    depositEur: depositCents(env) / 100,
-    stripeReady: stripeConfigured(env), host: url.host,
+    deals: sorted, zone, sort, view, depositCount: null, zoneCounts,
+    host: url.host,
     modelLinks, yearLinks, contextLinks, districtLinks, jsonLd,
     builtAt: mBuiltAt, feedBuiltAt,
-  }), 200, setCookie);
+  }), 200);
 }
 
 // Single-car detail page (opened by clicking a grid tile).
@@ -1684,314 +1639,23 @@ async function handleCar(request, env, url) {
   const zone = pickZone(url.searchParams.get("zone"));
   const view = pickView(url.searchParams.get("view"));
   const olxId = (url.searchParams.get("olx_id") || "").toString();
-  const { uid, setCookie } = ensureUid(request);
   const { deals, degraded } = await getDeals(env, zone);
-  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
   if (degraded) {
     return html(renderInfo({
-      zone, depositCount, title: "Serviço indisponível",
+      zone, depositCount: null, title: "Serviço indisponível",
       message: "Não foi possível carregar os negócios neste momento. Tenta novamente dentro de instantes.",
-    }), 503, setCookie);
+    }), 503);
   }
   const deal = (deals || []).find(d => d.olx_id === olxId);
-  if (!deal) return redirect(`/mercado?zone=${zone}`, 302, setCookie);
-  const rec = await getUnlock(env, uid, deal.olx_id);
+  if (!deal) return redirect(`/mercado?zone=${zone}`, 302);
   // Contextual link into the model SEO page, when this model has one.
   const mdoc = await getModels(env);
   const models = mdoc && mdoc.models;
   const mslug = slugify(`${deal.brand}-${deal.model}`);
   const modelHref = (models && models[mslug]) ? `/preco/${encodeURIComponent(mslug)}` : null;
   return html(renderCarPage({
-    deal, zone, view, unlocked: !!rec, justReserved: false,
-    claimedAtMs: claimedAtMs(rec), depositCount, modelHref,
-    depositEur: depositCents(env) / 100,
-    stripeReady: stripeConfigured(env), host: url.host,
-  }), 200, setCookie);
-}
-
-// Claim confirm interstitial (/claim) — deposit breakdown + benefits, then a
-// form that POSTs to /reserve → Stripe. If already unlocked, jump to detail.
-async function handleClaim(request, env, url) {
-  const zone = pickZone(url.searchParams.get("zone"));
-  const olxId = (url.searchParams.get("olx_id") || "").toString();
-  const { uid, setCookie } = ensureUid(request);
-  const { deals, degraded } = await getDeals(env, zone);
-  const depositCount = (await listUnlocked(env, uid, { fresh: !!setCookie })).size;
-  if (degraded) {
-    return html(renderInfo({
-      zone, depositCount, title: "Serviço indisponível",
-      message: "Não foi possível carregar os negócios neste momento. Tenta novamente dentro de instantes.",
-    }), 503, setCookie);
-  }
-  const deal = (deals || []).find(d => d.olx_id === olxId);
-  if (!deal) return redirect(`/mercado?zone=${zone}`, 302, setCookie);
-  if (await isUnlocked(env, uid, deal.olx_id)) {
-    return redirect(`/car?zone=${zone}&olx_id=${encodeURIComponent(olxId)}`, 302, setCookie);
-  }
-  return html(renderClaim({
-    deal, zone, depositCount,
-    depositEur: depositCents(env) / 100,
-    stripeReady: stripeConfigured(env),
-  }), 200, setCookie);
-}
-
-async function handleReserve(request, env, url) {
-  if (!sameOrigin(request, url)) return forbidden();
-  const { uid, setCookie } = ensureUid(request);
-  const form = await request.formData();
-  const olxId = (form.get("olx_id") || "").toString();
-  const zone = pickZone(form.get("zone"));
-  // Пусто у отказавшегося от аналитики: тогда серверное событие не уйдёт.
-  const gaCid = (form.get("ga_cid") || "").toString().slice(0, 64);
-
-  if (!stripeConfigured(env)) {
-    return html(renderInfo({
-      zone,
-      title: "Pagamentos indisponíveis",
-      message: "A reserva por depósito ainda não está ativa. Tenta novamente mais tarde.",
-    }), 503, setCookie);
-  }
-
-  // Validate the olx_id is a real, current deal before charging anyone.
-  const { deals } = await getDeals(env, zone);
-  const deal = (deals || []).find(d => d.olx_id === olxId);
-  if (!deal) return redirect(`/mercado?zone=${zone}`, 303, setCookie);
-
-  const carName = deal.title
-    || [deal.brand, deal.model, deal.year].filter(Boolean).join(" ")
-    || "Viatura";
-  // Stripe substitutes the literal {CHECKOUT_SESSION_ID} on redirect — must not
-  // be URL-encoded, so it's appended after the encoded params.
-  const successUrl =
-    `${url.origin}/unlocked?zone=${zone}&olx_id=${encodeURIComponent(olxId)}`
-    + `&session_id={CHECKOUT_SESSION_ID}`;
-  const cancelUrl = `${url.origin}/car?zone=${zone}&olx_id=${encodeURIComponent(olxId)}`;
-
-  try {
-    const session = await createCheckoutSession(env, {
-      uid, olxId, carName, gaCid,
-      amountCents: depositCents(env),
-      currency: env.CURRENCY || DEFAULT_CURRENCY,
-      successUrl, cancelUrl,
-    });
-    return redirect(session.url, 303, setCookie);
-  } catch (err) {
-    console.error("checkout create failed", err && err.message);
-    return html(renderInfo({
-      zone,
-      title: "Erro no pagamento",
-      message: "Não foi possível iniciar o pagamento. Tenta novamente dentro de instantes.",
-    }), 502, setCookie);
-  }
-}
-
-async function handleUnlocked(request, env, url) {
-  const zone = pickZone(url.searchParams.get("zone"));
-  const view = pickView(url.searchParams.get("view"));
-  const olxId = (url.searchParams.get("olx_id") || "").toString();
-  const sessionId = (url.searchParams.get("session_id") || "").toString();
-  const { uid, setCookie } = ensureUid(request);
-
-  // Verify on the redirect too (belt-and-suspenders with the webhook): if the
-  // user lands here with a genuinely paid session, record the unlock now so it
-  // works even if the webhook is delayed.
-  if (sessionId && stripeConfigured(env)) {
-    try {
-      const s = await retrieveCheckoutSession(env, sessionId);
-      if (s && s.payment_status === "paid") {
-        const m = s.metadata || {};
-        await recordUnlock(env, m.uid || uid, m.olx_id || olxId, {
-          stripe_session_id: s.id, amount: s.amount_total, currency: s.currency,
-        });
-      }
-    } catch (err) {
-      console.warn("unlocked verify failed", err && err.message);
-    }
-  }
-
-  const { deals, degraded } = await getDeals(env, zone);
-  // Unconditional: the verify above may have written an unlock under this uid.
-  const depositCount = (await listUnlocked(env, uid)).size;
-  if (degraded || !Array.isArray(deals) || deals.length === 0) {
-    return html(renderInfo({
-      zone, depositCount,
-      title: "Reserva registada",
-      message: "O teu depósito foi recebido. Recarrega a página dentro de instantes para ver o contacto.",
-    }), 200, setCookie);
-  }
-  const deal = (deals || []).find(d => d.olx_id === olxId);
-  if (!deal) return redirect(`/mercado?zone=${zone}`, 302, setCookie);
-  const rec = await getUnlock(env, uid, deal.olx_id);
-
-  // Paid+unlocked → the design's celebratory success screen. Not yet recorded
-  // (webhook lag) → reuse the detail page's locked module so they can retry.
-  if (rec) {
-    return html(renderClaimSuccess({
-      deal, zone, claimedAtMs: claimedAtMs(rec), depositCount,
-      txnId: txnId(deal.olx_id, rec),
-      depositEur: depositCents(env) / 100,
-    }), 200, setCookie);
-  }
-  return html(renderCarPage({
-    deal, zone, view, unlocked: false, justReserved: false,
-    claimedAtMs: null, depositCount,
-    depositEur: depositCents(env) / 100,
-    stripeReady: stripeConfigured(env),
-  }), 200, setCookie);
-}
-
-// Reservas (/reservas) — every car this visitor has claimed (paid-unlocked),
-// each with its 24h-exclusivity countdown anchored on the deposit timestamp.
-async function handleReservas(request, env, url) {
-  const { uid, setCookie } = ensureUid(request);
-  const { deals, degraded } = await getDeals(env, "all");
-  const records = await listUnlockedRecords(env, uid, { fresh: !!setCookie });
-  const depositCount = records.length;
-
-  let claims = [];
-  if (!degraded && Array.isArray(deals)) {
-    const byId = new Map(deals.map(d => [d.olx_id, d]));
-    claims = records
-      .map(r => ({ deal: byId.get(r.olxId), claimedAtMs: r.claimedAtMs }))
-      .filter(c => c.deal)
-      .sort((a, b) => (b.claimedAtMs || 0) - (a.claimedAtMs || 0));
-  }
-
-  return html(renderReservations({
-    claims, depositCount,
-    depositEur: depositCents(env) / 100,
-  }), 200, setCookie);
-}
-
-async function handleWebhook(request, env) {
-  const raw = await request.text();
-  const sig = request.headers.get("Stripe-Signature");
-  let event;
-  try {
-    event = await verifyWebhookSignature(env, raw, sig);
-  } catch (err) {
-    console.warn("webhook rejected", err && err.message);
-    return new Response("invalid signature", { status: 400 });
-  }
-  if (event.type === "checkout.session.completed"
-      || event.type === "checkout.session.async_payment_succeeded") {
-    const s = event.data && event.data.object;
-    if (s && s.payment_status === "paid") {
-      const m = s.metadata || {};
-      await recordUnlock(env, m.uid, m.olx_id, {
-        stripe_session_id: s.id, amount: s.amount_total, currency: s.currency,
-      });
-      // Клиентский purchase на странице после оплаты теряется, если человек
-      // закрыл вкладку на редиректе Stripe. Вебхук - единственный надёжный
-      // источник выручки, поэтому событие дублируется отсюда. Оба конца
-      // склеивают transaction_id из объявления и id сессии Stripe, поэтому GA4
-      // видит одну и ту же покупку и не считает её дважды.
-      await sendServerPurchase(env, m, s);
-    }
-  }
-  return new Response("ok", { status: 200 });
-}
-
-// Measurement Protocol. Отправляется только когда есть client_id, то есть
-// только для согласившихся на аналитику: без согласия куки _ga нет, и
-// придумывать синтетический идентификатор нельзя - это была бы обработка
-// данных человека, который отказался. Выручка от отказавшихся в GA4 не
-// попадает, и это осознанный размен.
-async function sendServerPurchase(env, meta, session) {
-  const secret = (env.GA4_API_SECRET || "").trim();
-  const id = (env.GA4_MEASUREMENT_ID || "").trim();
-  const cid = (meta.ga_cid || "").trim();
-  // Три причины не отправлять, и молчать можно только про две. Нет тега -
-  // аналитики нет вообще. Нет client_id - человек отказался от аналитики, это
-  // обычный путь, и жаловаться на него значит забить лог. А вот пустой секрет
-  // при живом теге это недоделанная настройка, и в тишине она неотличима от
-  // того, что покупок просто не было.
-  if (!id || !cid) return;
-  if (!secret) {
-    console.error("mp purchase skipped: GA4_API_SECRET is not set");
-    return;
-  }
-  const value = (session.amount_total || 0) / 100;
-  const body = {
-    client_id: cid,
-    non_personalized_ads: true,
-    events: [{
-      name: "purchase",
-      params: {
-        transaction_id: `${meta.olx_id}-${session.id}`,
-        currency: (session.currency || "eur").toUpperCase(),
-        value,
-        items: [{ item_id: meta.olx_id }],
-      },
-    }],
-  };
-  try {
-    const r = await fetch(
-      `https://www.google-analytics.com/mp/collect?measurement_id=${encodeURIComponent(id)}` +
-      `&api_secret=${encodeURIComponent(secret)}`,
-      { method: "POST", body: JSON.stringify(body) });
-    // MP отвечает 204 и молчит об ошибках в payload, поэтому логируем сам код:
-    // иначе поломка выглядела бы как отсутствие покупок. Неверный секрет так
-    // не поймать ничем: отладочный эндпоинт тоже отвечает 200 с пустым списком
-    // ошибок и на выдуманный ключ, и на чужой measurement_id - проверяет он
-    // только форму payload (замерено 26.08.2026). Единственная проверка пары -
-    // увидеть событие в Realtime своего ресурса.
-    if (r.status !== 204) console.error("mp purchase unexpected status", r.status);
-  } catch (err) {
-    console.error("mp purchase failed", err && err.message || err);
-  }
-}
-
-// ── Unlock state (KV) ─────────────────────────────────────────────────────
-
-async function recordUnlock(env, uid, olxId, info) {
-  if (!uid || !olxId) return;
-  await env.KV.put(
-    `unlock:${uid}:${olxId}`,
-    JSON.stringify({ paid_at: new Date().toISOString(), ...info }),
-    { expirationTtl: UNLOCK_TTL_SEC },
-  );
-}
-
-async function isUnlocked(env, uid, olxId) {
-  if (!uid || !olxId) return false;
-  return !!(await env.KV.get(`unlock:${uid}:${olxId}`));
-}
-
-// Full unlock record ({ paid_at, … }) or null — used to drive the per-car 24h
-// exclusivity countdown from when the deposit was actually taken.
-async function getUnlock(env, uid, olxId) {
-  if (!uid || !olxId) return null;
-  const raw = await env.KV.get(`unlock:${uid}:${olxId}`);
-  if (!raw) return null;
-  try { return JSON.parse(raw); } catch { return {}; }
-}
-
-// Epoch-ms of the deposit, for the countdown's data-claimed-at. Null if the
-// record predates paid_at (legacy) — the UI then shows a static 24:00:00.
-function claimedAtMs(rec) {
-  if (!rec || !rec.paid_at) return null;
-  const t = Date.parse(rec.paid_at);
-  return Number.isFinite(t) ? t : null;
-}
-
-// Идентификатор покупки для GA4. Должен совпадать с тем, что шлёт вебхук через
-// Measurement Protocol, иначе одна оплата посчитается дважды. Общая величина у
-// двух сторон только одна - id сессии Stripe: вебхук получает его из события, а
-// страница берёт из записи разблокировки. У старых записей его нет, там остаётся
-// момент оплаты, и вебхук по ним всё равно уже не придёт.
-function txnId(olxId, rec) {
-  const sid = rec && rec.stripe_session_id;
-  return `${olxId}-${sid || claimedAtMs(rec) || 0}`;
-}
-
-// Every unlock for this visitor as { olxId, claimedAtMs } — one prefix scan
-// plus a get per key (Reservas only, so the fan-out stays small).
-async function listUnlockedRecords(env, uid, { fresh = false } = {}) {
-  const ids = [...(await listUnlocked(env, uid, { fresh }))];
-  return Promise.all(ids.map(async olxId => ({
-    olxId, claimedAtMs: claimedAtMs(await getUnlock(env, uid, olxId)),
-  })));
+    deal, zone, view, depositCount: null, modelHref, host: url.host,
+  }), 200);
 }
 
 // ── Internal dashboard / assets — Basic Auth, fail-closed ───────────────────
@@ -2163,26 +1827,6 @@ function sortDeals(deals, sort = "score") {
   return out;
 }
 
-// Every olx_id this visitor has paid-unlocked, via one KV prefix scan instead
-// of N per-deal gets — used to badge tiles in the grid. Returns a Set.
-// `fresh` = uid minted in this request, so the prefix cannot hold anything.
-async function listUnlocked(env, uid, { fresh = false } = {}) {
-  const set = new Set();
-  if (!uid || fresh) return set;
-  const prefix = `unlock:${uid}:`;
-  let cursor;
-  try {
-    do {
-      const page = await env.KV.list({ prefix, cursor });
-      for (const k of page.keys) set.add(k.name.slice(prefix.length));
-      cursor = page.list_complete ? null : page.cursor;
-    } while (cursor);
-  } catch (err) {
-    console.warn("unlock list failed", err && err.message);
-  }
-  return set;
-}
-
 // ── Small helpers ───────────────────────────────────────────────────────────
 
 function pickZone(z) {
@@ -2195,30 +1839,10 @@ function pickView(v) {
   return (v || "").toString() === "revender" ? "revender" : "comprar";
 }
 
-function depositCents(env) {
-  const n = parseInt(env.DEPOSIT_AMOUNT_CENTS, 10);
-  return Number.isFinite(n) && n > 0 ? n : DEFAULT_DEPOSIT_CENTS;
-}
-
 function randomToken(bytes = 16) {
   const buf = new Uint8Array(bytes);
   crypto.getRandomValues(buf);
   return Array.from(buf, b => b.toString(16).padStart(2, "0")).join("");
-}
-
-// Read the visitor cookie, minting one if absent. The returned setCookie (if
-// any) must be attached to the response so the same visitor's unlocks persist.
-function ensureUid(request) {
-  const cookie = request.headers.get("cookie") || "";
-  const m = cookie.match(new RegExp(`${COOKIE_UID}=([a-f0-9]+)`));
-  if (m) return { uid: m[1], setCookie: null };
-  const uid = randomToken(16);
-  const setCookie = [
-    `${COOKIE_UID}=${uid}`,
-    "Path=/", "HttpOnly", "SameSite=Lax", "Secure",
-    `Max-Age=${365 * 24 * 3600}`,
-  ].join("; ");
-  return { uid, setCookie };
 }
 
 function publicHtml(body, status = 200) {
@@ -2255,7 +1879,7 @@ function isLocalHost(h) {
 function notFound() { return new Response("Not found", { status: 404 }); }
 function forbidden() { return new Response("Forbidden", { status: 403 }); }
 
-// CSRF guard for the /reserve POST: verify the request came from our own host.
+// CSRF guard for the /lead POST: verify the request came from our own host.
 function sameOrigin(request, url) {
   const origin = request.headers.get("Origin");
   if (origin) {
@@ -2280,12 +1904,11 @@ const LEAD_RATE_MAX = 5;
 
 async function handleLead(request, env, url) {
   if (!sameOrigin(request, url)) return forbidden();
-  const { setCookie } = ensureUid(request);
   let form;
   try { form = await request.formData(); }
-  catch { return leadError("O formulário chegou incompleto. Volta atrás e tenta outra vez.", 400, setCookie); }
+  catch { return leadError("O formulário chegou incompleto. Volta atrás e tenta outra vez.", 400); }
   const f = k => (form.get(k) || "").toString().trim();
-  const thanks = (name, year) => html(renderLeadThanks({ name, year, depositCount: null, host: url.host }), 200, setCookie);
+  const thanks = (name, year) => html(renderLeadThanks({ name, year, depositCount: null, host: url.host }), 200);
   if (f("website")) return thanks("", null);
 
   const modelo = f("modelo").toLowerCase().slice(0, 60);
@@ -2298,19 +1921,19 @@ async function handleLead(request, env, url) {
   const nome = f("nome").slice(0, 80);
   const consent = f("consent") === "1" || f("consent") === "on";
   if (!Number.isFinite(ano) || ano < 1980 || ano > 2027) {
-    return leadError("Indica o ano do carro, entre 1980 e 2027.", 400, setCookie);
+    return leadError("Indica o ano do carro, entre 1980 e 2027.", 400);
   }
   const digits = contacto.replace(/\D/g, "");
   const looksPhone = digits.length >= 9 && digits.length <= 15;
   const looksEmail = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(contacto);
   if (!looksPhone && !looksEmail) {
-    return leadError("Deixa um telemóvel com 9 dígitos ou um email válido, para te podermos enviar as propostas.", 400, setCookie);
+    return leadError("Deixa um telemóvel com 9 dígitos ou um email válido, para te podermos enviar as propostas.", 400);
   }
   if (!consent) {
-    return leadError("Para enviarmos o teu contacto a compradores precisamos da tua autorização: marca a caixa e volta a enviar.", 400, setCookie);
+    return leadError("Para enviarmos o teu contacto a compradores precisamos da tua autorização: marca a caixa e volta a enviar.", 400);
   }
   if (modelo && !/^[a-z0-9-]{2,60}$/.test(modelo)) {
-    return leadError("O modelo não foi reconhecido. Escolhe-o outra vez na lista.", 400, setCookie);
+    return leadError("O modelo não foi reconhecido. Escolhe-o outra vez na lista.", 400);
   }
 
   const ip = request.headers.get("cf-connecting-ip") || "0.0.0.0";
@@ -2318,7 +1941,7 @@ async function handleLead(request, env, url) {
   let count = 0;
   try { count = parseInt((await env.KV.get(rlKey)) || "0", 10) || 0; } catch {}
   if (count >= LEAD_RATE_MAX) {
-    return leadError("Já recebemos vários pedidos deste endereço na última hora. Tenta mais tarde.", 429, setCookie);
+    return leadError("Já recebemos vários pedidos deste endereço na última hora. Tenta mais tarde.", 429);
   }
   try { await env.KV.put(rlKey, String(count + 1), { expirationTtl: 3600 }); } catch {}
 
@@ -2332,14 +1955,14 @@ async function handleLead(request, env, url) {
     await env.KV.put(`lead:${ts}:${randomToken(4)}`, JSON.stringify(lead), { expirationTtl: LEAD_TTL_SEC });
   } catch (err) {
     console.error("lead store failed", err && err.message);
-    return leadError("Não conseguimos guardar o pedido. Tenta outra vez dentro de instantes.", 502, setCookie);
+    return leadError("Não conseguimos guardar o pedido. Tenta outra vez dentro de instantes.", 502);
   }
   await notifyLead(env, lead, url.host);
   return thanks(name, ano);
 }
 
-function leadError(message, status, setCookie) {
-  return html(renderInfo({ zone: "all", depositCount: null, title: "Falta um dado no pedido", message }), status, setCookie);
+function leadError(message, status) {
+  return html(renderInfo({ zone: "all", depositCount: null, title: "Falta um dado no pedido", message }), status);
 }
 
 async function notifyLead(env, lead, host) {

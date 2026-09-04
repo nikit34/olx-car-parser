@@ -11,7 +11,7 @@
 
 import { readFileSync } from "node:fs";
 import {
-  renderLanding, renderGrid, renderAvaliar, renderModelPage, renderModelsHub,
+  renderLanding, renderGrid, renderCarPage, renderAvaliar, renderModelPage, renderModelsHub,
   renderModelWidget, renderInfo, slugify, setAnalyticsId, renderPrivacy, ageTable,
 } from "../../flipper-club/src/templates.js";
 import {
@@ -944,8 +944,8 @@ check("existing product pages still render", () => {
     seller_type: "Particular",
   };
   const grid = renderGrid({
-    deals: [deal], zone: "all", sort: "score", view: "comprar", unlockedSet: new Set(),
-    depositEur: 5, depositCount: 0, zoneCounts: { all: 1, norte: 1, centro: 0, sul: 0 },
+    deals: [deal], zone: "all", sort: "score", view: "comprar",
+    depositCount: 0, zoneCounts: { all: 1, norte: 1, centro: 0, sul: 0 },
     host: HOST, builtAt,
     modelLinks: [{ slug: deep, b: models[deep].b, m: models[deep].m, fm: models[deep].fm, count: 1 }],
   });
@@ -955,7 +955,7 @@ check("existing product pages still render", () => {
 
   assertPage(renderLanding({
     stats: { deals: 1, avgDisc: "17%", totalProfit: "€1 500" }, featured: deal,
-    depositEur: 5, depositCount: 0, host: HOST,
+    depositCount: 0, host: HOST,
   }), { indexable: true, label: "landing" });
 
   const w = renderModelWidget({ rec: models[deep], slug: deep, host: HOST });
@@ -1093,10 +1093,44 @@ check("brand and revenue copy: Carsbuyer everywhere, no single-revenue claim", (
     seller_type: "Particular",
   };
   const landing = renderLanding({ stats: { deals: 1, avgDisc: "17%", totalProfit: "€1 500" }, featured: deal,
-                                  depositEur: 5, depositCount: 0, host: HOST });
+                                  depositCount: 0, host: HOST });
   assert(!landing.includes("única receita"), "landing still says the deposit is the only revenue");
   assert(landing.includes('href="/vender"'), "landing seller chip does not lead to the seller hub");
   assert(!landing.includes("em breve"), "seller path is still a placeholder");
+});
+
+check("no public page still sells a deposit", () => {
+  const deal = {
+    olx_id: "ID1", brand: models[deep].b, model: models[deep].m, title: "Carro de teste",
+    price_eur: 7000, fair_median: 8500, fair_low: 7600, fair_high: 9400, discount_pct: 0.17,
+    est_profit_eur: 1500, year: 2014, mileage_km: 180000, fuel_type: "Diesel",
+    district: "Porto", photo_urls: [], days_on_market: 12, first_seen_at: "2026-08-01T00:00:00Z",
+    seller_type: "Particular", url: "https://www.olx.pt/d/anuncio/teste",
+  };
+  const car = renderCarPage({ deal, zone: "all", view: "comprar", depositCount: 0,
+                              modelHref: `/preco/${deep}`, host: HOST });
+  assertPage(car, { indexable: false, label: "car" });
+  assert(car.includes(`href="${deal.url}"`), "car page does not link the seller's OLX ad");
+  assert(car.includes('rel="noopener nofollow"'), "the OLX link lost rel=noopener nofollow");
+  assert(car.includes(deal.seller_type), "car page no longer names the seller type");
+
+  const pages = [
+    ["landing", renderLanding({ stats: { deals: 1, avgDisc: "17%", totalProfit: "€1 500" },
+                                featured: deal, depositCount: 0, host: HOST })],
+    ["grid", renderGrid({ deals: [deal], zone: "all", sort: "score", view: "comprar",
+                          depositCount: 0, zoneCounts: { all: 1, norte: 1, centro: 0, sul: 0 },
+                          host: HOST, builtAt })],
+    ["car", car],
+    ["avaliar", renderAvaliar({ rec: null, olxId: null, sourceUrl: null, query: "", models,
+                                spec: null, depositCount: 0, host: HOST, builtAt })],
+    ["privacidade", renderPrivacy({ depositCount: 0, host: HOST, contact: "x@y.pt" })],
+    ["sobre", renderAbout({ stats, host: HOST, depositCount: 0, builtAt })],
+  ];
+  for (const [label, html] of pages) {
+    for (const word of [/dep[óo]sito/i, /\bStripe\b/, /\/reservas/, /\/claim/, /desbloquear/i]) {
+      assert(!word.test(html), `${label} still says ${word}`);
+    }
+  }
 });
 
 check("titles lead with the number", () => {

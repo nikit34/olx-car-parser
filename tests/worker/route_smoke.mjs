@@ -404,7 +404,7 @@ await check("robots and llms.txt describe the new surface", async () => {
   assert(groups.length >= 8, `robots has ${groups.length} groups, expected the wildcard plus the answer engines`);
   for (const g of groups) {
     const who = g.split("\n")[0];
-    for (const path of ["/reservas", "/claim", "/reserve", "/unlocked", "/analytics", "/_olx"]) {
+    for (const path of ["/analytics", "/_olx", "/lead"]) {
       assert(g.includes(`Disallow: ${path}`), `${who} is not told to skip ${path}`);
     }
     assert(g.includes("Allow: /"), `${who} lost its Allow`);
@@ -422,15 +422,63 @@ await check("robots and llms.txt describe the new surface", async () => {
   }
 });
 
-await check("wrong method on a known path is a 404, not a 401", async () => {
-  const r = await get("/reserve");       // GET on a POST-only route
-  assert(r.status === 404, `→ ${r.status}`);
+await check("the deposit routes are gone and answer like any unknown path", async () => {
+  for (const path of ["/claim", "/reservas", "/unlocked", "/reserve"]) {
+    const r = await get(path);
+    assert(r.status === 404, `${path} → ${r.status}, expected 404`);
+  }
+  const posted = await get("/reserve", "POST");
+  assert(posted.status === 404, `POST /reserve → ${posted.status}, expected 404`);
+  const wh = await worker.fetch(
+    new Request(`https://${HOST}/webhook/stripe`, { method: "POST", body: "{}" }), env);
+  assert(wh.status === 404, `POST /webhook/stripe → ${wh.status}, expected 404`);
+  const robots = await (await get("/robots.txt")).text();
+  for (const gone of ["Disallow: /claim", "Disallow: /reserve", "Disallow: /unlocked", "Disallow: /reservas"]) {
+    assert(!robots.includes(gone), `robots.txt still carries "${gone}"`);
+  }
+  const hz = await (await get("/healthz?verbose=1")).json();
+  assert(!("stripe" in hz), "healthz verbose still reports a stripe key");
 });
 
-await check("the canonical-host redirect still bypasses the webhook", async () => {
-  const wh = await worker.fetch(
-    new Request("https://olx-car-parser.permikov134.workers.dev/webhook/stripe", { method: "POST", body: "{}" }), env);
-  assert(wh.status !== 301 && wh.status !== 308, `webhook was redirected (${wh.status})`);
+await check("a car page links the OLX ad and no page mentions a deposit", async () => {
+  const deal = {
+    olx_id: "TESTCAR1", brand: models[deep].b, model: models[deep].m, title: "Carro de teste",
+    price_eur: 7000, fair_median: 8500, fair_low: 7600, fair_high: 9400, discount_pct: 0.17,
+    est_profit_eur: 1500, year: 2014, mileage_km: 180000, fuel_type: "Diesel", district: "Porto",
+    photo_urls: [], days_on_market: 12, first_seen_at: "2026-08-01T00:00:00Z",
+    seller_type: "Particular", url: "https://www.olx.pt/d/anuncio/teste",
+  };
+  const kv2 = new Map();
+  const dealEnv = { ...env, KV: { ...env.KV,
+    async get(k, type) {
+      const v = kv2.get(k);
+      if (v === undefined) return null;
+      return type === "json" ? JSON.parse(v) : v;
+    },
+    async put(k, v) { kv2.set(k, v); } } };
+  const prev = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const u = typeof input === "string" ? input : input.url;
+    if (u.includes("hot_deals_")) return new Response(JSON.stringify({ deals: [deal] }), { status: 200 });
+    return prev(input, init);
+  };
+  try {
+    const r = await worker.fetch(new Request(`https://${HOST}/car?olx_id=TESTCAR1`), dealEnv);
+    assert(r.status === 200, `/car with a live deal → ${r.status}`);
+    const car = await r.text();
+    assert(car.includes(`href="${deal.url}"`), "/car does not link the seller's OLX ad");
+    assert(car.includes('rel="noopener nofollow"'), "the OLX link lost rel=noopener nofollow");
+    const feed = await (await worker.fetch(new Request(`https://${HOST}/mercado`), dealEnv)).text();
+    for (const word of [/dep[óo]sito/i, /\bStripe\b/, /\/reservas/, /\/claim/, /desbloquear/i]) {
+      assert(!word.test(car), `/car still says ${word}`);
+      assert(!word.test(feed), `/mercado still says ${word}`);
+    }
+  } finally {
+    globalThis.fetch = prev;
+  }
+});
+
+await check("the canonical-host redirect still bypasses healthz", async () => {
   const hz = await worker.fetch(new Request("https://olx-car-parser.permikov134.workers.dev/healthz"), env);
   assert(hz.status === 200, `healthz was redirected (${hz.status})`);
   const page = await worker.fetch(new Request("https://olx-car-parser.permikov134.workers.dev/precos"), env);
@@ -795,20 +843,8 @@ await check("a cacheable page carries nothing that belongs to one visitor", asyn
   const PUBLIC = ["/precos", `/preco/${deep}`, `/preco/${deep}/${deepYear}`, "/liquidez",
     "/depreciacao", "/comparar", "/metodologia", "/sobre", "/isv", "/privacidade",
     "/sobrevalorizados", "/mercado/indice"];
-  const UID = "deadbeefdeadbeefdeadbeefdeadbeef";
-  const stateful = { ...env, KV: { ...env.KV,
-    async list(arg) {
-      const prefix = (arg && arg.prefix) || "";
-      if (prefix === `unlock:${UID}:`) {
-        return { keys: [{ name: `${prefix}A1` }, { name: `${prefix}A2` }], list_complete: true };
-      }
-      return env.KV.list(arg);
-    } } };
   const withCookie = p => worker.fetch(new Request(`https://${HOST}${p}`,
-    { headers: { cookie: `fc_uid=${UID}` } }), stateful);
-  const sanity = await (await withCookie("/reservas")).text();
-  assert(/€10 em depósito/.test(sanity),
-    "the stub gives this visitor no deposits, so the comparison below would be vacuous");
+    { headers: { cookie: "fc_uid=deadbeefdeadbeefdeadbeefdeadbeef" } }), env);
   for (const p of PUBLIC) {
     const anon = await get(p);
     if (anon.status !== 200) continue;
@@ -820,7 +856,7 @@ await check("a cacheable page carries nothing that belongs to one visitor", asyn
     assert((await anon.text()) === (await mine.text()),
       `${p} renders differently for a visitor with a cookie — a shared cache would leak it`);
   }
-  for (const p of ["/", "/mercado", "/avaliar", "/reservas"]) {
+  for (const p of ["/", "/mercado", "/avaliar"]) {
     const r = await get(p);
     const cc = r.headers.get("cache-control") || "";
     assert(/private/.test(cc), `${p} carries per-visitor state but is cacheable (${cc})`);
@@ -832,7 +868,7 @@ await check("a cacheable page carries nothing that belongs to one visitor", asyn
 // 1101, and /healthz plus the sitemap stayed green the whole time.
 const PAGES = ["/", "/mercado", "/precos", "/privacidade", "/sobre", "/metodologia", "/isv",
   "/liquidez", "/depreciacao", "/comparar", "/mercado/indice", "/sobrevalorizados", "/avaliar",
-  "/reservas", "/car?olx_id=x", `/preco/${deep}`, `/preco/${deep}/${deepYear}`];
+  "/car?olx_id=x", `/preco/${deep}`, `/preco/${deep}/${deepYear}`];
 
 await check("a KV that fails every op degrades the page, never 500s", async () => {
   const bang = op => { throw new Error(`KV ${op} failed: 429 Too Many Requests`); };
@@ -846,19 +882,16 @@ await check("a KV that fails every op degrades the page, never 500s", async () =
   }
 });
 
-await check("a cookie-less render spends no KV list op", async () => {
-  // Every crawler hit arrives without the cookie, and one scan per render is
-  // what drained the daily list quota.
+await check("rendering a page spends no KV list op", async () => {
+  // One scan per render is what drained the daily list quota, and a cookie no
+  // longer buys anything: a returning visitor gets the same page as a crawler.
   let lists = 0;
   const counted = { ...env, KV: { ...env.KV, async list(arg) { lists++; return env.KV.list(arg); } } };
   for (const p of PAGES) await worker.fetch(new Request(`https://${HOST}${p}`), counted);
-  assert(lists === 0, `${lists} list op(s) on cookie-less renders`);
-
-  // A returning visitor is still scanned: that scan is what badges the tiles.
   const r = await worker.fetch(new Request(`https://${HOST}/mercado`,
     { headers: { cookie: "fc_uid=deadbeefdeadbeefdeadbeefdeadbeef" } }), counted);
   assert(r.status === 200, `returning visitor → ${r.status}`);
-  assert(lists === 1, `returning visitor spent ${lists} list op(s), expected 1`);
+  assert(lists === 0, `${lists} list op(s) on a plain render`);
 });
 
 // ── weekly index: the cron, and the honesty about gaps ──────────────────────
