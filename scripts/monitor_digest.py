@@ -138,6 +138,27 @@ def leads_summary(fetch, user, password, now, window_h=24):
     return [line], [], len(fresh)
 
 
+def clicks_summary(fetch, user, password, today):
+    if not user or not password:
+        return ["Клики на историю: нет доступа"], 0
+    auth = base64.b64encode(f"{user}:{password}".encode()).decode()
+    status, body = fetch(SITE + "/analytics/clicks.json", {"Authorization": f"Basic {auth}"})
+    if status != 200:
+        return [f"Клики на историю: clicks.json отвечает {status}"], 0
+    try:
+        days = json.loads(body).get("days", {})
+    except Exception:
+        return ["Клики на историю: clicks.json не читается"], 0
+    yesterday = (today - dt.timedelta(days=1)).isoformat()
+    week = {(today - dt.timedelta(days=i)).isoformat() for i in range(1, 8)}
+    y = days.get(yesterday, {})
+    y_total = sum(y.values())
+    w_total = sum(sum(v.values()) for d, v in days.items() if d in week)
+    detail = ", ".join(f"{k} {v}" for k, v in sorted(y.items(), key=lambda kv: -kv[1]) if v)
+    line = f"Клики на историю: вчера {y_total}" + (f" ({detail})" if detail else "") + f", за 7 дней {w_total}"
+    return [line], y_total
+
+
 def decode_header(value):
     if not value:
         return ""
@@ -283,17 +304,18 @@ def main(argv=None):
     site_lines, site_warn = check_site(http_get)
     rel_lines, rel_warn = check_release(http_get, env("GITHUB_TOKEN"), now)
     lead_lines, lead_warn, fresh_leads = leads_summary(http_get, env("ANALYTICS_USER"), env("ANALYTICS_PASS"), now)
+    click_lines, fresh_clicks = clicks_summary(http_get, env("ANALYTICS_USER"), env("ANALYTICS_PASS"), now.date())
     mail_lines, mail_new = mail_summary(lambda: imaplib.IMAP4_SSL("imap.yandex.com", 993),
                                         env("MAIL_IMAP_USER"), env("MAIL_IMAP_PASSWORD"), now - dt.timedelta(days=1))
     weekly = args.force or now.weekday() == 0
     press = press_reminder(now.date())
-    sections = [site_lines, rel_lines, lead_lines, mail_lines, press]
+    sections = [site_lines, rel_lines, lead_lines, click_lines, mail_lines, press]
     if weekly:
         sections.append(gsc_summary(http_post_json, env("GSC_ADC_JSON"), now.date()))
     warnings = site_warn + rel_warn + lead_warn
     text = build_digest(now, sections, warnings)
     print(text)
-    quiet = not warnings and not fresh_leads and not mail_new and not weekly and not press
+    quiet = not warnings and not fresh_leads and not fresh_clicks and not mail_new and not weekly and not press
     if quiet:
         print("\nnothing new, digest not sent")
         return 0

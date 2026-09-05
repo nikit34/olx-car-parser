@@ -1124,5 +1124,30 @@ await check("sitemap lastmod follows the page's own change stamp when the blob c
   }
 });
 
+await check("the history link is a counted redirect to the partner url", async () => {
+  const miss = await get("/ir/historico?from=ano");
+  assert(miss.status === 404, `redirect without a partner url → ${miss.status}`);
+  env.HISTORY_REPORT_URL = "https://partner.example/pt";
+  try {
+    const before = [...kv.keys()].filter(k => k.startsWith("click:hist:")).length;
+    const r = await worker.fetch(new Request(`https://${HOST}/ir/historico?from=ano`, { headers: { "user-agent": "Mozilla/5.0 (iPhone)" } }), env);
+    assert(r.status === 302 && r.headers.get("location") === "https://partner.example/pt", `redirect → ${r.status} ${r.headers.get("location")}`);
+    const keys = [...kv.keys()].filter(k => k.startsWith("click:hist:"));
+    assert(keys.length === before + 1 && keys.some(k => k.endsWith(":ano")), "click was not counted under its source");
+    const bot = await worker.fetch(new Request(`https://${HOST}/ir/historico?from=ano`, { headers: { "user-agent": "Googlebot/2.1" } }), env);
+    assert(bot.status === 302, `bot redirect → ${bot.status}`);
+    assert(kv.get(keys[0]) === "1", "a bot click was counted");
+    const odd = await worker.fetch(new Request(`https://${HOST}/ir/historico?from=<script>`, { headers: { "user-agent": "Mozilla/5.0" } }), env);
+    assert(odd.status === 302 && [...kv.keys()].some(k => k.endsWith(":outro")), "unknown source is not folded into outro");
+    const page = await (await get(`/preco/${deep}/${yearPageYears(models[deep])[0]}`)).text();
+    assert(page.includes('href="/ir/historico?from=ano"'), "year page history link does not go through the counter");
+    assert(!page.includes("partner.example"), "partner url leaks into the page instead of the redirect");
+    const admin = await get("/analytics/clicks.json");
+    assert(admin.status === 401, `clicks.json without auth → ${admin.status}`);
+    const robots = await (await get("/robots.txt")).text();
+    assert(robots.includes("Disallow: /ir/"), "robots does not block the redirect path");
+  } finally { delete env.HISTORY_REPORT_URL; }
+});
+
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall route checks passed");
 process.exit(failures ? 1 : 0);

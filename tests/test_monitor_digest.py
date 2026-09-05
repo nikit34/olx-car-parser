@@ -94,3 +94,13 @@ def test_press_reminder_only_inside_its_window():
     assert md.press_reminder(dt.date(2026, 9, 28))
     assert md.press_reminder(dt.date(2026, 10, 4))
     assert md.press_reminder(dt.date(2026, 10, 5)) == []
+
+
+def test_clicks_summary_reports_yesterday_and_the_week():
+    days = {"days": {"2026-09-02": {"ano": 3, "avaliar": 1}, "2026-08-20": {"ano": 9}, "2026-09-03": {"ano": 1}}}
+    fetch = fake_fetch({"clicks.json": (200, json.dumps(days).encode())})
+    lines, fresh = md.clicks_summary(fetch, "u", "p", dt.date(2026, 9, 3))
+    assert fresh == 4
+    assert "вчера 4 (ano 3, avaliar 1)" in lines[0] and "за 7 дней 4" in lines[0]
+    lines, fresh = md.clicks_summary(fetch, "u", "p", dt.date(2026, 9, 10))
+    assert fresh == 0 and "вчера 0" in lines[0] and "за 7 дней 1" in lines[0]

@@ -70,7 +70,7 @@ const ICON_PATHS = new Set([
 ]);
 
 const PRODUCT_PATHS = new Set([
-  "/", "/mercado", "/car", "/avaliar", "/lead",
+  "/", "/mercado", "/car", "/avaliar", "/lead", "/ir/historico",
   "/precos", "/sitemap.xml", "/robots.txt", "/llms.txt",
   // Приватность обязана быть здесь: гейт стоит ВЫШЕ её обработчика, и без
   // записи в этом списке Basic-Auth отдавал бы 401 и Googlebot, и человеку,
@@ -191,6 +191,10 @@ const worker = {
       if (pathname === "/analytics/leads.json") {
         if (!checkBasicAuth(request, env)) return unauthorized();
         return leadsJson(env);
+      }
+      if (pathname === "/analytics/clicks.json") {
+        if (!checkBasicAuth(request, env)) return unauthorized();
+        return clicksJson(env);
       }
       if (pathname === "/analytics" || pathname.startsWith("/analytics/")) {
         return handleAnalytics(request, env, url);
@@ -333,6 +337,7 @@ const worker = {
       if (pathname === "/car" && method === "GET") return handleCar(request, env, url);
       if (pathname === "/lead" && method === "POST") return handleLead(request, env, url);
       if (pathname === "/lead" && method === "GET") return redirect("/avaliar#escolher", 302);
+      if (pathname === "/ir/historico" && method === "GET") return handleHistoryRedirect(request, env, url);
       // Страница приватности публичная и индексируемая: на неё ссылается баннер
       // согласия, и за Basic-Auth она отдавала бы 401 и Googlebot, и человеку.
       if (pathname === "/privacidade" && method === "GET") {
@@ -1463,7 +1468,7 @@ async function handleLlmsTxt(request, env, url) {
 // /robots.txt — allow public, block transactional/internal, point at the sitemap.
 const ROBOTS_RULES = [
   "Allow: /",
-  "Disallow: /analytics", "Disallow: /_olx", "Disallow: /lead",
+  "Disallow: /analytics", "Disallow: /_olx", "Disallow: /lead", "Disallow: /ir/",
 ];
 
 async function handleRobots(request, env, url) {
@@ -2053,4 +2058,43 @@ async function handleGuide(request, env, url) {
   if (!guide) return notFoundPage(request, env, url);
   return withModels(request, env, url, ({ models, builtAt, depositCount, stats, market }) =>
     publicHtml(renderGuide({ guide, models, market, stats, host: url.host, depositCount, builtAt })));
+}
+
+const CLICK_TTL_SEC = 180 * 24 * 3600;
+const CLICK_SOURCES = new Set(["avaliar", "ano", "importar", "vender", "modelo", "outro"]);
+const BOT_UA = /bot|crawl|spider|slurp|fetch|monitor|headless/i;
+
+async function handleHistoryRedirect(request, env, url) {
+  const target = (env.HISTORY_REPORT_URL || "").trim();
+  if (!target) return notFoundPage(request, env, url);
+  const raw = (url.searchParams.get("from") || "outro").toString().toLowerCase();
+  const from = CLICK_SOURCES.has(raw) ? raw : "outro";
+  if (!BOT_UA.test(request.headers.get("user-agent") || "")) {
+    const key = `click:hist:${new Date().toISOString().slice(0, 10)}:${from}`;
+    try {
+      const cur = parseInt((await env.KV.get(key)) || "0", 10) || 0;
+      await env.KV.put(key, String(cur + 1), { expirationTtl: CLICK_TTL_SEC });
+    } catch (err) { console.warn("click count failed", err && err.message); }
+  }
+  return new Response(null, { status: 302, headers: { Location: target, "Cache-Control": "no-store" } });
+}
+
+async function clicksJson(env) {
+  const days = {};
+  let cursor;
+  for (let i = 0; i < 5; i++) {
+    const page = await env.KV.list({ prefix: "click:hist:", limit: 500, cursor });
+    for (const k of page.keys || []) {
+      const parts = k.name.split(":");
+      const day = parts[2], from = parts[3] || "outro";
+      const v = parseInt((await env.KV.get(k.name)) || "0", 10) || 0;
+      (days[day] = days[day] || {})[from] = v;
+    }
+    if (page.list_complete || !page.cursor) break;
+    cursor = page.cursor;
+  }
+  return new Response(JSON.stringify({ days }, null, 2), {
+    status: 200,
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
+  });
 }

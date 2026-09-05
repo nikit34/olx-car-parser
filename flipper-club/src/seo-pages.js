@@ -986,7 +986,7 @@ export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, d
     </section>`;
 
   const histBlock = historyUrl ? `<section class="section fc-wrap" style="padding-top:0;">${historyCheckBlock({
-    url: historyUrl,
+    url: historyUrl, from: "ano",
     title: `Antes de pagar ${FM} por um ${rec.b} ${rec.m} de ${year}, verifica o histórico`,
     reasons: [
       cell.km != null ? `Um ${B} ${M} de ${year} anda em mediana com ${fmtKm(cell.km)}: bem abaixo disso, confirma o conta-quilómetros nas inspeções anteriores.` : "",
@@ -3323,7 +3323,7 @@ export function renderImportPage({ rec, slug, costs, stats, hasModelPage = true,
       </ul>
     </section>
     ${historyUrl ? `<section class="section fc-wrap">${historyCheckBlock({
-      url: historyUrl,
+      url: historyUrl, from: "importar",
       title: `Num importado, o histórico é a parte que mais importa`,
       reasons: [
         "Um carro vindo de fora chega sem o registo português de inspeções e donos; o relatório internacional é a única forma de ver quilómetros e sinistros anteriores.",

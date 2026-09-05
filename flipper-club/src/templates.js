@@ -1571,7 +1571,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
     // Contextual link into the model SEO page, when this model has one.
     const modelHref = (rec.ms && models && models[rec.ms]) ? `/preco/${encodeURIComponent(rec.ms)}` : null;
     const sub = `${rec.y ?? "—"} · ${rec.km != null ? fmtKm(rec.km) : "—"} · ${escapeHtml(rec.fu || "—")}`;
-    const hist = historyCheckBlock({ url: historyUrl, reasons: historyReasons(rec, models), price });
+    const hist = historyCheckBlock({ url: historyUrl, reasons: historyReasons(rec, models), price, from: "avaliar" });
     const sellHref = (rec.ms && models && models[rec.ms])
       ? `/avaliar?modelo=${encodeURIComponent(rec.ms)}${rec.y ? `&ano=${encodeURIComponent(rec.y)}` : ""}#vender`
       : "/avaliar#escolher";
@@ -2348,8 +2348,9 @@ export function leadFormBlock({ slug = "", name = "", year = null, median = null
       </section>`;
 }
 
-export function historyCheckBlock({ url, reasons = [], price = null, title = null }) {
+export function historyCheckBlock({ url, reasons = [], price = null, title = null, from = "outro" }) {
   if (!url) return "";
+  const href = `/ir/historico?from=${encodeURIComponent(from)}`;
   const items = reasons.filter(Boolean).map(r => `<li style="margin:0 0 4px;">${r}</li>`).join("");
   const head = title || `Antes de pagar${price != null ? ` ${fmtEur(price)}` : ""}, verifica o histórico`;
   return `
@@ -2357,8 +2358,8 @@ export function historyCheckBlock({ url, reasons = [], price = null, title = nul
           <div style="font-weight:600;color:#16181D;font-size:14.5px;">${escapeHtml(head)}</div>
           <p style="font-size:13.5px;color:#5B606B;margin:6px 0 0;line-height:1.5;">Quilómetros reais, sinistros, número de donos e se veio do estrangeiro: o anúncio não diz, o relatório pela matrícula ou pelo VIN diz.${items ? " Neste caso há motivos concretos:" : ""}</p>
           ${items ? `<ul style="margin:8px 0 0;padding-left:18px;font-size:13.5px;color:#16181D;line-height:1.5;">${items}</ul>` : ""}
-          <a href="${escapeHtml(url)}" target="_blank" rel="nofollow sponsored noopener" class="btn-outline" style="display:inline-block;margin-top:12px;padding:10px 16px;font-size:13.5px;">Verificar o histórico do carro&nbsp;&nbsp;↗</a>
-          <div class="mono" style="font-size:11px;color:#9A9FA8;margin-top:8px;line-height:1.5;">Ligação de parceiro: se comprares um relatório, o Carsbuyer recebe uma comissão. O preço para ti é o mesmo e a avaliação não muda.</div>
+          <a href="${href}" target="_blank" rel="nofollow sponsored noopener" class="btn-outline" style="display:inline-block;margin-top:12px;padding:10px 16px;font-size:13.5px;">Verificar o histórico do carro&nbsp;&nbsp;↗</a>
+          <div class="mono" style="font-size:11px;color:#9A9FA8;margin-top:8px;line-height:1.5;">Relatório vendido pela carVertical, ligação de parceiro: se comprares um relatório, o Carsbuyer recebe uma comissão. O preço para ti é o mesmo e a avaliação não muda.</div>
         </div>`;
 }
 

@@ -1152,7 +1152,7 @@ check("titles lead with the number", () => {
   const yt = yp.match(/<title>([^<]*)<\/title>/)[1];
   assert(yt.includes("€") && yt.includes(String(y)), `year title has no number: ${yt}`);
   assert(yp.includes('rel="nofollow sponsored noopener"'), "year page history link is not marked sponsored");
-  assert(yp.includes("https://example.test/h"), "year page lost the partner link");
+  assert(yp.includes('href="/ir/historico?from=ano"') && !yp.includes("https://example.test/h"), "year page history link must go through the counted redirect");
 });
 
 check("the seller lead form and the history block render on /avaliar", () => {
@@ -1169,7 +1169,7 @@ check("the seller lead form and the history block render on /avaliar", () => {
   const pasted = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models, spec: null,
                                  depositCount: 0, host: HOST, builtAt, historyUrl: "https://example.test/h" });
   assert(pasted.includes('rel="nofollow sponsored noopener"'), "partner link is not marked sponsored");
-  assert(pasted.includes("https://example.test/h"), "history link is missing");
+  assert(pasted.includes('href="/ir/historico?from=avaliar"') && !pasted.includes("https://example.test/h"), "history link must go through the counted redirect");
   assert(pasted.includes("importação"), "import reason not listed");
   assert(pasted.includes("baixou 2 vezes"), "price-cut reason not listed");
   assert(pasted.includes("#vender"), "no path from a pasted listing to the seller form");
