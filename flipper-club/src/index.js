@@ -2062,7 +2062,7 @@ async function handleGuide(request, env, url) {
 
 const CLICK_TTL_SEC = 180 * 24 * 3600;
 const CLICK_SOURCES = new Set(["avaliar", "ano", "importar", "vender", "modelo", "outro"]);
-const BOT_UA = /bot|crawl|spider|slurp|fetch|monitor|headless/i;
+const BOT_UA = /bot|crawl|spider|slurp|fetch|monitor|headless|curl|wget|python/i;
 
 async function handleHistoryRedirect(request, env, url) {
   const target = (env.HISTORY_REPORT_URL || "").trim();
