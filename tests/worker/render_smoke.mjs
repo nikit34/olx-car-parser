@@ -12,7 +12,7 @@
 import { readFileSync } from "node:fs";
 import {
   renderLanding, renderGrid, renderCarPage, renderAvaliar, renderModelPage, renderModelsHub,
-  renderModelWidget, renderInfo, slugify, setAnalyticsId, renderPrivacy, ageTable,
+  renderModelWidget, renderInfo, slugify, setAnalyticsId, renderPrivacy, ageTable, monthTag,
 } from "../../flipper-club/src/templates.js";
 import {
   renderYearPage, renderNotFound, renderDepreciationPage, renderDepreciationHub,
@@ -1183,6 +1183,11 @@ check("titles lead with the number", () => {
   });
   const yt = yp.match(/<title>([^<]*)<\/title>/)[1];
   assert(yt.includes("€") && yt.includes(String(y)), `year title has no number: ${yt}`);
+  const mon = monthTag(builtAt);
+  for (const [label, title] of [["model", t], ["year", yt]]) {
+    assert(title.includes("preço"), `${label} title misses the word every ranking query uses: ${title}`);
+    assert(!mon || title.includes(mon), `${label} title carries no freshness stamp: ${title}`);
+  }
   assert(yp.includes('rel="nofollow sponsored noopener"'), "year page history link is not marked sponsored");
   assert(yp.includes('href="/ir/historico?from=ano"') && !yp.includes("https://example.test/h"), "year page history link must go through the counted redirect");
 });

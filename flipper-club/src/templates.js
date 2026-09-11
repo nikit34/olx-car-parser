@@ -857,6 +857,15 @@ function analyticsClick(name, params = {}) {
   return ` onclick="if(window.gtag)gtag('event',${attr(name)},${attr(params)})"`;
 }
 
+const MONTH_ABBR_PT = ["jan", "fev", "mar", "abr", "mai", "jun",
+  "jul", "ago", "set", "out", "nov", "dez"];
+
+export function monthTag(builtAt) {
+  const m = /^(\d{4})-(\d{2})/.exec(builtAt || "");
+  if (!m || +m[2] < 1 || +m[2] > 12) return "";
+  return `${MONTH_ABBR_PT[+m[2] - 1]}/${m[1]}`;
+}
+
 // ── Shell ─────────────────────────────────────────────────────────────────────
 export function layout({ title, body, zone, nav, depositCount, index = false, description = null,
                  canonical = null, jsonLd = null, host = null, image = null, type = "website",
@@ -955,7 +964,7 @@ ${consentBanner()}
 <footer class="footer">
   <div class="footer-in">
     <span class="mono">AVALIAÇÃO INDEPENDENTE&nbsp;· dados de anúncios públicos OLX&nbsp;· estimativas indicativas, não vinculativas&nbsp;· não somos stand nem intermediário</span>
-    <span class="mono"><a href="/precos" style="color:#5B606B;">Preços por modelo</a>&nbsp;· <a href="/depreciacao" style="color:#5B606B;">Desvalorização</a>&nbsp;· <a href="/comparar" style="color:#5B606B;">Comparar</a>&nbsp;· <a href="/liquidez" style="color:#5B606B;">Tempo de venda</a>&nbsp;· <a href="/mercado/indice" style="color:#5B606B;">Índice de mercado</a>&nbsp;· <a href="/avaliar" style="color:#5B606B;">Avaliar o meu carro</a>&nbsp;· <a href="/vender" style="color:#5B606B;">Vender o meu carro</a>&nbsp;· <a href="/guias" style="color:#5B606B;">Guias para vender</a></span>
+    <span class="mono"><a href="/precos" style="color:#5B606B;">Preços por modelo</a>&nbsp;· <a href="/depreciacao" style="color:#5B606B;">Desvalorização</a>&nbsp;· <a href="/comparar" style="color:#5B606B;">Comparar</a>&nbsp;· <a href="/liquidez" style="color:#5B606B;">Tempo de venda</a>&nbsp;· <a href="/mercado/indice" style="color:#5B606B;">Índice de mercado</a>&nbsp;· <a href="/avaliar" style="color:#5B606B;">Quanto vale o meu carro</a>&nbsp;· <a href="/vender" style="color:#5B606B;">Vender o meu carro</a>&nbsp;· <a href="/guias" style="color:#5B606B;">Guias para vender</a></span>
     <span class="mono"><a href="/metodologia" style="color:#5B606B;">Metodologia</a>&nbsp;· <a href="/sobre" style="color:#5B606B;">Quem somos</a>&nbsp;· <a href="/isv" style="color:#5B606B;">Simulador ISV</a>&nbsp;· <a href="/importar" style="color:#5B606B;">Importar da Alemanha</a>&nbsp;· Portugal&nbsp;🇵🇹</span>
   </div>
 </footer>
@@ -2195,7 +2204,7 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
     ],
   };
   return layout({
-    title: `${rec.b} ${rec.m} usado: ${FM} (${rec.n} anúncios) · quanto vale em Portugal`,
+    title: `${rec.b} ${rec.m} usado: preço ${FM}${monthTag(builtAt) ? ` em ${monthTag(builtAt)}` : ""} (${rec.n} anúncios)`,
     description: `${rec.b} ${rec.m} usado em Portugal: preço mediano ${FM} (intervalo ${FL}–${FH}), com base em ${rec.n} anúncios ativos no OLX. Preços por ano e avaliação independente grátis.`,
     canonical, jsonLd, body, zone: "all", nav: "precos", depositCount, index: true, host, altJson,
   });

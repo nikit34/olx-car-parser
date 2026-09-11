@@ -29,7 +29,7 @@
 
 import {
   layout, escapeHtml, fmtEur, fmtKm, fmtNum, fmtBuilt, slugify,
-  present, thumbBlock, gradeChip, historyCheckBlock, leadFormBlock,
+  present, thumbBlock, gradeChip, historyCheckBlock, leadFormBlock, monthTag,
 } from "./templates.js";
 
 // ── Publishing thresholds ────────────────────────────────────────────────────
@@ -1083,8 +1083,8 @@ export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, d
   };
 
   return layout({
-    title: `${rec.b} ${rec.m} ${year} usado: ${FM} (${cell.n} anúncios) · quanto vale`,
-    description: `${rec.b} ${rec.m} de ${year} usado: preço mediano ${FM} (${FL}–${FH}) em ${cell.n} ${sample} do OLX Portugal${cell.km != null ? `, ${fmtKm(cell.km)} medianos` : ""}. Avaliação independente.`,
+    title: `${rec.b} ${rec.m} ${year} usado: preço ${FM}${monthTag(builtAt) ? ` em ${monthTag(builtAt)}` : ""} (${cell.n} anúncios)`,
+    description: `${rec.b} ${rec.m} de ${year} usado: preço mediano ${FM} (${FL}–${FH}) em ${cell.n} ${sample} do OLX Portugal${cell.km != null ? `, ${fmtKm(cell.km)} medianos` : ""}. Avaliação independente, atualizada${(builtAt || "").slice(0, 10) ? ` a ${(builtAt || "").slice(0, 10)}` : ""}.`,
     canonical, jsonLd, body, zone: "all", nav: "precos", depositCount, index: true, host,
     altJson: `${canonical}.json`,
   });
@@ -3048,7 +3048,7 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
   }
 
   return layout({
-    title: `${titlePhrase} usado: ${fmtEur(cell.fm)} (${cell.n} anúncios) · quanto vale`,
+    title: `${titlePhrase} usado: preço ${fmtEur(cell.fm)}${monthTag(builtAt) ? ` em ${monthTag(builtAt)}` : ""} (${cell.n} anúncios)`,
     description: `${titlePhrase}: preço mediano ${fmtEur(cell.fm)} (${fmtEur(cell.fl)}–${fmtEur(cell.fh)}) em ${cell.n} anúncios ativos do OLX Portugal.${ageMoves ? ` Ajustado pela idade, o corte pede ${more(age.pct)} ${agePct}% do que ${refAll}.` : ""}`,
     canonical, body, zone: "all", nav: "precos", depositCount, index: true, host, altJson,
     jsonLd: {
