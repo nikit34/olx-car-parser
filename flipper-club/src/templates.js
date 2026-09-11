@@ -851,6 +851,12 @@ function analyticsEvent(name, params = {}) {
   return `<script>if(typeof gtag==='function')gtag('event',${JSON.stringify(name)},${payload});</script>`;
 }
 
+function analyticsClick(name, params = {}) {
+  if (!GA4_MEASUREMENT_ID) return "";
+  const attr = v => JSON.stringify(v).replace(/</g, "\\u003c").replace(/"/g, "&quot;");
+  return ` onclick="if(window.gtag)gtag('event',${attr(name)},${attr(params)})"`;
+}
+
 // ── Shell ─────────────────────────────────────────────────────────────────────
 export function layout({ title, body, zone, nav, depositCount, index = false, description = null,
                  canonical = null, jsonLd = null, host = null, image = null, type = "website",
@@ -1220,7 +1226,7 @@ export function renderGrid({ deals, zone, sort, view, depositCount,
 }
 
 // ── Car detail (/car) ───────────────────────────────────────────────────────────
-export function renderCarPage({ deal, zone, view, depositCount, modelHref, host }) {
+export function renderCarPage({ deal, zone, view, depositCount, modelHref, host, historyUrl = null }) {
   const p = present(deal);
   const lens = view === "revender" ? "revender" : "comprar";
   const photos = p.photos;
@@ -1316,11 +1322,12 @@ export function renderCarPage({ deal, zone, view, depositCount, modelHref, host 
             <div><div class="nm">${escapeHtml(p.sellerType)}</div><div class="meta">Anúncio público no OLX</div></div>
           </div>
           <div class="olx-row">
-            <a class="olx-btn" href="${escapeHtml(deal.url || "#")}" target="_blank" rel="noopener nofollow">Abrir anúncio no OLX&nbsp;&nbsp;↗</a>
+            <a class="olx-btn" href="${escapeHtml(deal.url || "#")}" target="_blank" rel="noopener nofollow"${analyticsClick("olx_open", { source: "car", olx_id: String(deal.olx_id || "") })}>Abrir anúncio no OLX&nbsp;&nbsp;↗</a>
           </div>
           ${originNote}
         </div>
-      </div>`;
+      </div>
+      ${historyCheckBlock({ url: historyUrl, from: "car", price: deal.price_eur != null ? deal.price_eur : null })}`;
 
   const locBits = [p.loc, p.firstSeenDays != null ? `há ${p.firstSeenDays}d` : null, p.sellerType].filter(Boolean).join(" · ");
 
@@ -1600,7 +1607,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
         ${sellLine}
         ${stallBlock}
         ${hist}
-        ${olxHref ? `<a class="olx-btn" style="display:block;margin-top:18px;" href="${escapeHtml(olxHref)}" target="_blank" rel="noopener nofollow">Ver anúncio original&nbsp;&nbsp;↗</a>` : ""}
+        ${olxHref ? `<a class="olx-btn" style="display:block;margin-top:18px;" href="${escapeHtml(olxHref)}" target="_blank" rel="noopener nofollow"${analyticsClick("olx_open", { source: "avaliar", olx_id: String(olxId || "") })}>Ver anúncio original&nbsp;&nbsp;↗</a>` : ""}
         ${whatsappShare(`${rec.t || "Viatura"}: pedido ${fmtEur(price)}, justo ${fmtEur(fm)} (${fmtEur(fl)}–${fmtEur(fh)}). Avaliação independente:`, host ? `https://${host}/avaliar?q=${encodeURIComponent(olxId || "")}` : "")}
         ${modelHref ? `<a href="${modelHref}" style="display:block;text-align:center;margin-top:12px;font-size:13.5px;color:#177A47;font-weight:600;">Ver preços deste modelo por ano&nbsp;→</a>` : ""}
         <a href="${sellHref}" style="display:block;text-align:center;margin-top:10px;font-size:13.5px;color:#5B606B;">É o teu carro? Recebe propostas de compra&nbsp;→</a>
@@ -2358,7 +2365,7 @@ export function historyCheckBlock({ url, reasons = [], price = null, title = nul
           <div style="font-weight:600;color:#16181D;font-size:14.5px;">${escapeHtml(head)}</div>
           <p style="font-size:13.5px;color:#5B606B;margin:6px 0 0;line-height:1.5;">Quilómetros reais, sinistros, número de donos e se veio do estrangeiro: o anúncio não diz, o relatório pela matrícula ou pelo VIN diz.${items ? " Neste caso há motivos concretos:" : ""}</p>
           ${items ? `<ul style="margin:8px 0 0;padding-left:18px;font-size:13.5px;color:#16181D;line-height:1.5;">${items}</ul>` : ""}
-          <a href="${href}" target="_blank" rel="nofollow sponsored noopener" class="btn-outline" style="display:inline-block;margin-top:12px;padding:10px 16px;font-size:13.5px;">Verificar o histórico do carro&nbsp;&nbsp;↗</a>
+          <a href="${href}" target="_blank" rel="nofollow sponsored noopener"${analyticsClick("history_check", { from })} class="btn-outline" style="display:inline-block;margin-top:12px;padding:10px 16px;font-size:13.5px;">Verificar o histórico do carro&nbsp;&nbsp;↗</a>
           <div class="mono" style="font-size:11px;color:#9A9FA8;margin-top:8px;line-height:1.5;">Relatório vendido pela carVertical, ligação de parceiro: se comprares um relatório, o Carsbuyer recebe uma comissão. O preço para ti é o mesmo e a avaliação não muda.</div>
         </div>`;
 }

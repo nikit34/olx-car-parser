@@ -1660,6 +1660,7 @@ async function handleCar(request, env, url) {
   const modelHref = (models && models[mslug]) ? `/preco/${encodeURIComponent(mslug)}` : null;
   return html(renderCarPage({
     deal, zone, view, depositCount: null, modelHref, host: url.host,
+    historyUrl: env.HISTORY_REPORT_URL || null,
   }), 200);
 }
 
@@ -2061,7 +2062,7 @@ async function handleGuide(request, env, url) {
 }
 
 const CLICK_TTL_SEC = 180 * 24 * 3600;
-const CLICK_SOURCES = new Set(["avaliar", "ano", "importar", "vender", "modelo", "outro"]);
+const CLICK_SOURCES = new Set(["avaliar", "ano", "car", "importar", "vender", "modelo", "outro"]);
 const BOT_UA = /bot|crawl|spider|slurp|fetch|monitor|headless|curl|wget|python/i;
 
 async function handleHistoryRedirect(request, env, url) {

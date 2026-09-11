@@ -1035,6 +1035,38 @@ check("the valuation event still fires on both /avaliar paths", () => {
   assert(!bare.includes("valuation_result"), "valuation event fired with no result and no measurement id");
 });
 
+check("the money clicks fire their own events", () => {
+  setAnalyticsId("G-TESTONLY");
+  const slug = deep;
+  const rec = { t: "VW Golf", y: 2015, km: 40000, fu: "Diesel", p: 9000, fl: 9500, fm: 11000, fh: 12500,
+                imp: 1, ms: slug, sd: 20, dom: 70 };
+  const pasted = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models, spec: null,
+                                 depositCount: 0, host: HOST, builtAt, historyUrl: "https://example.test/h" });
+  assert(/href="\/ir\/historico\?from=avaliar"[^>]*onclick="[^"]*history_check/.test(pasted),
+    "the counted history redirect is same-origin, so without its own event GA never sees the click");
+  assert(pasted.includes("&quot;from&quot;:&quot;avaliar&quot;"), "history event lost its source page");
+  assert(/olx-btn[^>]*onclick="[^"]*olx_open/.test(pasted), "no event on the OLX link of a pasted listing");
+  const deal = {
+    olx_id: "ID1", brand: models[deep].b, model: models[deep].m, title: "Carro de teste",
+    price_eur: 7000, fair_median: 8500, fair_low: 7600, fair_high: 9400, discount_pct: 0.17,
+    est_profit_eur: 1500, year: 2014, mileage_km: 180000, fuel_type: "Diesel",
+    city: "Porto", seller_type: "Particular", photos: [], url: "https://www.olx.pt/x.html",
+  };
+  const car = renderCarPage({ deal, zone: "all", view: "comprar", depositCount: 0,
+                              modelHref: `/preco/${deep}`, host: HOST, historyUrl: "https://example.test/h" });
+  assert(/href="\/ir\/historico\?from=car"[^>]*onclick="[^"]*history_check/.test(car),
+    "the deal page a buyer reaches from the feed carries no history CTA");
+  assert(/olx-btn[^>]*onclick="[^"]*olx_open/.test(car), "no event on the OLX link of the deal page");
+  const carNoPartner = renderCarPage({ deal, zone: "all", view: "comprar", depositCount: 0,
+                                       modelHref: `/preco/${deep}`, host: HOST });
+  assert(!carNoPartner.includes("ir/historico"), "history block rendered with no partner url configured");
+  setAnalyticsId("");
+  const off = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models, spec: null,
+                              depositCount: 0, host: HOST, builtAt, historyUrl: "https://example.test/h" });
+  assert(!off.includes("history_check") && !off.includes("olx_open"),
+    "click events fired with no measurement id");
+});
+
 check("the negotiation facts show up on a pasted listing", () => {
   const rec = { t: "VW Golf 1.6 TDI", y: 2015, km: 150000, fu: "Diesel", p: 9000,
                 fl: 9500, fm: 11000, fh: 12500, ct: "Porto", sd: 29, dom: 68,
