@@ -599,6 +599,8 @@ jobs:
           TRAIN_RC: ${{ steps.train_model.outputs.train_rc }}
           ANOM_RC: ${{ steps.train_aux_models.outputs.anomaly_rc }}
           HAZ_RC: ${{ steps.train_aux_models.outputs.hazard_rc }}
+          DASH_OUTCOME: ${{ steps.build_dashboard.outcome }}
+          HOT_OUTCOME: ${{ steps.build_hot_deals.outcome }}
         run: |
           assets=()
           if [ "$TRAIN_RC" = "0" ]; then
@@ -619,16 +621,25 @@ jobs:
             echo "::warning::Skipping hazard metrics — train-hazard rc=${HAZ_RC:-<unset>}"
           fi
 
-          if [ -d data/dashboard ] && [ -f data/dashboard/manifest.json ]; then
+          if [ "$DASH_OUTCOME" != "success" ]; then
+            echo "::warning::Skipping dashboard witness upload — build-dashboard outcome=${DASH_OUTCOME:-<unset>}"
+          elif [ -d data/dashboard ] && [ -f data/dashboard/manifest.json ]; then
             assets+=(data/dashboard/*.parquet data/dashboard/*.json)
           else
             echo "::warning::Skipping dashboard witness upload — data/dashboard/manifest.json missing"
           fi
 
-          if [ -d data/hot_deals ]; then
+          if [ "$HOT_OUTCOME" != "success" ]; then
+            echo "::warning::Skipping hot_deals upload — build-hot_deals outcome=${HOT_OUTCOME:-<unset>}"
+          elif [ -d data/hot_deals ]; then
             assets+=(data/hot_deals/hot_deals_*.json)
           else
             echo "::warning::Skipping hot_deals upload — data/hot_deals/ missing"
+          fi
+
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "::warning::Nothing fresh to publish — leaving the release untouched"
+            exit 0
           fi
 
           .venv/bin/python -m scripts.release_chunks publish "${assets[@]}" \
