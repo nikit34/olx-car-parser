@@ -51,8 +51,26 @@ jobs:
 
       - name: Set up Python venv
         run: |
-          /opt/homebrew/bin/python3.14 -m venv .venv 2>/dev/null || true
-          .venv/bin/pip install -q -e .
+          if ! .venv/bin/python -m pip --version >/dev/null 2>&1; then
+            BUILT=""
+            for PY in /opt/homebrew/bin/python3.14 /opt/homebrew/bin/python3.13 \
+                      /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3.11; do
+              [ -x "$PY" ] || continue
+              rm -rf .venv
+              if "$PY" -m venv .venv && .venv/bin/python -m pip --version >/dev/null 2>&1; then
+                BUILT="$PY"
+                break
+              fi
+              echo "::warning::$PY cannot build a venv with a working pip on this runner"
+            done
+            if [ -z "$BUILT" ]; then
+              rm -rf .venv
+              echo "::error::no interpreter on this runner can build a venv with pip"
+              exit 1
+            fi
+            echo "venv rebuilt with $BUILT ($("$BUILT" -V))"
+          fi
+          .venv/bin/python -m pip install -q -e .
 
       - name: Read the German side
         id: crawl
