@@ -1,0 +1,160 @@
+name: EU market (AutoScout24 DE/FR/IT)
+
+on:
+  schedule:
+    - cron: "53 1 * * *"
+  workflow_dispatch:
+    inputs:
+      budget:
+        description: "Hard cap on AutoScout24 requests per country this run"
+        type: string
+        default: "450"
+      countries:
+        description: "Comma-separated country codes to crawl, train and build"
+        type: string
+        default: "DE,FR,IT"
+
+concurrency:
+  group: scrape-job
+  cancel-in-progress: false
+
+jobs:
+  eu-market:
+    runs-on: [self-hosted, olx-scraper]
+    timeout-minutes: 150
+
+    env:
+      OLX_DB_URL: ${{ secrets.OLX_DB_URL }}
+      COUNTRIES: ${{ inputs.countries || 'DE,FR,IT' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Link persistent data directory
+        run: |
+          rm -rf data
+          ln -s /Users/anastasia/olx-car-parser/data data
+
+      - name: Set up Python venv
+        run: |
+          if ! .venv/bin/python -m pip --version >/dev/null 2>&1; then
+            BUILT=""
+            for PY in /opt/homebrew/bin/python3.14 /opt/homebrew/bin/python3.13 \
+                      /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3.11; do
+              [ -x "$PY" ] || continue
+              rm -rf .venv
+              if "$PY" -m venv .venv && .venv/bin/python -m pip --version >/dev/null 2>&1; then
+                BUILT="$PY"
+                break
+              fi
+              echo "::warning::$PY cannot build a venv with a working pip on this runner"
+            done
+            if [ -z "$BUILT" ]; then
+              rm -rf .venv
+              echo "::error::no interpreter on this runner can build a venv with pip"
+              exit 1
+            fi
+            echo "venv rebuilt with $BUILT ($("$BUILT" -V))"
+          fi
+          .venv/bin/python -m pip install -q -e .
+
+      - name: Crawl AutoScout24
+        id: crawl
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          set +e
+          args=()
+          IFS=',' read -ra CCS <<< "$COUNTRIES"
+          for cc in "${CCS[@]}"; do
+            cc="$(echo "$cc" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')"
+            [ -n "$cc" ] && args+=(--country "$cc")
+          done
+          .venv/bin/python scripts/crawl_eu_market.py \
+            --budget "${{ inputs.budget || '450' }}" "${args[@]}"
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          if [ $rc -eq 2 ]; then
+            echo "::warning::AutoScout24 asked us to back off — run stopped early, tomorrow picks up"
+            exit 0
+          fi
+          exit $rc
+
+      - name: Train price models per country
+        id: train
+        if: ${{ !cancelled() }}
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          trained=()
+          IFS=',' read -ra CCS <<< "$COUNTRIES"
+          for cc in "${CCS[@]}"; do
+            cc="$(echo "$cc" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')"
+            [ -n "$cc" ] || continue
+            if .venv/bin/python -m src.cli train-model --country "$cc"; then
+              trained+=("$cc")
+            else
+              echo "::warning::train-model --country $cc produced no bundle (row floor or training error) — its pages ship asking-only"
+            fi
+          done
+          echo "trained=$(IFS=,; echo "${trained[*]}")" >> "$GITHUB_OUTPUT"
+
+      - name: Build country blobs
+        id: build_blobs
+        if: ${{ !cancelled() }}
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          args=()
+          IFS=',' read -ra CCS <<< "$COUNTRIES"
+          for cc in "${CCS[@]}"; do
+            cc="$(echo "$cc" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')"
+            [ -n "$cc" ] && args+=(--country "$cc")
+          done
+          .venv/bin/python scripts/build_country_blobs.py "${args[@]}"
+
+      - name: Upload country blobs + model metrics to GitHub Releases
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+          BLOBS_OUTCOME: ${{ steps.build_blobs.outcome }}
+          TRAINED: ${{ steps.train.outputs.trained }}
+        run: |
+          assets=()
+          if [ "$BLOBS_OUTCOME" != "success" ]; then
+            echo "::warning::Skipping country blob upload — build outcome=${BLOBS_OUTCOME:-<unset>}"
+          elif [ -d data/intl ]; then
+            for f in data/intl/*.json; do
+              [ -f "$f" ] && assets+=("$f")
+            done
+          else
+            echo "::warning::Skipping country blob upload — data/intl/ missing"
+          fi
+
+          IFS=',' read -ra TRAINED_CCS <<< "$TRAINED"
+          for cc in "${TRAINED_CCS[@]}"; do
+            lc="$(echo "$cc" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+            [ -n "$lc" ] || continue
+            for f in data/price_metrics_${lc}.json data/price_importance_${lc}.json \
+                     data/price_grouped_importance_${lc}.json \
+                     data/price_shap_importance_${lc}.json; do
+              [ -f "$f" ] && assets+=("$f")
+            done
+          done
+
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "::warning::Nothing fresh to publish — leaving the release untouched"
+            exit 0
+          fi
+
+          .venv/bin/python -m scripts.release_chunks publish "${assets[@]}" \
+            || echo "::warning::some assets did not reach the release"
+
+      - name: Audit the release
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+          PYTHONPATH: ${{ github.workspace }}
+        run: .venv/bin/python -m scripts.audit_release --heal

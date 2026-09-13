@@ -106,3 +106,50 @@ class TestFreshness:
 
     def test_absent_assets_are_left_to_the_missing_check(self):
         assert "models.json" not in audit_release.stale_assets(self._times({}))
+
+
+class TestOptionalCountryBlobs:
+    """The per-country blobs are reported, never required: a market that has
+    not shipped yet must not turn the Portuguese release red."""
+
+    def test_country_blobs_are_outside_the_required_set(self):
+        assert audit_release.INTL_ASSETS
+        assert not set(audit_release.INTL_ASSETS) & audit_release.expected()
+        assert "hot_deals_de_all.json" in audit_release.INTL_ASSETS
+
+    def test_missing_country_blobs_are_noticed_but_pass(self, complete, capsys):
+        assert audit_release.main([]) == 0
+        out = capsys.readouterr().out
+        assert "models_de.json" in out
+        assert "::error::" not in out
+
+    def test_present_country_blobs_are_not_reported(self, complete, monkeypatch, capsys):
+        assets = complete | set(audit_release.INTL_ASSETS)
+        monkeypatch.setattr(audit_release, "asset_times", lambda: _fresh(assets))
+        assert audit_release.main([]) == 0
+        assert "models_de.json" not in capsys.readouterr().out
+
+    def test_stale_country_blob_is_reported_not_failed(self, complete, monkeypatch, capsys):
+        times = _fresh(complete | set(audit_release.INTL_ASSETS))
+        times["models_de.json"] -= audit_release.timedelta(hours=50)
+        monkeypatch.setattr(audit_release, "asset_times", lambda: times)
+        assert audit_release.main([]) == 0
+        out = capsys.readouterr().out
+        assert "models_de.json has not been refreshed for 50h" in out
+        assert "::error::" not in out
+
+    def test_missing_country_blob_does_not_block_a_healed_release(
+            self, complete, monkeypatch, tmp_path):
+        state = {"assets": complete - {"models.json"}}
+        monkeypatch.setattr(audit_release, "asset_times", lambda: _fresh(state["assets"]))
+        local = tmp_path / "models.json"
+        local.write_text("{}")
+        monkeypatch.setattr(audit_release, "local_copy",
+                            lambda n: local if n == "models.json" else None)
+
+        def _publish(paths):
+            state["assets"] = state["assets"] | {p.name for p in paths}
+            return 0
+
+        monkeypatch.setattr(audit_release, "publish", _publish)
+        assert audit_release.main(["--heal"]) == 0

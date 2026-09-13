@@ -53,6 +53,15 @@ _METRICS_PATH = _MODEL_DIR / "price_metrics.json"
 _IMPORTANCE_PATH = _MODEL_DIR / "price_importance.json"
 _GROUPED_IMPORTANCE_PATH = _MODEL_DIR / "price_grouped_importance.json"
 _SHAP_IMPORTANCE_PATH = _MODEL_DIR / "price_shap_importance.json"
+_ARTIFACT_FILES = {
+    "model": "price_model.joblib",
+    "metrics": "price_metrics.json",
+    "importance": "price_importance.json",
+    "grouped_importance": "price_grouped_importance.json",
+    "shap_importance": "price_shap_importance.json",
+}
+_DEFAULT_ARTIFACT_PATHS = {key: _MODEL_DIR / name for key, name in _ARTIFACT_FILES.items()}
+_HOME_COUNTRY = "PT"
 _MODEL_MAX_AGE_HOURS = 24
 _MIN_CATEGORY_COUNT = 3
 _OTHER_CATEGORY = "__other__"
@@ -1806,6 +1815,49 @@ def compute_price_contributions(
 # Model persistence
 # ---------------------------------------------------------------------------
 
+def _country_suffix(country: str | None) -> str:
+    """``""`` for the home market, ``_de`` / ``_fr`` / ``_it`` for any other."""
+    cc = (country or _HOME_COUNTRY).strip().upper()
+    if len(cc) != 2 or not cc.isalpha():
+        raise ValueError(f"country must be a two-letter ISO code, got {country!r}")
+    return "" if cc == _HOME_COUNTRY else f"_{cc.lower()}"
+
+
+def artifact_paths(country: str | None = None) -> dict[str, Path]:
+    """Where one market's price-model bundle and its companion files live.
+
+    Keys: ``model``, ``metrics``, ``importance``, ``grouped_importance``,
+    ``shap_importance``. The home market (``None`` or ``"PT"``) keeps today's
+    file names; every other country gets ``_{cc}`` before the extension
+    (``price_model_de.joblib``, ``price_metrics_de.json``, ...), so several
+    markets' bundles sit side by side in ``_MODEL_DIR`` and none of them can
+    overwrite the Portuguese one.
+
+    Resolved at call time from the module constants, so a test may point
+    either ``_MODEL_DIR`` or an individual ``_MODEL_PATH``-style constant at a
+    temporary directory: an individual constant that was reassigned wins,
+    everything else follows ``_MODEL_DIR``.
+    """
+    suffix = _country_suffix(country)
+    if suffix:
+        out: dict[str, Path] = {}
+        for key, name in _ARTIFACT_FILES.items():
+            stem, ext = name.rsplit(".", 1)
+            out[key] = _MODEL_DIR / f"{stem}{suffix}.{ext}"
+        return out
+    current = {
+        "model": _MODEL_PATH,
+        "metrics": _METRICS_PATH,
+        "importance": _IMPORTANCE_PATH,
+        "grouped_importance": _GROUPED_IMPORTANCE_PATH,
+        "shap_importance": _SHAP_IMPORTANCE_PATH,
+    }
+    return {
+        key: (path if path != _DEFAULT_ARTIFACT_PATHS[key] else _MODEL_DIR / _ARTIFACT_FILES[key])
+        for key, path in current.items()
+    }
+
+
 def save_model(
     models: dict[str, lgb.LGBMRegressor],
     cat_maps: dict[str, dict[str, int]],
@@ -1813,9 +1865,15 @@ def save_model(
     oof_preds: dict[str, tuple[float, float, float]] | None = None,
     median_calibrator: IsotonicRegression | None = None,
     uncertainty_bundle: tuple[lgb.LGBMRegressor, float] | None = None,
+    country: str | None = None,
 ) -> None:
-    """Save trained model bundle to disk and append metrics to history."""
-    _MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    """Save trained model bundle to disk and append metrics to history.
+
+    ``country`` selects the market's artefact set (see ``artifact_paths``);
+    the default writes the Portuguese bundle exactly as before.
+    """
+    model_path = artifact_paths(country)["model"]
+    model_path.parent.mkdir(parents=True, exist_ok=True)
     bundle = {
         "schema_version": _SCHEMA_VERSION,
         "feature_names": list(_ALL_FEATURES),
@@ -1827,12 +1885,13 @@ def save_model(
         "uncertainty_bundle": uncertainty_bundle,
         "saved_at": datetime.now(timezone.utc).isoformat(),
     }
-    joblib.dump(bundle, _MODEL_PATH)
-    _append_metrics(dict(metrics))
+    joblib.dump(bundle, model_path)
+    _append_metrics(dict(metrics), country=country)
 
 
 def load_model(
     max_age_hours: float = _MODEL_MAX_AGE_HOURS,
+    country: str | None = None,
 ) -> tuple[
     dict, dict, dict, dict, IsotonicRegression | None,
     tuple[lgb.LGBMRegressor, float] | None,
@@ -1851,14 +1910,18 @@ def load_model(
 
     Returning None falls through to "no fresh model" — the dashboard then logs
     a warning and skips price predictions until the next CI training run.
+
+    ``country`` reads that market's bundle (``artifact_paths``); the default
+    is the Portuguese one.
     """
-    if not _MODEL_PATH.exists():
+    model_path = artifact_paths(country)["model"]
+    if not model_path.exists():
         return None
-    age_hours = (time.time() - _MODEL_PATH.stat().st_mtime) / 3600
+    age_hours = (time.time() - model_path.stat().st_mtime) / 3600
     if age_hours > max_age_hours:
         return None
     try:
-        bundle = joblib.load(_MODEL_PATH)
+        bundle = joblib.load(model_path)
         if bundle.get("schema_version") != _SCHEMA_VERSION:
             return None
         if bundle.get("feature_names") != list(_ALL_FEATURES):
@@ -1875,12 +1938,13 @@ def load_model(
         return None
 
 
-def _append_metrics(metrics: dict) -> None:
+def _append_metrics(metrics: dict, country: str | None = None) -> None:
     """Append metrics entry to the JSON history file."""
+    metrics_path = artifact_paths(country)["metrics"]
     history: list[dict] = []
-    if _METRICS_PATH.exists():
+    if metrics_path.exists():
         try:
-            history = json.loads(_METRICS_PATH.read_text())
+            history = json.loads(metrics_path.read_text())
         except (json.JSONDecodeError, ValueError):
             pass
     history.append({
@@ -1888,20 +1952,36 @@ def _append_metrics(metrics: dict) -> None:
         **metrics,
     })
     history = history[-100:]
-    _METRICS_PATH.write_text(json.dumps(history, indent=2))
+    metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    metrics_path.write_text(json.dumps(history, indent=2))
 
 
-def load_metrics_history() -> list[dict]:
+def load_metrics_history(country: str | None = None) -> list[dict]:
     """Load full metrics history for dashboard display."""
-    if not _METRICS_PATH.exists():
+    metrics_path = artifact_paths(country)["metrics"]
+    if not metrics_path.exists():
         return []
     try:
-        return json.loads(_METRICS_PATH.read_text())
+        return json.loads(metrics_path.read_text())
     except (json.JSONDecodeError, ValueError):
         return []
 
 
-def save_importance(importance_df: pd.DataFrame) -> None:
+def _write_frame(path: Path, frame: pd.DataFrame) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(frame.to_json(orient="records"))
+
+
+def _read_frame(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_json(path, orient="records")
+    except (ValueError, json.JSONDecodeError):
+        return pd.DataFrame()
+
+
+def save_importance(importance_df: pd.DataFrame, country: str | None = None) -> None:
     """Persist permutation importance next to the model.
 
     Computed once at training time and shipped in the data release so the
@@ -1909,18 +1989,12 @@ def save_importance(importance_df: pd.DataFrame) -> None:
     """
     if importance_df is None or importance_df.empty:
         return
-    _MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    _IMPORTANCE_PATH.write_text(importance_df.to_json(orient="records"))
+    _write_frame(artifact_paths(country)["importance"], importance_df)
 
 
-def load_importance() -> pd.DataFrame:
+def load_importance(country: str | None = None) -> pd.DataFrame:
     """Return the shipped importance frame, or empty if missing."""
-    if not _IMPORTANCE_PATH.exists():
-        return pd.DataFrame()
-    try:
-        return pd.read_json(_IMPORTANCE_PATH, orient="records")
-    except (ValueError, json.JSONDecodeError):
-        return pd.DataFrame()
+    return _read_frame(artifact_paths(country)["importance"])
 
 
 # ---------------------------------------------------------------------------
@@ -2104,25 +2178,19 @@ def compute_grouped_permutation_importance(
     return imp.sort_values("median_importance", ascending=False).reset_index(drop=True)
 
 
-def save_grouped_importance(importance_df: pd.DataFrame) -> None:
+def save_grouped_importance(importance_df: pd.DataFrame, country: str | None = None) -> None:
     """Persist grouped permutation importance alongside the model."""
     if importance_df is None or importance_df.empty:
         return
-    _MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    _GROUPED_IMPORTANCE_PATH.write_text(importance_df.to_json(orient="records"))
+    _write_frame(artifact_paths(country)["grouped_importance"], importance_df)
 
 
-def load_grouped_importance() -> pd.DataFrame:
+def load_grouped_importance(country: str | None = None) -> pd.DataFrame:
     """Return the shipped grouped-importance frame, or empty if missing."""
-    if not _GROUPED_IMPORTANCE_PATH.exists():
-        return pd.DataFrame()
-    try:
-        return pd.read_json(_GROUPED_IMPORTANCE_PATH, orient="records")
-    except (ValueError, json.JSONDecodeError):
-        return pd.DataFrame()
+    return _read_frame(artifact_paths(country)["grouped_importance"])
 
 
-def save_shap_importance(importance_df: pd.DataFrame) -> None:
+def save_shap_importance(importance_df: pd.DataFrame, country: str | None = None) -> None:
     """Persist mean(|TreeSHAP|) global importance next to the model.
 
     Same column shape as permutation importance — feature/low/median/high —
@@ -2132,15 +2200,9 @@ def save_shap_importance(importance_df: pd.DataFrame) -> None:
     """
     if importance_df is None or importance_df.empty:
         return
-    _MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    _SHAP_IMPORTANCE_PATH.write_text(importance_df.to_json(orient="records"))
+    _write_frame(artifact_paths(country)["shap_importance"], importance_df)
 
 
-def load_shap_importance() -> pd.DataFrame:
+def load_shap_importance(country: str | None = None) -> pd.DataFrame:
     """Return the shipped SHAP-importance frame, or empty if missing."""
-    if not _SHAP_IMPORTANCE_PATH.exists():
-        return pd.DataFrame()
-    try:
-        return pd.read_json(_SHAP_IMPORTANCE_PATH, orient="records")
-    except (ValueError, json.JSONDecodeError):
-        return pd.DataFrame()
+    return _read_frame(artifact_paths(country)["shap_importance"])

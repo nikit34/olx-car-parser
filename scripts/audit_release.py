@@ -10,6 +10,10 @@ one exists, which is the usual case: the pipeline built the file, only the
 upload died. Whatever is still missing afterwards is reported and the exit
 code is non-zero, so the run goes red and someone looks.
 
+The per-country blobs (``models_de.json`` and friends, built by the EU
+market workflow) are optional: a market that has not shipped yet, or whose
+build skipped a collapsed blob, is reported but never fails the audit.
+
     python -m scripts.audit_release --heal
 """
 from __future__ import annotations
@@ -45,7 +49,13 @@ MODEL_ARTIFACTS = (
     "price_shap_importance.json",
     "price_backtest.json",
 )
-SEARCH_DIRS = ("data/dashboard", "data/hot_deals", "data")
+INTL_COUNTRIES = ("de", "fr", "it")
+INTL_ASSETS = tuple(
+    name.format(cc=cc)
+    for cc in INTL_COUNTRIES
+    for name in ("models_{cc}.json", "valuations_{cc}.json", "hot_deals_{cc}_all.json")
+)
+SEARCH_DIRS = ("data/dashboard", "data/hot_deals", "data/intl", "data")
 STALE_AFTER_HOURS = 36
 
 
@@ -69,17 +79,18 @@ def release_assets() -> set[str]:
     return set(asset_times())
 
 
-def stale_assets(times: dict[str, datetime]) -> dict[str, int]:
-    """Expected assets whose newest piece is older than the threshold.
+def stale_assets(times: dict[str, datetime],
+                 names: set[str] | tuple[str, ...] | None = None) -> dict[str, int]:
+    """Assets whose newest piece is older than the threshold.
 
     Presence is not freshness: a witness the pipeline stopped refreshing
     still passes a name check while the dashboard quietly serves last
-    week's market.
+    week's market. Checks ``expected()`` unless *names* narrows it.
     """
     now = datetime.now(timezone.utc)
     cutoff = timedelta(hours=STALE_AFTER_HOURS)
     stale: dict[str, int] = {}
-    for name in expected():
+    for name in (expected() if names is None else names):
         pieces = [t for asset, t in times.items()
                   if asset == name or asset.startswith(f"{name}.")]
         if not pieces:
@@ -134,6 +145,10 @@ def main(argv: list[str] | None = None) -> int:
 
     for name, hours in sorted(stale_assets(times).items()):
         print(f"::warning::{name} has not been refreshed for {hours}h")
+    for name in sorted(n for n in INTL_ASSETS if not satisfied(n, assets)):
+        print(f"::notice::optional country blob not in the release: {name}")
+    for name, hours in sorted(stale_assets(times, INTL_ASSETS).items()):
+        print(f"::notice::optional country blob {name} has not been refreshed for {hours}h")
 
     if not missing and not broken:
         print(f"release complete: {len(expected())} expected assets present")

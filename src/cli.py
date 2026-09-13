@@ -1258,13 +1258,95 @@ def alerts():
         console.print("[yellow]No new alerts to send.[/yellow]")
 
 
+_COUNTRY_MIN_TRAIN_ROWS = 1500
+
+
+def _train_country_model(cc: str) -> None:
+    """``train-model --country`` for an AutoScout24 market (DE/FR/IT).
+
+    Reads that country's rows from ``import_listings`` in the listings-frame
+    shape, keeps only what is still on sale (no sold-price haircut: a foreign
+    listing that vanished tells us nothing about its sale price) and writes
+    every artefact with the ``_{cc}`` suffix, so the Portuguese bundle is never
+    touched. Under ``_COUNTRY_MIN_TRAIN_ROWS`` priced rows the command refuses
+    to train: a model fit on a few hundred cars would ship confident nonsense
+    to the country pages, and whatever bundle was there stays in place.
+    """
+    from src.storage.repository import get_country_listings_df
+    from src.analytics.computed_columns import enrich_listings
+    from src.analytics.turnover import compute_turnover_stats
+    from src.analytics.price_model import (
+        artifact_paths, train_price_model, save_model, save_importance,
+        save_grouped_importance, save_shap_importance,
+    )
+    from src.dashboard.data_loader import prepare_active_for_model
+
+    init_db()
+    session = get_session()
+    listings = get_country_listings_df(session, cc)
+    session.close()
+
+    if not listings.empty and "is_active" in listings.columns:
+        listings = listings[listings["is_active"].fillna(False).astype(bool)].copy()
+    priced = 0
+    if not listings.empty and "price_eur" in listings.columns:
+        priced = int((pd.to_numeric(listings["price_eur"], errors="coerce") > 0).sum())
+    if priced < _COUNTRY_MIN_TRAIN_ROWS:
+        console.print(
+            f"[red]{cc}: {priced} priced active listings, need at least "
+            f"{_COUNTRY_MIN_TRAIN_ROWS} to train — skipping; the previous "
+            f"{artifact_paths(cc)['model'].name}, if any, stays in place.[/red]"
+        )
+        raise typer.Exit(1)
+
+    listings = enrich_listings(listings)
+    turnover = compute_turnover_stats(listings)
+    active = prepare_active_for_model(listings, turnover=turnover)
+    console.print(f"{cc}: training on {len(active)} active listings...")
+    result = train_price_model(active)
+    if result is None:
+        console.print(f"[red]{cc}: training failed: insufficient data after filtering.[/red]")
+        raise typer.Exit(1)
+
+    (
+        models, cat_maps, metrics, oof_preds, calibrator, uncertainty,
+        importance_df, grouped_importance_df, shap_importance_df,
+    ) = result
+    save_model(
+        models, cat_maps, metrics,
+        oof_preds=oof_preds,
+        median_calibrator=calibrator,
+        uncertainty_bundle=uncertainty,
+        country=cc,
+    )
+    save_importance(importance_df, country=cc)
+    save_grouped_importance(grouped_importance_df, country=cc)
+    save_shap_importance(shap_importance_df, country=cc)
+    console.print(
+        f"[green]{cc} model saved to {artifact_paths(cc)['model'].name}.[/green] "
+        f"MAE={metrics['mae']:.0f} € · MAPE={metrics['mape']:.1f}% · "
+        f"R²={metrics['r2']:.3f} · n={metrics['n_samples']}"
+    )
+
+
 @app.command("train-model")
-def train_model():
+def train_model(
+    country: str = typer.Option(
+        "PT", "--country",
+        help="Market to train: PT (OLX, default) or an AutoScout24 country code "
+             "(DE/FR/IT) read from import_listings; artefacts get a _{cc} suffix.",
+    ),
+):
     """Train price model and save to data/price_model.joblib.
 
     Intended for CI: runs after scrape+enrich, uploads to the release alongside
     the DB. Dashboard loads the shipped model and never trains inline.
     """
+    cc = (country or "PT").strip().upper()
+    if cc != "PT":
+        _train_country_model(cc)
+        return
+
     from src.storage.repository import get_listings_df
     from src.analytics.computed_columns import enrich_listings
     from src.analytics.turnover import compute_turnover_stats
