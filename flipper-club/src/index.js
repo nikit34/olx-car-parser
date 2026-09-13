@@ -65,6 +65,7 @@ import { GUIDES, GUIDES_UPDATED, guideBySlug, guideBlock, renderGuide, renderGui
 import {
   setIntlLocales, intlLocales, liveLocales, localeForPath, href as ihref,
   parseAs24Id, valuationKey, t as it,
+  registerIntlPageModule, intlPageModules, setNavLive,
 } from "./i18n.js";
 import {
   renderIntlLanding, renderIntlHub, renderIntlModelPage, renderIntlYearPage,
@@ -72,6 +73,9 @@ import {
   renderIntlPrivacy, renderIntlNotFound, renderIntlInfo,
   intlModelJson, intlYearJson, intlSitemapPaths, intlYearCell, intlSiblings,
 } from "./pages-intl.js";
+import { intlModelCutLinks } from "./intl-facets.js";
+import { intlModelCurveLinks } from "./intl-curves.js";
+import "./intl-compare.js";
 
 const ZONES = ["norte", "centro", "sul", "all"];
 
@@ -1240,6 +1244,51 @@ function jsonResponse(payload, status = 200) {
   });
 }
 
+export function registerIntlPages(mod) {
+  registerIntlPageModule(mod);
+  return mod;
+}
+
+function matchIntlModule(loc, path) {
+  for (const mod of intlPageModules()) {
+    for (const route of mod.routes) {
+      const seg = loc.routes[route.routeKey];
+      if (typeof seg !== "string" || !seg) continue;
+      const base = `/${seg}`;
+      if (path !== base && !path.startsWith(`${base}/`)) continue;
+      const rest = path.slice(base.length);
+      let params = null;
+      try {
+        params = route.match(rest);
+      } catch (err) {
+        console.warn(`intl module ${mod.id} match error`, err && err.message);
+        params = null;
+      }
+      if (params) return { mod, route, params, rest };
+    }
+  }
+  return null;
+}
+
+async function runIntlModule(request, env, url, loc, path, claimed) {
+  const mdoc = await getModels(env, loc.country);
+  const models = mdoc && mdoc.models;
+  if (!models) return intlUnavailable(loc, url.host, "info.preparing_models");
+  const builtAt = mdoc.built_at;
+  refreshIntlNav(loc, models, builtAt, mdoc);
+  return claimed.route.handle({
+    request, env, url, loc, models, builtAt, mdoc,
+    stats: corpusStats(models, builtAt),
+    path, rest: claimed.rest, params: claimed.params,
+    helpers: {
+      publicHtml,
+      jsonResponse,
+      notFoundIntl: (e = env, u = url, l = loc) => intlNotFound(e, u, l),
+      getModels,
+    },
+  });
+}
+
 async function handleIntl(request, env, url, intl) {
   const { loc, rest } = intl;
   if (request.method !== "GET") return intlNotFound(env, url, loc);
@@ -1251,19 +1300,45 @@ async function handleIntl(request, env, url, intl) {
   if (path === `/${R.mercado}`) return intlFeed(env, url, loc);
   if (path === `/${R.metodologia}`) return intlTrustPage(env, url, loc, "method");
   if (path === `/${R.sobre}`) return intlTrustPage(env, url, loc, "about");
-  if (path === `/${R.privacidade}`) return publicHtml(renderIntlPrivacy({ loc, host: url.host }));
+  if (path === `/${R.privacidade}`) return intlPrivacy(env, url, loc);
   if (path === "/sitemap.xml") return intlSitemap(env, url, loc);
+  const claimed = matchIntlModule(loc, path);
+  if (claimed) return runIntlModule(request, env, url, loc, path, claimed);
   if (path.startsWith(`/${R.model}/`)) {
     return intlModel(env, url, loc, path.slice(`/${R.model}/`.length));
   }
   return intlNotFound(env, url, loc);
 }
 
+const NAV_STAMP = new Map();
+
+function refreshIntlNav(loc, models, builtAt, mdoc) {
+  if (NAV_STAMP.get(loc.code) === builtAt) return;
+  const declared = [], live = [];
+  for (const mod of intlPageModules()) {
+    if (!Array.isArray(mod.navRouteKeys) || !mod.navRouteKeys.length) continue;
+    for (const k of mod.navRouteKeys) declared.push(k);
+    if (typeof mod.navAvailable !== "function") {
+      for (const k of mod.navRouteKeys) live.push(k);
+      continue;
+    }
+    try {
+      for (const k of mod.navAvailable(loc, models, builtAt, mdoc) || []) live.push(k);
+    } catch (err) {
+      console.warn(`intl nav ${mod.id} error`, err && err.message);
+      for (const k of mod.navRouteKeys) live.push(k);
+    }
+  }
+  setNavLive(loc.code, declared, live);
+  NAV_STAMP.set(loc.code, builtAt);
+}
+
 async function intlCorpus(env, loc) {
   const mdoc = await getModels(env, loc.country);
   const models = mdoc && mdoc.models;
   if (!models) return null;
-  return { models, builtAt: mdoc.built_at, stats: corpusStats(models, mdoc.built_at) };
+  refreshIntlNav(loc, models, mdoc.built_at, mdoc);
+  return { models, mdoc, builtAt: mdoc.built_at, stats: corpusStats(models, mdoc.built_at) };
 }
 
 function intlUnavailable(loc, host, key) {
@@ -1277,6 +1352,7 @@ async function intlNotFound(env, url, loc) {
   try {
     const mdoc = await getModels(env, loc.country);
     if (mdoc && mdoc.models) {
+      refreshIntlNav(loc, mdoc.models, mdoc.built_at, mdoc);
       suggestions = Object.entries(mdoc.models)
         .sort((a, b) => (b[1].n || 0) - (a[1].n || 0)).slice(0, 12)
         .map(([slug, r]) => ({ slug, m: `${r.b} ${r.m}`, fm: r.fm }));
@@ -1285,6 +1361,11 @@ async function intlNotFound(env, url, loc) {
   return html(renderIntlNotFound({
     loc, host: url.host, path: url.pathname, suggestions,
   }), 404);
+}
+
+async function intlPrivacy(env, url, loc) {
+  await intlCorpus(env, loc);
+  return publicHtml(renderIntlPrivacy({ loc, host: url.host }));
 }
 
 async function intlLanding(env, url, loc) {
@@ -1358,6 +1439,8 @@ async function intlModel(env, url, loc, tail) {
   return publicHtml(renderIntlModelPage({
     loc, host: url.host, models: c.models, rec, slug, builtAt: c.builtAt, stats: c.stats,
     siblings: intlSiblings(c.models, slug, rec),
+    extras: intlModelCutLinks(loc, rec, slug, c.mdoc && c.mdoc.districts)
+      + intlModelCurveLinks(loc, c.models, rec, slug, c.builtAt),
   }));
 }
 
@@ -1405,7 +1488,25 @@ async function intlSitemap(env, url, loc) {
   const models = (mdoc && mdoc.models) || null;
   const lastmod = ((mdoc && mdoc.built_at) || "").slice(0, 10);
   const lm = /^\d{4}-\d{2}-\d{2}$/.test(lastmod) ? `<lastmod>${lastmod}</lastmod>` : "";
-  const urls = intlSitemapPaths(loc, models).map(u =>
+  const paths = intlSitemapPaths(loc, models);
+  if (models) {
+    for (const mod of intlPageModules()) {
+      if (typeof mod.sitemap !== "function") continue;
+      try {
+        for (const u of mod.sitemap(loc, models, (mdoc && mdoc.built_at) || null, mdoc) || []) {
+          if (u && typeof u.path === "string" && u.path) paths.push(u);
+        }
+      } catch (err) {
+        console.warn(`intl sitemap ${mod.id} error`, err && err.message);
+      }
+    }
+  }
+  const seen = new Set();
+  const urls = paths.filter(u => {
+    if (seen.has(u.path)) return false;
+    seen.add(u.path);
+    return true;
+  }).map(u =>
     `<url><loc>${base}${u.path}</loc>${lm}<changefreq>${u.freq}</changefreq><priority>${u.prio}</priority></url>`);
   const xml = `<?xml version="1.0" encoding="UTF-8"?>\n`
     + `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>`;

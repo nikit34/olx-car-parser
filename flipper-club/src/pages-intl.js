@@ -348,7 +348,7 @@ function hrefYear(loc, slug, year) {
   return `${href(loc, "model", slug)}/${year}`;
 }
 
-export function renderIntlModelPage({ loc, host, models, rec, slug, builtAt, stats, siblings = [] }) {
+export function renderIntlModelPage({ loc, host, models, rec, slug, builtAt, stats, siblings = [], extras = "" }) {
   const pageYears = yearPageYears(rec);
   const withSlug = Object.assign({}, rec, { __slug: slug });
   const canonical = `https://${host}${href(loc, "model", slug)}`;
@@ -393,7 +393,7 @@ export function renderIntlModelPage({ loc, host, models, rec, slug, builtAt, sta
       <p class="fc-p" style="margin-top:26px;">${t(loc, "model.trust", { n: fmtNumL(loc, rec.n), source: loc.source.name, method: href(loc, "metodologia"), avaliar: href(loc, "avaliar") })}</p>
       ${sibs}
       ${intlProvenance(loc, { n: rec.n, builtAt })}
-    </section>`;
+    </section>` + extras;
   const faq = modelFaq(loc, rec, stats, range);
   const title = month
     ? t(loc, "model.title_m", { brand: escapeHtml(rec.b), model: escapeHtml(rec.m), price, month, n: fmtNumL(loc, rec.n) })

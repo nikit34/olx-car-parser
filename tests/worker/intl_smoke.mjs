@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import worker from "../../flipper-club/src/index.js";
 import { yearPageYears } from "../../flipper-club/src/seo-pages.js";
 import { LOCALES, KEYS, missingKeys } from "../../flipper-club/src/i18n.js";
@@ -393,6 +393,85 @@ await check("with INTL_LOCALES unset the locale prefixes do not exist", async ()
   kv.clear();
 });
 
+const ptDeep = Object.entries(mdoc.models).sort((a, b) => (b[1].n || 0) - (a[1].n || 0))[0][0];
+const alternates = html =>
+  [...html.matchAll(/<link rel="alternate" hreflang="([^"]+)" href="([^"]+)">/g)]
+    .map(m => ({ lang: m[1], href: m[2] }));
+const LANGS = ["pt-PT", "de-DE", "fr-FR", "it-IT"];
+
+await check("a locale page lists every live language, itself included", async () => {
+  const html = await body(`/de/preis/${deep}`);
+  const alts = alternates(html);
+  const langs = alts.filter(a => a.lang !== "x-default").map(a => a.lang);
+  assert(langs.length === LANGS.length,
+    `the German model page lists ${langs.length} alternates, expected ${LANGS.length}`);
+  assert(new Set(langs).size === langs.length, "the alternate set repeats a language");
+  for (const want of LANGS) assert(langs.includes(want), `no hreflang for ${want}`);
+  const by = Object.fromEntries(alts.map(a => [a.lang, a.href]));
+  assert(by["de-DE"] === `https://${HOST}/de/preis/${deep}`,
+    "the page does not point hreflang at itself");
+  assert(by["pt-PT"] === `https://${HOST}/preco/${deep}`, `pt alternate is ${by["pt-PT"]}`);
+  assert(by["fr-FR"] === `https://${HOST}/fr/cote/${deep}`, `fr alternate is ${by["fr-FR"]}`);
+  assert(by["it-IT"] === `https://${HOST}/it/prezzo/${deep}`, `it alternate is ${by["it-IT"]}`);
+  assert(by["x-default"] === by["pt-PT"], "x-default is not the Portuguese page");
+
+  const year = alternates(await body(`/de/preis/${deep}/${deepYears[0]}`));
+  const yby = Object.fromEntries(year.map(a => [a.lang, a.href]));
+  assert(yby["pt-PT"] === `https://${HOST}/preco/${deep}/${deepYears[0]}`,
+    "the year page alternate is not the same year in Portuguese");
+  assert(yby["it-IT"] === `https://${HOST}/it/prezzo/${deep}/${deepYears[0]}`,
+    "the year page alternate is not the same year in Italian");
+});
+
+await check("the Portuguese root carries the same reciprocal set", async () => {
+  for (const [ptPath, dePath] of [["/precos", "/de/preise"], [`/preco/${ptDeep}`, `/de/preis/${ptDeep}`],
+                                  ["/metodologia", "/de/methodik"], ["/sobre", "/de/ueber-uns"],
+                                  ["/privacidade", "/de/datenschutz"], ["/avaliar", "/de/bewerten"]]) {
+    const alts = alternates(await body(ptPath));
+    const langs = alts.filter(a => a.lang !== "x-default").map(a => a.lang);
+    for (const want of LANGS) assert(langs.includes(want), `${ptPath} has no hreflang for ${want}`);
+    const by = Object.fromEntries(alts.map(a => [a.lang, a.href]));
+    assert(by["pt-PT"] === `https://${HOST}${ptPath}`, `${ptPath} does not list itself`);
+    assert(by["de-DE"] === `https://${HOST}${dePath}`,
+      `${ptPath} points German at ${by["de-DE"]}, expected ${dePath}`);
+    assert(by["x-default"] === `https://${HOST}${ptPath}`, `${ptPath} x-default is ${by["x-default"]}`);
+    const mirror = Object.fromEntries(alternates(await body(dePath)).map(a => [a.lang, a.href]));
+    for (const lang of [...LANGS, "x-default"]) {
+      assert(mirror[lang] === by[lang],
+        `${dePath} and ${ptPath} disagree on ${lang}: ${mirror[lang]} vs ${by[lang]}`);
+    }
+  }
+});
+
+await check("x-default points at the Portuguese root on the home family", async () => {
+  const by = Object.fromEntries(alternates(await body("/de")).map(a => [a.lang, a.href]));
+  assert(by["x-default"] === `https://${HOST}/`, `x-default is ${by["x-default"]}, expected the root`);
+  assert(by["pt-PT"] === `https://${HOST}/`, "the Portuguese alternate of /de is not the root");
+  assert(by["de-DE"] === `https://${HOST}/de`, "/de does not list itself");
+  assert(by["fr-FR"] === `https://${HOST}/fr` && by["it-IT"] === `https://${HOST}/it`,
+    "the home family is missing a live locale");
+});
+
+await check("a page with no counterpart claims no alternate at all", async () => {
+  const district = Object.keys(mdoc.districts || {})[0];
+  assert(district, "the fixture has no district to test with");
+  const html = await body(`/precos/${district}`);
+  assert(html.includes(`<link rel="canonical" href="https://${HOST}/precos/${district}">`),
+    "the district page lost its canonical, so the test proves nothing");
+  assert(alternates(html).length === 0,
+    "a Portugal-only page advertises a translation that does not exist");
+});
+
+await check("with INTL_LOCALES unset no hreflang is emitted anywhere", async () => {
+  kv.clear();
+  for (const p of ["/", "/precos", `/preco/${ptDeep}`, "/metodologia", "/sobre", "/privacidade"]) {
+    const html = await body(p, envOff);
+    assert(alternates(html).length === 0, `${p} emits hreflang with no locales live`);
+    assert(!html.includes('rel="alternate" hreflang='), `${p} emits a stray hreflang link`);
+  }
+  kv.clear();
+});
+
 await check("every locale defines every key", async () => {
   const gaps = missingKeys();
   assert(Object.keys(gaps).length === 0, `key sets disagree: ${JSON.stringify(gaps)}`);
@@ -400,16 +479,14 @@ await check("every locale defines every key", async () => {
 });
 
 await check("every key the pages ask for exists in all four locales", async () => {
-  const sources = [
-    ["flipper-club/src/pages-intl.js", /\bt\(\s*loc\s*,\s*"([^"]+)"/g],
-    ["flipper-club/src/templates.js", /\bt\(\s*L\s*,\s*"([^"]+)"/g],
-    ["flipper-club/src/index.js", /\bit\(\s*\w+\s*,\s*"([^"]+)"/g],
-    ["flipper-club/src/i18n.js", /\bt\(\s*l\s*,\s*"([^"]+)"/g],
-  ];
+  const dir = "flipper-club/src";
+  const sources = readdirSync(dir).filter(f => f.endsWith(".js")).sort().map(f => `${dir}/${f}`);
+  assert(sources.length >= 6, `only ${sources.length} source files — did the scan break?`);
+  const patterns = [/(?<![\w$.])t\(\s*\w+\s*,\s*"([^"]+)"/g, /(?<![\w$.])it\(\s*\w+\s*,\s*"([^"]+)"/g];
   const used = new Set();
-  for (const [file, re] of sources) {
+  for (const file of sources) {
     const src = readFileSync(file, "utf8");
-    for (const m of src.matchAll(re)) used.add(m[1]);
+    for (const re of patterns) for (const m of src.matchAll(re)) used.add(m[1]);
   }
   assert(used.size > 100, `only found ${used.size} t() calls — did the scan break?`);
   for (const key of used) {

@@ -8,7 +8,7 @@
 //
 // Screens: Landing (/) → Mercado feed (/mercado) → Car detail (/car).
 
-import { t, href as ihref, languageSwitcher, consentBannerL } from "./i18n.js";
+import { t, href as ihref, languageSwitcher, consentBannerL, alternatePaths, navExtras } from "./i18n.js";
 
 const ZONE_LABEL = {
   norte: "Norte",
@@ -868,6 +868,21 @@ export function monthTag(builtAt) {
   return `${MONTH_ABBR_PT[+m[2] - 1]}/${m[1]}`;
 }
 
+function alternateLinks(L, canonical, origin) {
+  if (!canonical || !origin) return [];
+  if (canonical !== origin && !canonical.startsWith(`${origin}/`)) return [];
+  const path = canonical.slice(origin.length) || "/";
+  const alts = alternatePaths(L || "pt", path);
+  if (!alts.length) return [];
+  const out = alts.map(a =>
+    `<link rel="alternate" hreflang="${escapeHtml(a.lang)}" href="${escapeHtml(origin + a.path)}">`);
+  const fallback = alts.find(a => a.code === "pt");
+  if (fallback) {
+    out.push(`<link rel="alternate" hreflang="x-default" href="${escapeHtml(origin + fallback.path)}">`);
+  }
+  return out;
+}
+
 // ── Shell ─────────────────────────────────────────────────────────────────────
 export function layout({ title, body, zone, nav, depositCount, index = false, description = null,
                  canonical = null, jsonLd = null, host = null, image = null, type = "website",
@@ -913,6 +928,7 @@ export function layout({ title, body, zone, nav, depositCount, index = false, de
   const head = [
     description ? `<meta name="description" content="${escapeHtml(description)}">` : "",
     canonical ? `<link rel="canonical" href="${escapeHtml(canonical)}">` : "",
+    ...alternateLinks(L, canonical, origin),
     ...social,
     // jsonLd is our own data (no user input); JSON.stringify already escapes it,
     // and we additionally close-tag-escape to be safe inside <script>.
@@ -965,10 +981,13 @@ export function layout({ title, body, zone, nav, depositCount, index = false, de
   </div>
 </header>`;
   const link = (to, label) => `<a href="${ihref(L, to)}" style="color:#5B606B;">${label}</a>`;
+  const extraLinks = L
+    ? navExtras(L).map(e => `&nbsp;· ${link(e.routeKey, t(L, e.labelKey))}`).join("")
+    : "";
   const footer = L ? `<footer class="footer">
   <div class="footer-in">
     <span class="mono">${t(L, "footer.disclaimer", { source: src })}</span>
-    <span class="mono">${link("hub", t(L, "footer.hub"))}&nbsp;· ${link("avaliar", t(L, "footer.avaliar"))}&nbsp;· ${link("mercado", t(L, "footer.mercado"))}</span>
+    <span class="mono">${link("hub", t(L, "footer.hub"))}&nbsp;· ${link("avaliar", t(L, "footer.avaliar"))}&nbsp;· ${link("mercado", t(L, "footer.mercado"))}${extraLinks}</span>
     <span class="mono">${link("metodologia", t(L, "footer.metodologia"))}&nbsp;· ${link("sobre", t(L, "footer.sobre"))}&nbsp;· ${link("privacidade", t(L, "footer.privacidade"))}&nbsp;· ${escapeHtml(L.countryName)}&nbsp;${L.flag}</span>${switcherLine}
   </div>
 </footer>` : `<footer class="footer">

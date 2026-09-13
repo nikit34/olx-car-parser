@@ -1487,6 +1487,158 @@ export function missingKeys() {
   return out;
 }
 
+const KEY_SET = new Set(KEYS);
+
+export function registerStrings(code, dict) {
+  const l = resolve(code);
+  const entries = Object.entries(dict || {});
+  for (const [key, value] of entries) {
+    if (Object.prototype.hasOwnProperty.call(l.strings, key)) {
+      throw new Error(`i18n: string key "${key}" already registered for locale ${l.code}`);
+    }
+    if (typeof value !== "string") {
+      throw new Error(`i18n: string key "${key}" for locale ${l.code} is not a string`);
+    }
+  }
+  for (const [key, value] of entries) {
+    l.strings[key] = value;
+    if (!KEY_SET.has(key)) {
+      KEY_SET.add(key);
+      KEYS.push(key);
+    }
+  }
+}
+
+export function registerRoutes(code, routes) {
+  const l = resolve(code);
+  const entries = Object.entries(routes || {});
+  const taken = new Map(Object.entries(l.routes).map(([k, v]) => [v, k]));
+  for (const [key, seg] of entries) {
+    if (Object.prototype.hasOwnProperty.call(l.routes, key)) {
+      throw new Error(`i18n: route key "${key}" already registered for locale ${l.code}`);
+    }
+    if (typeof seg !== "string" || !seg || seg.includes("/")) {
+      throw new Error(`i18n: route "${key}" for locale ${l.code} must be one path segment`);
+    }
+    if (taken.has(seg)) {
+      throw new Error(`i18n: segment "${seg}" for locale ${l.code} is already route "${taken.get(seg)}"`);
+    }
+    taken.set(seg, key);
+  }
+  for (const [key, seg] of entries) l.routes[key] = seg;
+}
+
+const NAV_EXTRA = [];
+
+export function registerNav(entries) {
+  for (const e of entries || []) {
+    if (!e || typeof e.routeKey !== "string" || typeof e.labelKey !== "string") {
+      throw new Error("i18n: a nav entry needs both routeKey and labelKey");
+    }
+    if (NAV_EXTRA.some(x => x.routeKey === e.routeKey)) {
+      throw new Error(`i18n: nav entry for route "${e.routeKey}" is already registered`);
+    }
+    NAV_EXTRA.push({ routeKey: e.routeKey, labelKey: e.labelKey });
+  }
+}
+
+const NAV_LIVE = new Map();
+
+export function setNavLive(code, declared, live) {
+  NAV_LIVE.set(code, {
+    declared: new Set(declared || []),
+    live: new Set(live || []),
+  });
+}
+
+export function navLive(code) {
+  return NAV_LIVE.get(code) || null;
+}
+
+export function navExtras(loc) {
+  const l = resolve(loc);
+  const gate = NAV_LIVE.get(l.code);
+  return NAV_EXTRA.filter(e => {
+    if (typeof l.routes[e.routeKey] !== "string") return false;
+    if (typeof l.strings[e.labelKey] !== "string") return false;
+    if (gate && gate.declared.has(e.routeKey) && !gate.live.has(e.routeKey)) return false;
+    return true;
+  });
+}
+
+const INTL_PAGE_MODULES = [];
+
+export function registerIntlPageModule(mod) {
+  if (!mod || typeof mod.id !== "string" || !mod.id) {
+    throw new Error("intl page module: id is required");
+  }
+  if (INTL_PAGE_MODULES.some(m => m.id === mod.id)) {
+    throw new Error(`intl page module "${mod.id}" is already registered`);
+  }
+  if (!Array.isArray(mod.routes)) {
+    throw new Error(`intl page module "${mod.id}": routes must be an array`);
+  }
+  for (const r of mod.routes) {
+    if (!r || typeof r.routeKey !== "string" || typeof r.match !== "function" || typeof r.handle !== "function") {
+      throw new Error(`intl page module "${mod.id}": each route needs routeKey, match() and handle()`);
+    }
+  }
+  INTL_PAGE_MODULES.push(mod);
+}
+
+export function intlPageModules() {
+  return INTL_PAGE_MODULES;
+}
+
+const ALT_ROUTES = {
+  landing: "bare", hub: "bare", avaliar: "bare", mercado: "bare",
+  metodologia: "bare", sobre: "bare", privacidade: "bare", model: "model",
+};
+
+function splitRoute(l, pathname) {
+  let rest = String(pathname || "").split("?")[0].split("#")[0];
+  if (l.prefix) {
+    if (rest === l.prefix) rest = "";
+    else if (rest.startsWith(`${l.prefix}/`)) rest = rest.slice(l.prefix.length);
+    else return null;
+  }
+  if (rest === "" || rest === "/") return { route: "landing", tail: [] };
+  if (!rest.startsWith("/")) return null;
+  const parts = rest.slice(1).split("/");
+  if (parts.some(p => p === "")) return null;
+  for (const [key, seg] of Object.entries(l.routes)) {
+    if (seg === parts[0]) return { route: key, tail: parts.slice(1) };
+  }
+  return null;
+}
+
+function buildRoute(l, route, tail) {
+  if (route === "landing") return l.prefix || "/";
+  const seg = l.routes[route];
+  if (typeof seg !== "string" || !seg) return null;
+  return `${l.prefix}/${seg}${tail.length ? `/${tail.join("/")}` : ""}`;
+}
+
+export function alternatePaths(loc, pathname) {
+  if (!LIVE.size) return [];
+  const l = resolve(loc);
+  const parsed = splitRoute(l, pathname);
+  if (!parsed) return [];
+  const shape = ALT_ROUTES[parsed.route];
+  if (!shape) return [];
+  if (shape === "bare" && parsed.tail.length) return [];
+  if (shape === "model") {
+    if (parsed.tail.length < 1 || parsed.tail.length > 2) return [];
+    if (parsed.tail.length === 2 && !/^\d{4}$/.test(parsed.tail[1])) return [];
+  }
+  const out = [];
+  for (const cand of [LOCALES.pt, ...liveLocales()]) {
+    const path = buildRoute(cand, parsed.route, parsed.tail);
+    if (path) out.push({ code: cand.code, lang: cand.lang, path });
+  }
+  return out.length > 1 ? out : [];
+}
+
 function resolve(loc) {
   const l = typeof loc === "string" ? LOCALES[loc] : loc;
   if (!l || !l.code) throw new Error(`unknown locale: ${String(loc)}`);

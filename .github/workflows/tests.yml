@@ -155,3 +155,6 @@ jobs:
           node tests/worker/render_smoke.mjs tests/worker/fixtures/models.json
           node tests/worker/route_smoke.mjs  tests/worker/fixtures/models.json
           node tests/worker/intl_smoke.mjs   tests/worker/fixtures/models.json tests/worker/fixtures/models_de.json
+          node tests/worker/intl_facets_smoke.mjs  tests/worker/fixtures/models_de.json
+          node tests/worker/intl_curves_smoke.mjs  tests/worker/fixtures/models_de.json
+          node tests/worker/intl_compare_smoke.mjs tests/worker/fixtures/models_de.json
