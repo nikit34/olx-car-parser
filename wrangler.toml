@@ -128,7 +128,7 @@ SITE_CONTACT_EMAIL = "ola@carsbuyer.org"
 SEO_WAVE_MODELS = "60"
 LIQ_WAVE_MODELS = "60"
 
-INTL_LOCALES = ""
+INTL_LOCALES = "de,fr,it"
 
 HISTORY_REPORT_URL = "https://www.carvertical.com/pt"
 LEADS_TELEGRAM_CHAT_ID = "604665081"
