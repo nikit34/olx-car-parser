@@ -262,14 +262,35 @@ def mail_summary(imap_factory, user, password, since):
     return ["Почта, новое:"] + [f"• {f}" for f in found[-10:]], len(found)
 
 
+def google_error(status, body):
+    if status == 0:
+        return f"сеть: {(body or b'').decode('utf-8', 'replace')[:80]}"
+    try:
+        err = json.loads(body or b"{}")
+    except Exception:
+        return f"HTTP {status}"
+    detail = err.get("error")
+    if isinstance(detail, dict):
+        detail = detail.get("status") or detail.get("message")
+    note = err.get("error_description") or ""
+    return f"HTTP {status} {detail or '?'}" + (f" — {note[:90]}" if note else "")
+
+
 def gsc_token(post, adc):
+    missing = [k for k in ("client_id", "client_secret", "refresh_token") if not adc.get(k)]
+    if missing:
+        return None, "в GSC_ADC_JSON нет полей: " + ", ".join(missing)
     status, body = post("https://oauth2.googleapis.com/token", {
         "client_id": adc["client_id"], "client_secret": adc["client_secret"],
         "refresh_token": adc["refresh_token"], "grant_type": "refresh_token",
     })
     if status != 200:
-        return None
-    return json.loads(body).get("access_token")
+        return None, google_error(status, body)
+    try:
+        token = json.loads(body).get("access_token")
+    except Exception:
+        return None, f"HTTP {status}, ответ не JSON"
+    return (token, None) if token else (None, f"HTTP {status}, в ответе нет access_token")
 
 
 def gsc_query(post, token, start, end, dimensions):
@@ -277,8 +298,11 @@ def gsc_query(post, token, start, end, dimensions):
     status, body = post(url, {"startDate": start, "endDate": end, "dimensions": dimensions, "rowLimit": 5000, "dataState": "all"},
                         {"Authorization": f"Bearer {token}", "x-goog-user-project": GSC_PROJECT})
     if status != 200:
-        return None
-    return json.loads(body).get("rows", [])
+        return None, google_error(status, body)
+    try:
+        return json.loads(body).get("rows", []), None
+    except Exception:
+        return None, f"HTTP {status}, ответ не JSON"
 
 
 def summarise_pages(rows):
@@ -310,14 +334,14 @@ def gsc_summary(post, adc_json, today):
         adc = json.loads(adc_json)
     except Exception:
         return ["Search Console: GSC_ADC_JSON не JSON"]
-    token = gsc_token(post, adc)
+    token, why = gsc_token(post, adc)
     if not token:
-        return ["Search Console: не удалось получить токен"]
+        return [f"Search Console: токен не выдан — {why}"]
     end = today - dt.timedelta(days=3)
     start = end - dt.timedelta(days=6)
-    rows = gsc_query(post, token, start.isoformat(), end.isoformat(), ["page"])
+    rows, why = gsc_query(post, token, start.isoformat(), end.isoformat(), ["page"])
     if rows is None:
-        return ["Search Console: запрос отклонён"]
+        return [f"Search Console: запрос отклонён — {why}"]
     total, year, vender = summarise_pages(rows)
     return [
         f"Search Console {start.strftime('%d.%m')}–{end.strftime('%d.%m')}: {total['impr']} показов, {total['clicks']} кликов, CTR {ctr(total):.1f}%",

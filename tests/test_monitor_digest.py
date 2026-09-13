@@ -125,6 +125,41 @@ def test_clicks_summary_separates_dropped_hits_from_live_ones():
     assert lines[1] == "Откуда шли живые клики: Vodafone Portugal 2"
 
 
+def test_gsc_failure_says_what_google_actually_answered():
+    adc = json.dumps({"client_id": "c", "client_secret": "s", "refresh_token": "r"})
+
+    def refused(url, payload, headers=None, timeout=30):
+        return 400, json.dumps({
+            "error": "invalid_grant",
+            "error_description": "Token has been expired or revoked.",
+        }).encode()
+
+    line = md.gsc_summary(refused, adc, dt.date(2026, 9, 13))[0]
+    assert "invalid_grant" in line and "revoked" in line
+    assert "не удалось получить токен" not in line
+
+    def offline(url, payload, headers=None, timeout=30):
+        return 0, b"<urlopen error timed out>"
+
+    assert "сеть" in md.gsc_summary(offline, adc, dt.date(2026, 9, 13))[0]
+
+    half = json.dumps({"client_id": "c", "refresh_token": "r"})
+    line = md.gsc_summary(refused, half, dt.date(2026, 9, 13))[0]
+    assert "client_secret" in line, "a half-pasted secret must name the missing field"
+
+
+def test_gsc_reports_a_rejected_query_separately_from_a_rejected_token():
+    adc = json.dumps({"client_id": "c", "client_secret": "s", "refresh_token": "r"})
+
+    def post(url, payload, headers=None, timeout=30):
+        if url.endswith("/token"):
+            return 200, json.dumps({"access_token": "t"}).encode()
+        return 403, json.dumps({"error": {"status": "PERMISSION_DENIED", "message": "User does not have permission"}}).encode()
+
+    line = md.gsc_summary(post, adc, dt.date(2026, 9, 13))[0]
+    assert "запрос отклонён" in line and "PERMISSION_DENIED" in line
+
+
 def test_ai_summary_counts_the_week_and_names_the_cited_pages():
     payload = {
         "days": {
