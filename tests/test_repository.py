@@ -2,6 +2,8 @@
 
 from datetime import date, datetime, timedelta, timezone
 
+import pandas as pd
+
 from src.models.listing import Listing, PriceSnapshot, MarketStats, UnmatchedListing
 from src.storage.repository import (
     upsert_listing,
@@ -14,11 +16,15 @@ from src.storage.repository import (
     compute_market_stats,
     deduplicate_cross_platform,
     deduplicate_same_platform,
+    deactivate_import_missing,
+    expire_import_listings,
     get_import_listings_df,
     get_listings_df,
     get_unmatched_df,
     upsert_import_listings,
+    _utcnow,
 )
+from src.models.import_listing import ImportListing
 
 
 class TestSellerColumnsInListingsDf:
@@ -979,6 +985,20 @@ class TestImportListings:
             "vat_label": "inkl. MwSt.", "vat_reclaimable": False,
         } for i in range(n)]
 
+    def test_a_card_repeated_inside_one_batch_lands_once(self, db_session):
+        """AutoScout24 repeats a promoted listing further down the same page.
+
+        Both copies miss the database lookup, so a row per copy means two
+        INSERTs for one key and the unique constraint kills the whole batch —
+        which is how the first live crawl died.
+        """
+        batch = self._rows(2)
+        batch.append(dict(batch[0], price_eur=8888))
+        assert upsert_import_listings(db_session, batch) == (2, 1)
+        df = get_import_listings_df(db_session)
+        assert len(df) == 2
+        assert float(df.loc[df["external_id"] == "de-0", "price_eur"].iloc[0]) == 8888.0
+
     def test_insert_then_refresh_keeps_one_row_per_listing(self, db_session):
         assert upsert_import_listings(db_session, self._rows()) == (3, 0)
         assert upsert_import_listings(db_session, self._rows(price=9000)) == (0, 3)
@@ -1010,3 +1030,74 @@ class TestImportListings:
     def test_an_empty_batch_costs_nothing(self, db_session):
         assert upsert_import_listings(db_session, []) == (0, 0)
         assert get_import_listings_df(db_session).empty
+
+    def test_a_row_seen_again_is_active_again(self, db_session):
+        upsert_import_listings(db_session, self._rows(1))
+        n = deactivate_import_missing(db_session, "autoscout24",
+                                      [("Citroën", "C3", 2018)], set())
+        assert n == 1
+        gone = get_import_listings_df(db_session).iloc[0]
+        assert gone["is_active"] is False or gone["is_active"] == False  # noqa: E712
+        assert not pd.isna(gone["deactivated_at"])
+        upsert_import_listings(db_session, self._rows(1))
+        back = get_import_listings_df(db_session).iloc[0]
+        assert back["is_active"] == True  # noqa: E712
+        assert pd.isna(back["deactivated_at"])
+
+    def test_deactivation_touches_only_the_named_cells_of_the_named_source(self, db_session):
+        rows = self._rows(3)
+        rows[2]["year"] = 2019
+        other = dict(rows[0], source="as24_fr", external_id="fr-0")
+        upsert_import_listings(db_session, rows + [other])
+        n = deactivate_import_missing(db_session, "autoscout24",
+                                      [("Citroën", "C3", 2018)], {"de-0"})
+        assert n == 1
+        df = get_import_listings_df(db_session, source=None)
+        state = {ext: bool(active) for ext, active in zip(df["external_id"], df["is_active"])}
+        assert state == {"de-0": True, "de-1": False, "de-2": True, "fr-0": True}
+
+    def test_deactivation_with_no_cells_is_a_no_op(self, db_session):
+        upsert_import_listings(db_session, self._rows(1))
+        assert deactivate_import_missing(db_session, "autoscout24", [], set()) == 0
+        assert bool(get_import_listings_df(db_session)["is_active"].iloc[0]) is True
+
+    def test_expiry_respects_the_cutoff(self, db_session):
+        rows = self._rows(2) + [dict(self._rows(1)[0], source="as24_fr", external_id="fr-0")]
+        upsert_import_listings(db_session, rows)
+        now = _utcnow()
+        stale = now - timedelta(days=30)
+        (db_session.query(ImportListing)
+         .filter(ImportListing.external_id.in_(["de-0", "fr-0"]))
+         .update({ImportListing.last_seen_at: stale}, synchronize_session="fetch"))
+        db_session.commit()
+        n = expire_import_listings(db_session, "autoscout24", max_age_days=21, now=now)
+        assert n == 1
+        df = get_import_listings_df(db_session, source=None).set_index("external_id")
+        assert bool(df.loc["de-0", "is_active"]) is False
+        assert df.loc["de-0", "deactivated_at"] == now
+        assert bool(df.loc["de-1", "is_active"]) is True
+        assert bool(df.loc["fr-0", "is_active"]) is True
+        assert expire_import_listings(db_session, "autoscout24", max_age_days=21, now=now) == 0
+
+    def test_the_default_frame_is_the_german_benchmark_only(self, db_session):
+        rows = self._rows(2) + [dict(self._rows(1)[0], source="as24_fr", external_id="fr-0")]
+        upsert_import_listings(db_session, rows)
+        default = get_import_listings_df(db_session)
+        assert len(default) == 2 and set(default["source"]) == {"autoscout24"}
+        everything = get_import_listings_df(db_session, source=None)
+        assert len(everything) == 3 and set(everything["source"]) == {"autoscout24", "as24_fr"}
+        assert get_import_listings_df(db_session, source="as24_it").empty
+
+    def test_the_country_columns_round_trip(self, db_session):
+        row = dict(self._rows(1)[0], region="Bayern", photo_count=12, version="1.2 PureTech",
+                   price_label="Guter Preis", offer_type="U", body_type="Kleinwagen",
+                   image_url="https://prod.pictures.autoscout24.net/x/720x540.webp")
+        upsert_import_listings(db_session, [row])
+        got = get_import_listings_df(db_session).iloc[0]
+        assert got["region"] == "Bayern"
+        assert got["photo_count"] == 12
+        assert got["version"] == "1.2 PureTech"
+        assert got["price_label"] == "Guter Preis"
+        assert got["offer_type"] == "U"
+        assert got["body_type"] == "Kleinwagen"
+        assert got["image_url"].endswith("/720x540.webp")

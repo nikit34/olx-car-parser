@@ -1441,7 +1441,8 @@ _IMPORT_FIELDS = (
     "price_eur", "vat_label", "vat_reclaimable", "year", "registration_month",
     "mileage_km", "engine_cc", "horsepower", "power_kw", "fuel_type",
     "transmission", "co2_g_km", "seller_type", "country_code", "city",
-    "zip_code", "is_damaged",
+    "zip_code", "is_damaged", "region", "photo_count", "version", "price_label",
+    "image_url", "offer_type", "body_type",
 )
 
 
@@ -1458,10 +1459,19 @@ def upsert_import_listings(session: Session, listings) -> tuple[int, int]:
     requests — on the first ad-hoc run that turned a 30-minute pass into a
     four-hour one while AutoScout24 was answering in half a second.
 
+    One car can appear twice in a single batch: AutoScout24 repeats a promoted
+    listing further down the same result page. Both copies miss the database
+    lookup, so adding a row per copy sends two INSERTs for one key and the whole
+    batch dies on the unique constraint. Rows created here therefore join the
+    same map the lookup filled, and the second copy updates the first.
+
     Keyed on (source, external_id). A listing seen again only moves
     ``last_seen_at`` and whatever the seller changed, so the table records how
     long a German ad has been up as a side effect — the same lifecycle signal
-    the Portuguese corpus carries.
+    the Portuguese corpus carries. Being seen also means being for sale: every
+    upsert re-activates the row and clears ``deactivated_at``, so a car that
+    vanished from one pass and reappeared on the next is live again without a
+    separate path for it.
     """
     from src.parser.brand_normalize import normalize_brand
 
@@ -1492,36 +1502,207 @@ def upsert_import_listings(session: Session, listings) -> tuple[int, int]:
         values = {k: data.get(k) for k in _IMPORT_FIELDS if k in data}
         row = existing.get((source, external_id))
         if row is None:
-            session.add(ImportListing(source=source, external_id=external_id,
-                                      first_seen_at=now, last_seen_at=now, **values))
+            row = ImportListing(source=source, external_id=external_id,
+                                first_seen_at=now, last_seen_at=now,
+                                is_active=True, deactivated_at=None, **values)
+            session.add(row)
+            existing[(source, external_id)] = row
             inserted += 1
         else:
             for key, value in values.items():
                 if value is not None:
                     setattr(row, key, value)
             row.last_seen_at = now
+            row.is_active = True
+            row.deactivated_at = None
             updated += 1
     session.commit()
     return inserted, updated
 
 
-def get_import_listings_df(session: Session) -> pd.DataFrame:
-    """Every foreign-market listing as a DataFrame, in this project's vocabulary."""
-    rows = session.query(ImportListing).all()
+def deactivate_import_missing(session: Session, source: str,
+                              cells: list[tuple[str, str, int]], seen_ids: set[str],
+                              now: datetime | None = None) -> int:
+    """Retire the rows of fully enumerated model-years that the pass did not see.
+
+    Only the named ``(brand, model, year)`` cells of the named source are
+    touched: the crawler calls this right after reading every page a cell has,
+    which is the one moment "not on the page" means "not for sale" rather than
+    "on a page we did not ask for". Rows whose ``external_id`` is in *seen_ids*
+    stay. Returns the number of rows deactivated.
+    """
+    from sqlalchemy import and_, or_
+
+    if not cells:
+        return 0
+    stamp = now or _utcnow()
+    seen = {str(s) for s in seen_ids}
+    count = 0
+    for chunk in _chunked(list(cells), size=max(1, _MAX_BIND_PARAMS // 3)):
+        clauses = [and_(ImportListing.brand == brand, ImportListing.model == model,
+                        ImportListing.year == year)
+                   for brand, model, year in chunk]
+        rows = (session.query(ImportListing)
+                .filter(ImportListing.source == source,
+                        ImportListing.is_active.isnot(False),
+                        or_(*clauses))
+                .all())
+        for row in rows:
+            if row.external_id in seen:
+                continue
+            row.is_active = False
+            row.deactivated_at = stamp
+            count += 1
+    session.commit()
+    return count
+
+
+def expire_import_listings(session: Session, source: str, max_age_days: int = 21,
+                           now: datetime | None = None) -> int:
+    """Retire every active row of *source* not seen for ``max_age_days``.
+
+    The safety net under ``deactivate_import_missing``: a model-year the crawl
+    stopped visiting (dropped below the inventory floor, ran out of budget for
+    weeks) would otherwise keep its rows for sale forever. Returns the number of
+    rows deactivated.
+    """
+    stamp = now or _utcnow()
+    cutoff = stamp - timedelta(days=max_age_days)
+    count = (session.query(ImportListing)
+             .filter(ImportListing.source == source,
+                     ImportListing.is_active.isnot(False),
+                     ImportListing.last_seen_at < cutoff)
+             .update({ImportListing.is_active: False,
+                      ImportListing.deactivated_at: stamp},
+                     synchronize_session="fetch"))
+    session.commit()
+    return int(count or 0)
+
+
+def get_import_listings_df(session: Session,
+                           source: str | None = "autoscout24") -> pd.DataFrame:
+    """Foreign-market listings of one source as a DataFrame, in this project's vocabulary.
+
+    The default is the weekly German benchmark crawl, which is what the import
+    pages have always read; ``source=None`` returns every source at once. The
+    country corpora (``as24_de`` and friends) are read through
+    ``get_country_listings_df`` instead, shaped like the Portuguese frame.
+    """
+    q = session.query(ImportListing)
+    if source is not None:
+        q = q.filter(ImportListing.source == source)
+    rows = q.all()
     if not rows:
         return pd.DataFrame()
     return pd.DataFrame([{
         "source": r.source, "external_id": r.external_id, "url": r.url,
         "brand": r.brand, "model": r.model, "model_group": r.model_group,
-        "variant": r.variant, "motor_type": r.motor_type,
-        "price_eur": r.price_eur, "vat_label": r.vat_label,
-        "vat_reclaimable": r.vat_reclaimable,
+        "variant": r.variant, "motor_type": r.motor_type, "version": r.version,
+        "price_eur": r.price_eur, "price_label": r.price_label,
+        "vat_label": r.vat_label, "vat_reclaimable": r.vat_reclaimable,
         "year": r.year, "registration_month": r.registration_month,
         "mileage_km": r.mileage_km, "engine_cc": r.engine_cc,
         "horsepower": r.horsepower, "power_kw": r.power_kw,
         "fuel_type": r.fuel_type, "transmission": r.transmission,
         "co2_g_km": r.co2_g_km, "seller_type": r.seller_type,
-        "country_code": r.country_code, "city": r.city, "zip_code": r.zip_code,
-        "is_damaged": r.is_damaged,
+        "offer_type": r.offer_type, "body_type": r.body_type,
+        "country_code": r.country_code, "region": r.region, "city": r.city,
+        "zip_code": r.zip_code, "is_damaged": r.is_damaged,
+        "photo_count": r.photo_count, "image_url": r.image_url,
+        "is_active": r.is_active, "deactivated_at": r.deactivated_at,
         "first_seen_at": r.first_seen_at, "last_seen_at": r.last_seen_at,
     } for r in rows])
+
+
+def _country_listing_row(r: ImportListing, country_code: str) -> dict:
+    """One foreign row in the shape ``get_listings_df`` gives a Portuguese one.
+
+    Every key the Portuguese frame carries is present so the price model, the
+    model pages and the deal builders run unchanged on a country corpus; what
+    AutoScout24 does not have (snapshots, descriptions, seller profiles) is None
+    rather than absent. ``olx_id`` is prefixed with the source so a German and
+    a French id can never collide with each other or with an OLX one.
+    """
+    title = " ".join(p for p in (r.brand, r.model, r.version) if p)
+    inactive = r.is_active is False
+    return {
+        "olx_id": f"{r.source}:{r.external_id}", "url": r.url, "title": title,
+        "brand": r.brand, "model": r.model, "year": r.year,
+        "price_eur": r.price_eur,
+        "first_price_eur": r.price_eur,
+        "num_price_drops": 0,
+        "max_drop_pct": 0.0,
+        "price_drop_velocity": None,
+        "days_since_last_drop": None,
+        "mileage_km": r.mileage_km, "engine_cc": r.engine_cc,
+        "fuel_type": r.fuel_type, "horsepower": r.horsepower,
+        "transmission": r.transmission, "segment": r.body_type,
+        "doors": None, "seats": None, "color": None,
+        "condition": None, "drive_type": None,
+        "photo_count": r.photo_count, "description_length": None,
+        "city": r.city, "district": r.region,
+        "seller_type": r.seller_type, "is_active": r.is_active,
+        "generation": None,
+        "description": None,
+        "llm_extras": None,
+        "first_seen_at": r.first_seen_at,
+        "last_seen_at": r.last_seen_at,
+        "last_scraped_at": r.last_seen_at,
+        "sub_model": r.motor_type,
+        "trim_level": None,
+        "desc_mentions_repair": None,
+        "desc_mentions_accident": None,
+        "real_mileage_km": None,
+        "desc_mentions_num_owners": None,
+        "desc_mentions_customs_cleared": None,
+        "right_hand_drive": None,
+        "mechanical_condition": None,
+        "damage_severity": None,
+        "urgency": None,
+        "warranty": None,
+        "tuning_or_mods": None,
+        "taxi_fleet_rental": None,
+        "first_owner_selling": None,
+        "source": r.source,
+        "duplicate_of": None,
+        "deactivated_at": r.deactivated_at,
+        "deactivation_reason": "expired" if inactive else None,
+        "seller_uuid": None,
+        "seller_displayed_as": None,
+        "seller_profile_url": None,
+        "seller_listings_count_90d": None,
+        **_seller_columns_for(None, None),
+        "country": country_code,
+        "external_id": r.external_id,
+        "image_url": r.image_url,
+        "price_label": r.price_label,
+        "co2_g_km": r.co2_g_km,
+        "registration_month": r.registration_month,
+        "vat_reclaimable": r.vat_reclaimable,
+        "is_damaged": r.is_damaged,
+        "origin": None,
+    }
+
+
+def get_country_listings_df(session: Session, country_code: str) -> pd.DataFrame:
+    """One country's AutoScout24 corpus, shaped exactly like ``get_listings_df``.
+
+    Reads the rows whose source belongs to *country_code* (``src.countries``
+    decides which), so the Portuguese table is never consulted and no other
+    country's rows can slip in. The frame keeps every column of the Portuguese
+    one plus a few the foreign card has and OLX does not (``country``,
+    ``image_url``, ``price_label``, ``co2_g_km``, ...), and comes back with all
+    those columns even when there are no rows, so callers can filter on them
+    without checking for presence first.
+    """
+    from src.countries import source_for
+
+    code = str(country_code).upper()
+    source = source_for(code)
+    rows = (session.query(ImportListing)
+            .filter(ImportListing.source == source)
+            .order_by(ImportListing.id)
+            .all())
+    if not rows:
+        return pd.DataFrame(columns=list(_country_listing_row(ImportListing(), code)))
+    return pd.DataFrame([_country_listing_row(r, code) for r in rows])

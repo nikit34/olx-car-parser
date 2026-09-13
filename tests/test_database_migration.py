@@ -171,3 +171,89 @@ def test_listing_row_can_reference_seller(fresh_schema):
         )).fetchone()
     engine.dispose()
     assert tuple(row) == ("L1", "Rui", "Utilizador")
+
+
+_V7_IMPORT_COLUMNS = (
+    "region", "photo_count", "version", "price_label", "image_url",
+    "offer_type", "body_type", "is_active", "deactivated_at",
+)
+
+
+def _index_exists(url: str, name: str) -> bool:
+    engine = create_engine(url)
+    try:
+        with engine.connect() as conn:
+            return bool(conn.execute(text(
+                "SELECT COUNT(*) FROM pg_indexes "
+                "WHERE schemaname = current_schema() AND indexname = :n"
+            ), {"n": name}).scalar_one())
+    finally:
+        engine.dispose()
+
+
+def _build_legacy_import_db(url: str) -> None:
+    """A v6 database: ``import_listings`` as the weekly German crawl left it,
+    before the country columns and the ``last_seen_at`` index, with one row
+    already in it so the migration has existing data to default."""
+    from src.models.listing import Base
+    import src.models.import_listing  # noqa: F401
+    import src.models.portfolio  # noqa: F401
+    import src.models.relist  # noqa: F401
+    import src.models.seller  # noqa: F401
+
+    engine = create_engine(url)
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(text("DROP INDEX IF EXISTS ix_import_listings_last_seen_at"))
+        for col in _V7_IMPORT_COLUMNS:
+            conn.execute(text(
+                f"ALTER TABLE import_listings DROP COLUMN IF EXISTS {col}"))
+        conn.execute(text(
+            "INSERT INTO import_listings (source, external_id, url, brand, model, year) "
+            "VALUES ('autoscout24', 'legacy-1', 'https://x', 'BMW', '320', 2016)"))
+    engine.dispose()
+
+
+def test_fresh_db_has_import_listing_country_columns(fresh_schema):
+    from src.storage.database import init_db
+
+    init_db(fresh_schema)
+
+    cols = _table_columns(fresh_schema, "import_listings")
+    for col in _V7_IMPORT_COLUMNS:
+        assert col in cols, f"import_listings.{col} missing on a fresh DB"
+    assert _index_exists(fresh_schema, "ix_import_listings_last_seen_at")
+
+
+def test_existing_import_listings_get_country_columns(fresh_schema):
+    _build_legacy_import_db(fresh_schema)
+    assert "region" not in _table_columns(fresh_schema, "import_listings")
+    reset_module_engine_cache()
+    from src.storage.database import init_db
+
+    init_db(fresh_schema)
+
+    cols = _table_columns(fresh_schema, "import_listings")
+    for col in _V7_IMPORT_COLUMNS:
+        assert col in cols, f"migration didn't add import_listings.{col}"
+    assert _index_exists(fresh_schema, "ix_import_listings_last_seen_at")
+    engine = create_engine(fresh_schema)
+    with engine.connect() as conn:
+        row = conn.execute(text(
+            "SELECT is_active, deactivated_at FROM import_listings "
+            "WHERE external_id = 'legacy-1'"
+        )).fetchone()
+    engine.dispose()
+    assert tuple(row) == (True, None)
+
+
+def test_import_listing_migration_is_idempotent(fresh_schema):
+    _build_legacy_import_db(fresh_schema)
+    reset_module_engine_cache()
+    from src.storage.database import init_db
+
+    init_db(fresh_schema)
+    reset_module_engine_cache()
+    init_db(fresh_schema)
+
+    assert "is_active" in _table_columns(fresh_schema, "import_listings")

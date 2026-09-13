@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
 
 from src.models.listing import Base
+import src.models.import_listing  # noqa: F401
 import src.models.portfolio  # noqa: F401 — register PortfolioDeal with Base
 import src.models.relist  # noqa: F401 — register RelistEvent with Base
 import src.models.seller  # noqa: F401 — register Seller with Base
@@ -65,7 +66,7 @@ def _get_table_columns(conn, table_name: str) -> set[str]:
     return {col["name"] for col in inspect(conn).get_columns(table_name)}
 
 
-_SCHEMA_VERSION = 6  # bump when _migrate_columns or _dead_json_keys changes
+_SCHEMA_VERSION = 7  # bump when _migrate_columns or _dead_json_keys changes
 
 
 def _read_schema_version(conn) -> int:
@@ -190,8 +191,32 @@ def init_db(db_url: str | None = None):
     _migrate_indexes = [
         ("ix_listings_seller_uuid", "listings", "seller_uuid"),
         ("ix_listings_last_scraped_at", "listings", "last_scraped_at"),
+        ("ix_import_listings_last_seen_at", "import_listings", "last_seen_at"),
+    ]
+    _migrate_import_columns = [
+        ("region", "TEXT"),
+        ("photo_count", "INTEGER"),
+        ("version", "TEXT"),
+        ("price_label", "TEXT"),
+        ("image_url", "TEXT"),
+        ("offer_type", "TEXT"),
+        ("body_type", "TEXT"),
+        ("is_active", "BOOLEAN DEFAULT TRUE"),
+        ("deactivated_at", "TIMESTAMP"),
     ]
     with engine.connect() as conn:
+        existing_import_columns = _get_table_columns(conn, "import_listings")
+        for col_name, col_type in _migrate_import_columns:
+            if col_name in existing_import_columns:
+                continue
+            try:
+                conn.execute(text(
+                    f"ALTER TABLE import_listings ADD COLUMN {col_name} "
+                    f"{col_type}"
+                ))
+                conn.commit()
+            except Exception:
+                conn.rollback()
         existing_listing_columns = _get_table_columns(conn, "listings")
         for col_name, col_type in _migrate_columns:
             if col_name in existing_listing_columns:
