@@ -410,7 +410,7 @@ await check("the sitemap advertises exactly the cut and region pages the router 
 await check("the sitemap still carries the pages the core module owns", async () => {
   const xml = await body("/de/sitemap.xml");
   const locs = new Set([...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => new URL(m[1]).pathname));
-  for (const p of ["/de", "/de/preise", "/de/bewerten", "/de/markt", "/de/methodik"]) {
+  for (const p of ["/de", "/de/preise", "/de/bewerten", "/de/methodik", "/de/ueber-uns"]) {
     assert(locs.has(p), `the sitemap lost the core page ${p}`);
   }
   assert(locs.has(`/de/preis/${deepModel}`), "the sitemap lost a model page");

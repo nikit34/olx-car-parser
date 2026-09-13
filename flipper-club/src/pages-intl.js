@@ -930,7 +930,7 @@ export function renderIntlFeed({ loc, host, deals, builtAt, models = null }) {
   return layout({
     title: t(loc, "feed.title", { country: loc.countryName, source: loc.source.name }),
     description: t(loc, "feed.desc", { source: loc.source.name }),
-    body, zone: "all", nav: "feed", depositCount: null, index: true, host, locale: loc,
+    body, zone: "all", nav: "feed", depositCount: null, index: list.length > 0, host, locale: loc,
     canonical: `https://${host}${href(loc, "mercado")}`,
     jsonLd: graph([breadcrumbLd(host, [homeCrumb(loc), { name: t(loc, "feed.crumb"), href: href(loc, "mercado") }])]),
   });
@@ -1124,12 +1124,12 @@ export function renderIntlPrivacy({ loc, host }) {
   });
 }
 
-export function intlSitemapPaths(loc, models) {
+export function intlSitemapPaths(loc, models, hasDeals = true) {
   const out = [
     { path: href(loc, "landing"), freq: "daily", prio: "0.9" },
     { path: href(loc, "hub"), freq: "weekly", prio: "0.7" },
     { path: href(loc, "avaliar"), freq: "weekly", prio: "0.8" },
-    { path: href(loc, "mercado"), freq: "daily", prio: "0.8" },
+    ...(hasDeals ? [{ path: href(loc, "mercado"), freq: "daily", prio: "0.8" }] : []),
     { path: href(loc, "metodologia"), freq: "monthly", prio: "0.6" },
     { path: href(loc, "sobre"), freq: "monthly", prio: "0.6" },
     { path: href(loc, "privacidade"), freq: "yearly", prio: "0.2" },

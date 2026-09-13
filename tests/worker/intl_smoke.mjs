@@ -510,5 +510,32 @@ await check("no locale string is broken or carries a stray placeholder", async (
   }
 });
 
+await check("an empty deal feed is neither indexed nor advertised", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const u = typeof input === "string" ? input : input.url;
+    if (u.includes("hot_deals_")) return json({ deals: [] });
+    return realFetch(input, init);
+  };
+  try {
+    const page = await (await get("/fr/marche")).text();
+    const robots = (page.match(/name="robots" content="([^"]+)"/) || [])[1];
+    assert(robots === "noindex,follow",
+      `an empty market page says ${robots}: it offers nothing to index`);
+    const xml = await (await get("/fr/sitemap.xml")).text();
+    assert(!xml.includes("<loc>https://" + HOST + "/fr/marche</loc>"),
+      "the sitemap advertises a market page with no offers behind it");
+  } finally { globalThis.fetch = realFetch; }
+});
+
+await check("a feed that has offers is indexed and advertised again", async () => {
+  const page = await (await get("/de/markt")).text();
+  const robots = (page.match(/name="robots" content="([^"]+)"/) || [])[1];
+  assert(robots === "index,follow", `a market page with offers says ${robots}`);
+  const xml = await (await get("/de/sitemap.xml")).text();
+  assert(xml.includes("<loc>https://" + HOST + "/de/markt</loc>"),
+    "the sitemap dropped a market page that does have offers");
+});
+
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall intl checks passed");
 process.exit(failures ? 1 : 0);

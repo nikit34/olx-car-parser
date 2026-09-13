@@ -1488,7 +1488,12 @@ async function intlSitemap(env, url, loc) {
   const models = (mdoc && mdoc.models) || null;
   const lastmod = ((mdoc && mdoc.built_at) || "").slice(0, 10);
   const lm = /^\d{4}-\d{2}-\d{2}$/.test(lastmod) ? `<lastmod>${lastmod}</lastmod>` : "";
-  const paths = intlSitemapPaths(loc, models);
+  let hasDeals = false;
+  try {
+    const feed = await getDeals(env, "all", loc.country);
+    hasDeals = !feed.degraded && Array.isArray(feed.deals) && feed.deals.length > 0;
+  } catch (_) { hasDeals = false; }
+  const paths = intlSitemapPaths(loc, models, hasDeals);
   if (models) {
     for (const mod of intlPageModules()) {
       if (typeof mod.sitemap !== "function") continue;
