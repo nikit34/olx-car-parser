@@ -1,16 +1,31 @@
-"""AutoScout24.de search reader — the German side of the import question.
+"""AutoScout24 search reader — the German, French and Italian sides of the market.
 
-The one thing this project cannot answer from its own corpus is whether buying
-a given model in Germany and nationalising it beats buying it here. The
-Portuguese half we own; the German half is one number we do not have — what the
-same car asks in Germany today — and this module is how it arrives.
+This started as one question the Portuguese corpus cannot answer from itself:
+does buying a given model in Germany and nationalising it beat buying it here.
+The Portuguese half we own; the German half is one number we do not have — what
+the same car asks in Germany today — and this module is how it arrives.
 
-Why the search page and not a detail page: AutoScout24 is a Next.js app and its
-result page ships ``__NEXT_DATA__`` with twenty fully-formed listings, exactly
-like Standvirtual (see ``scraper._sv_advert_from_html``). Every input the ISV
-formula needs is already on the card — CO2 in g/km, Erstzulassung, fuel,
-cilindrada, plus the price and, crucially, its VAT label. So one request per
-twenty cars, and no detail fetches at all.
+It now reads three national sites rather than one. AutoScout24 runs the same
+Next.js application on ``.de``, ``.fr`` and ``.it``, with the same card shape
+and the same ``__NEXT_DATA__`` payload; what changes between them is the
+vocabulary printed on the card (``Benzin`` / ``Essence`` / ``Benzina``), the
+aria labels those values hang off, and the unit horsepower is quoted in
+(``PS`` / ``Ch`` / ``CV``). So the reader is one parser with a per-market
+vocabulary table, not three parsers: a field that moves on one site moves on
+all three, and a translation that is wrong is wrong in one visible place.
+
+Everything a card yields is mapped into this project's Portuguese vocabulary on
+the way out — ``Diesel``/``Gasolina``/``Eléctrico``, ``Manual``/``Automática``,
+``Profissional``/``Particular`` — because the price model, the deal builders and
+the pages are all written against that vocabulary and a per-country dialect in
+the database is a per-country bug in every one of them.
+
+Why the search page and not a detail page: the result page ships twenty
+fully-formed listings, exactly like Standvirtual (see
+``scraper._sv_advert_from_html``). Every input the ISV formula needs is already
+on the card — CO2 in g/km, Erstzulassung, fuel, cilindrada, plus the price and,
+crucially, its VAT label. So one request per twenty cars, and no detail fetches
+at all.
 
 **How this behaves on someone else's site**, because that is a decision and not
 an implementation detail:
@@ -23,13 +38,26 @@ an implementation detail:
   closes the whole site to the named AI crawlers (GPTBot, ClaudeBot, CCBot).
   We are none of those, and the path form used here (``/lst/{make}/{model}``)
   is not among the disallowed prefixes. ``robots_allows`` keeps that judgement
-  in code rather than in a comment nobody re-reads.
+  in code rather than in a comment nobody re-reads. The three national files
+  disallow the same prefixes, so one list covers all of them.
 * It is slow on purpose: ``DELAY_MIN``/``DELAY_MAX`` seconds between requests,
   serial, one request per model-year, and a hard ``budget`` per run so a bug
   cannot turn into a flood. A 429 or a 403 stops the run then and there instead
   of retrying into a ban.
-* It takes aggregates, not inventory. What ships to the public pages is the
-  median of a model-year, never a copy of somebody's listing.
+* What it publishes differs by page, and the difference is worth stating
+  rather than leaving for someone to discover. The import comparison
+  (``scripts/crawl_autoscout.py``, source ``autoscout24``) takes aggregates
+  only: the median of a model-year, never a copy of somebody's listing. The
+  country corpora (``scripts/crawl_eu_market.py``) publish those medians too,
+  and on top of them a feed that shows individual cars, each with its photo,
+  price, specs and a link to the advert itself. That is a republication of
+  someone else's inventory, and calling it anything softer here would be a
+  comfortable lie. What bounds it is real, though: the seller's own text is
+  never stored for these corpora (``get_country_listings_df`` drops the
+  description), the photo is displayed from AutoScout24's own servers rather
+  than copied onto ours, every card sends the reader out to the source, and a
+  listing nobody has re-confirmed lately is withheld instead of being passed
+  off as live.
 """
 
 from __future__ import annotations
@@ -39,11 +67,13 @@ import logging
 import random
 import re
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from urllib.parse import urlencode
 
 import httpx
 
+from src.parser import regions
 from src.parser.fuel_normalize import normalize_fuel_type
 
 logger = logging.getLogger(__name__)
@@ -67,25 +97,164 @@ _DISALLOWED_PREFIXES = (
 _NEXT_DATA_RE = re.compile(
     r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', re.S)
 
-_FUEL_DE_TO_PT = {
-    "diesel": "Diesel",
-    "benzin": "Gasolina",
-    "elektro": "Eléctrico",
-    "elektro/benzin": "Híbrido (Gasolina)",
-    "elektro/diesel": "Híbrido (Diesel)",
-    "autogas (lpg)": "GPL",
-    "lpg": "GPL",
-    "erdgas (cng)": "GNC",
-    "cng": "GNC",
-    "wasserstoff": "Hidrogénio",
-    "ethanol": "Gasolina",
+_HOSTS = {
+    "de": BASE_URL,
+    "fr": "https://www.autoscout24.fr",
+    "it": "https://www.autoscout24.it",
 }
 
-_TRANSMISSION_DE_TO_PT = {
-    "automatik": "Automática",
-    "schaltgetriebe": "Manual",
-    "halbautomatik": "Automática",
+_SELLER_TO_PT = {"dealer": "Profissional", "privateseller": "Particular"}
+
+_THOUSANDS_SPACE = re.compile(r"(?<=\d)[\s   ](?=\d)")
+_POWER_KW_RE = re.compile(r"(\d[\d.]*)\s*kW")
+_POWER_HP_RE = re.compile(r"(\d[\d.]*)\s*(?:PS|Ch|CV)\b", re.I)
+
+
+def base_url(tld: str = "de") -> str:
+    """The national AutoScout24 origin for a tld. Unknown tlds raise."""
+    try:
+        return _HOSTS[str(tld or "").lower()]
+    except KeyError:
+        raise ValueError(f"no AutoScout24 market for tld {tld!r} "
+                         f"(known: {', '.join(sorted(_HOSTS))})") from None
+
+
+def _label_key(text) -> str:
+    """Accent- and punctuation-free lookup key: 'Boîte manuelle' → 'boite manuelle'.
+
+    The same powertrain is spelled ``Electrique`` and ``Électrique`` on the same
+    French page, and ``Autogas (LPG)`` carries punctuation that means nothing.
+    Folding both away keeps the vocabulary tables one entry per concept instead
+    of one per spelling the site happens to ship this month.
+    """
+    decomposed = unicodedata.normalize("NFKD", str(text or ""))
+    plain = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    return " ".join(re.sub(r"[^0-9a-z]+", " ", plain.lower()).split())
+
+
+@dataclass(frozen=True)
+class Market:
+    """One national site: its host, its language header, and what its cards say.
+
+    ``fuels`` and ``gearboxes`` map the site's own label onto this project's
+    Portuguese vocabulary. A value of None is a deliberate "this tells us
+    nothing" — ``Sonstige``/``Autres``/``Altro`` is the seller declining to
+    answer, and storing it as a fuel type would invent a category the price
+    model then splits the corpus on. A label that is in neither the table nor
+    the None set passes through unchanged, so a new powertrain shows up in the
+    data as itself rather than disappearing.
+    """
+
+    tld: str
+    accept_language: str
+    mileage_label: str
+    gearbox_label: str
+    registration_label: str
+    fuel_label: str
+    power_label: str
+    co2_label: str | None
+    fuels: dict[str, str | None]
+    gearboxes: dict[str, str | None]
+
+
+_MARKETS: dict[str, Market] = {
+    "de": Market(
+        tld="de",
+        accept_language="de-DE,de;q=0.9",
+        mileage_label="Kilometerstand",
+        gearbox_label="Getriebe",
+        registration_label="Erstzulassung",
+        fuel_label="Kraftstoff",
+        power_label="Leistung",
+        co2_label="CO₂-Emissionen",
+        fuels={
+            "diesel": "Diesel",
+            "benzin": "Gasolina",
+            "elektro": "Eléctrico",
+            "elektro benzin": "Híbrido (Gasolina)",
+            "elektro diesel": "Híbrido (Diesel)",
+            "autogas lpg": "GPL",
+            "lpg": "GPL",
+            "erdgas cng": "GNC",
+            "cng": "GNC",
+            "wasserstoff": "Hidrogénio",
+            "ethanol": "Gasolina",
+            "sonstige": None,
+            "andere": None,
+        },
+        gearboxes={
+            "schaltgetriebe": "Manual",
+            "automatik": "Automática",
+            "halbautomatik": "Automática",
+        },
+    ),
+    "fr": Market(
+        tld="fr",
+        accept_language="fr-FR,fr;q=0.9",
+        mileage_label="Kilométrage",
+        gearbox_label="Boîte",
+        registration_label="1ère immatriculation",
+        fuel_label="Carburant",
+        power_label="Puissance kW (CH)",
+        co2_label=None,
+        fuels={
+            "diesel": "Diesel",
+            "essence": "Gasolina",
+            "electrique": "Eléctrico",
+            "electrique essence": "Híbrido (Gasolina)",
+            "electrique diesel": "Híbrido (Diesel)",
+            "gpl": "GPL",
+            "cng": "GNC",
+            "gnv": "GNC",
+            "hydrogene": "Hidrogénio",
+            "ethanol": "Gasolina",
+            "autres": None,
+            "autre": None,
+        },
+        gearboxes={
+            "boite manuelle": "Manual",
+            "boite automatique": "Automática",
+            "semi automatique": "Automática",
+        },
+    ),
+    "it": Market(
+        tld="it",
+        accept_language="it-IT,it;q=0.9",
+        mileage_label="Chilometraggio",
+        gearbox_label="Cambio",
+        registration_label="Anno",
+        fuel_label="Carburante",
+        power_label="Potenza",
+        co2_label=None,
+        fuels={
+            "diesel": "Diesel",
+            "benzina": "Gasolina",
+            "elettrica": "Eléctrico",
+            "elettrica benzina": "Híbrido (Gasolina)",
+            "elettrica diesel": "Híbrido (Diesel)",
+            "gpl": "GPL",
+            "metano": "GNC",
+            "idrogeno": "Hidrogénio",
+            "etanolo": "Gasolina",
+            "altro": None,
+            "altri": None,
+        },
+        gearboxes={
+            "manuale": "Manual",
+            "automatico": "Automática",
+            "semiautomatico": "Automática",
+        },
+    ),
 }
+
+
+def market(tld: str = "de") -> Market:
+    """The vocabulary table for a tld. Unknown tlds raise rather than default."""
+    try:
+        return _MARKETS[str(tld or "").lower()]
+    except KeyError:
+        raise ValueError(f"no AutoScout24 market for tld {tld!r} "
+                         f"(known: {', '.join(sorted(_MARKETS))})") from None
 
 
 class AutoScoutBlocked(RuntimeError):
@@ -97,7 +266,8 @@ def robots_allows(path: str) -> bool:
 
     Kept as code so the crawler cannot drift away from what the file says: the
     runner asks before every fetch, and a path that lands on a disallowed
-    prefix is skipped rather than requested.
+    prefix is skipped rather than requested. The German, French and Italian
+    files disallow the same search prefixes, so the judgement is shared.
     """
     p = path if path.startswith("/") else "/" + path
     return not any(p.startswith(pre) for pre in _DISALLOWED_PREFIXES)
@@ -105,7 +275,7 @@ def robots_allows(path: str) -> bool:
 
 @dataclass
 class DeListing:
-    """One German listing, in this project's vocabulary rather than AS24's."""
+    """One foreign listing, in this project's vocabulary rather than AS24's."""
 
     external_id: str
     url: str
@@ -117,6 +287,9 @@ class DeListing:
     model_group: str | None = None
     variant: str | None = None
     motor_type: str | None = None
+    version: str | None = None
+    body_type: str | None = None
+    offer_type: str | None = None
     year: int | None = None
     registration_month: str | None = None
     mileage_km: int | None = None
@@ -126,11 +299,15 @@ class DeListing:
     fuel_type: str | None = None
     transmission: str | None = None
     co2_g_km: int | None = None
+    price_label: str | None = None
     seller_type: str | None = None
     country_code: str | None = None
+    region: str | None = None
     city: str | None = None
     zip_code: str | None = None
     is_damaged: bool | None = None
+    photo_count: int | None = None
+    image_url: str | None = None
     source: str = "autoscout24"
 
 
@@ -142,13 +319,20 @@ class AutoScoutConfig:
     budget: int = 200
     user_agent: str = USER_AGENT
     country: str = "D"
+    tld: str = "de"
 
 
 def _num(text: str | None) -> float | None:
-    """German-formatted number out of a label: '1.995 cm³' → 1995.0."""
+    """A card's number out of its label: '1.995 cm³' → 1995, '65 000 km' → 65000.
+
+    Three markets, three thousands separators: Germany and Italy print a dot,
+    France prints a narrow no-break space. The space forms have to go before
+    the digits are read or ``65 000 km`` comes back as sixty-five.
+    """
     if not text:
         return None
-    m = re.search(r"-?\d[\d.]*(?:,\d+)?", str(text))
+    cleaned = _THOUSANDS_SPACE.sub("", str(text))
+    m = re.search(r"-?\d[\d.]*(?:,\d+)?", cleaned)
     if not m:
         return None
     raw = m.group(0).replace(".", "").replace(",", ".")
@@ -163,7 +347,9 @@ def _int(text) -> int | None:
     return int(round(v)) if v is not None else None
 
 
-def _detail(listing: dict, aria: str) -> str | None:
+def _detail(listing: dict, aria: str | None) -> str | None:
+    if not aria:
+        return None
     for item in listing.get("vehicleDetails") or []:
         if item.get("ariaLabel") == aria:
             return item.get("data")
@@ -174,7 +360,7 @@ CO2_MIN_G_KM = 50
 CO2_MAX_G_KM = 500
 
 
-def _co2(listing: dict, fuel_pt: str | None = None) -> int | None:
+def _co2(listing: dict, fuel_pt: str | None = None, mk: Market | None = None) -> int | None:
     """CO2 in g/km off the card, or None when the seller typed something impossible.
 
     The field is free text on AutoScout24 and sellers fill it with anything: a
@@ -190,7 +376,7 @@ def _co2(listing: dict, fuel_pt: str | None = None) -> int | None:
             raw = _int(value)
             break
     if raw is None:
-        raw = _int(_detail(listing, "CO₂-Emissionen"))
+        raw = _int(_detail(listing, (mk or _MARKETS["de"]).co2_label))
     if raw is None:
         return None
     electric = (fuel_pt or "").lower().startswith("elé")
@@ -199,25 +385,30 @@ def _co2(listing: dict, fuel_pt: str | None = None) -> int | None:
     return raw if CO2_MIN_G_KM <= raw <= CO2_MAX_G_KM else None
 
 
-def _registration(listing: dict) -> tuple[int | None, str | None]:
-    """(year, 'MM/YYYY') from Erstzulassung, tracking first, label second."""
+def _registration(listing: dict, mk: Market) -> tuple[int | None, str | None]:
+    """(year, 'MM/YYYY') from first registration, tracking first, label second.
+
+    ``tracking.firstRegistration`` is the same ``MM-YYYY`` on all three sites
+    while the printed label is whatever the locale prints, so the tracked value
+    wins and the label is only the fallback.
+    """
     raw = (listing.get("tracking") or {}).get("firstRegistration")
     if raw and re.match(r"^\d{2}-\d{4}$", str(raw)):
         month, year = str(raw).split("-")
         return int(year), f"{month}/{year}"
-    label = _detail(listing, "Erstzulassung")
+    label = _detail(listing, mk.registration_label)
     if label and re.match(r"^\d{2}/\d{4}$", str(label).strip()):
         month, year = str(label).strip().split("/")
         return int(year), f"{month}/{year}"
     return None, None
 
 
-def _power(listing: dict) -> tuple[int | None, int | None]:
-    """(kW, PS) from '140 kW (190 PS)'."""
-    label = _detail(listing, "Leistung") or ""
-    kw = re.search(r"(\d[\d.]*)\s*kW", label)
-    ps = re.search(r"(\d[\d.]*)\s*PS", label)
-    return (_int(kw.group(1)) if kw else None, _int(ps.group(1)) if ps else None)
+def _power(listing: dict, mk: Market) -> tuple[int | None, int | None]:
+    """(kW, hp) from '140 kW (190 PS)', '81 kW (110 Ch)', '110 kW (150 CV)'."""
+    label = _detail(listing, mk.power_label) or ""
+    kw = _POWER_KW_RE.search(label)
+    hp = _POWER_HP_RE.search(label)
+    return (_int(kw.group(1)) if kw else None, _int(hp.group(1)) if hp else None)
 
 
 def _vat(price: dict) -> tuple[str | None, bool | None]:
@@ -241,14 +432,44 @@ def _vat(price: dict) -> tuple[str | None, bool | None]:
     return str(label), None
 
 
-def parse_search(html: str) -> tuple[list[DeListing], dict]:
+def _translate(raw: str, table: dict[str, str | None]) -> str | None:
+    """A card label in our vocabulary; unknown labels survive as themselves."""
+    key = _label_key(raw)
+    if key in table:
+        return table[key]
+    return raw.strip() or None
+
+
+def _make_models(props: dict) -> list[dict]:
+    """The make page's own model list, flattened out of the taxonomy.
+
+    ``taxonomy.models`` is keyed by make id and each value is that make's list,
+    so a make page carries exactly one key and a filtered search page carries
+    the make it was filtered to. Flattening keeps the caller from having to
+    know the make id it asked for.
+    """
+    models = ((props.get("taxonomy") or {}).get("models")) or {}
+    entries: list[dict] = []
+    groups = models.values() if isinstance(models, dict) else [models]
+    for group in groups:
+        for item in group or []:
+            if not isinstance(item, dict):
+                continue
+            entries.append({"label": item.get("label"), "value": item.get("value"),
+                            "makeId": item.get("makeId")})
+    return entries
+
+
+def parse_search(html: str, tld: str = "de") -> tuple[list[DeListing], dict]:
     """(listings, meta) from a search page's ``__NEXT_DATA__``.
 
     ``meta`` carries ``results`` and ``pages`` so the runner can stop paging
-    instead of guessing. A page whose JSON is missing or reshaped returns an
-    empty list and an empty meta — the caller treats that as "stop", never as
-    "no cars in Germany".
+    instead of guessing, and ``make_models`` so a make page doubles as the
+    discovery of that make's model vocabulary. A page whose JSON is missing or
+    reshaped returns an empty list and an empty meta — the caller treats that
+    as "stop", never as "no cars in this country".
     """
+    mk = market(tld)
     m = _NEXT_DATA_RE.search(html or "")
     if not m:
         return [], {}
@@ -261,16 +482,17 @@ def parse_search(html: str) -> tuple[list[DeListing], dict]:
     raw = props.get("listings")
     if not isinstance(raw, list):
         return [], {}
-    meta = {"results": props.get("numberOfResults"), "pages": props.get("numberOfPages")}
+    meta = {"results": props.get("numberOfResults"), "pages": props.get("numberOfPages"),
+            "make_models": _make_models(props)}
     out = []
     for item in raw:
-        parsed = _to_listing(item)
+        parsed = _to_listing(item, mk)
         if parsed is not None:
             out.append(parsed)
     return out, meta
 
 
-def _to_listing(item: dict) -> DeListing | None:
+def _to_listing(item: dict, mk: Market) -> DeListing | None:
     vehicle = item.get("vehicle") or {}
     price = item.get("price") or {}
     tracking = item.get("tracking") or {}
@@ -280,19 +502,25 @@ def _to_listing(item: dict) -> DeListing | None:
     if not external_id or not brand or not model:
         return None
     price_eur = price.get("priceRaw")
-    price_eur = float(price_eur) if isinstance(price_eur, (int, float)) else _num(tracking.get("price"))
+    price_eur = (float(price_eur) if isinstance(price_eur, (int, float))
+                 else _num(tracking.get("price")))
     vat_label, vat_reclaimable = _vat(price)
-    year, reg_month = _registration(item)
-    power_kw, power_ps = _power(item)
+    year, reg_month = _registration(item, mk)
+    power_kw, power_hp = _power(item, mk)
     location = item.get("location") or {}
     seller = item.get("seller") or {}
     url = str(item.get("url") or "")
     fuel_raw = str(vehicle.get("fuel") or "").strip()
     gearbox_raw = str(vehicle.get("transmission") or "").strip()
-    fuel_pt = normalize_fuel_type(_FUEL_DE_TO_PT.get(fuel_raw.lower(), fuel_raw or None))
+    fuel_pt = normalize_fuel_type(_translate(fuel_raw, mk.fuels)) if fuel_raw else None
+    images = item.get("images")
+    images = images if isinstance(images, list) else None
+    country_code = str(location.get("countryCode") or "").strip() or None
+    city = str(location.get("city") or "").strip() or None
+    zip_code = str(location.get("zip") or "").strip() or None
     return DeListing(
         external_id=external_id,
-        url=(BASE_URL + url) if url.startswith("/") else url,
+        url=(base_url(mk.tld) + url) if url.startswith("/") else url,
         brand=brand,
         model=model,
         price_eur=price_eur,
@@ -301,47 +529,90 @@ def _to_listing(item: dict) -> DeListing | None:
         model_group=str(vehicle.get("modelGroup") or "").strip() or None,
         variant=str(vehicle.get("variant") or "").strip() or None,
         motor_type=str(vehicle.get("motorTypeName") or "").strip() or None,
+        version=str(vehicle.get("modelVersionInput") or "").strip() or None,
+        body_type=str(vehicle.get("bodyType") or "").strip() or None,
+        offer_type=str(vehicle.get("offerType") or "").strip() or None,
         year=year,
         registration_month=reg_month,
         mileage_km=_int(tracking.get("mileage")) or _int(vehicle.get("mileageInKm")),
         engine_cc=_int(vehicle.get("engineDisplacementInCCM")),
-        horsepower=power_ps,
+        horsepower=power_hp,
         power_kw=power_kw,
         fuel_type=fuel_pt,
-        transmission=_TRANSMISSION_DE_TO_PT.get(gearbox_raw.lower(), gearbox_raw or None),
-        co2_g_km=_co2(item, fuel_pt),
-        seller_type=str(seller.get("type") or "").strip() or None,
-        country_code=str(location.get("countryCode") or "").strip() or None,
-        city=str(location.get("city") or "").strip() or None,
-        zip_code=str(location.get("zip") or "").strip() or None,
+        transmission=_translate(gearbox_raw, mk.gearboxes) if gearbox_raw else None,
+        co2_g_km=_co2(item, fuel_pt, mk),
+        price_label=str(tracking.get("priceLabel") or "").strip() or None,
+        seller_type=_SELLER_TO_PT.get(_label_key(seller.get("type"))),
+        country_code=country_code,
+        region=regions.region_for(country_code or "", zip_code, city),
+        city=city,
+        zip_code=zip_code,
         is_damaged=vehicle.get("isCurrentlyDamaged"),
+        photo_count=len(images) if images is not None else None,
+        image_url=_cover_image(images),
     )
 
 
+def _cover_image(images: list | None) -> str | None:
+    """The card's first photo at the size a page can actually show it.
+
+    The search payload links thumbnails (``/250x188.webp``), which look like
+    mud at card width; the same object is served at ``/720x540.webp`` and the
+    swap costs one string replacement instead of a detail fetch.
+    """
+    if not images:
+        return None
+    first = str(images[0] or "").strip()
+    if not first:
+        return None
+    return first.replace("/250x188.webp", "/720x540.webp")
+
+
+def _list_path(segments, *, year: int | None = None, page: int = 1, country: str = "D",
+               sort: str | None = None, desc: bool = False, ustate: str = "N,U") -> str:
+    params = {
+        "atype": "C",
+        "cy": country,
+        "damaged_listing": "exclude",
+        "powertype": "kw",
+        "sort": sort or "standard",
+        "ustate": ustate,
+    }
+    if desc:
+        params["desc"] = 1
+    if year:
+        params["fregfrom"] = year
+        params["fregto"] = year
+    if page and page > 1:
+        params["page"] = page
+    tail = "/".join(str(s).strip("/") for s in segments if s)
+    return f"{SEARCH_PATH}/{tail}?{urlencode(params)}"
+
+
 def search_path(make: str, model: str, *, year: int | None = None, page: int = 1,
-                country: str = "D", body: str | None = None) -> str:
+                country: str = "D", body: str | None = None, sort: str | None = None,
+                desc: bool = False, ustate: str = "N,U") -> str:
     """The path+query for one model-year page, in the form robots.txt leaves open.
 
     ``body`` is AutoScout24's body-type segment (``bt_kombi`` and friends). It
     exists because half the Portuguese estate vocabulary — "308 SW", "Leon ST",
     "Mégane Sport Tourer" — is a body type there rather than a model, so those
     models are unreachable without it and were coming back 404.
+
+    ``sort``/``desc`` exist for the country crawl, which walks a model newest
+    first (``sort=age&desc=1``) so that the twenty cars a single request buys
+    are the twenty that changed. Left alone it keeps the site's own relevance
+    order, which is what the import benchmark has always asked for.
     """
-    params = {
-        "atype": "C",
-        "cy": country,
-        "damaged_listing": "exclude",
-        "powertype": "kw",
-        "sort": "standard",
-        "ustate": "N,U",
-    }
-    if year:
-        params["fregfrom"] = year
-        params["fregto"] = year
-    if page and page > 1:
-        params["page"] = page
-    tail = f"/{body}" if body else ""
-    return f"{SEARCH_PATH}/{make}/{model}{tail}?{urlencode(params)}"
+    return _list_path([make, model, body], year=year, page=page, country=country,
+                      sort=sort, desc=desc, ustate=ustate)
+
+
+def make_path(make: str, *, page: int = 1, country: str = "D", sort: str | None = None,
+              desc: bool = False, ustate: str = "N,U") -> str:
+    """The path+query for a make's own page, which carries its model taxonomy."""
+    return _list_path([make], page=page, country=country, sort=sort, desc=desc,
+                      ustate=ustate)
 
 
 @dataclass
@@ -357,7 +628,7 @@ class AutoScoutClient:
             timeout=self.config.timeout,
             follow_redirects=True,
             headers={"User-Agent": self.config.user_agent,
-                     "Accept-Language": "de-DE,de;q=0.9"},
+                     "Accept-Language": market(self.config.tld).accept_language},
         )
         return self
 
@@ -387,13 +658,36 @@ class AutoScoutClient:
         if self.spent:
             self._sleep()
         self.spent += 1
-        resp = self._client.get(BASE_URL + path)
+        resp = self._client.get(base_url(self.config.tld) + path)
         if resp.status_code in (403, 429):
             raise AutoScoutBlocked(f"{resp.status_code} on {path}")
         if resp.status_code >= 400:
             logger.warning("autoscout: %s on %s", resp.status_code, path)
             return None
         return resp.text
+
+    def search(self, make: str, model: str, *, year: int | None = None, page: int = 1,
+               body: str | None = None, sort: str | None = None, desc: bool = False,
+               ustate: str = "U") -> tuple[list[DeListing], dict]:
+        """One search page as (listings, meta); ``([], {})`` when nothing was read.
+
+        The empty meta is the caller's signal to stop: a budget that ran out, a
+        path robots closed and a 404 are all "no answer", and none of them is
+        the same as a page that answered with zero cars.
+        """
+        html = self.fetch(search_path(make, model, year=year, page=page,
+                                      country=self.config.country, body=body,
+                                      sort=sort, desc=desc, ustate=ustate))
+        if html is None:
+            return [], {}
+        return parse_search(html, self.config.tld)
+
+    def make_page(self, make: str, *, page: int = 1) -> tuple[list[DeListing], dict]:
+        """A make's own page: twenty real cars and, in meta, its model vocabulary."""
+        html = self.fetch(make_path(make, page=page, country=self.config.country))
+        if html is None:
+            return [], {}
+        return parse_search(html, self.config.tld)
 
     def model_year(self, make: str, model: str, year: int, *, max_pages: int = 1,
                    body: str | None = None) -> list[DeListing]:
@@ -404,7 +698,7 @@ class AutoScoutClient:
                                           country=self.config.country, body=body))
             if html is None:
                 break
-            listings, meta = parse_search(html)
+            listings, meta = parse_search(html, self.config.tld)
             if not listings:
                 break
             found.extend(listings)

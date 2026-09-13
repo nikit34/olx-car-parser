@@ -1,0 +1,1352 @@
+{
+ "props": {
+  "pageProps": {
+   "numberOfResults": 1047,
+   "numberOfPages": 53,
+   "listings": [
+    {
+     "id": "bb920d7a-8749-4efe-b458-8f62b5ab24eb",
+     "isTrending": false,
+     "identifier": {
+      "legacyId": null,
+      "crossReferenceId": null
+     },
+     "images": [
+      "https://prod.pictures.autoscout24.net/listing-images/bb920d7a-8749-4efe-b458-8f62b5ab24eb_48c951e0-e635-4177-a219-8435c717914d.jpg/250x188.webp",
+      "https://prod.pictures.autoscout24.net/listing-images/bb920d7a-8749-4efe-b458-8f62b5ab24eb_e507da64-c5d2-4156-bd23-e08272c8e75e.jpg/250x188.webp"
+     ],
+     "ocsImagesA": [],
+     "price": {
+      "priceFormatted": "€ 13.990",
+      "isVatLabelLegallyRequired": false,
+      "priceRaw": 13990,
+      "isPriceEvaluationEnabled": true,
+      "isConditionalPrice": false
+     },
+     "availableNow": true,
+     "availability": {
+      "fromDate": null,
+      "inDays": null
+     },
+     "superDeal": {
+      "oldPriceFormatted": "",
+      "isEligible": false
+     },
+     "url": "/angebote/volkswagen-golf-join-automatik-led-diesel-blau-cat_ma74gr100101ge7va2820mt428tr480888-bb920d7a-8749-4efe-b458-8f62b5ab24eb",
+     "vehicle": {
+      "articleType": "Car",
+      "type": "Car",
+      "make": "Volkswagen",
+      "model": "Golf",
+      "modelGroup": "Golf",
+      "variant": "Standardmodell",
+      "motorTypeName": "1.6 TDI",
+      "modelId": 2084,
+      "modelVersionInput": "Join  Automatik LED",
+      "modelVersionCustom": null,
+      "subtitle": null,
+      "offerType": "U",
+      "transmission": "Automatik",
+      "fuel": "Diesel",
+      "mileageInKm": "120.000 km",
+      "isCurrentlyDamaged": false
+     },
+     "location": {
+      "countryCode": "DE",
+      "zip": "53757",
+      "city": "Sankt Augustin",
+      "street": "Hennefer Straße 31a"
+     },
+     "ratings": {
+      "ratingsCount": 131,
+      "ratingsStars": 5,
+      "ratingsEnabled": true
+     },
+     "seller": {
+      "dealer": {
+       "maxImages": 50,
+       "culture": "de-DE"
+      },
+      "id": "23597",
+      "type": "Dealer",
+      "companyName": "AAZ Automobile Agentur",
+      "contactName": "Alion Al-Zaheri"
+     },
+     "appliedAdTier": "T50",
+     "adTier": "T50",
+     "isOcs": false,
+     "specialConditions": [],
+     "statistics": {
+      "leadsRange": "Some"
+     },
+     "searchResultType": "Organic",
+     "searchResultSection": "Main",
+     "tracking": {
+      "firstRegistration": "10-2018",
+      "fuelType": "d",
+      "imageContent": "no-placeholder|0.16589992132729492",
+      "isSmyleEligible": "false",
+      "mileage": "120000",
+      "priceLabel": "unknown",
+      "price": "13990",
+      "orderBucket": "unknown",
+      "modelTaxonomy": "[make_id:74, model_group_id:100101, variant_id:2820, generation_id:7, motortype_id:428, trim_id:480888];"
+     },
+     "coverImageAttractiveness": 0.16589992132729492,
+     "vehicleDetails": [
+      {
+       "data": "120.000 km",
+       "iconName": "mileage_odometer",
+       "ariaLabel": "Kilometerstand"
+      },
+      {
+       "data": "Automatik",
+       "iconName": "gearbox",
+       "ariaLabel": "Getriebe"
+      },
+      {
+       "data": "10/2018",
+       "iconName": "calendar",
+       "ariaLabel": "Erstzulassung"
+      },
+      {
+       "data": "Diesel",
+       "iconName": "gas_pump",
+       "ariaLabel": "Kraftstoff"
+      },
+      {
+       "data": "85 kW (116 PS)",
+       "iconName": "speedometer",
+       "ariaLabel": "Leistung"
+      },
+      {
+       "data": "3,90 l/100 km (komb.)",
+       "iconName": "water_drop",
+       "ariaLabel": "Kraftstoffverbrauch",
+       "name": "fuelConsumptionExtended"
+      },
+      {
+       "data": "102 g/km (komb.)",
+       "iconName": "leaf",
+       "ariaLabel": "CO₂-Emissionen",
+       "name": "co2Emission"
+      }
+     ],
+     "wltpValues": [],
+     "trackingParameters": [
+      {
+       "key": "boost_level",
+       "value": "t50"
+      },
+      {
+       "key": "applied_boost_level",
+       "value": "t50"
+      },
+      {
+       "key": "relevance_adjustment",
+       "value": "boost"
+      },
+      {
+       "key": "boosting_product",
+       "value": "mia"
+      }
+     ]
+    },
+    {
+     "id": "e024a065-8c0a-423b-babd-fe2c3d12f967",
+     "identifier": {
+      "legacyId": null,
+      "crossReferenceId": "43105868573568"
+     },
+     "crossReferenceId": "43105868573568",
+     "images": [
+      "https://prod.pictures.autoscout24.net/listing-images/e024a065-8c0a-423b-babd-fe2c3d12f967_b5253467-5785-4abd-a5ef-630712959729.jpg/250x188.webp",
+      "https://prod.pictures.autoscout24.net/listing-images/e024a065-8c0a-423b-babd-fe2c3d12f967_d5b4088e-68c4-4bec-add7-901a6915a887.jpg/250x188.webp"
+     ],
+     "ocsImagesA": [],
+     "price": {
+      "priceFormatted": "€ 14.900",
+      "priceEvaluation": 3,
+      "isVatLabelLegallyRequired": false,
+      "priceRaw": 14900,
+      "isPriceEvaluationEnabled": true,
+      "isConditionalPrice": false
+     },
+     "availableNow": true,
+     "availability": {
+      "fromDate": null,
+      "inDays": null
+     },
+     "superDeal": {
+      "oldPriceFormatted": "",
+      "isEligible": false
+     },
+     "url": "/angebote/volkswagen-golf-vii-lim-join-r-line-navi-benzin-grau-cat_ma74gr100101ge7va2820mt424tr480888-e024a065-8c0a-423b-babd-fe2c3d12f967",
+     "vehicle": {
+      "articleType": "Car",
+      "type": "Car",
+      "make": "Volkswagen",
+      "model": "Golf",
+      "modelGroup": "Golf",
+      "variant": "Standardmodell",
+      "motorTypeName": "1.5 TSI",
+      "modelId": 2084,
+      "modelVersionInput": "VII Lim. * JOIN * R LINE * NAVI *",
+      "modelVersionCustom": null,
+      "subtitle": "Bluetooth, Sportpaket, Sitzheizung, USB, Alufelgen, Navigationssystem, LED-Tagfahrlicht, Abstandstempomat",
+      "offerType": "U",
+      "transmission": "Schaltgetriebe",
+      "fuel": "Benzin",
+      "mileageInKm": "79.647 km",
+      "engineDisplacementInCCM": "1.498 cm³",
+      "isCurrentlyDamaged": false
+     },
+     "location": {
+      "countryCode": "DE",
+      "zip": "22143",
+      "city": "Hamburg",
+      "street": "Großlohering 72"
+     },
+     "ratings": {
+      "ratingsCount": 1,
+      "ratingsStars": 5,
+      "ratingsEnabled": true
+     },
+     "seller": {
+      "dealer": {
+       "maxImages": 50,
+       "isFreespeeCallTrackingEnabled": true,
+       "culture": "de-DE"
+      },
+      "id": "61384373",
+      "type": "Dealer",
+      "companyName": "Wagenwert21 GbR",
+      "contactName": "Verkaufsteam Wagenwert21 GbR"
+     },
+     "appliedAdTier": "T50",
+     "adTier": "T50",
+     "isOcs": false,
+     "specialConditions": [],
+     "statistics": {
+      "leadsRange": "Some"
+     },
+     "searchResultType": "Organic",
+     "searchResultSection": "Main",
+     "tracking": {
+      "firstRegistration": "03-2018",
+      "fuelType": "b",
+      "imageContent": "no-placeholder|0.25169830535749804",
+      "isSmyleEligible": "false",
+      "mileage": "79647",
+      "priceLabel": "fair-price",
+      "price": "14900",
+      "orderBucket": "unknown",
+      "modelTaxonomy": "[make_id:74, model_group_id:100101, variant_id:2820, generation_id:7, motortype_id:424, trim_id:480888];"
+     },
+     "coverImageAttractiveness": 0.25169830535749804,
+     "vehicleDetails": [
+      {
+       "data": "79.647 km",
+       "iconName": "mileage_odometer",
+       "ariaLabel": "Kilometerstand"
+      },
+      {
+       "data": "Schaltgetriebe",
+       "iconName": "gearbox",
+       "ariaLabel": "Getriebe"
+      },
+      {
+       "data": "03/2018",
+       "iconName": "calendar",
+       "ariaLabel": "Erstzulassung"
+      },
+      {
+       "data": "Benzin",
+       "iconName": "gas_pump",
+       "ariaLabel": "Kraftstoff"
+      },
+      {
+       "data": "110 kW (150 PS)",
+       "iconName": "speedometer",
+       "ariaLabel": "Leistung"
+      },
+      {
+       "data": "5,0 l/100 km (komb.)",
+       "iconName": "water_drop",
+       "ariaLabel": "Kraftstoffverbrauch",
+       "name": "fuelConsumptionExtended"
+      },
+      {
+       "data": "114 g/km (komb.)",
+       "iconName": "leaf",
+       "ariaLabel": "CO₂-Emissionen",
+       "name": "co2Emission"
+      }
+     ],
+     "wltpValues": [
+      "5,0 l/100 km (komb.)",
+      "114 g/km (komb.)"
+     ],
+     "trackingParameters": [
+      {
+       "key": "boost_level",
+       "value": "t50"
+      },
+      {
+       "key": "applied_boost_level",
+       "value": "t50"
+      },
+      {
+       "key": "relevance_adjustment",
+       "value": "boost"
+      },
+      {
+       "key": "boosting_product",
+       "value": "mia"
+      }
+     ]
+    },
+    {
+     "id": "6e1a56b0-f9cd-4674-982c-41433f83cf79",
+     "isTrending": false,
+     "identifier": {
+      "legacyId": null,
+      "crossReferenceId": "157515927"
+     },
+     "crossReferenceId": "157515927",
+     "images": [
+      "https://prod.pictures.autoscout24.net/listing-images/6e1a56b0-f9cd-4674-982c-41433f83cf79_c12ff67e-8792-4973-9fef-1a4a7a50a78d.jpg/250x188.webp",
+      "https://prod.pictures.autoscout24.net/listing-images/6e1a56b0-f9cd-4674-982c-41433f83cf79_30488e29-5751-412c-92f5-b1c3f806456e.jpg/250x188.webp"
+     ],
+     "ocsImagesA": [],
+     "isOfferNew": true,
+     "price": {
+      "priceFormatted": "€ 14.849",
+      "priceEvaluation": 3,
+      "isVatLabelLegallyRequired": false,
+      "priceRaw": 14849,
+      "isPriceEvaluationEnabled": true,
+      "isConditionalPrice": false
+     },
+     "availableNow": true,
+     "availability": {
+      "fromDate": null,
+      "inDays": null
+     },
+     "superDeal": {
+      "oldPriceFormatted": "",
+      "isEligible": false
+     },
+     "url": "/angebote/volkswagen-golf-7-5-highline-17zoll-dsg-pano-led-8fach-carplay-diesel-schwarz-cat_ma74gr100101ge7va2820mt440tr587-6e1a56b0-f9cd-4674-982c-41433f83cf79",
+     "vehicle": {
+      "articleType": "Car",
+      "type": "Car",
+      "make": "Volkswagen",
+      "model": "Golf",
+      "modelGroup": "Golf",
+      "variant": "Standardmodell",
+      "motorTypeName": "2.0 TDI",
+      "modelId": 2084,
+      "modelVersionInput": "7.5 HIGHLINE 17ZOLL/DSG/PANO/LED/8Fach/Carplay",
+      "modelVersionCustom": null,
+      "subtitle": "HU/AU neu, Schiebedach, Sportpaket, Soundsystem, Ambientebeleuchtung, Sportsitze, Panoramadach, Navigationssystem",
+      "offerType": "U",
+      "transmission": "Automatik",
+      "fuel": "Diesel",
+      "mileageInKm": "179.000 km",
+      "engineDisplacementInCCM": "1.968 cm³"
+     },
+     "location": {
+      "countryCode": "DE",
+      "zip": "64569",
+      "city": "Nauheim",
+      "street": "Schleifweg 19"
+     },
+     "ratings": {
+      "ratingsCount": 67,
+      "ratingsStars": 5,
+      "ratingsEnabled": true
+     },
+     "seller": {
+      "dealer": {
+       "maxImages": 50,
+       "hasDealerInformationOnResultList": true,
+       "isFreespeeCallTrackingEnabled": true,
+       "culture": "de-DE"
+      },
+      "id": "46558379",
+      "type": "Dealer",
+      "companyName": "Automobilzentrum Rhein-Main",
+      "contactName": "Redouan Boufoussan"
+     },
+     "appliedAdTier": "T50",
+     "adTier": "T50",
+     "isOcs": false,
+     "specialConditions": [],
+     "statistics": {
+      "leadsRange": "Some"
+     },
+     "searchResultType": "Organic",
+     "searchResultSection": "Main",
+     "tracking": {
+      "firstRegistration": "06-2018",
+      "fuelType": "d",
+      "imageContent": "no-placeholder|0.1881108190874401",
+      "isSmyleEligible": "false",
+      "mileage": "179000",
+      "priceLabel": "fair-price",
+      "price": "14849",
+      "orderBucket": "unknown",
+      "modelTaxonomy": "[make_id:74, model_group_id:100101, variant_id:2820, generation_id:7, motortype_id:440, trim_id:587];"
+     },
+     "coverImageAttractiveness": 0.1881108190874401,
+     "vehicleDetails": [
+      {
+       "data": "179.000 km",
+       "iconName": "mileage_odometer",
+       "ariaLabel": "Kilometerstand"
+      },
+      {
+       "data": "Automatik",
+       "iconName": "gearbox",
+       "ariaLabel": "Getriebe"
+      },
+      {
+       "data": "06/2018",
+       "iconName": "calendar",
+       "ariaLabel": "Erstzulassung"
+      },
+      {
+       "data": "Diesel",
+       "iconName": "gas_pump",
+       "ariaLabel": "Kraftstoff"
+      },
+      {
+       "data": "110 kW (150 PS)",
+       "iconName": "speedometer",
+       "ariaLabel": "Leistung"
+      },
+      {
+       "data": "- (l/100 km)",
+       "isPlaceholder": true,
+       "iconName": "water_drop",
+       "ariaLabel": "Kraftstoffverbrauch",
+       "name": "fuelConsumptionExtended"
+      },
+      {
+       "data": "- (g/km)",
+       "iconName": "leaf",
+       "isPlaceholder": true,
+       "ariaLabel": "CO₂-Emissionen",
+       "name": "co2Emission"
+      }
+     ],
+     "wltpValues": [],
+     "trackingParameters": [
+      {
+       "key": "boost_level",
+       "value": "t50"
+      },
+      {
+       "key": "applied_boost_level",
+       "value": "t50"
+      },
+      {
+       "key": "relevance_adjustment",
+       "value": "boost"
+      },
+      {
+       "key": "boosting_product",
+       "value": "mia"
+      }
+     ]
+    },
+    {
+     "id": "af602248-35b7-4f1f-8765-34167fe0207f",
+     "identifier": {
+      "legacyId": null,
+      "crossReferenceId": null
+     },
+     "images": [
+      "https://prod.pictures.autoscout24.net/listing-images/af602248-35b7-4f1f-8765-34167fe0207f_c2a86bc1-1f18-484e-90a7-01384cb7d611.jpg/250x188.webp",
+      "https://prod.pictures.autoscout24.net/listing-images/af602248-35b7-4f1f-8765-34167fe0207f_70276c90-d6d6-456d-a1a9-b630693db47d.jpg/250x188.webp"
+     ],
+     "ocsImagesA": [],
+     "price": {
+      "priceFormatted": "€ 13.850",
+      "priceEvaluation": 1,
+      "isVatLabelLegallyRequired": false,
+      "priceRaw": 13850,
+      "isPriceEvaluationEnabled": true,
+      "isConditionalPrice": false
+     },
+     "seals": [
+      {
+       "id": 162,
+       "image": "https://www.autoscout24.de/seal-images/162/NfKCXaOyf39H35WFGWGbxhgneymK7s8v/p9lgQ38rklD926gFPidxl71Qx31HhL8q.png",
+       "culture": "de-DE"
+      }
+     ],
+     "availableNow": true,
+     "availability": {
+      "fromDate": null,
+      "inDays": null
+     },
+     "superDeal": {
+      "oldPriceFormatted": "",
+      "isEligible": false
+     },
+     "url": "/angebote/volkswagen-golf-vii-1-0-tsi-join-navi-pdc-app-connect-shz-benzin-silber-cat_ma74gr100101ge7va2820mt412tr480888-af602248-35b7-4f1f-8765-34167fe0207f",
+     "vehicle": {
+      "articleType": "Car",
+      "type": "Car",
+      "make": "Volkswagen",
+      "model": "Golf",
+      "modelGroup": "Golf",
+      "variant": "Standardmodell",
+      "motorTypeName": "1.0 TSI",
+      "modelId": 2084,
+      "modelVersionInput": "VII 1.0 TSI Join Navi PDC App Connect SHZ",
+      "modelVersionCustom": null,
+      "subtitle": "HU/AU neu, Sitzheizung, Alufelgen, E10-geeignet, Einparkhilfe Sensoren vorne, 2-Zonen-Klimaautomatik, Apple CarPlay, Navigationssystem",
+      "offerType": "U",
+      "transmission": "Schaltgetriebe",
+      "fuel": "Benzin",
+      "mileageInKm": "46.000 km",
+      "engineDisplacementInCCM": "999 cm³"
+     },
+     "location": {
+      "countryCode": "DE",
+      "zip": "58540",
+      "city": "Meinerzhagen",
+      "street": "Kohlbergstr. 2-4"
+     },
+     "ratings": {
+      "ratingsCount": 27,
+      "ratingsStars": 4.5,
+      "ratingsEnabled": true
+     },
+     "seller": {
+      "dealer": {
+       "maxImages": 50,
+       "isFreespeeCallTrackingEnabled": true,
+       "culture": "de-DE"
+      },
+      "id": "3836727",
+      "type": "Dealer",
+      "companyName": "Schmidt-Kfz GmbH & Co KG",
+      "contactName": "Mike Schmidt"
+     },
+     "appliedAdTier": "T50",
+     "adTier": "T50",
+     "isOcs": false,
+     "specialConditions": [],
+     "statistics": {
+      "leadsRange": "Zero"
+     },
+     "searchResultType": "Organic",
+     "searchResultSection": "Main",
+     "tracking": {
+      "firstRegistration": "10-2018",
+      "fuelType": "b",
+      "imageContent": "no-placeholder|0.171701379750263",
+      "isSmyleEligible": "false",
+      "mileage": "46000",
+      "priceLabel": "top-price",
+      "price": "13850",
+      "orderBucket": "unknown",
+      "modelTaxonomy": "[make_id:74, model_group_id:100101, variant_id:2820, generation_id:7, motortype_id:412, trim_id:480888];"
+     },
+     "coverImageAttractiveness": 0.171701379750263,
+     "vehicleDetails": [
+      {
+       "data": "46.000 km",
+       "iconName": "mileage_odometer",
+       "ariaLabel": "Kilometerstand"
+      },
+      {
+       "data": "Schaltgetriebe",
+       "iconName": "gearbox",
+       "ariaLabel": "Getriebe"
+      },
+      {
+       "data": "10/2018",
+       "iconName": "calendar",
+       "ariaLabel": "Erstzulassung"
+      },
+      {
+       "data": "Benzin",
+       "iconName": "gas_pump",
+       "ariaLabel": "Kraftstoff"
+      },
+      {
+       "data": "85 kW (116 PS)",
+       "iconName": "speedometer",
+       "ariaLabel": "Leistung"
+      },
+      {
+       "data": "6,0 l/100 km (komb.)",
+       "iconName": "water_drop",
+       "ariaLabel": "Kraftstoffverbrauch",
+       "name": "fuelConsumptionExtended"
+      },
+      {
+       "data": "135 g/km (komb.)",
+       "iconName": "leaf",
+       "ariaLabel": "CO₂-Emissionen",
+       "name": "co2Emission"
+      },
+      {
+       "data": "CO₂-Klasse D (komb.)",
+       "iconName": "efficiency",
+       "ariaLabel": "CO₂-Klasse"
+      }
+     ],
+     "wltpValues": [
+      "6,0 l/100 km (komb.)",
+      "135 g/km (komb.)",
+      "CO₂-Klasse D (komb.)"
+     ],
+     "trackingParameters": [
+      {
+       "key": "boost_level",
+       "value": "t50"
+      },
+      {
+       "key": "applied_boost_level",
+       "value": "t50"
+      },
+      {
+       "key": "relevance_adjustment",
+       "value": "boost"
+      },
+      {
+       "key": "boosting_product",
+       "value": "mia"
+      }
+     ]
+    }
+   ],
+   "taxonomy": {
+    "models": {
+     "74": [
+      {
+       "value": 2083,
+       "label": "Corrado",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 2084,
+       "label": "Golf",
+       "makeId": 74,
+       "modelLineId": 101
+      },
+      {
+       "value": 2087,
+       "label": "Jetta",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 2089,
+       "label": "Passat",
+       "makeId": 74,
+       "modelLineId": 100
+      },
+      {
+       "value": 2090,
+       "label": "Polo",
+       "makeId": 74,
+       "modelLineId": 99
+      },
+      {
+       "value": 2091,
+       "label": "Santana",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 2092,
+       "label": "Scirocco",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 2093,
+       "label": "Sharan",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 2094,
+       "label": "Vento",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 2106,
+       "label": "Bus",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 2113,
+       "label": "Anfibio",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 2114,
+       "label": "Käfer",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 14792,
+       "label": "T4",
+       "makeId": 74,
+       "modelLineId": 105
+      },
+      {
+       "value": 15363,
+       "label": "T2",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 15381,
+       "label": "New Beetle",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 15534,
+       "label": "Lupo",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 15535,
+       "label": "Bora",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 15734,
+       "label": "Caddy",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 15767,
+       "label": "LT",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 15864,
+       "label": "Maggiolino",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 15981,
+       "label": "Buggy",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 16520,
+       "label": "Taro",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 16521,
+       "label": "L80",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 16584,
+       "label": "Iltis",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 16585,
+       "label": "181",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 16623,
+       "label": "Karmann Ghia",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 18190,
+       "label": "T4 Allstar",
+       "makeId": 74,
+       "modelLineId": 105
+      },
+      {
+       "value": 18200,
+       "label": "T3 Blue Star",
+       "makeId": 74,
+       "modelLineId": 104
+      },
+      {
+       "value": 18210,
+       "label": "T5 Caravelle",
+       "makeId": 74,
+       "modelLineId": 106
+      },
+      {
+       "value": 18220,
+       "label": "T5 Multivan",
+       "makeId": 74,
+       "modelLineId": 106
+      },
+      {
+       "value": 18230,
+       "label": "Transporter",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 18240,
+       "label": "T3 White Star",
+       "makeId": 74,
+       "modelLineId": 104
+      },
+      {
+       "value": 18276,
+       "label": "Phaeton",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 18285,
+       "label": "Touareg",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 18317,
+       "label": "T3",
+       "makeId": 74,
+       "modelLineId": 104
+      },
+      {
+       "value": 18329,
+       "label": "Touran",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 18370,
+       "label": "T5",
+       "makeId": 74,
+       "modelLineId": 106
+      },
+      {
+       "value": 18575,
+       "label": "T5 California",
+       "makeId": 74,
+       "modelLineId": 106
+      },
+      {
+       "value": 18599,
+       "label": "Fox",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 18707,
+       "label": "Eos",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 18747,
+       "label": "T5 Shuttle",
+       "makeId": 74,
+       "modelLineId": 106
+      },
+      {
+       "value": 18781,
+       "label": "Crafter",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 19063,
+       "label": "Tiguan",
+       "makeId": 74,
+       "modelLineId": 158
+      },
+      {
+       "value": 19127,
+       "label": "Routan",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 19261,
+       "label": "Amarok",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 19344,
+       "label": "Pointer",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 19618,
+       "label": "T1",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 19659,
+       "label": "Polo Sedan",
+       "makeId": 74,
+       "modelLineId": 99
+      },
+      {
+       "value": 19724,
+       "label": "Beetle",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 19750,
+       "label": "up!",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 19780,
+       "label": "CC",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 20026,
+       "label": "Golf Plus",
+       "makeId": 74,
+       "modelLineId": 101
+      },
+      {
+       "value": 20170,
+       "label": "Polo Cross",
+       "makeId": 74,
+       "modelLineId": 99
+      },
+      {
+       "value": 20315,
+       "label": "Cross Golf",
+       "makeId": 74,
+       "modelLineId": 101
+      },
+      {
+       "value": 20316,
+       "label": "Cross Touran",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 20333,
+       "label": "Polo Plus",
+       "makeId": 74,
+       "modelLineId": 99
+      },
+      {
+       "value": 20334,
+       "label": "Polo Variant",
+       "makeId": 74,
+       "modelLineId": 99
+      },
+      {
+       "value": 20335,
+       "label": "Polo GTI",
+       "makeId": 74,
+       "modelLineId": 99
+      },
+      {
+       "value": 20336,
+       "label": "Polo R WRC",
+       "makeId": 74,
+       "modelLineId": 99
+      },
+      {
+       "value": 20337,
+       "label": "Passat CC",
+       "makeId": 74,
+       "modelLineId": 100
+      },
+      {
+       "value": 20338,
+       "label": "Passat Variant",
+       "makeId": 74,
+       "modelLineId": 100
+      },
+      {
+       "value": 20339,
+       "label": "Passat Alltrack",
+       "makeId": 74,
+       "modelLineId": 100
+      },
+      {
+       "value": 20340,
+       "label": "Golf Variant",
+       "makeId": 74,
+       "modelLineId": 101
+      },
+      {
+       "value": 20341,
+       "label": "Golf Cabriolet",
+       "makeId": 74,
+       "modelLineId": 101
+      },
+      {
+       "value": 20342,
+       "label": "Golf GTI",
+       "makeId": 74,
+       "modelLineId": 101
+      },
+      {
+       "value": 20352,
+       "label": "T3 Multivan",
+       "makeId": 74,
+       "modelLineId": 104
+      },
+      {
+       "value": 20353,
+       "label": "T4 Multivan",
+       "makeId": 74,
+       "modelLineId": 105
+      },
+      {
+       "value": 20354,
+       "label": "T3 California",
+       "makeId": 74,
+       "modelLineId": 104
+      },
+      {
+       "value": 20355,
+       "label": "T4 California",
+       "makeId": 74,
+       "modelLineId": 105
+      },
+      {
+       "value": 20356,
+       "label": "T3 Caravelle",
+       "makeId": 74,
+       "modelLineId": 104
+      },
+      {
+       "value": 20357,
+       "label": "T4 Caravelle",
+       "makeId": 74,
+       "modelLineId": 105
+      },
+      {
+       "value": 20358,
+       "label": "T5 Kombi",
+       "makeId": 74,
+       "modelLineId": 106
+      },
+      {
+       "value": 20359,
+       "label": "T4 Kombi",
+       "makeId": 74,
+       "modelLineId": 105
+      },
+      {
+       "value": 20360,
+       "label": "T3 Kombi",
+       "makeId": 74,
+       "modelLineId": 104
+      },
+      {
+       "value": 20376,
+       "label": "Golf Sportsvan",
+       "makeId": 74,
+       "modelLineId": 101
+      },
+      {
+       "value": 20380,
+       "label": "XL1",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 20841,
+       "label": "Derby",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 21034,
+       "label": "Sonstige",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 21080,
+       "label": "T6 Transporter",
+       "makeId": 74,
+       "modelLineId": 115
+      },
+      {
+       "value": 21081,
+       "label": "T6 Caravelle",
+       "makeId": 74,
+       "modelLineId": 115
+      },
+      {
+       "value": 21082,
+       "label": "T6 Multivan",
+       "makeId": 74,
+       "modelLineId": 115
+      },
+      {
+       "value": 21083,
+       "label": "T6 California",
+       "makeId": 74,
+       "modelLineId": 115
+      },
+      {
+       "value": 21179,
+       "label": "Coccinelle",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 21180,
+       "label": "Escarabajo",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 74550,
+       "label": "Arteon",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 74667,
+       "label": "T-Roc",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 74938,
+       "label": "Atlas",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 74939,
+       "label": "Kever",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 75194,
+       "label": "T-Cross",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 75216,
+       "label": "T5 Transporter",
+       "makeId": 74,
+       "modelLineId": 106
+      },
+      {
+       "value": 75217,
+       "label": "T6 Kombi",
+       "makeId": 74,
+       "modelLineId": 115
+      },
+      {
+       "value": 75601,
+       "label": "Grand California",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 75602,
+       "label": "ID.3",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 75645,
+       "label": "ID.4",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 75655,
+       "label": "Golf GTE",
+       "makeId": 74,
+       "modelLineId": 101
+      },
+      {
+       "value": 75738,
+       "label": "T6.1 California",
+       "makeId": 74,
+       "modelLineId": 151
+      },
+      {
+       "value": 75739,
+       "label": "T6.1 Caravelle",
+       "makeId": 74,
+       "modelLineId": 151
+      },
+      {
+       "value": 75740,
+       "label": "T6.1 Kombi",
+       "makeId": 74,
+       "modelLineId": 151
+      },
+      {
+       "value": 75741,
+       "label": "T6.1 Multivan",
+       "makeId": 74,
+       "modelLineId": 151
+      },
+      {
+       "value": 75742,
+       "label": "T6.1 Transporter",
+       "makeId": 74,
+       "modelLineId": 151
+      },
+      {
+       "value": 75860,
+       "label": "e-up!",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 75939,
+       "label": "T7 Multivan",
+       "makeId": 74,
+       "modelLineId": 165
+      },
+      {
+       "value": 75940,
+       "label": "e-Golf",
+       "makeId": 74,
+       "modelLineId": 101
+      },
+      {
+       "value": 75946,
+       "label": "Taigo",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 75995,
+       "label": "ID.5",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 76161,
+       "label": "Tiguan Allspace",
+       "makeId": 74,
+       "modelLineId": 158
+      },
+      {
+       "value": 76266,
+       "label": "ID. Buzz",
+       "makeId": 74,
+       "modelLineId": 159
+      },
+      {
+       "value": 76267,
+       "label": "ID. Buzz Cargo",
+       "makeId": 74,
+       "modelLineId": 159
+      },
+      {
+       "value": 76355,
+       "label": "ID.6",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 76356,
+       "label": "Viloran",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 76377,
+       "label": "Golf R",
+       "makeId": 74,
+       "modelLineId": 101
+      },
+      {
+       "value": 76490,
+       "label": "ID.7",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 76518,
+       "label": "Golf GTD",
+       "makeId": 74,
+       "modelLineId": 101
+      },
+      {
+       "value": 76791,
+       "label": "T7 California",
+       "makeId": 74,
+       "modelLineId": 165
+      },
+      {
+       "value": 76793,
+       "label": "T7 Transporter",
+       "makeId": 74,
+       "modelLineId": 165
+      },
+      {
+       "value": 76850,
+       "label": "T7 Kombi",
+       "makeId": 74,
+       "modelLineId": 165
+      },
+      {
+       "value": 76851,
+       "label": "T7 Caravelle",
+       "makeId": 74,
+       "modelLineId": 165
+      },
+      {
+       "value": 76863,
+       "label": "Tayron",
+       "makeId": 74,
+       "modelLineId": null
+      },
+      {
+       "value": 79376,
+       "label": "ID. Polo",
+       "makeId": 74,
+       "modelLineId": null
+      }
+     ]
+    }
+   }
+  }
+ }
+}
