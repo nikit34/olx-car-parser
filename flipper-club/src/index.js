@@ -61,7 +61,7 @@ import {
   DUELS, duel, duelByPath, duelJson, duelSlugs, duelsFor, publishedDuel,
   renderDuelPage, renderDuelHub,
 } from "./seo-pages.js";
-import { GUIDES, GUIDES_UPDATED, guideBySlug, renderGuide, renderGuidesHub } from "./guides.js";
+import { GUIDES, GUIDES_UPDATED, guideBySlug, guideBlock, renderGuide, renderGuidesHub } from "./guides.js";
 import {
   setIntlLocales, intlLocales, liveLocales, localeForPath, href as ihref,
   parseAs24Id, valuationKey, t as it,
@@ -596,6 +596,7 @@ async function handleModelPage(request, env, url) {
     });
 
   return publicHtml(renderModelPage({
+    guides: guideBlock("preco"),
     rec, slug, liveDeals, siblings, host: url.host, depositCount: null, builtAt,
     insights: modelInsights(rec, stats),
     yearPages: publishedYearPages(models, slug, rec, builtAt),
@@ -662,6 +663,7 @@ async function renderYear({ request, env, url, models, rec, slug, year, builtAt,
   } catch (_) { /* best-effort */ }
 
   return publicHtml(renderYearPage({
+    guides: guideBlock("preco"),
     rec, slug, year, cell,
     neighbours: { older, newer, window: win },
     liveDeals, dealsNear, pageYears: publishedYearPages(models, slug, rec, builtAt), stats,
@@ -964,6 +966,7 @@ async function handleImportPage(request, env, url) {
   const mdoc = await getModels(env);
   const hasModelPage = !!(mdoc && mdoc.models && mdoc.models[slug]);
   return publicHtml(renderImportPage({
+      guides: guideBlock("importar"),
     rec, slug, costs: doc.costs, hasModelPage,
     host: url.host, depositCount: null, builtAt: doc.built_at,
     historyUrl: env.HISTORY_REPORT_URL || null,
@@ -2366,6 +2369,7 @@ async function handleVenderPage(request, env, url) {
     if (!rec || !publishedVender(models, slug, rec, builtAt)) return notFoundPage(request, env, url, setCookie);
     if (wantsJson) return jsonResponse(venderJson(rec, slug, { host: url.host, builtAt }));
     return publicHtml(renderVenderPage({
+      guides: guideBlock("vender"),
       rec, slug, market,
       pageYears: publishedYearPages(models, slug, rec, builtAt),
       hasLiquidity: publishedLiquidity(models, slug, rec, builtAt),

@@ -1854,7 +1854,7 @@ export function fmtBuilt(iso) {
 // (below fair), already filtered by the worker. siblings = same-brand models.
 // builtAt = models.json build stamp (freshness signal). rec.gl/gm/gh = the
 // MODEL fair-value band, present only when it cleared the build-time guards.
-export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositCount, builtAt,
+export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, host, depositCount, builtAt,
                                   insights = [], yearPages = [], competitors = [],
                                   competitorKind = "price", comparisons = [],
                                   facets = [], hasDepreciation = false, duels = [],
@@ -2123,7 +2123,7 @@ export function renderModelPage({ rec, slug, liveDeals, siblings, host, depositC
   // internal links back to / and /precos (reinforcing the crawl spine).
   const crumb = `<nav class="section" aria-label="Breadcrumb" style="max-width:680px;padding:22px 22px 0;font-size:12.5px;color:#8A8F98;">`
     + `<a href="/" style="color:#8A8F98;">Início</a> › <a href="/precos" style="color:#8A8F98;">Preços</a> › <span style="color:#16181D;">${B} ${M}</span></nav>`;
-  const body = `${crumb}<div style="padding-top:14px;">${hero}</div>${gbmCard}${insightBlock}${bridge1}${table}${facetBlock}${duelLink}${depLink}${liqLink}${venderLink}${bridge2}${trust}${rivals}${sellerCta}${sib}`;
+  const body = `${crumb}<div style="padding-top:14px;">${hero}</div>${gbmCard}${insightBlock}${bridge1}${table}${facetBlock}${duelLink}${depLink}${liqLink}${venderLink}${bridge2}${trust}${rivals}${sellerCta}${sib}${guides}`;
 
   const canonical = `https://${host}/preco/${slug}`;
   const faq = (q, a) => ({

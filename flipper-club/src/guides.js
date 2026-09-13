@@ -236,6 +236,37 @@ export function guideBySlug(slug) {
   return GUIDES.find(g => g.slug === slug) || null;
 }
 
+const GUIDE_SETS = {
+  vender: ["Antes de fechar negócio", [
+    ["documentos-para-vender-carro", "que documentos entregar e o contrato de compra e venda"],
+    ["registo-de-propriedade-automovel", "como se faz o registo automóvel, em que prazo e quem paga"],
+    ["burlas-e-pagamento-seguro", "receber o dinheiro sem levar uma burla"],
+    ["depois-de-vender-seguro-iuc-via-verde", "o seguro, o IUC e a Via Verde depois da venda"],
+  ]],
+  importar: ["Se o carro veio de fora", [
+    ["vender-carro-importado", "vender um carro importado: matrícula portuguesa e a regra dos 12 meses"],
+    ["registo-de-propriedade-automovel", "como se faz o registo automóvel, em que prazo e quem paga"],
+  ]],
+  preco: ["Se estás a pensar vender", [
+    ["quanto-pedir-e-quanto-tempo-demora", "quanto pedir e em quantos dias costuma sair"],
+    ["documentos-para-vender-carro", "que documentos entregar e o contrato de compra e venda"],
+  ]],
+};
+
+export function guideBlock(kind) {
+  const spec = GUIDE_SETS[kind];
+  if (!spec) return "";
+  const [heading, entries] = spec;
+  const items = entries.filter(([slug]) => guideBySlug(slug));
+  if (!items.length) return "";
+  return `
+    <section class="section fc-wrap" style="padding-top:0;">
+      <h2 class="fc-h2">${escapeHtml(heading)}</h2>
+      <ul class="fc-ul">${items.map(([slug, anchor]) =>
+        `<li><a href="/guias/${slug}">${escapeHtml(anchor)}</a></li>`).join("")}</ul>
+    </section>`;
+}
+
 function guideNav(current) {
   return GUIDES.filter(g => g.slug !== current).map(g => `<li class="fc-li"><a href="/guias/${g.slug}">${escapeHtml(g.title)}</a></li>`).join("");
 }

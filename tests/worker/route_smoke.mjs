@@ -1138,6 +1138,40 @@ await check("sitemap lastmod follows the page's own change stamp when the blob c
   }
 });
 
+await check("the guides are linked from the pages that carry the traffic, with one owner per anchor", async () => {
+  let slug = null;
+  for (const s of Object.keys(models)) {
+    if (!yearPageYears(models[s]).length) continue;
+    if ((await get(`/vender/${s}`)).status === 200) { slug = s; break; }
+  }
+  assert(slug, "no model has both a seller page and a year page — the fixture cannot test this");
+  const year = yearPageYears(models[slug])[0];
+
+  const pages = {
+    "/preco/": await (await get(`/preco/${slug}`)).text(),
+    "/preco/{ano}": await (await get(`/preco/${slug}/${year}`)).text(),
+    "/vender/": await (await get(`/vender/${slug}`)).text(),
+  };
+  for (const [name, html] of Object.entries(pages)) {
+    const deep = [...html.matchAll(/href="\/guias\/([a-z0-9-]+)"/g)].map(m => m[1]);
+    assert(deep.length > 0, `${name} still links no guide at all, only the hub`);
+    assert(deep.includes("documentos-para-vender-carro"),
+      `${name} does not reach the guide that owns the sale-document queries`);
+  }
+
+  const sellerGuides = [...pages["/vender/"].matchAll(/href="\/guias\/([a-z0-9-]+)"/g)].map(m => m[1]);
+  assert(sellerGuides.includes("registo-de-propriedade-automovel"),
+    "the seller page does not reach the registo guide, the one query family with real volume");
+
+  const anchor = /<a href="\/guias\/([a-z0-9-]+)">[^<]*contrato de compra e venda[^<]*<\/a>/g;
+  const owners = new Set();
+  for (const html of Object.values(pages)) {
+    for (const m of html.matchAll(anchor)) owners.add(m[1]);
+  }
+  assert(owners.size === 1 && owners.has("documentos-para-vender-carro"),
+    `the "contrato de compra e venda" anchor points at ${[...owners].join(", ") || "nothing"} — it must name one owner`);
+});
+
 await check("a dated snapshot keeps saying the same thing after the live numbers move", async () => {
   for (const k of [...kv.keys()]) if (k.startsWith("snap:models:") || k.startsWith("idx:")) kv.delete(k);
   const slug = Object.keys(models)[0];

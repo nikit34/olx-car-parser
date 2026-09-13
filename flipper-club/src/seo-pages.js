@@ -838,7 +838,7 @@ export function yearGap(a, b) {
 // It only exists where the year has 10+ active listings (MIN_YEAR_PAGE_N).
 // Thinner years stay as a row in the parent table — visible, linked, honest, and
 // not a URL asking to be indexed on four data points.
-export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, dealsNear, pageYears,
+export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours, liveDeals, dealsNear, pageYears,
                                  stats, host, depositCount, builtAt, historyUrl = null, hasVender = false }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
   const FM = fmtEur(cell.fm), FL = fmtEur(cell.fl), FH = fmtEur(cell.fh);
@@ -1011,7 +1011,7 @@ export function renderYearPage({ rec, slug, year, cell, neighbours, liveDeals, d
   const body = crumbs([
     { name: "Início", href: "/" }, { name: "Preços", href: "/precos" },
     { name: `${rec.b} ${rec.m}`, href: `/preco/${slug}` }, { name: String(year) },
-  ]) + `<div style="padding-top:14px;">${hero}</div>${sellBlock}${histBlock}${stepBlock}${table}${yearNav}${deals}${cta}${sellForm}${links}`;
+  ]) + `<div style="padding-top:14px;">${hero}</div>${sellBlock}${histBlock}${stepBlock}${table}${yearNav}${deals}${cta}${sellForm}${links}${guides}`;
 
   const faqs = [[
     `Quanto vale um ${rec.b} ${rec.m} de ${year} em Portugal?`,
@@ -3300,7 +3300,7 @@ export function importJson(rec, slug, costs, { host, builtAt } = {}) {
   };
 }
 
-export function renderImportPage({ rec, slug, costs, stats, hasModelPage = true,
+export function renderImportPage({ guides = "", rec, slug, costs, stats, hasModelPage = true,
                                   host, depositCount, builtAt, historyUrl = null }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
   const canonical = `https://${host}/importar/${slug}`;
@@ -3401,7 +3401,7 @@ export function renderImportPage({ rec, slug, costs, stats, hasModelPage = true,
     </section>
     <section class="section fc-wrap" style="padding-bottom:70px;">
       <p class="fc-p">${hasModelPage ? `<a href="/preco/${slug}">Preços de ${B} ${M} em Portugal</a> · ` : ""}<a href="/importar">Outros modelos que vale a pena comparar</a> · <a href="/isv">Simulador de ISV</a> · <a href="${canonical}.json">Dados em JSON</a></p>
-    </section>`;
+    </section>${guides}`;
 
   const faqs = [
     [`Vale a pena importar um ${rec.b} ${rec.m} da Alemanha?`,
@@ -3926,7 +3926,7 @@ const VENDER_CHECKLIST = [
   ["Responde no próprio dia", "o comprador que pergunta hoje compra amanhã, a outro."],
 ];
 
-export function renderVenderPage({ rec, slug, market, pageYears = [], hasLiquidity = false, hasDepreciation = false,
+export function renderVenderPage({ guides = "", rec, slug, market, pageYears = [], hasLiquidity = false, hasDepreciation = false,
                                    host, depositCount, builtAt }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
   const FM = fmtEur(rec.fm), FL = fmtEur(rec.fl), FH = fmtEur(rec.fh);
@@ -4009,7 +4009,7 @@ export function renderVenderPage({ rec, slug, market, pageYears = [], hasLiquidi
     </section>
     <section class="section fc-wrap" style="padding-bottom:70px;">
       <p class="fc-p"><a href="/preco/${slug}">Preços de ${B} ${M} por ano</a>${hasDepreciation ? ` · <a href="/depreciacao/${slug}">Desvalorização</a>` : ""}${hasLiquidity ? ` · <a href="/liquidez/${slug}">Tempo de venda</a>` : ""} · <a href="/vender">Outros modelos</a> · <a href="/guias">Guias para vender</a> · <a href="/metodologia">Como medimos</a> · <a href="${canonical}.json">Dados em JSON</a></p>
-    </section>`;
+    </section>${guides}`;
 
   const faqs = [
     [`Quanto pedir por um ${rec.b} ${rec.m} usado?`,
