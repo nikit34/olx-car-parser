@@ -146,9 +146,12 @@ def clicks_summary(fetch, user, password, today):
     if status != 200:
         return [f"Клики на историю: clicks.json отвечает {status}"], 0
     try:
-        days = json.loads(body).get("days", {})
+        data = json.loads(body)
     except Exception:
         return ["Клики на историю: clicks.json не читается"], 0
+    days = data.get("days", {})
+    drops = data.get("drops", {})
+    hits = data.get("hits", [])
     yesterday = (today - dt.timedelta(days=1)).isoformat()
     week = {(today - dt.timedelta(days=i)).isoformat() for i in range(1, 8)}
     y = days.get(yesterday, {})
@@ -156,7 +159,34 @@ def clicks_summary(fetch, user, password, today):
     w_total = sum(sum(v.values()) for d, v in days.items() if d in week)
     detail = ", ".join(f"{k} {v}" for k, v in sorted(y.items(), key=lambda kv: -kv[1]) if v)
     line = f"Клики на историю: вчера {y_total}" + (f" ({detail})" if detail else "") + f", за 7 дней {w_total}"
-    return [line], y_total
+    dropped = tally(
+        (k, n) for d, v in drops.items() if d in week for k, n in v.items()
+    )
+    if dropped:
+        line += f"; отсеяно {sum(dropped.values())} ({fmt_tally(dropped)})"
+    lines = [line]
+    nets = tally(
+        (h.get("net") or h.get("country") or "сеть неизвестна", 1)
+        for h in hits
+        if not h.get("drop") and (h.get("t") or "")[:10] in week
+    )
+    if nets:
+        lines.append(f"Откуда шли живые клики: {fmt_tally(nets, top=3)}")
+    return lines, y_total
+
+
+def tally(pairs):
+    out = {}
+    for key, n in pairs:
+        out[key] = out.get(key, 0) + n
+    return out
+
+
+def fmt_tally(counts, top=None):
+    items = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    if top:
+        items = items[:top]
+    return ", ".join(f"{k} {v}" for k, v in items)
 
 
 def decode_header(value):

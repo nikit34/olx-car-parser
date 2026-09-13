@@ -104,3 +104,29 @@ def test_clicks_summary_reports_yesterday_and_the_week():
     assert "вчера 4 (ano 3, avaliar 1)" in lines[0] and "за 7 дней 4" in lines[0]
     lines, fresh = md.clicks_summary(fetch, "u", "p", dt.date(2026, 9, 10))
     assert fresh == 0 and "вчера 0" in lines[0] and "за 7 дней 1" in lines[0]
+
+
+def test_clicks_summary_separates_dropped_hits_from_live_ones():
+    payload = {
+        "days": {"2026-09-02": {"ano": 2}},
+        "drops": {"2026-09-02": {"prefetch": 9, "bot": 3}, "2026-08-01": {"bot": 99}},
+        "hits": [
+            {"t": "2026-09-02T10:00:00Z", "drop": None, "net": "Vodafone Portugal"},
+            {"t": "2026-09-02T11:00:00Z", "drop": None, "net": "Vodafone Portugal"},
+            {"t": "2026-09-02T12:00:00Z", "drop": "prefetch", "net": "Google LLC"},
+            {"t": "2026-07-01T12:00:00Z", "drop": None, "net": "MEO"},
+        ],
+    }
+    fetch = fake_fetch({"clicks.json": (200, json.dumps(payload).encode())})
+    lines, fresh = md.clicks_summary(fetch, "u", "p", dt.date(2026, 9, 3))
+    assert fresh == 2
+    assert "отсеяно 12 (prefetch 9, bot 3)" in lines[0]
+    assert "99" not in lines[0]
+    assert lines[1] == "Откуда шли живые клики: Vodafone Portugal 2"
+
+
+def test_clicks_summary_stays_quiet_when_nothing_was_dropped():
+    payload = {"days": {"2026-09-02": {"ano": 1}}, "drops": {}, "hits": []}
+    fetch = fake_fetch({"clicks.json": (200, json.dumps(payload).encode())})
+    lines, _ = md.clicks_summary(fetch, "u", "p", dt.date(2026, 9, 3))
+    assert len(lines) == 1 and "отсеяно" not in lines[0]

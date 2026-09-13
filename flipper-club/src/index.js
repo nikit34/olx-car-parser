@@ -2062,39 +2062,98 @@ async function handleGuide(request, env, url) {
 }
 
 const CLICK_TTL_SEC = 180 * 24 * 3600;
+const HIT_TTL_SEC = 30 * 24 * 3600;
+const HIT_SAMPLE_MAX = 150;
+const HIT_SAMPLE_PER_BUCKET = 20;
 const CLICK_SOURCES = new Set(["avaliar", "ano", "car", "importar", "vender", "modelo", "outro"]);
 const BOT_UA = /bot|crawl|spider|slurp|fetch|monitor|headless|curl|wget|python/i;
+const PREFETCH_HINT = /prefetch|prerender|preview/i;
+
+function hitPurpose(request) {
+  return (request.headers.get("sec-purpose")
+    || request.headers.get("purpose")
+    || request.headers.get("x-purpose")
+    || request.headers.get("x-moz")
+    || "").trim();
+}
+
+function clickDrop(request) {
+  const ua = (request.headers.get("user-agent") || "").trim();
+  if (!ua) return "sem-ua";
+  if (PREFETCH_HINT.test(hitPurpose(request))) return "prefetch";
+  if (BOT_UA.test(ua)) return "bot";
+  return null;
+}
 
 async function handleHistoryRedirect(request, env, url) {
   const target = (env.HISTORY_REPORT_URL || "").trim();
   if (!target) return notFoundPage(request, env, url);
   const raw = (url.searchParams.get("from") || "outro").toString().toLowerCase();
   const from = CLICK_SOURCES.has(raw) ? raw : "outro";
-  if (!BOT_UA.test(request.headers.get("user-agent") || "")) {
-    const key = `click:hist:${new Date().toISOString().slice(0, 10)}:${from}`;
-    try {
-      const cur = parseInt((await env.KV.get(key)) || "0", 10) || 0;
-      await env.KV.put(key, String(cur + 1), { expirationTtl: CLICK_TTL_SEC });
-    } catch (err) { console.warn("click count failed", err && err.message); }
-  }
+  const drop = clickDrop(request);
+  const day = new Date().toISOString().slice(0, 10);
+  const key = drop ? `click:drop:${day}:${drop}` : `click:hist:${day}:${from}`;
+  let seen = HIT_SAMPLE_PER_BUCKET;
+  try {
+    seen = parseInt((await env.KV.get(key)) || "0", 10) || 0;
+    await env.KV.put(key, String(seen + 1), { expirationTtl: CLICK_TTL_SEC });
+  } catch (err) { console.warn("click count failed", err && err.message); }
+  if (seen < HIT_SAMPLE_PER_BUCKET) await recordHistoryHit(env, request, from, drop);
   return new Response(null, { status: 302, headers: { Location: target, "Cache-Control": "no-store" } });
 }
 
-async function clicksJson(env) {
-  const days = {};
+async function recordHistoryHit(env, request, from, drop) {
+  const cf = request.cf || {};
+  const trim = (v, n) => ((v == null ? "" : String(v)).slice(0, n) || null);
+  const rec = {
+    t: new Date().toISOString(),
+    from,
+    drop: drop || null,
+    ua: trim(request.headers.get("user-agent"), 200),
+    ref: trim(request.headers.get("referer"), 200),
+    purpose: trim(hitPurpose(request), 60),
+    country: trim(cf.country, 4),
+    net: trim(cf.asOrganization, 80),
+  };
+  try {
+    await env.KV.put(`histhit:${rec.t}:${randomToken(3)}`, JSON.stringify(rec), { expirationTtl: HIT_TTL_SEC });
+  } catch (err) { console.warn("click sample failed", err && err.message); }
+}
+
+async function kvCountsByDay(env, prefix) {
+  const out = {};
   let cursor;
   for (let i = 0; i < 5; i++) {
-    const page = await env.KV.list({ prefix: "click:hist:", limit: 500, cursor });
+    const page = await env.KV.list({ prefix, limit: 500, cursor });
     for (const k of page.keys || []) {
       const parts = k.name.split(":");
-      const day = parts[2], from = parts[3] || "outro";
+      const day = parts[2], bucket = parts[3] || "outro";
       const v = parseInt((await env.KV.get(k.name)) || "0", 10) || 0;
-      (days[day] = days[day] || {})[from] = v;
+      (out[day] = out[day] || {})[bucket] = v;
     }
     if (page.list_complete || !page.cursor) break;
     cursor = page.cursor;
   }
-  return new Response(JSON.stringify({ days }, null, 2), {
+  return out;
+}
+
+async function clicksJson(env) {
+  const days = await kvCountsByDay(env, "click:hist:");
+  const drops = await kvCountsByDay(env, "click:drop:");
+  const names = [];
+  let cursor;
+  for (let i = 0; i < 5; i++) {
+    const page = await env.KV.list({ prefix: "histhit:", limit: 500, cursor });
+    for (const k of page.keys || []) names.push(k.name);
+    if (page.list_complete || !page.cursor) break;
+    cursor = page.cursor;
+  }
+  const hits = [];
+  for (const name of names.slice(-HIT_SAMPLE_MAX).reverse()) {
+    const v = await env.KV.get(name, "json").catch(() => null);
+    if (v) hits.push(v);
+  }
+  return new Response(JSON.stringify({ days, drops, hits }, null, 2), {
     status: 200,
     headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
   });

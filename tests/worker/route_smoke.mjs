@@ -1139,6 +1139,18 @@ await check("the history link is a counted redirect to the partner url", async (
     assert(kv.get(keys[0]) === "1", "a bot click was counted");
     const odd = await worker.fetch(new Request(`https://${HOST}/ir/historico?from=<script>`, { headers: { "user-agent": "Mozilla/5.0" } }), env);
     assert(odd.status === 302 && [...kv.keys()].some(k => k.endsWith(":outro")), "unknown source is not folded into outro");
+    const pre = await worker.fetch(new Request(`https://${HOST}/ir/historico?from=ano`, {
+      headers: { "user-agent": "Mozilla/5.0 (Macintosh) Safari/605", "sec-purpose": "prefetch;anonymous-client-ip" },
+    }), env);
+    assert(pre.status === 302, `prefetch redirect → ${pre.status}`);
+    assert(kv.get(keys[0]) === "1", "a prefetch was counted as a click");
+    assert([...kv.keys()].some(k => k.startsWith("click:drop:") && k.endsWith(":prefetch")), "prefetch was dropped without leaving a trace");
+    const blank = await worker.fetch(new Request(`https://${HOST}/ir/historico?from=ano`), env);
+    assert(blank.status === 302 && [...kv.keys()].some(k => k.endsWith(":sem-ua")), "a request with no user-agent was counted as a click");
+    const samples = [...kv.keys()].filter(k => k.startsWith("histhit:"));
+    assert(samples.length === 5, `every hit must leave one sample, got ${samples.length}`);
+    const asBot = JSON.parse(kv.get(samples.find(k => JSON.parse(kv.get(k)).drop === "bot")));
+    assert(asBot.ua.includes("Googlebot") && asBot.from === "ano", "the dropped sample does not carry what was dropped");
     const page = await (await get(`/preco/${deep}/${yearPageYears(models[deep])[0]}`)).text();
     assert(page.includes('href="/ir/historico?from=ano"'), "year page history link does not go through the counter");
     assert(!page.includes("partner.example"), "partner url leaks into the page instead of the redirect");
