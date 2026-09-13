@@ -111,14 +111,14 @@ function isInternalAsset(pathname) {
 }
 
 const worker = {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const { pathname } = url;
     const method = request.method;
 
     if (method === "HEAD") {
       const res = await worker.fetch(
-        new Request(url.toString(), { method: "GET", headers: request.headers }), env);
+        new Request(url.toString(), { method: "GET", headers: request.headers }), env, ctx);
       return new Response(null, { status: res.status, statusText: res.statusText, headers: res.headers });
     }
 
@@ -196,8 +196,18 @@ const worker = {
         if (!checkBasicAuth(request, env)) return unauthorized();
         return clicksJson(env);
       }
+      if (pathname === "/analytics/ai.json") {
+        if (!checkBasicAuth(request, env)) return unauthorized();
+        return aiJson(env);
+      }
       if (pathname === "/analytics" || pathname.startsWith("/analytics/")) {
         return handleAnalytics(request, env, url);
+      }
+
+      if (method === "GET") {
+        const tracked = trackAiFetch(env, request, pathname);
+        if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(tracked);
+        else await tracked;
       }
 
       // URL normalisation — one canonical spelling per page, 301 to it.
@@ -2059,6 +2069,76 @@ async function handleGuide(request, env, url) {
   if (!guide) return notFoundPage(request, env, url);
   return withModels(request, env, url, ({ models, builtAt, depositCount, stats, market }) =>
     publicHtml(renderGuide({ guide, models, market, stats, host: url.host, depositCount, builtAt })));
+}
+
+const AI_TTL_SEC = 180 * 24 * 3600;
+const AI_HIT_TTL_SEC = 30 * 24 * 3600;
+const AI_AGENTS = [
+  ["chatgpt-user", "ask", /ChatGPT-User/i],
+  ["perplexity-user", "ask", /Perplexity-User/i],
+  ["claude-user", "ask", /Claude-User/i],
+  ["oai-searchbot", "index", /OAI-SearchBot/i],
+  ["perplexitybot", "index", /PerplexityBot/i],
+  ["claude-searchbot", "index", /Claude-SearchBot/i],
+  ["gptbot", "bulk", /GPTBot/i],
+  ["claudebot", "bulk", /ClaudeBot/i],
+  ["ccbot", "bulk", /CCBot/i],
+  ["bytespider", "bulk", /Bytespider/i],
+  ["amazonbot", "bulk", /Amazonbot/i],
+  ["meta-ai", "bulk", /meta-externalagent/i],
+];
+const AI_CAP = { ask: 120, index: 120, bulk: 20 };
+const AI_SAMPLE_CAP = 30;
+const AI_SKIP = ["/analytics", "/_olx", "/ir/", "/fonts/", "/healthz", "/og-default.png"];
+
+function aiAgent(ua) {
+  for (const [name, kind, re] of AI_AGENTS) if (re.test(ua)) return { name, kind };
+  return null;
+}
+
+async function trackAiFetch(env, request, pathname) {
+  if (ICON_PATHS.has(pathname)) return;
+  if (AI_SKIP.some(p => pathname === p || pathname.startsWith(p))) return;
+  const agent = aiAgent(request.headers.get("user-agent") || "");
+  if (!agent) return;
+  const day = new Date().toISOString().slice(0, 10);
+  const key = `ai:hit:${day}:${agent.name}`;
+  let seen;
+  try {
+    seen = parseInt((await env.KV.get(key)) || "0", 10) || 0;
+    if (seen < AI_CAP[agent.kind]) await env.KV.put(key, String(seen + 1), { expirationTtl: AI_TTL_SEC });
+  } catch (err) { console.warn("ai count failed", err && err.message); return; }
+  if (agent.kind !== "ask" || seen >= AI_SAMPLE_CAP) return;
+  const rec = {
+    t: new Date().toISOString(),
+    agent: agent.name,
+    path: pathname,
+    country: (request.cf && request.cf.country) || null,
+  };
+  try {
+    await env.KV.put(`aihit:${rec.t}:${randomToken(3)}`, JSON.stringify(rec), { expirationTtl: AI_HIT_TTL_SEC });
+  } catch (err) { console.warn("ai sample failed", err && err.message); }
+}
+
+async function aiJson(env) {
+  const days = await kvCountsByDay(env, "ai:hit:");
+  const names = [];
+  let cursor;
+  for (let i = 0; i < 5; i++) {
+    const page = await env.KV.list({ prefix: "aihit:", limit: 500, cursor });
+    for (const k of page.keys || []) names.push(k.name);
+    if (page.list_complete || !page.cursor) break;
+    cursor = page.cursor;
+  }
+  const hits = [];
+  for (const name of names.slice(-HIT_SAMPLE_MAX).reverse()) {
+    const v = await env.KV.get(name, "json").catch(() => null);
+    if (v) hits.push(v);
+  }
+  return new Response(JSON.stringify({ days, hits }, null, 2), {
+    status: 200,
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
+  });
 }
 
 const CLICK_TTL_SEC = 180 * 24 * 3600;

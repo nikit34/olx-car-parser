@@ -125,6 +125,35 @@ def test_clicks_summary_separates_dropped_hits_from_live_ones():
     assert lines[1] == "Откуда шли живые клики: Vodafone Portugal 2"
 
 
+def test_ai_summary_counts_the_week_and_names_the_cited_pages():
+    payload = {
+        "days": {
+            "2026-09-02": {"chatgpt-user": 4, "gptbot": 11},
+            "2026-09-01": {"chatgpt-user": 1},
+            "2026-07-01": {"chatgpt-user": 999},
+        },
+        "hits": [
+            {"t": "2026-09-02T09:00:00Z", "agent": "chatgpt-user", "path": "/preco/citroen-c3/2018"},
+            {"t": "2026-09-02T10:00:00Z", "agent": "chatgpt-user", "path": "/preco/citroen-c3/2018"},
+            {"t": "2026-09-01T10:00:00Z", "agent": "chatgpt-user", "path": "/avaliar"},
+            {"t": "2026-07-01T10:00:00Z", "agent": "chatgpt-user", "path": "/mercado"},
+        ],
+    }
+    fetch = fake_fetch({"ai.json": (200, json.dumps(payload).encode())})
+    lines = md.ai_summary(fetch, "u", "p", dt.date(2026, 9, 3))
+    assert "за 7 дней: 16" in lines[0]
+    assert "chatgpt-user 5" in lines[0] and "gptbot 11" in lines[0]
+    assert "999" not in lines[0]
+    assert lines[1].startswith("В живых ответах (3):")
+    assert "/preco/citroen-c3/2018 2" in lines[1] and "/mercado" not in lines[1]
+
+
+def test_ai_summary_says_so_when_no_agent_came():
+    fetch = fake_fetch({"ai.json": (200, json.dumps({"days": {}, "hits": []}).encode())})
+    lines = md.ai_summary(fetch, "u", "p", dt.date(2026, 9, 3))
+    assert len(lines) == 1 and "ни одного захода" in lines[0]
+
+
 def test_clicks_summary_stays_quiet_when_nothing_was_dropped():
     payload = {"days": {"2026-09-02": {"ano": 1}}, "drops": {}, "hits": []}
     fetch = fake_fetch({"clicks.json": (200, json.dumps(payload).encode())})

@@ -1124,6 +1124,39 @@ await check("sitemap lastmod follows the page's own change stamp when the blob c
   }
 });
 
+await check("AI fetches are counted by agent, and only a live answer leaves a sample", async () => {
+  for (const k of [...kv.keys()]) if (k.startsWith("ai:hit:") || k.startsWith("aihit:")) kv.delete(k);
+  const visit = (ua, path = "/precos") =>
+    worker.fetch(new Request(`https://${HOST}${path}`, { headers: { "user-agent": ua } }), env);
+
+  await visit("Mozilla/5.0 (compatible; ChatGPT-User/1.0; +https://openai.com/bot)");
+  await visit("Mozilla/5.0 (compatible; GPTBot/1.2; +https://openai.com/gptbot)");
+  await visit("Mozilla/5.0 (compatible; PerplexityBot/1.0; +https://perplexity.ai/perplexitybot)");
+  await visit("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) Safari/605.1.15");
+
+  const counted = [...kv.keys()].filter(k => k.startsWith("ai:hit:")).map(k => k.split(":").pop()).sort();
+  assert(counted.join(",") === "chatgpt-user,gptbot,perplexitybot",
+    `agents counted: ${counted.join(",") || "none"}`);
+
+  const samples = [...kv.keys()].filter(k => k.startsWith("aihit:")).map(k => JSON.parse(kv.get(k)));
+  assert(samples.length === 1, `a live answer must leave exactly one sample, got ${samples.length}`);
+  assert(samples[0].agent === "chatgpt-user" && samples[0].path === "/precos",
+    "the sample does not say who asked for what");
+
+  await visit("Mozilla/5.0 (compatible; Claude-User/1.0; +Claude-User@anthropic.com)");
+  assert([...kv.keys()].some(k => k.endsWith(":claude-user")), "Claude-User was swallowed by the ClaudeBot rule");
+
+  const gptKey = [...kv.keys()].find(k => k.startsWith("ai:hit:") && k.endsWith(":gptbot"));
+  const gptBefore = kv.get(gptKey);
+  await visit("Mozilla/5.0 (compatible; GPTBot/1.2)", "/healthz");
+  assert(kv.get(gptKey) === gptBefore, "a healthz probe was counted as an AI fetch of the site");
+  await visit("Mozilla/5.0 (compatible; GPTBot/1.2)", "/robots.txt");
+  assert(kv.get(gptKey) === String(Number(gptBefore) + 1), "a crawler reading robots.txt was not counted");
+
+  const guard = await worker.fetch(new Request(`https://${HOST}/analytics/ai.json`), env);
+  assert(guard.status === 401, `ai.json without auth → ${guard.status}`);
+});
+
 await check("the history link is a counted redirect to the partner url", async () => {
   const miss = await get("/ir/historico?from=ano");
   assert(miss.status === 404, `redirect without a partner url → ${miss.status}`);

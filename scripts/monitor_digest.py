@@ -175,6 +175,32 @@ def clicks_summary(fetch, user, password, today):
     return lines, y_total
 
 
+def ai_summary(fetch, user, password, today):
+    if not user or not password:
+        return ["ИИ-цитирование: нет доступа"]
+    auth = base64.b64encode(f"{user}:{password}".encode()).decode()
+    status, body = fetch(SITE + "/analytics/ai.json", {"Authorization": f"Basic {auth}"})
+    if status != 200:
+        return [f"ИИ-цитирование: ai.json отвечает {status}"]
+    try:
+        data = json.loads(body)
+    except Exception:
+        return ["ИИ-цитирование: ai.json не читается"]
+    days = data.get("days", {})
+    hits = data.get("hits", [])
+    week = {(today - dt.timedelta(days=i)).isoformat() for i in range(1, 8)}
+    by_agent = tally((a, n) for d, v in days.items() if d in week for a, n in v.items())
+    asked = [h for h in hits if (h.get("t") or "")[:10] in week]
+    total = sum(by_agent.values())
+    if not total:
+        return ["ИИ-цитирование: за 7 дней ни одного захода ИИ-агента"]
+    lines = [f"ИИ-цитирование за 7 дней: {total} ({fmt_tally(by_agent, top=4)})"]
+    if asked:
+        pages = fmt_tally(tally((h.get("path") or "?", 1) for h in asked), top=3)
+        lines.append(f"В живых ответах ({len(asked)}): {pages}")
+    return lines
+
+
 def tally(pairs):
     out = {}
     for key, n in pairs:
@@ -335,11 +361,12 @@ def main(argv=None):
     rel_lines, rel_warn = check_release(http_get, env("GITHUB_TOKEN"), now)
     lead_lines, lead_warn, fresh_leads = leads_summary(http_get, env("ANALYTICS_USER"), env("ANALYTICS_PASS"), now)
     click_lines, fresh_clicks = clicks_summary(http_get, env("ANALYTICS_USER"), env("ANALYTICS_PASS"), now.date())
+    ai_lines = ai_summary(http_get, env("ANALYTICS_USER"), env("ANALYTICS_PASS"), now.date())
     mail_lines, mail_new = mail_summary(lambda: imaplib.IMAP4_SSL("imap.yandex.com", 993),
                                         env("MAIL_IMAP_USER"), env("MAIL_IMAP_PASSWORD"), now - dt.timedelta(days=1))
     weekly = args.force or now.weekday() == 0
     press = press_reminder(now.date())
-    sections = [site_lines, rel_lines, lead_lines, click_lines, mail_lines, press]
+    sections = [site_lines, rel_lines, lead_lines, click_lines, ai_lines, mail_lines, press]
     if weekly:
         sections.append(gsc_summary(http_post_json, env("GSC_ADC_JSON"), now.date()))
     warnings = site_warn + rel_warn + lead_warn
