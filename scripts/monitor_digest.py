@@ -276,27 +276,68 @@ def google_error(status, body):
     return f"HTTP {status} {detail or '?'}" + (f" — {note[:90]}" if note else "")
 
 
-def gsc_token(post, adc):
-    missing = [k for k in ("client_id", "client_secret", "refresh_token") if not adc.get(k)]
-    if missing:
-        return None, "в GSC_ADC_JSON нет полей: " + ", ".join(missing)
-    status, body = post("https://oauth2.googleapis.com/token", {
-        "client_id": adc["client_id"], "client_secret": adc["client_secret"],
-        "refresh_token": adc["refresh_token"], "grant_type": "refresh_token",
+GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+
+
+def jwt_assertion(adc, issued_at):
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    def seg(obj):
+        raw = json.dumps(obj, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).rstrip(b"=")
+
+    aud = adc.get("token_uri") or GOOGLE_TOKEN_URL
+    signing_input = seg({"alg": "RS256", "typ": "JWT"}) + b"." + seg({
+        "iss": adc["client_email"], "scope": GSC_SCOPE, "aud": aud,
+        "iat": issued_at, "exp": issued_at + 3600,
     })
+    key = serialization.load_pem_private_key(adc["private_key"].encode(), password=None)
+    sig = key.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
+    return aud, (signing_input + b"." + base64.urlsafe_b64encode(sig).rstrip(b"=")).decode()
+
+
+def gsc_auth(post, adc, now=None):
+    if adc.get("type") == "service_account":
+        missing = [k for k in ("client_email", "private_key") if not adc.get(k)]
+        if missing:
+            return None, "в GSC_ADC_JSON нет полей: " + ", ".join(missing)
+        stamp = int((now or dt.datetime.now(dt.timezone.utc)).timestamp())
+        try:
+            url, assertion = jwt_assertion(adc, stamp)
+        except ImportError:
+            return None, "для сервисного аккаунта нужен пакет cryptography"
+        except Exception as exc:
+            return None, f"не удалось подписать JWT: {type(exc).__name__}"
+        payload = {"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": assertion}
+        extra = {}
+    else:
+        missing = [k for k in ("client_id", "client_secret", "refresh_token") if not adc.get(k)]
+        if missing:
+            return None, "в GSC_ADC_JSON нет полей: " + ", ".join(missing)
+        url = GOOGLE_TOKEN_URL
+        payload = {
+            "client_id": adc["client_id"], "client_secret": adc["client_secret"],
+            "refresh_token": adc["refresh_token"], "grant_type": "refresh_token",
+        }
+        extra = {"x-goog-user-project": GSC_PROJECT}
+    status, body = post(url, payload)
     if status != 200:
         return None, google_error(status, body)
     try:
         token = json.loads(body).get("access_token")
     except Exception:
         return None, f"HTTP {status}, ответ не JSON"
-    return (token, None) if token else (None, f"HTTP {status}, в ответе нет access_token")
+    if not token:
+        return None, f"HTTP {status}, в ответе нет access_token"
+    return {"Authorization": f"Bearer {token}", **extra}, None
 
 
-def gsc_query(post, token, start, end, dimensions):
+def gsc_query(post, headers, start, end, dimensions):
     url = "https://www.googleapis.com/webmasters/v3/sites/" + urllib.parse.quote(GSC_SITE, safe="") + "/searchAnalytics/query"
     status, body = post(url, {"startDate": start, "endDate": end, "dimensions": dimensions, "rowLimit": 5000, "dataState": "all"},
-                        {"Authorization": f"Bearer {token}", "x-goog-user-project": GSC_PROJECT})
+                        headers)
     if status != 200:
         return None, google_error(status, body)
     try:
@@ -329,25 +370,25 @@ def ctr(bucket):
 
 def gsc_summary(post, adc_json, today):
     if not adc_json:
-        return ["Search Console: нет доступа (GSC_ADC_JSON)"]
+        return ["Search Console: нет доступа (GSC_ADC_JSON)"], ["Search Console: секрет GSC_ADC_JSON не задан"]
     try:
         adc = json.loads(adc_json)
     except Exception:
-        return ["Search Console: GSC_ADC_JSON не JSON"]
-    token, why = gsc_token(post, adc)
-    if not token:
-        return [f"Search Console: токен не выдан — {why}"]
+        return ["Search Console: GSC_ADC_JSON не JSON"], ["Search Console: GSC_ADC_JSON не разбирается как JSON"]
+    headers, why = gsc_auth(post, adc)
+    if not headers:
+        return [f"Search Console: токен не выдан — {why}"], [f"Search Console: токен не выдан — {why}"]
     end = today - dt.timedelta(days=3)
     start = end - dt.timedelta(days=6)
-    rows, why = gsc_query(post, token, start.isoformat(), end.isoformat(), ["page"])
+    rows, why = gsc_query(post, headers, start.isoformat(), end.isoformat(), ["page"])
     if rows is None:
-        return [f"Search Console: запрос отклонён — {why}"]
+        return [f"Search Console: запрос отклонён — {why}"], [f"Search Console: запрос отклонён — {why}"]
     total, year, vender = summarise_pages(rows)
     return [
         f"Search Console {start.strftime('%d.%m')}–{end.strftime('%d.%m')}: {total['impr']} показов, {total['clicks']} кликов, CTR {ctr(total):.1f}%",
         f"• страницы года: {year['impr']} показов, CTR {ctr(year):.1f}% (цель > 1.5%)",
         f"• /vender: {vender['impr']} показов, {vender['clicks']} кликов",
-    ]
+    ], []
 
 
 PRESS_WINDOW = (dt.date(2026, 9, 28), dt.date(2026, 10, 5))
@@ -391,9 +432,11 @@ def main(argv=None):
     weekly = args.force or now.weekday() == 0
     press = press_reminder(now.date())
     sections = [site_lines, rel_lines, lead_lines, click_lines, ai_lines, mail_lines, press]
+    gsc_warn = []
     if weekly:
-        sections.append(gsc_summary(http_post_json, env("GSC_ADC_JSON"), now.date()))
-    warnings = site_warn + rel_warn + lead_warn
+        gsc_lines, gsc_warn = gsc_summary(http_post_json, env("GSC_ADC_JSON"), now.date())
+        sections.append(gsc_lines)
+    warnings = site_warn + rel_warn + lead_warn + gsc_warn
     text = build_digest(now, sections, warnings)
     print(text)
     quiet = not warnings and not fresh_leads and not fresh_clicks and not mail_new and not weekly and not press

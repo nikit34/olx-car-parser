@@ -26,6 +26,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install the JWT signing dependency
+        run: pip install --quiet 'cryptography>=42'
       - name: Build and send the digest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

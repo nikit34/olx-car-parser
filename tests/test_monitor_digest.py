@@ -1,5 +1,8 @@
+import base64
 import datetime as dt
 import json
+
+import pytest
 
 from scripts import monitor_digest as md
 
@@ -134,18 +137,77 @@ def test_gsc_failure_says_what_google_actually_answered():
             "error_description": "Token has been expired or revoked.",
         }).encode()
 
-    line = md.gsc_summary(refused, adc, dt.date(2026, 9, 13))[0]
+    lines, warns = md.gsc_summary(refused, adc, dt.date(2026, 9, 13))
+    line = lines[0]
+    assert warns, "отказ Search Console не попал в предупреждения"
     assert "invalid_grant" in line and "revoked" in line
     assert "не удалось получить токен" not in line
 
     def offline(url, payload, headers=None, timeout=30):
         return 0, b"<urlopen error timed out>"
 
-    assert "сеть" in md.gsc_summary(offline, adc, dt.date(2026, 9, 13))[0]
+    assert "сеть" in md.gsc_summary(offline, adc, dt.date(2026, 9, 13))[0][0]
 
     half = json.dumps({"client_id": "c", "refresh_token": "r"})
-    line = md.gsc_summary(refused, half, dt.date(2026, 9, 13))[0]
+    line = md.gsc_summary(refused, half, dt.date(2026, 9, 13))[0][0]
     assert "client_secret" in line, "a half-pasted secret must name the missing field"
+
+
+def test_gsc_signs_a_service_account_assertion_google_would_accept():
+    crypto = pytest.importorskip("cryptography", reason="подпись JWT требует cryptography")
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding, rsa
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+    adc = json.dumps({
+        "type": "service_account", "client_email": "bot@proj.iam.gserviceaccount.com",
+        "private_key": pem, "token_uri": "https://oauth2.googleapis.com/token",
+    })
+
+    seen = {}
+
+    def post(url, payload, headers=None, timeout=30):
+        if url.endswith("/token"):
+            seen.update(payload)
+            return 200, json.dumps({"access_token": "t"}).encode()
+        seen["headers"] = headers or {}
+        return 200, json.dumps({"rows": []}).encode()
+
+    lines, warns = md.gsc_summary(post, adc, dt.date(2026, 9, 13))
+    assert warns == [] and "Search Console 04.09" in lines[0]
+    assert seen["grant_type"] == "urn:ietf:params:oauth:grant-type:jwt-bearer"
+
+    head, body, sig = seen["assertion"].split(".")
+
+    def unpad(chunk):
+        return json.loads(base64.urlsafe_b64decode(chunk + "=" * (-len(chunk) % 4)))
+
+    assert unpad(head) == {"alg": "RS256", "typ": "JWT"}
+    claims = unpad(body)
+    assert claims["iss"] == "bot@proj.iam.gserviceaccount.com"
+    assert claims["scope"] == md.GSC_SCOPE
+    assert claims["exp"] - claims["iat"] == 3600
+    key.public_key().verify(
+        base64.urlsafe_b64decode(sig + "=" * (-len(sig) % 4)),
+        f"{head}.{body}".encode(), padding.PKCS1v15(), hashes.SHA256(),
+    )
+    assert "x-goog-user-project" not in seen["headers"], \
+        "квота-проект от ADC не должна уезжать с сервисным аккаунтом"
+
+
+def test_gsc_service_account_without_a_key_says_which_field_is_missing():
+    adc = json.dumps({"type": "service_account", "client_email": "bot@proj.iam.gserviceaccount.com"})
+
+    def unused(url, payload, headers=None, timeout=30):
+        raise AssertionError("до сети дойти не должно")
+
+    lines, warns = md.gsc_summary(unused, adc, dt.date(2026, 9, 13))
+    assert "private_key" in lines[0] and warns
 
 
 def test_gsc_reports_a_rejected_query_separately_from_a_rejected_token():
@@ -156,7 +218,7 @@ def test_gsc_reports_a_rejected_query_separately_from_a_rejected_token():
             return 200, json.dumps({"access_token": "t"}).encode()
         return 403, json.dumps({"error": {"status": "PERMISSION_DENIED", "message": "User does not have permission"}}).encode()
 
-    line = md.gsc_summary(post, adc, dt.date(2026, 9, 13))[0]
+    line = md.gsc_summary(post, adc, dt.date(2026, 9, 13))[0][0]
     assert "запрос отклонён" in line and "PERMISSION_DENIED" in line
 
 
