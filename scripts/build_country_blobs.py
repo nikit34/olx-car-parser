@@ -53,6 +53,7 @@ _DEAL_EXTRA_COLS = (
 )
 
 MAX_UNSEEN_DAYS = 14
+MIN_YEAR_CELL_FOR_DEAL = 10
 
 
 def _log(cc: str, msg: str) -> None:
@@ -233,6 +234,41 @@ def _coverage_80(bundle: dict | None) -> float | None:
     return metrics.get("coverage_80_calibrated") or metrics.get("coverage_80")
 
 
+def _cell_deep_enough(merged: pd.DataFrame, listings: pd.DataFrame, cc: str) -> pd.DataFrame:
+    """Deals whose own model year the corpus has actually looked at.
+
+    ``sample_size`` cannot catch this on a young market. The crawl reads twenty
+    listings per model before it ever walks that model year by year, so every
+    car of a covered model reports twenty comparables while its own year may
+    hold exactly one. The band comes out tight and wrong, and the card then
+    offers a saving against a value nobody measured: the first Italian run put
+    a 2007 van with 420 000 km at 13 321 EUR against an asking price of 5 500.
+
+    So the gate is the depth of the car's own (brand, model, year) cell, which
+    is what the harvest pass fills. The floor is the one the project already
+    defends for a model year to earn a page of its own
+    (``model_pages.MIN_YEAR_PAGE_N``): a year too thin to carry a published
+    median is too thin to price one car against. Until that pass has been round, a market
+    publishes its medians and no per-car claim, and the feed opens by itself as
+    the cells fill.
+    """
+    need = {"brand", "model", "year"}
+    if merged.empty or not need <= set(merged.columns) or not need <= set(listings.columns):
+        return merged
+    active = listings
+    if "is_active" in listings.columns:
+        active = listings[listings["is_active"].fillna(False).astype(bool)]
+    counts = active.groupby(["brand", "model", "year"]).size()
+    keys = list(zip(merged["brand"], merged["model"], merged["year"]))
+    deep = pd.Series([int(counts.get(k, 0)) >= MIN_YEAR_CELL_FOR_DEAL for k in keys],
+                     index=merged.index)
+    kept = merged[deep]
+    if len(kept) != len(merged):
+        _log(cc, f"deal feed: {len(merged) - len(kept)} of {len(merged)} signals sit in a model "
+                 f"year holding under {MIN_YEAR_CELL_FOR_DEAL} listings — no per-car claim yet")
+    return kept
+
+
 def _seen_recently(merged: pd.DataFrame, cc: str) -> pd.DataFrame:
     """Deals whose listing we have actually confirmed is still up.
 
@@ -294,6 +330,7 @@ def _hot_deals(signals: pd.DataFrame, listings: pd.DataFrame, predictions: pd.Da
              f"{merged['verdict'].value_counts().to_dict()}")
 
     merged = _seen_recently(merged, cc)
+    merged = _cell_deep_enough(merged, listings, cc)
     stages: dict[str, int] = {}
     picked = _pick_zone_deals(merged, "all", None, 0, MAX_LISTING_AGE_DAYS, stages)
     _log(cc, f"funnel: {stages.get('signals', 0)} signals → {stages.get('active', 0)} active"

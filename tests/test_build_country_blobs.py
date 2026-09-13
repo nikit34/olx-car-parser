@@ -25,7 +25,7 @@ MODELS = (
     ("Ford", "B-MAX", 13000.0),
 )
 YEARS = tuple(range(2012, 2020))
-PER_CELL = 5
+PER_CELL = 12
 
 
 def _row(i: int, brand: str, model: str, year: int, price: float, now: pd.Timestamp) -> dict:
@@ -96,7 +96,7 @@ def _country_frame() -> pd.DataFrame:
 @pytest.fixture
 def country_frame(monkeypatch):
     frame = _country_frame()
-    assert len(frame) == len(MODELS) * len(YEARS) * PER_CELL == 120
+    assert len(frame) == len(MODELS) * len(YEARS) * PER_CELL == len(MODELS) * len(YEARS) * PER_CELL
 
     def _load(session, cc):
         assert cc == "DE"
@@ -141,7 +141,7 @@ class TestModelPages:
         doc = _read(tmp_path / "models_de.json")
         assert "bayern" in doc["districts"]
         bayern = doc["districts"]["bayern"]
-        assert bayern["lbl"] == REGION and bayern["n"] == 120
+        assert bayern["lbl"] == REGION and bayern["n"] == len(MODELS) * len(YEARS) * PER_CELL
         assert {slug for slug, _n, _fm in bayern["top"]} == set(doc["models"])
 
     def test_collapse_guard_keeps_the_previous_blob(self, tmp_path, country_frame, no_model):
@@ -159,8 +159,8 @@ class TestModelPages:
         assert not (tmp_path / "hot_deals_de_all.json").exists()
         assert not (tmp_path / "valuations_de.json").exists()
         assert (tmp_path / "manifest_de.json").exists()
-        assert manifest["rows"]["listings"] == 120
-        assert manifest["rows"]["active"] == 120
+        assert manifest["rows"]["listings"] == len(MODELS) * len(YEARS) * PER_CELL
+        assert manifest["rows"]["active"] == len(MODELS) * len(YEARS) * PER_CELL
         assert manifest["rows"]["hot_deals"] == 0
         assert manifest["rows"]["valuations"] == 0
         brands = _read(tmp_path / "brands_models_de.json")
@@ -216,7 +216,7 @@ class TestDealFeed:
 
         valuations = _read(tmp_path / "valuations_de.json")
         assert valuations["v"] == 1
-        assert len(valuations["cars"]) == 120 == manifest["rows"]["valuations"]
+        assert len(valuations["cars"]) == len(MODELS) * len(YEARS) * PER_CELL == manifest["rows"]["valuations"]
         car = valuations["cars"]["as24_de:700001"]
         assert car["p"] > 0 and car["fl"] <= car["fm"] <= car["fh"]
         assert car["ms"] == "skoda-citigo"
@@ -537,3 +537,36 @@ class TestWhatTheCrawlCadenceCannotSupport:
     def test_a_frame_without_the_column_is_left_alone(self):
         merged = pd.DataFrame([{"olx_id": "as24_de:1"}])
         assert len(bcb._seen_recently(merged, "DE")) == 1
+
+
+class TestNoPerCarClaimOnAThinYear:
+    """A young market publishes medians, not per-car savings.
+
+    The crawl reads twenty listings per model before it walks that model year
+    by year, so every car of a covered model reports twenty comparables while
+    its own year may hold one. That is how the first Italian run offered a 2007
+    van with 420 000 km at a 59% discount against a value nobody measured.
+    """
+
+    @staticmethod
+    def _frames(per_year: int):
+        rows = []
+        for i in range(per_year):
+            rows.append({"brand": "Fiat", "model": "Doblo", "year": 2019, "is_active": True,
+                         "olx_id": f"as24_it:{i}"})
+        listings = pd.DataFrame(rows)
+        merged = pd.DataFrame([{"brand": "Fiat", "model": "Doblo", "year": 2019,
+                                "olx_id": "as24_it:0"}])
+        return merged, listings
+
+    def test_a_year_the_crawl_has_not_walked_yet_carries_no_deal(self):
+        merged, listings = self._frames(bcb.MIN_YEAR_CELL_FOR_DEAL - 1)
+        assert bcb._cell_deep_enough(merged, listings, "IT").empty
+
+    def test_a_year_with_real_depth_keeps_its_deal(self):
+        merged, listings = self._frames(bcb.MIN_YEAR_CELL_FOR_DEAL)
+        assert len(bcb._cell_deep_enough(merged, listings, "IT")) == 1
+
+    def test_a_frame_without_the_columns_is_left_alone(self):
+        merged = pd.DataFrame([{"olx_id": "as24_it:0"}])
+        assert len(bcb._cell_deep_enough(merged, pd.DataFrame(), "IT")) == 1
