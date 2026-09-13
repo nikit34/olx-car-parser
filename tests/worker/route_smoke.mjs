@@ -422,6 +422,20 @@ await check("robots and llms.txt describe the new surface", async () => {
   }
 });
 
+await check("with no INTL_LOCALES the Portuguese robots and llms carry nothing extra", async () => {
+  const robots = await (await get("/robots.txt")).text();
+  const sitemaps = robots.split("\n").filter(l => l.startsWith("Sitemap:"));
+  assert(sitemaps.length === 1 && sitemaps[0] === `Sitemap: https://${HOST}/sitemap.xml`,
+    `robots advertises ${sitemaps.length} sitemaps with no locale live: ${sitemaps.join(" | ")}`);
+  const llms = await (await get("/llms.txt")).text();
+  assert(!/Outros mercados/.test(llms), "llms.txt announces markets that are not live");
+  for (const cc of ["/de/", "/fr/", "/it/"]) {
+    assert(!llms.includes(cc) && !robots.includes(cc), `${cc} leaks into the Portuguese files`);
+  }
+  const home = await (await get("/")).text();
+  assert(!/Deutsch|Italiano|Français/.test(home), "the language switcher shows with no locale live");
+});
+
 await check("the deposit routes are gone and answer like any unknown path", async () => {
   for (const path of ["/claim", "/reservas", "/unlocked", "/reserve"]) {
     const r = await get(path);

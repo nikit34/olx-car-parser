@@ -62,6 +62,16 @@ import {
   renderDuelPage, renderDuelHub,
 } from "./seo-pages.js";
 import { GUIDES, GUIDES_UPDATED, guideBySlug, renderGuide, renderGuidesHub } from "./guides.js";
+import {
+  setIntlLocales, intlLocales, liveLocales, localeForPath, href as ihref,
+  parseAs24Id, valuationKey, t as it,
+} from "./i18n.js";
+import {
+  renderIntlLanding, renderIntlHub, renderIntlModelPage, renderIntlYearPage,
+  renderIntlAvaliar, renderIntlFeed, renderIntlMethodology, renderIntlAbout,
+  renderIntlPrivacy, renderIntlNotFound, renderIntlInfo,
+  intlModelJson, intlYearJson, intlSitemapPaths, intlYearCell, intlSiblings,
+} from "./pages-intl.js";
 
 const ZONES = ["norte", "centro", "sul", "all"];
 
@@ -186,6 +196,7 @@ const worker = {
       setWave(env.SEO_WAVE_MODELS);
       setLiqWave(env.LIQ_WAVE_MODELS);
       setVenderWave(env.VENDER_WAVE_MODELS);
+      setIntlLocales(env.INTL_LOCALES);
 
       // Internal stlite dashboard + its assets — Basic-Auth gated, fail-closed.
       if (pathname === "/analytics/leads.json") {
@@ -229,6 +240,9 @@ const worker = {
           return redirect(dest.toString(), 301);
         }
       }
+
+      const intl = localeForPath(pathname, intlLocales());
+      if (intl) return handleIntl(request, env, url, intl);
 
       // Self-hosted webfonts. Public and un-gated for the same reason as the
       // share card: the Basic-Auth fallthrough would answer 401, and a 401 on a
@@ -1130,6 +1144,181 @@ function jsonResponse(payload, status = 200) {
   });
 }
 
+async function handleIntl(request, env, url, intl) {
+  const { loc, rest } = intl;
+  if (request.method !== "GET") return intlNotFound(env, url, loc);
+  const R = loc.routes;
+  const path = rest === "/" ? "" : rest;
+  if (path === "") return intlLanding(env, url, loc);
+  if (path === `/${R.hub}`) return intlHub(env, url, loc);
+  if (path === `/${R.avaliar}`) return intlAvaliar(env, url, loc);
+  if (path === `/${R.mercado}`) return intlFeed(env, url, loc);
+  if (path === `/${R.metodologia}`) return intlTrustPage(env, url, loc, "method");
+  if (path === `/${R.sobre}`) return intlTrustPage(env, url, loc, "about");
+  if (path === `/${R.privacidade}`) return publicHtml(renderIntlPrivacy({ loc, host: url.host }));
+  if (path === "/sitemap.xml") return intlSitemap(env, url, loc);
+  if (path.startsWith(`/${R.model}/`)) {
+    return intlModel(env, url, loc, path.slice(`/${R.model}/`.length));
+  }
+  return intlNotFound(env, url, loc);
+}
+
+async function intlCorpus(env, loc) {
+  const mdoc = await getModels(env, loc.country);
+  const models = mdoc && mdoc.models;
+  if (!models) return null;
+  return { models, builtAt: mdoc.built_at, stats: corpusStats(models, mdoc.built_at) };
+}
+
+function intlUnavailable(loc, host, key) {
+  return html(renderIntlInfo({
+    loc, host, title: it(loc, "info.unavailable"), message: it(loc, key),
+  }), 503);
+}
+
+async function intlNotFound(env, url, loc) {
+  let suggestions = [];
+  try {
+    const mdoc = await getModels(env, loc.country);
+    if (mdoc && mdoc.models) {
+      suggestions = Object.entries(mdoc.models)
+        .sort((a, b) => (b[1].n || 0) - (a[1].n || 0)).slice(0, 12)
+        .map(([slug, r]) => ({ slug, m: `${r.b} ${r.m}`, fm: r.fm }));
+    }
+  } catch (_) { /* a 404 must never depend on a network call */ }
+  return html(renderIntlNotFound({
+    loc, host: url.host, path: url.pathname, suggestions,
+  }), 404);
+}
+
+async function intlLanding(env, url, loc) {
+  const c = await intlCorpus(env, loc);
+  if (!c) return intlUnavailable(loc, url.host, "info.preparing_models");
+  return publicHtml(renderIntlLanding({ loc, host: url.host, stats: c.stats, builtAt: c.builtAt }));
+}
+
+async function intlHub(env, url, loc) {
+  const c = await intlCorpus(env, loc);
+  if (!c) return intlUnavailable(loc, url.host, "info.preparing_hub");
+  return publicHtml(renderIntlHub({
+    loc, host: url.host, models: c.models, builtAt: c.builtAt, stats: c.stats,
+  }));
+}
+
+async function intlTrustPage(env, url, loc, kind) {
+  const c = await intlCorpus(env, loc);
+  const stats = c ? c.stats : null;
+  const builtAt = c ? c.builtAt : null;
+  const page = kind === "method"
+    ? renderIntlMethodology({ loc, host: url.host, stats, builtAt })
+    : renderIntlAbout({ loc, host: url.host, stats, builtAt });
+  return publicHtml(page);
+}
+
+async function intlModel(env, url, loc, tail) {
+  let rest;
+  try {
+    rest = decodeURIComponent(tail).replace(/\/+$/, "").toLowerCase();
+  } catch (_) {
+    return intlNotFound(env, url, loc);
+  }
+  const wantsJson = rest.endsWith(".json");
+  if (wantsJson) rest = rest.slice(0, -".json".length);
+  let slug = rest, year = null;
+  const slash = rest.lastIndexOf("/");
+  if (slash > 0) {
+    const seg = rest.slice(slash + 1);
+    slug = rest.slice(0, slash);
+    if (!/^\d{4}$/.test(seg)) return intlNotFound(env, url, loc);
+    year = parseInt(seg, 10);
+  }
+  const c = await intlCorpus(env, loc);
+  const rec = c ? c.models[slug] : null;
+  if (!rec) return intlNotFound(env, url, loc);
+  const modelUrl = `https://${url.host}${ihref(loc, "model", slug)}`;
+  if (year != null) {
+    const cell = intlYearCell(rec, year);
+    if (!cell) {
+      if ((rec.yr || []).some(x => x.y === year)) {
+        return new Response(null, {
+          status: 301,
+          headers: { location: `${modelUrl}${wantsJson ? ".json" : ""}` },
+        });
+      }
+      return intlNotFound(env, url, loc);
+    }
+    if (wantsJson) {
+      return jsonResponse(intlYearJson(loc, rec, slug, year, cell, { host: url.host, builtAt: c.builtAt }));
+    }
+    return publicHtml(renderIntlYearPage({
+      loc, host: url.host, rec, slug, year, cell, stats: c.stats, builtAt: c.builtAt,
+    }));
+  }
+  if (wantsJson) {
+    return jsonResponse(intlModelJson(loc, rec, slug, {
+      host: url.host, builtAt: c.builtAt, models: c.models,
+    }));
+  }
+  return publicHtml(renderIntlModelPage({
+    loc, host: url.host, models: c.models, rec, slug, builtAt: c.builtAt, stats: c.stats,
+    siblings: intlSiblings(c.models, slug, rec),
+  }));
+}
+
+async function intlAvaliar(env, url, loc) {
+  const query = (url.searchParams.get("q") || "").toString().trim();
+  const modelo = (url.searchParams.get("modelo") || "").toString().trim().toLowerCase();
+  const anoRaw = parseInt(url.searchParams.get("ano") || "", 10);
+  const ano = Number.isFinite(anoRaw) ? anoRaw : null;
+
+  let rec = null, carId = null, sourceUrl = null;
+  if (query) {
+    carId = parseAs24Id(query);
+    if (/^https?:\/\//i.test(query)) sourceUrl = query;
+    if (carId) {
+      const cars = await getValuations(env, loc.country);
+      rec = cars ? (cars[valuationKey(loc, carId)] || null) : null;
+    }
+  }
+  const c = await intlCorpus(env, loc);
+  const models = c ? c.models : null;
+  let spec = null;
+  if (!rec && modelo && models && models[modelo]) {
+    const mrec = models[modelo];
+    spec = { rec: mrec, slug: modelo, year: ano, cell: pickYearCell(mrec, ano) };
+  }
+  return html(renderIntlAvaliar({
+    loc, host: url.host, models, builtAt: c && c.builtAt, stats: c && c.stats,
+    rec, carId, sourceUrl, query, spec,
+  }), 200);
+}
+
+async function intlFeed(env, url, loc) {
+  const { deals, degraded, builtAt } = await getDeals(env, "all", loc.country);
+  if (degraded) return intlUnavailable(loc, url.host, "info.deals_unavailable");
+  const c = await intlCorpus(env, loc);
+  return publicHtml(renderIntlFeed({
+    loc, host: url.host, deals: sortDeals(deals || [], "score"),
+    builtAt: builtAt || (c && c.builtAt), models: c && c.models,
+  }));
+}
+
+async function intlSitemap(env, url, loc) {
+  const base = `https://${url.host}`;
+  const mdoc = await getModels(env, loc.country);
+  const models = (mdoc && mdoc.models) || null;
+  const lastmod = ((mdoc && mdoc.built_at) || "").slice(0, 10);
+  const lm = /^\d{4}-\d{2}-\d{2}$/.test(lastmod) ? `<lastmod>${lastmod}</lastmod>` : "";
+  const urls = intlSitemapPaths(loc, models).map(u =>
+    `<url><loc>${base}${u.path}</loc>${lm}<changefreq>${u.freq}</changefreq><priority>${u.prio}</priority></url>`);
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n`
+    + `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>`;
+  return new Response(xml, {
+    status: 200,
+    headers: { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=3600" },
+  });
+}
+
 // Models hub (/precos) — the crawl spine linking every model page.
 async function handleModelsHub(request, env, url) {
   const mdoc = await getModels(env);
@@ -1464,6 +1653,7 @@ async function handleLlmsTxt(request, env, url) {
     top.length ? "## Modelos com mais dados" : null,
     top.length ? "" : null,
     ...top,
+    ...llmsLocaleSection(base),
     "",
   ].filter(v => v !== null).join("\n");
   return new Response(body, {
@@ -1473,6 +1663,21 @@ async function handleLlmsTxt(request, env, url) {
       "cache-control": "public, max-age=3600",
     },
   });
+}
+
+function llmsLocaleSection(base) {
+  const live = liveLocales();
+  if (!live.length) return [];
+  return [
+    "",
+    "## Outros mercados",
+    "",
+    "O mesmo produto, com dados do mercado local e em língua local:",
+    "",
+    ...live.map(l =>
+      `- [${l.countryName} — ${l.source.name}](${base}${ihref(l, "hub")}): ${it(l, "hub.h1", { country: l.countryName })} (${l.lang})`),
+    `- Cada mercado tem o seu sitemap em \`${base}/{cc}/sitemap.xml\`.`,
+  ];
 }
 
 // /robots.txt — allow public, block transactional/internal, point at the sitemap.
@@ -1502,6 +1707,7 @@ async function handleRobots(request, env, url) {
     "User-agent: CCBot", ...ROBOTS_RULES,
     "",
     `Sitemap: https://${url.host}/sitemap.xml`,
+    ...liveLocales().map(l => `Sitemap: https://${url.host}${l.prefix}/sitemap.xml`),
     // Not a search-ranking signal — no engine ranks on it. It is an
     // agent-readiness convenience: a single fetch that tells a tool-using
     // model what this site holds and how to reach it.
@@ -1724,9 +1930,10 @@ const DEGRADED_CACHE_TTL_SEC = 30;
 
 // Returns { deals, degraded }. `degraded: true` means we could not load the
 // real feed — surfaced honestly rather than showing stale or fake listings.
-async function getDeals(env, zone) {
-  const safeZone = ZONES.includes(zone) ? zone : "all";
-  const cacheKey = `cache:deals:${safeZone}`;
+async function getDeals(env, zone, country = null) {
+  const cc = country ? String(country).toLowerCase() : null;
+  const safeZone = cc ? "all" : (ZONES.includes(zone) ? zone : "all");
+  const cacheKey = cc ? `cache:deals:${cc}:all` : `cache:deals:${safeZone}`;
   let cached = null;
   try { cached = await env.KV.get(cacheKey); } catch (err) { console.warn("deals cache read failed", err && err.message); }
   if (cached) {
@@ -1736,7 +1943,7 @@ async function getDeals(env, zone) {
       if (Array.isArray(parsed.deals)) return { deals: parsed.deals, degraded: false, builtAt: parsed.built_at || null };
     } catch {}
   }
-  const url = `${HOT_DEALS_BASE}/hot_deals_${safeZone}.json`;
+  const url = `${HOT_DEALS_BASE}/${cc ? `hot_deals_${cc}_all` : `hot_deals_${safeZone}`}.json`;
   try {
     const r = await fetch(url, { cf: { cacheTtl: 60, cacheEverything: true } });
     if (!r.ok) {
@@ -1778,9 +1985,10 @@ async function degrade(env, cacheKey) {
 // gzipped; fetched from the Release and edge-cached. Parsed per request (the
 // /avaliar tool is low-traffic). Returns the {olx_id: rec} map, or null if the
 // blob isn't published yet / fetch fails (handler then shows the fallback).
-async function getValuations(env) {
-  for (const packed of [true, false]) {
-    const url = `${HOT_DEALS_BASE}/valuations.json${packed ? ".gz" : ""}`;
+async function getValuations(env, country = null) {
+  const cc = country ? String(country).toLowerCase() : null;
+  for (const packed of cc ? [false] : [true, false]) {
+    const url = `${HOT_DEALS_BASE}/${cc ? `valuations_${cc}` : "valuations"}.json${packed ? ".gz" : ""}`;
     try {
       // Cache only successful responses (cacheTtlByStatus) — never pin a 404 from
       // the pre-publish window, or a transient 5xx, into the edge cache for 10 min.
@@ -1809,8 +2017,9 @@ async function getValuations(env) {
 // Returns the full doc { models: {slug: rec}, built_at }, or null (handlers
 // then 404/degrade). Callers read `.models`; `.built_at` drives the public
 // "preços atualizados em …" freshness line.
-async function getModels(env) {
-  const url = `${HOT_DEALS_BASE}/models.json`;
+async function getModels(env, country = null) {
+  const cc = country ? String(country).toLowerCase() : null;
+  const url = `${HOT_DEALS_BASE}/${cc ? `models_${cc}` : "models"}.json`;
   try {
     const r = await fetch(url, {
       cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": 300, "300-399": 0, "400-499": 0, "500-599": 0 } },

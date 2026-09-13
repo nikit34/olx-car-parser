@@ -1325,5 +1325,15 @@ check("every seller guide renders as an indexable article with FAQ, sources and 
   for (const guide of GUIDES) assert(hub.includes(`/guias/${guide.slug}`), `hub does not link ${guide.slug}`);
 });
 
+check("the localised shell stays out of the Portuguese pages", () => {
+  const page = renderPrivacy({ depositCount: null, host: HOST, contact: null });
+  assert(page.includes('<html lang="pt-PT">'), "the shell changed language");
+  assert(page.includes('<meta property="og:locale" content="pt_PT">'), "the shell changed og:locale");
+  assert(!/hreflang=|Deutsch|Italiano|Français/.test(page),
+    "a language switcher rendered while no locale is live");
+  assert(page.includes('href="/mercado"') && page.includes("Ver mercado"),
+    "the Portuguese header lost its own nav");
+});
+
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall render checks passed");
 process.exit(failures ? 1 : 0);

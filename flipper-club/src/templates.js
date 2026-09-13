@@ -8,6 +8,8 @@
 //
 // Screens: Landing (/) → Mercado feed (/mercado) → Car detail (/car).
 
+import { t, href as ihref, languageSwitcher, consentBannerL } from "./i18n.js";
+
 const ZONE_LABEL = {
   norte: "Norte",
   centro: "Centro",
@@ -869,7 +871,8 @@ export function monthTag(builtAt) {
 // ── Shell ─────────────────────────────────────────────────────────────────────
 export function layout({ title, body, zone, nav, depositCount, index = false, description = null,
                  canonical = null, jsonLd = null, host = null, image = null, type = "website",
-                 ogUrl: ogUrlOverride = null, altJson = null }) {
+                 ogUrl: ogUrlOverride = null, altJson = null, locale = null }) {
+  const L = locale || null;
   const navItem = (key, label, href) =>
     `<a href="${href}" class="${nav === key ? "active" : ""}">${label}</a>`;
   // Public valuation pages are indexable (SEO). Everything else is noindex but
@@ -892,7 +895,7 @@ export function layout({ title, body, zone, nav, depositCount, index = false, de
   const usingDefaultImage = !image; // only the default card is known 1200×630
   const social = origin ? [
     `<meta property="og:site_name" content="Carsbuyer">`,
-    `<meta property="og:locale" content="pt_PT">`,
+    `<meta property="og:locale" content="${L ? escapeHtml(L.ogLocale) : "pt_PT"}">`,
     `<meta property="og:type" content="${escapeHtml(type)}">`,
     `<meta property="og:title" content="${escapeHtml(title)}">`,
     description ? `<meta property="og:description" content="${escapeHtml(description)}">` : "",
@@ -917,15 +920,66 @@ export function layout({ title, body, zone, nav, depositCount, index = false, de
     // Machine-readable twin of this page. An agent that finds the HTML can take
     // the numbers without parsing our markup, and the link is what tells it the
     // endpoint exists — a JSON route nobody can discover gets used by nobody.
-    altJson ? `<link rel="alternate" type="application/json" href="${escapeHtml(altJson)}" title="Dados desta página em JSON">` : "",
+    altJson ? `<link rel="alternate" type="application/json" href="${escapeHtml(altJson)}" title="${L ? escapeHtml(t(L, "footer.altJson")) : "Dados desta página em JSON"}">` : "",
   ].filter(Boolean).join("\n");
 
   // Keep the SERP title under ~60 chars: append the brand suffix only when it
   // still fits, so keyword-led titles aren't truncated by " · Flipper Club".
   const suffix = " · Carsbuyer";
   const fullTitle = (title.length + suffix.length <= 60) ? title + suffix : title;
+  const switcher = languageSwitcher(L);
+  const switcherLine = switcher ? `\n    ${switcher}` : "";
+  const banner = L ? consentBannerL(L, Boolean(GA4_MEASUREMENT_ID)) : consentBanner();
+  const src = L ? L.source.name : null;
+  const header = L ? `<header class="fc-header">
+  <div class="fc-header-in">
+    <a class="fc-brand" href="${ihref(L, "landing")}">
+      <div class="fc-logo">€</div>
+      <span class="fc-word">Carsbuyer</span>
+    </a>
+    <nav class="fc-nav">
+      ${navItem("feed", t(L, "nav.mercado"), ihref(L, "mercado"))}
+      ${navItem("precos", t(L, "nav.hub"), ihref(L, "hub"))}
+      ${navItem("avaliar", t(L, "nav.avaliar"), ihref(L, "avaliar"))}
+      ${navItem("landing", t(L, "nav.landing"), ihref(L, "landing"))}
+    </nav>
+    <div class="fc-right">
+      <a class="fc-cta-dark" href="${ihref(L, "mercado")}">${t(L, "nav.cta")}</a>
+    </div>
+  </div>
+</header>` : `<header class="fc-header">
+  <div class="fc-header-in">
+    <a class="fc-brand" href="/">
+      <div class="fc-logo">€</div>
+      <span class="fc-word">Carsbuyer</span>
+    </a>
+    <nav class="fc-nav">
+      ${navItem("feed", "Mercado", "/mercado")}
+      ${navItem("precos", "Preços", "/precos")}
+      ${navItem("avaliar", "Avaliar", "/avaliar")}
+      ${navItem("landing", "Como funciona", "/")}
+    </nav>
+    <div class="fc-right">
+      <a class="fc-cta-dark" href="/mercado">Ver mercado</a>
+    </div>
+  </div>
+</header>`;
+  const link = (to, label) => `<a href="${ihref(L, to)}" style="color:#5B606B;">${label}</a>`;
+  const footer = L ? `<footer class="footer">
+  <div class="footer-in">
+    <span class="mono">${t(L, "footer.disclaimer", { source: src })}</span>
+    <span class="mono">${link("hub", t(L, "footer.hub"))}&nbsp;· ${link("avaliar", t(L, "footer.avaliar"))}&nbsp;· ${link("mercado", t(L, "footer.mercado"))}</span>
+    <span class="mono">${link("metodologia", t(L, "footer.metodologia"))}&nbsp;· ${link("sobre", t(L, "footer.sobre"))}&nbsp;· ${link("privacidade", t(L, "footer.privacidade"))}&nbsp;· ${escapeHtml(L.countryName)}&nbsp;${L.flag}</span>${switcherLine}
+  </div>
+</footer>` : `<footer class="footer">
+  <div class="footer-in">
+    <span class="mono">AVALIAÇÃO INDEPENDENTE&nbsp;· dados de anúncios públicos OLX&nbsp;· estimativas indicativas, não vinculativas&nbsp;· não somos stand nem intermediário</span>
+    <span class="mono"><a href="/precos" style="color:#5B606B;">Preços por modelo</a>&nbsp;· <a href="/depreciacao" style="color:#5B606B;">Desvalorização</a>&nbsp;· <a href="/comparar" style="color:#5B606B;">Comparar</a>&nbsp;· <a href="/liquidez" style="color:#5B606B;">Tempo de venda</a>&nbsp;· <a href="/mercado/indice" style="color:#5B606B;">Índice de mercado</a>&nbsp;· <a href="/avaliar" style="color:#5B606B;">Quanto vale o meu carro</a>&nbsp;· <a href="/vender" style="color:#5B606B;">Vender o meu carro</a>&nbsp;· <a href="/guias" style="color:#5B606B;">Guias para vender</a></span>
+    <span class="mono"><a href="/metodologia" style="color:#5B606B;">Metodologia</a>&nbsp;· <a href="/sobre" style="color:#5B606B;">Quem somos</a>&nbsp;· <a href="/isv" style="color:#5B606B;">Simulador ISV</a>&nbsp;· <a href="/importar" style="color:#5B606B;">Importar da Alemanha</a>&nbsp;· Portugal&nbsp;🇵🇹</span>${switcherLine}
+  </div>
+</footer>`;
   return `<!doctype html>
-<html lang="pt-PT">
+<html lang="${L ? escapeHtml(L.lang) : "pt-PT"}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -942,32 +996,10 @@ ${FONT_LINKS}
 <style>${CSS}</style>
 </head>
 <body>
-${consentBanner()}
-<header class="fc-header">
-  <div class="fc-header-in">
-    <a class="fc-brand" href="/">
-      <div class="fc-logo">€</div>
-      <span class="fc-word">Carsbuyer</span>
-    </a>
-    <nav class="fc-nav">
-      ${navItem("feed", "Mercado", "/mercado")}
-      ${navItem("precos", "Preços", "/precos")}
-      ${navItem("avaliar", "Avaliar", "/avaliar")}
-      ${navItem("landing", "Como funciona", "/")}
-    </nav>
-    <div class="fc-right">
-      <a class="fc-cta-dark" href="/mercado">Ver mercado</a>
-    </div>
-  </div>
-</header>
+${banner}
+${header}
 <main>${body}</main>
-<footer class="footer">
-  <div class="footer-in">
-    <span class="mono">AVALIAÇÃO INDEPENDENTE&nbsp;· dados de anúncios públicos OLX&nbsp;· estimativas indicativas, não vinculativas&nbsp;· não somos stand nem intermediário</span>
-    <span class="mono"><a href="/precos" style="color:#5B606B;">Preços por modelo</a>&nbsp;· <a href="/depreciacao" style="color:#5B606B;">Desvalorização</a>&nbsp;· <a href="/comparar" style="color:#5B606B;">Comparar</a>&nbsp;· <a href="/liquidez" style="color:#5B606B;">Tempo de venda</a>&nbsp;· <a href="/mercado/indice" style="color:#5B606B;">Índice de mercado</a>&nbsp;· <a href="/avaliar" style="color:#5B606B;">Quanto vale o meu carro</a>&nbsp;· <a href="/vender" style="color:#5B606B;">Vender o meu carro</a>&nbsp;· <a href="/guias" style="color:#5B606B;">Guias para vender</a></span>
-    <span class="mono"><a href="/metodologia" style="color:#5B606B;">Metodologia</a>&nbsp;· <a href="/sobre" style="color:#5B606B;">Quem somos</a>&nbsp;· <a href="/isv" style="color:#5B606B;">Simulador ISV</a>&nbsp;· <a href="/importar" style="color:#5B606B;">Importar da Alemanha</a>&nbsp;· Portugal&nbsp;🇵🇹</span>
-  </div>
-</footer>
+${footer}
 <script>${PAGE_SCRIPT}</script>
 </body></html>`;
 }

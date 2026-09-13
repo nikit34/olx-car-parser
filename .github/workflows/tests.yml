@@ -154,3 +154,4 @@ jobs:
           # красит ветку. Вручную по живому блобу - без аргумента.
           node tests/worker/render_smoke.mjs tests/worker/fixtures/models.json
           node tests/worker/route_smoke.mjs  tests/worker/fixtures/models.json
+          node tests/worker/intl_smoke.mjs   tests/worker/fixtures/models.json tests/worker/fixtures/models_de.json
