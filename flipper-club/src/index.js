@@ -56,7 +56,7 @@ import {
   renderLiquidityPage, liquidityJson, publishedLiquidity, setLiqWave, liqWaveSlugs,
   renderVenderPage, renderVenderHub, venderJson, publishedVender, setVenderWave,
   renderImportPage, renderImportHub, importJson, importOk, importSlugs,
-  isoWeek, missingWeeks, monthlyCuts, renderMarketMonth, breadcrumbLd,
+  isoWeek, missingWeeks, monthlyCuts, renderMarketMonth, renderArchiveHub, breadcrumbLd,
   setWave, waveSlugs, publishedYearPages, publishedDepreciation, publishedPairs, publishedFacets,
   DUELS, duel, duelByPath, duelJson, duelSlugs, duelsFor, publishedDuel,
   renderDuelPage, renderDuelHub,
@@ -81,7 +81,7 @@ const ICON_PATHS = new Set([
 
 const PRODUCT_PATHS = new Set([
   "/", "/mercado", "/car", "/avaliar", "/lead", "/ir/historico",
-  "/precos", "/sitemap.xml", "/robots.txt", "/llms.txt",
+  "/precos", "/sitemap.xml", "/robots.txt", "/llms.txt", "/historico",
   // Приватность обязана быть здесь: гейт стоит ВЫШЕ её обработчика, и без
   // записи в этом списке Basic-Auth отдавал бы 401 и Googlebot, и человеку,
   // пришедшему по ссылке из баннера согласия. (Неизвестные пути теперь отдают
@@ -283,6 +283,9 @@ const worker = {
       if (pathname.startsWith("/vender/") && method === "GET") {
         return handleVenderPage(request, env, url);
       }
+      if (pathname.startsWith("/historico/") && method === "GET") {
+        return handleArchive(request, env, url);
+      }
       if (pathname.startsWith("/guias/") && method === "GET") {
         return handleGuide(request, env, url);
       }
@@ -347,6 +350,7 @@ const worker = {
       if (pathname === "/liquidez" && method === "GET") return handleLiquidity(request, env, url);
       if (pathname === "/vender" && method === "GET") return handleVenderHub(request, env, url);
       if (pathname === "/guias" && method === "GET") return handleGuidesHub(request, env, url);
+      if (pathname === "/historico" && method === "GET") return handleArchiveHub(request, env, url);
       if (pathname === "/sobrevalorizados" && method === "GET") return handleValuationGap(request, env, url);
       if (pathname === "/importar" && method === "GET") return handleImportHub(request, env, url);
       if (pathname === "/metodologia" && method === "GET") return handleMethodology(request, env, url);
@@ -1042,6 +1046,43 @@ function snapshotFrom(models, builtAt, week, date, src) {
  * Never overwrites an existing week. Returns the history either way, so the
  * caller can render without a second read.
  */
+const SNAP_MODELS_PREFIX = "snap:models:";
+const SNAP_LIST_KEY = "snap:models:weeks";
+
+function modelsCut(models) {
+  const out = {};
+  for (const [slug, r] of Object.entries(models)) {
+    out[slug] = {
+      b: r.b, m: r.m, fm: r.fm, fl: r.fl, fh: r.fh, n: r.n, kmm: r.kmm,
+      yr: (r.yr || []).map(c => ({ y: c.y, fm: c.fm, fl: c.fl, fh: c.fh, n: c.n })),
+    };
+  }
+  return out;
+}
+
+async function snapshotWeeks(env) {
+  try {
+    const listed = await env.KV.get(SNAP_LIST_KEY, "json");
+    return Array.isArray(listed) ? listed : [];
+  } catch (_) { return []; }
+}
+
+async function recordModelsSnapshot(env, models, builtAt, week, date, src) {
+  const weeks = await snapshotWeeks(env);
+  if (weeks.includes(week)) return false;
+  const body = JSON.stringify({
+    week, date, builtAt: builtAt || null, src, models: modelsCut(models),
+  });
+  try {
+    await env.KV.put(`${SNAP_MODELS_PREFIX}${week}`, body);
+    await env.KV.put(SNAP_LIST_KEY, JSON.stringify([...weeks, week].sort()));
+  } catch (err) {
+    console.warn("models snapshot write failed", err && err.message);
+    return false;
+  }
+  return true;
+}
+
 async function recordWeeklyIndex(env, now, src = "web") {
   const mdoc = await getModels(env);
   const models = mdoc && mdoc.models;
@@ -1057,6 +1098,7 @@ async function recordWeeklyIndex(env, now, src = "web") {
   // No data means no snapshot. A row of nulls is worse than a gap: the gap is
   // visible and honest, the nulls look like a market that stopped existing.
   if (!models) return { week, history, written: false, reason: "no-models" };
+  await recordModelsSnapshot(env, models, mdoc.built_at, week, today, src);
   if (history.some(h => h.week === week)) return { week, history, written: false, reason: "already" };
 
   const snap = snapshotFrom(models, mdoc.built_at, week, today, src);
@@ -1069,6 +1111,57 @@ async function recordWeeklyIndex(env, now, src = "web") {
     return { week, history, written: false, reason: "kv-error" };
   }
   return { week, history: next, written: true, snapshot: snap };
+}
+
+function weekToken(raw) {
+  const m = /^(\d{4})-w(\d{2})$/i.exec(raw || "");
+  return m ? `${m[1]}-W${m[2]}` : null;
+}
+
+async function readSnapshot(env, week) {
+  try { return await env.KV.get(`${SNAP_MODELS_PREFIX}${week}`, "json"); }
+  catch (_) { return null; }
+}
+
+async function handleArchiveHub(request, env, url) {
+  const weeks = await snapshotWeeks(env);
+  return publicHtml(renderArchiveHub({ weeks, host: url.host }));
+}
+
+async function handleArchive(request, env, url) {
+  let tail;
+  try {
+    tail = decodeURIComponent(url.pathname.slice("/historico/".length)).replace(/\/+$/, "").toLowerCase();
+  } catch (_) { return notFoundPage(request, env, url); }
+  if (!tail.endsWith(".json")) return notFoundPage(request, env, url);
+  const parts = tail.slice(0, -".json".length).split("/");
+  if (parts.length > 2) return notFoundPage(request, env, url);
+
+  const week = weekToken(parts[0]);
+  if (!week) return notFoundPage(request, env, url);
+  const snap = await readSnapshot(env, week);
+  if (!snap) return notFoundPage(request, env, url);
+
+  const base = {
+    week: snap.week, date: snap.date, built_at: snap.builtAt,
+    source: `https://${url.host}/historico/${parts[0]}.json`,
+    note: "Valores congelados nesta semana. Não mudam: cita-os com a data.",
+  };
+  const frozen = payload => {
+    const res = jsonResponse(payload);
+    res.headers.set("cache-control", "public, max-age=31536000, immutable");
+    return res;
+  };
+  if (parts.length === 1) {
+    return frozen({ ...base, models: snap.models || {} });
+  }
+  const rec = (snap.models || {})[parts[1]];
+  if (!rec) return notFoundPage(request, env, url);
+  return frozen({
+    ...base,
+    source: `https://${url.host}/historico/${parts[0]}/${parts[1]}.json`,
+    slug: parts[1], ...rec,
+  });
 }
 
 async function handleMarketIndex(request, env, url) {
@@ -1380,6 +1473,7 @@ async function handleSitemap(request, env, url) {
   add("/precos", "weekly", "0.7");
   add("/mercado/indice", "weekly", "0.7");
   // Trust pages: they change rarely but they are what an evaluator looks for.
+  add("/historico", "weekly", "0.5");
   add("/metodologia", "monthly", "0.6");
   add("/sobre", "monthly", "0.6");
   add("/isv", "monthly", "0.6");
@@ -1581,6 +1675,7 @@ async function handleLlmsTxt(request, env, url) {
     `- [Avaliar um anúncio concreto](${base}/avaliar)`,
     `- [Mercado: carros abaixo do valor justo](${base}/mercado)`,
     `- [Índice do mercado, com arquivo semanal e mensal permanente](${base}/mercado/indice)`,
+    `- [Arquivo datado por modelo: os números como estavam nessa semana](${base}/historico)`,
     `- [Desvalorização por modelo](${base}/depreciacao)`,
     `- [Quanto tempo demora a vender cada modelo](${base}/liquidez)`,
     `- [Vender: quanto pedir por modelo e em quantos dias vende](${base}/vender)`,
@@ -1613,6 +1708,22 @@ async function handleLlmsTxt(request, env, url) {
     `- \`${base}/comparar/{slug-a}-vs-{slug-b}\` — comparação entre dois modelos`,
     `- \`${base}/mercado/indice/{AAAA}-W{SS}\` — corte semanal permanente do mercado`,
     `- \`${base}/mercado/indice/{AAAA}-{MM}\` — corte mensal permanente, mediana dos cortes semanais desse mês`,
+    `- \`${base}/historico/{AAAA}-w{SS}.json\` — corte semanal congelado de todos os modelos`,
+    `- \`${base}/historico/{AAAA}-w{SS}/{slug}.json\` — um modelo como estava nessa semana`,
+    "",
+    "## Como citar um número sem que envelheça",
+    "",
+    "As páginas de preço mostram o mercado de hoje e hoje muda: a mediana que",
+    "citares esta semana já não é a que lá está na próxima. Isso não torna a",
+    "citação falsa, torna-a sem data — e sem data parece errada.",
+    "",
+    `Para citar um valor estável usa o arquivo: [${base}/historico](${base}/historico).`,
+    "Cada semana fica congelada e o seu endereço não volta a mudar. Cada",
+    "resposta traz `week`, `date` e `built_at`, por isso a data da citação não",
+    "depende de quem cita.",
+    "",
+    "Por modelo o corte tem mediana pedida, intervalo interquartil, anúncios",
+    "ativos e quilometragem mediana, e o mesmo por ano do carro.",
     "",
     waveCount ? "" : null,
     waveCount ? "## Publicação por vagas" : null,

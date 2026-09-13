@@ -1138,6 +1138,59 @@ await check("sitemap lastmod follows the page's own change stamp when the blob c
   }
 });
 
+await check("a dated snapshot keeps saying the same thing after the live numbers move", async () => {
+  for (const k of [...kv.keys()]) if (k.startsWith("snap:models:") || k.startsWith("idx:")) kv.delete(k);
+  const slug = Object.keys(models)[0];
+  const before = models[slug].fm;
+
+  await get("/mercado/indice");
+  const weeks = JSON.parse(kv.get("snap:models:weeks") || "[]");
+  assert(weeks.length === 1, `one week should be archived, got ${weeks.length}`);
+  const token = weeks[0].toLowerCase();
+
+  const full = await (await get(`/historico/${token}.json`)).json();
+  assert(full.week === weeks[0] && full.date, "the cut does not carry its own week and date");
+  assert(full.models[slug].fm === before, "the archived median is not the one that was live");
+
+  models[slug].fm = before + 12345;
+  try {
+    const live = await (await get(`/preco/${slug}.json`)).json();
+    assert(JSON.stringify(live).includes(String(before + 12345)), "the live page did not move");
+    const again = await (await get(`/historico/${token}.json`)).json();
+    assert(again.models[slug].fm === before,
+      "the archive moved with the live data — then citing it is worth nothing");
+    const one = await (await get(`/historico/${token}/${slug}.json`)).json();
+    assert(one.slug === slug && one.fm === before && one.week === weeks[0],
+      "the per-model cut disagrees with the full cut");
+    assert(Array.isArray(one.yr), "the per-model cut lost its per-year cells");
+  } finally { models[slug].fm = before; }
+
+  await get("/mercado/indice");
+  assert(JSON.parse(kv.get("snap:models:weeks")).length === 1, "the same week was archived twice");
+
+  for (const bad of ["/historico/1999-w03.json", "/historico/nonsense.json", `/historico/${token}/no-such-model.json`,
+                     `/historico/${token}`, `/historico/${token}/a/b.json`]) {
+    const r = await get(bad);
+    assert(r.status === 404, `${bad} → ${r.status}, expected 404`);
+  }
+  const hub = await get("/historico");
+  assert(hub.status === 200, `/historico → ${hub.status}`);
+  assert((await hub.text()).includes(`/historico/${token}.json`), "the hub does not link the week it has");
+
+  const head = (await get(`/historico/${token}.json`)).headers.get("cache-control") || "";
+  assert(head.includes("immutable"), `frozen data served as mutable: ${head}`);
+
+  const llms = await (await get("/llms.txt")).text();
+  assert(llms.includes("/historico"), "llms.txt never mentions the archive an agent should cite");
+  assert(/historico\/\{AAAA\}-w\{SS\}\/\{slug\}\.json/.test(llms), "llms.txt does not give the per-model address shape");
+  const sm = await (await get("/sitemap.xml")).text();
+  assert(sm.includes("<loc>https://carsbuyer.org/historico</loc>"), "the archive hub is not in the sitemap");
+  assert(!sm.includes("/historico/"), "frozen cuts must stay out of the sitemap, they are for citing not for ranking");
+
+  const page = await (await get(`/preco/${slug}`)).text();
+  assert(page.includes('href="/historico"'), "a page full of numbers does not point at the dated archive");
+});
+
 await check("AI fetches are counted by agent, and only a live answer leaves a sample", async () => {
   for (const k of [...kv.keys()]) if (k.startsWith("ai:hit:") || k.startsWith("aihit:")) kv.delete(k);
   const visit = (ua, path = "/precos") =>

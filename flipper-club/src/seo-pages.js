@@ -681,6 +681,7 @@ export function provenance({ n, builtAt, measure = "Preço pedido em anúncios a
   const day = (builtAt || "").slice(0, 10);
   return `<p class="mono fc-prov" data-sample="${n != null ? n : ""}" data-updated="${escapeHtml(day)}" data-measure="${escapeHtml(measureId)}" data-source="${escapeHtml(source)}">`
     + `Amostra: ${n != null ? fmtNum(n) + " " + escapeHtml(unit) : "n/d"} · Recolhido até: ${day || "n/d"} · Medida: ${escapeHtml(measure)} · Fonte: ${escapeHtml(source)}${extra ? " · " + extra : ""}`
+    + ` · Este número muda: para o citar com data, usa o <a href="/historico" style="color:inherit;text-decoration:underline;">arquivo semanal</a>`
     + `</p>`;
 }
 
@@ -2225,6 +2226,65 @@ export function renderMarketMonth({ cut, months = [], host, depositCount }) {
           "temporalCoverage": cut.from && cut.to ? `${cut.from}/${cut.to}` : undefined,
           "dateModified": cut.builtAt || undefined,
           "variableMeasured": ["Preço pedido mediano (EUR)", "Anúncios ativos", "Dias até vender (mediana)"],
+        },
+        breadcrumbLd(host, crumbItems),
+      ],
+    },
+  });
+}
+
+export function renderArchiveHub({ weeks = [], host, depositCount = null }) {
+  const permalink = `https://${host}/historico`;
+  const shown = weeks.slice().sort().reverse();
+  const latest = shown[0] || null;
+  const tok = w => escapeHtml(w.toLowerCase());
+
+  const rows = shown.map(w => `<tr>
+      <td class="mono">${escapeHtml(w)}</td>
+      <td><a href="/historico/${tok(w)}.json" style="color:#177A47;font-weight:600;">todos os modelos</a></td>
+      <td class="mut mono">/historico/${tok(w)}/{modelo}.json</td></tr>`).join("");
+
+  const crumbItems = [{ name: "Início", href: "/" }, { name: "Arquivo datado" }];
+
+  const body = crumbs(crumbItems) + `
+    <section class="section fc-wrap" style="padding-top:16px;">
+      <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">ARQUIVO · ${shown.length} SEMANA${shown.length === 1 ? "" : "S"}</span></div>
+      <h1 class="fc-h1">Arquivo datado: os números como estavam nessa semana</h1>
+      <p class="fc-p">As páginas de preço mostram o mercado de hoje, e hoje muda. Uma mediana citada na semana passada já não é a que aparece agora — o que faz a citação parecer errada quando na verdade envelheceu.</p>
+      <p class="fc-p">Por isso cada semana fica congelada aqui. Estes endereços <strong>não voltam a mudar</strong>: cita o número com a semana e a citação continua verdadeira daqui a um ano.</p>
+      ${latest ? `<p class="fc-p">Semana mais recente: <span class="mono fc-url">${escapeHtml(permalink)}/${tok(latest)}.json</span></p>` : `<p class="fc-p">Ainda não há semanas arquivadas — a primeira é escrita no próximo corte semanal.</p>`}
+    </section>
+    ${shown.length ? `<section class="section fc-wrap" style="padding-top:0;">
+      <h2 class="fc-h2">Semanas disponíveis</h2>
+      <div class="fc-scroll"><table class="fc-tbl">
+        <thead><tr><th>Semana</th><th>Corte completo</th><th>Um modelo</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </section>` : ""}
+    <section class="section fc-wrap" style="padding-top:0;">
+      <h2 class="fc-h2">O que vem em cada corte</h2>
+      <p class="fc-p">Por modelo: mediana pedida, intervalo interquartil, número de anúncios ativos e quilometragem mediana; e o mesmo por ano do carro. Os valores são <strong>preços pedidos</strong> em anúncios ativos do OLX Portugal, não preços de venda fechados — a <a href="/metodologia">metodologia</a> explica a diferença.</p>
+      <p class="fc-p">Cada resposta traz <span class="mono">week</span>, <span class="mono">date</span> e <span class="mono">built_at</span>, para que a data da citação não dependa de quem cita.</p>
+      <p class="fc-p"><a href="/precos">Preços de hoje por modelo</a> · <a href="/mercado/indice">Índice do mercado</a> · <a href="/llms.txt">llms.txt</a></p>
+    </section>`;
+
+  return layout({
+    title: "Arquivo datado de preços de usados em Portugal",
+    description: "Cortes semanais congelados dos preços de carros usados em Portugal, por modelo e por ano. Endereços permanentes, em JSON, para citar um número com a data em que era verdade.",
+    canonical: permalink, body, zone: "all", nav: "feed", depositCount, index: true, host,
+    jsonLd: {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Dataset", "license": licenseUrl(host), "url": permalink, "inLanguage": "pt-PT",
+          "name": "Arquivo semanal de preços de carros usados em Portugal",
+          "description": "Cortes semanais permanentes do preço pedido mediano, intervalo interquartil e número de anúncios ativos por modelo e por ano, a partir de anúncios do OLX Portugal.",
+          "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
+          "isAccessibleForFree": true,
+          "distribution": shown.slice(0, 20).map(w => ({
+            "@type": "DataDownload", "encodingFormat": "application/json",
+            "contentUrl": `${permalink}/${w.toLowerCase()}.json`,
+          })),
         },
         breadcrumbLd(host, crumbItems),
       ],
