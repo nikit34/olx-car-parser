@@ -2,22 +2,22 @@
 //
 // Why a second file: templates.js owns the product (feed, car, checkout) and the
 // design system. This owns the pages that exist to answer a search query, all of
-// which are derived from the SAME models.json blob the /preco pages already read.
+// which are derived from the SAME models.json blob the /pt/preco pages already read.
 // No new data source, no new pipeline — the numbers are re-cut, not re-collected.
 //
 // What lives here:
-//   /preco/{slug}/{ano}      one model in one year  — the query is "quanto vale
-//                            um Golf de 2012", and the model page answers it for
-//                            every year at once, which wins none of them.
-//   /depreciacao/{slug}      how fast this model loses value (+ the hub)
-//   /comparar/{a}-vs-{b}     two models side by side (+ the hub)
-//   /liquidez                how long each model takes to sell
-//   /sobrevalorizados        where asking price and estimated fair value diverge
-//   /mercado/indice          market-wide medians, with a permanent weekly archive
-//   /metodologia /sobre      how the numbers are made, and by whom
-//   /isv                     ISV estimator for an imported car
-//   404                      a real not-found page (see index.js: unknown paths
-//                            used to fall into the analytics Basic-Auth gate and
+//   /pt/preco/{slug}/{ano}      one model in one year  — the query is "quanto vale
+//                               um Golf de 2012", and the model page answers it for
+//                               every year at once, which wins none of them.
+//   /pt/depreciacao/{slug}      how fast this model loses value (+ the hub)
+//   /pt/comparar/{a}-vs-{b}     two models side by side (+ the hub)
+//   /pt/liquidez                how long each model takes to sell
+//   /pt/sobrevalorizados        where asking price and estimated fair value diverge
+//   /pt/mercado/indice          market-wide medians, with a permanent weekly archive
+//   /pt/metodologia /pt/sobre   how the numbers are made, and by whom
+//   /pt/isv                     ISV estimator for an imported car
+//   404                         a real not-found page (see index.js: unknown paths
+//                               used to fall into the analytics Basic-Auth gate and
 //                            answer 401, which Googlebot reads as "forbidden",
 //                            not "gone")
 //
@@ -41,9 +41,9 @@ import {
 export const MIN_YEAR_PAGE_N = 10;
 
 // Условия повторного использования опубликованных цифр. Полный текст лежит на
-// /metodologia#licenca и продублирован в поле licence каждого .json-эндпоинта,
+// /pt/metodologia#licenca и продублирован в поле licence каждого .json-эндпоинта,
 // чтобы машиночитаемая и человекочитаемая формулировки не разъехались.
-const licenseUrl = (host) => `https://${host}/metodologia#licenca`;
+const licenseUrl = (host) => `https://${host}/pt/metodologia#licenca`;
 
 // A depreciation curve needs enough points, over enough time, that a straight
 // line through them is a description rather than an interpolation.
@@ -436,7 +436,7 @@ function weightedMedian(points) {
  *   price, at the same model year — bounds how far apart two cars of one class
  *                   may be before "{A} ou {B}" stops being one person's choice.
  *
- * Ordering inside a pair is alphabetical so /comparar/a-vs-b and /comparar/b-vs-a
+ * Ordering inside a pair is alphabetical so /pt/comparar/a-vs-b and /pt/comparar/b-vs-a
  * can never both exist.
  */
 export function comparePairs(models) {
@@ -681,7 +681,7 @@ export function provenance({ n, builtAt, measure = "Preço pedido em anúncios a
   const day = (builtAt || "").slice(0, 10);
   return `<p class="mono fc-prov" data-sample="${n != null ? n : ""}" data-updated="${escapeHtml(day)}" data-measure="${escapeHtml(measureId)}" data-source="${escapeHtml(source)}">`
     + `Amostra: ${n != null ? fmtNum(n) + " " + escapeHtml(unit) : "n/d"} · Recolhido até: ${day || "n/d"} · Medida: ${escapeHtml(measure)} · Fonte: ${escapeHtml(source)}${extra ? " · " + extra : ""}`
-    + ` · Este número muda: para o citar com data, usa o <a href="/historico" style="color:inherit;text-decoration:underline;">arquivo semanal</a>`
+    + ` · Este número muda: para o citar com data, usa o <a href="/pt/historico" style="color:inherit;text-decoration:underline;">arquivo semanal</a>`
     + `</p>`;
 }
 
@@ -829,7 +829,7 @@ export function yearGap(a, b) {
   };
 }
 
-// ═══ /preco/{slug}/{ano} ═════════════════════════════════════════════════════
+// ═══ /pt/preco/{slug}/{ano} ══════════════════════════════════════════════════
 //
 // The model page answers "quanto vale um Golf" for eighteen model years at once,
 // which means it competes with itself on every one of them and wins none. This
@@ -842,7 +842,7 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
                                  stats, host, depositCount, builtAt, historyUrl = null, hasVender = false }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
   const FM = fmtEur(cell.fm), FL = fmtEur(cell.fl), FH = fmtEur(cell.fh);
-  const canonical = `https://${host}/preco/${slug}/${year}`;
+  const canonical = `https://${host}/pt/preco/${slug}/${year}`;
   const hasG = cell.gm != null && cell.gl != null && cell.gh != null;
   const refYear = parseInt((builtAt || "").slice(0, 4), 10) || null;
   const age = refYear ? refYear - year : null;
@@ -880,7 +880,7 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
     if (newer) {
       const g = yearGap(cell, newer);
       const pct = Math.round(g.pct * 100);
-      const href = pageYears.includes(newer.y) ? `/preco/${slug}/${newer.y}` : `/preco/${slug}`;
+      const href = pageYears.includes(newer.y) ? `/pt/preco/${slug}/${newer.y}` : `/pt/preco/${slug}`;
       const link = `<a href="${href}">${B} ${M} de ${newer.y}</a>`;
       const km = g.dkm != null && g.dkm !== 0
         ? `, com ${fmtKm(Math.abs(g.dkm))} ${g.dkm < 0 ? "a menos" : "a mais"} no conta-quilómetros`
@@ -892,7 +892,7 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
     if (older) {
       const g = yearGap(older, cell);
       const save = Math.round((cell.fm - older.fm) / cell.fm * 100);
-      const href = pageYears.includes(older.y) ? `/preco/${slug}/${older.y}` : `/preco/${slug}`;
+      const href = pageYears.includes(older.y) ? `/pt/preco/${slug}/${older.y}` : `/pt/preco/${slug}`;
       const link = `<a href="${href}">${older.y}</a>`;
       const km = older.km != null && cell.km != null && older.km !== cell.km
         ? `, com ${fmtKm(Math.abs(older.km - cell.km))} ${older.km > cell.km ? "a mais" : "a menos"} no conta-quilómetros`
@@ -913,7 +913,7 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
     if (fit) {
       const r = Math.round(fit.rate * 100);
       const series = `${fit.cells.length} anos com amostra, de ${fit.oldest.y} a ${fit.newest.y}`;
-      const href = `<a href="/depreciacao/${slug}">ritmo medido em toda a série</a>`;
+      const href = `<a href="/pt/depreciacao/${slug}">ritmo medido em toda a série</a>`;
       const gapNewer = newer ? yearGap(cell, newer) : null;
       bits.push(gapNewer && !gapNewer.separated
         ? `<li>Ao ${href} do ${B} ${M} (${series}), um ano de idade vale cerca de <b>${r}%</b>. É a melhor resposta que os dados dão à pergunta acima: entre dois anos concretos a diferença de preço fica dominada por quem pôs o carro à venda, e só a curva inteira mede o ano.</li>`
@@ -929,7 +929,7 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
   const rows = neighbours.window.map(c => {
     const isSelf = c.y === year;
     const label = pageYears.includes(c.y) && !isSelf
-      ? `<a href="/preco/${slug}/${c.y}" style="color:#177A47;font-weight:600;">${c.y}</a>`
+      ? `<a href="/pt/preco/${slug}/${c.y}" style="color:#177A47;font-weight:600;">${c.y}</a>`
       : `${isSelf ? `<b>${c.y}</b>` : c.y}`;
     return `<tr${isSelf ? ' style="background:#F6FBF8;"' : ""}>
       <td>${label}</td><td>${c.n}</td><td>${fmtEur(c.fm)}</td>
@@ -942,14 +942,14 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
       <div class="fc-scroll"><table class="fc-tbl">
         <thead><tr><th>Ano</th><th>Anúncios</th><th>Mediano (pedido)</th><th>P25–P75</th><th>Km mediano</th></tr></thead>
         <tbody>${rows}</tbody></table></div>
-      <p class="fc-p" style="margin-top:12px;"><a href="/preco/${slug}">Ver todos os anos de ${B} ${M}&nbsp;→</a></p>
+      <p class="fc-p" style="margin-top:12px;"><a href="/pt/preco/${slug}">Ver todos os anos de ${B} ${M}&nbsp;→</a></p>
     </section>` : "";
 
   const yearNav = pageYears.length > 1 ? `
     <section class="section fc-wrap">
       <div class="sec-label" style="margin-bottom:10px;">OUTROS ANOS COM DADOS SUFICIENTES</div>
       <div class="fc-yearlinks">${pageYears.map(y =>
-        y === year ? `<a class="on" href="/preco/${slug}/${y}">${y}</a>` : `<a href="/preco/${slug}/${y}">${y}</a>`).join("")}</div>
+        y === year ? `<a class="on" href="/pt/preco/${slug}/${y}">${y}</a>` : `<a href="/pt/preco/${slug}/${y}">${y}</a>`).join("")}</div>
     </section>` : "";
 
   const deals = (liveDeals || []).length ? `
@@ -958,7 +958,7 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
       ${dealsNear ? `<p class="fc-p" style="margin:0 0 12px;">Nenhum de ${year} neste momento. Estes são ${B} ${M} de anos próximos cujo preço pedido está abaixo do valor justo que estimamos.</p>` : ""}
       <div class="grid">${liveDeals.slice(0, 3).map(d => {
         const p = present(d);
-        return `<a class="tile" href="/car?olx_id=${encodeURIComponent(d.olx_id)}" style="max-width:none;">
+        return `<a class="tile" href="/pt/car?olx_id=${encodeURIComponent(d.olx_id)}" style="max-width:none;">
           <div class="thumb">${thumbBlock(p, 168, 28)}${gradeChip(p)}</div>
           <div class="tbody"><div class="tile-title">${escapeHtml(p.name)}</div>
           <div class="tile-sub">${p.subHtml}</div>
@@ -967,7 +967,7 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
       }).join("")}</div>
     </section>` : `
     <section class="section fc-wrap">
-      <p class="fc-p">Sem ${B} ${M} abaixo do preço justo neste momento, nem de ${year} nem dos anos à volta. <a href="/avaliar">Avalia um anúncio concreto</a> ou <a href="/mercado">vê o mercado completo</a>.</p>
+      <p class="fc-p">Sem ${B} ${M} abaixo do preço justo neste momento, nem de ${year} nem dos anos à volta. <a href="/pt/avaliar">Avalia um anúncio concreto</a> ou <a href="/pt/mercado">vê o mercado completo</a>.</p>
     </section>`;
 
   const cta = `
@@ -977,13 +977,13 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
           <h2>Tens um ${B} ${M} de ${year}?</h2>
           <p>Metade dos ${cell.n} anúncios de ${year} pede entre ${FL} e ${FH}. Cola o link do teu e dizemos onde cai — quilómetros, versão e estado incluídos.</p>
         </div>
-        <a class="btn-bright" href="/avaliar?modelo=${encodeURIComponent(slug)}&ano=${year}">Avaliar o meu ${year}&nbsp;&nbsp;→</a>
+        <a class="btn-bright" href="/pt/avaliar?modelo=${encodeURIComponent(slug)}&ano=${year}">Avaliar o meu ${year}&nbsp;&nbsp;→</a>
       </div>
     </section>`;
 
   const links = `
     <section class="section fc-wrap" style="padding-bottom:70px;">
-      <p class="fc-p"><a href="/preco/${slug}">Preços de ${B} ${M} por ano</a>${depreciationOk(rec) ? ` · <a href="/depreciacao/${slug}">Curva de desvalorização</a>` : ""} · <a href="/metodologia">Como calculamos</a> · <a href="/precos">Todos os modelos</a></p>
+      <p class="fc-p"><a href="/pt/preco/${slug}">Preços de ${B} ${M} por ano</a>${depreciationOk(rec) ? ` · <a href="/pt/depreciacao/${slug}">Curva de desvalorização</a>` : ""} · <a href="/pt/metodologia">Como calculamos</a> · <a href="/pt/precos">Todos os modelos</a></p>
     </section>`;
 
   const histBlock = historyUrl ? `<section class="section fc-wrap" style="padding-top:0;">${historyCheckBlock({
@@ -995,7 +995,7 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
     ],
   })}</section>` : "";
 
-  const sellHref = hasVender ? `/vender/${slug}#vender` : `/avaliar?modelo=${encodeURIComponent(slug)}&ano=${year}#vender`;
+  const sellHref = hasVender ? `/pt/vender/${slug}#vender` : `/pt/avaliar?modelo=${encodeURIComponent(slug)}&ano=${year}#vender`;
   const sellBlock = `
     <section class="section" style="padding:18px 22px 0;max-width:680px;margin:0 auto;">
       <div class="exclusive" style="background:#F4F6FB;border:1px solid #D9E0F0;align-items:flex-start;">
@@ -1009,8 +1009,8 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
     </section>`;
 
   const body = crumbs([
-    { name: "Início", href: "/" }, { name: "Preços", href: "/precos" },
-    { name: `${rec.b} ${rec.m}`, href: `/preco/${slug}` }, { name: String(year) },
+    { name: "Início", href: "/pt" }, { name: "Preços", href: "/pt/precos" },
+    { name: `${rec.b} ${rec.m}`, href: `/pt/preco/${slug}` }, { name: String(year) },
   ]) + `<div style="padding-top:14px;">${hero}</div>${sellBlock}${histBlock}${stepBlock}${table}${yearNav}${deals}${cta}${sellForm}${links}${guides}`;
 
   const faqs = [[
@@ -1076,8 +1076,8 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
         },
       },
       breadcrumbLd(host, [
-        { name: "Início", href: "/" }, { name: "Preços", href: "/precos" },
-        { name: `${rec.b} ${rec.m}`, href: `/preco/${slug}` }, { name: String(year) },
+        { name: "Início", href: "/pt" }, { name: "Preços", href: "/pt/precos" },
+        { name: `${rec.b} ${rec.m}`, href: `/pt/preco/${slug}` }, { name: String(year) },
       ]),
       faqLd(faqs),
     ],
@@ -1102,16 +1102,16 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
 // on it still carry signal back into the site.
 export function renderNotFound({ suggestions = [], depositCount = 0, host = null, path = "" } = {}) {
   const chips = suggestions.slice(0, 12).map(s =>
-    `<a class="mchip" href="/preco/${encodeURIComponent(s.slug)}">${escapeHtml(s.m)} <span class="mut">${fmtEur(s.fm)}</span></a>`).join("");
+    `<a class="mchip" href="/pt/preco/${encodeURIComponent(s.slug)}">${escapeHtml(s.m)} <span class="mut">${fmtEur(s.fm)}</span></a>`).join("");
   const body = `
     <div class="fc-404">
       <div class="eyebrow" style="justify-content:center;margin-bottom:16px;"><span class="e-dot"></span><span class="mono">ERRO 404</span></div>
       <h1 class="fc-h1">Esta página não existe</h1>
       <p class="fc-p">${path ? `Não temos nada em <span class="mono">${escapeHtml(path)}</span>. ` : ""}Pode ter sido um link antigo ou um endereço mal escrito. O que existe está tudo a partir daqui:</p>
       <div class="hero-actions" style="justify-content:center;margin:22px 0 30px;">
-        <a class="btn-dark" href="/precos">Preços por modelo</a>
-        <a class="chip" href="/avaliar">Avaliar o meu carro</a>
-        <a class="chip" href="/mercado">Mercado</a>
+        <a class="btn-dark" href="/pt/precos">Preços por modelo</a>
+        <a class="chip" href="/pt/avaliar">Avaliar o meu carro</a>
+        <a class="chip" href="/pt/mercado">Mercado</a>
       </div>
       ${chips ? `<div class="sec-label" style="text-align:left;">MODELOS MAIS PROCURADOS</div><div class="mchips" style="justify-content:center;">${chips}</div>` : ""}
     </div>`;
@@ -1122,7 +1122,7 @@ export function renderNotFound({ suggestions = [], depositCount = 0, host = null
   });
 }
 
-// ═══ /depreciacao/{slug} ═════════════════════════════════════════════════════
+// ═══ /pt/depreciacao/{slug} ══════════════════════════════════════════════════
 //
 // "{modelo} desvalorização" is a query nobody on this market answers with real
 // numbers, and it is the single most linkable thing this dataset can produce:
@@ -1133,7 +1133,7 @@ export function renderNotFound({ suggestions = [], depositCount = 0, host = null
 // through six scattered points would be a drawing, not a finding.
 export function renderDepreciationPage({ rec, slug, fit, stats, pageYears, host, depositCount, builtAt }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
-  const canonical = `https://${host}/depreciacao/${slug}`;
+  const canonical = `https://${host}/pt/depreciacao/${slug}`;
   const cs = fit.cells;                       // oldest → newest, n>=5
   const newest = fit.newest, oldest = fit.oldest;
   const ratePct = Math.round(fit.rate * 100);
@@ -1166,7 +1166,7 @@ export function renderDepreciationPage({ rec, slug, fit, stats, pageYears, host,
     const vs = Math.round((c.fm / newest.fm - 1) * 100);
     const ageGap = newest.y - c.y;
     const link = pageYears.includes(c.y)
-      ? `<a href="/preco/${slug}/${c.y}" style="color:#177A47;font-weight:600;">${c.y}</a>` : c.y;
+      ? `<a href="/pt/preco/${slug}/${c.y}" style="color:#177A47;font-weight:600;">${c.y}</a>` : c.y;
     return `<tr><td>${link}</td>
       <td>${fmtEur(c.fm)}</td>
       <td>${c.n}</td>
@@ -1187,7 +1187,7 @@ export function renderDepreciationPage({ rec, slug, fit, stats, pageYears, host,
     : `<p class="fc-p">Aqui isso não chega a acontecer dentro do que alguém procura: aos ${av.capAge} anos um ano de idade ainda vale cerca de ${fmtEur(av.capCost)}, e só muito mais tarde desceria abaixo de ${fmtEur(av.costFloor)}. Neste modelo a matrícula manda no preço em toda a gama que se compra — esticar o orçamento por um ano mais recente continua a custar dinheiro a sério.</p>`);
 
   const body = crumbs([
-    { name: "Início", href: "/" }, { name: "Desvalorização", href: "/depreciacao" },
+    { name: "Início", href: "/pt" }, { name: "Desvalorização", href: "/pt/depreciacao" },
     { name: `${rec.b} ${rec.m}` },
   ]) + `
     <div style="padding-top:14px;">
@@ -1236,11 +1236,11 @@ export function renderDepreciationPage({ rec, slug, fit, stats, pageYears, host,
           <h2>Quanto vale o TEU ${B} ${M} hoje?</h2>
           <p>Esta curva é do modelo. Cola o link do teu anúncio e dizemos o valor justo do teu carro concreto, com os teus quilómetros e a tua versão.</p>
         </div>
-        <a class="btn-bright" href="/avaliar?modelo=${encodeURIComponent(slug)}">Avaliar o meu carro&nbsp;&nbsp;→</a>
+        <a class="btn-bright" href="/pt/avaliar?modelo=${encodeURIComponent(slug)}">Avaliar o meu carro&nbsp;&nbsp;→</a>
       </div>
     </section>
     <section class="section fc-wrap" style="padding-bottom:70px;">
-      <p class="fc-p"><a href="/preco/${slug}">Preço de ${B} ${M} por ano</a> · <a href="/depreciacao">Desvalorização de outros modelos</a> · <a href="/precos">Todos os modelos</a> · <a href="${canonical}.json">Dados em JSON</a></p>
+      <p class="fc-p"><a href="/pt/preco/${slug}">Preço de ${B} ${M} por ano</a> · <a href="/pt/depreciacao">Desvalorização de outros modelos</a> · <a href="/pt/precos">Todos os modelos</a> · <a href="${canonical}.json">Dados em JSON</a></p>
     </section>`;
 
   const faqs = [
@@ -1278,7 +1278,7 @@ export function renderDepreciationPage({ rec, slug, fit, stats, pageYears, host,
         "url": canonical,
       },
       breadcrumbLd(host, [
-        { name: "Início", href: "/" }, { name: "Desvalorização", href: "/depreciacao" },
+        { name: "Início", href: "/pt" }, { name: "Desvalorização", href: "/pt/depreciacao" },
         { name: `${rec.b} ${rec.m}` },
       ]),
       faqLd(faqs),
@@ -1292,12 +1292,12 @@ export function renderDepreciationPage({ rec, slug, fit, stats, pageYears, host,
   });
 }
 
-// ── /depreciacao — hub, ranked ───────────────────────────────────────────────
+// ── /pt/depreciacao — hub, ranked ────────────────────────────────────────────
 export function renderDepreciationHub({ rows, stats, host, depositCount, builtAt, duelHubs = [] }) {
-  const canonical = `https://${host}/depreciacao`;
+  const canonical = `https://${host}/pt/depreciacao`;
   const dec = x => x.toFixed(1).replace(".", ",");
   const tr = rows.map(r => `<tr>
-      <td><a href="/depreciacao/${r.slug}" style="color:#177A47;font-weight:600;">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a></td>
+      <td><a href="/pt/depreciacao/${r.slug}" style="color:#177A47;font-weight:600;">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a></td>
       <td>${Math.round(r.rate * 100)}%</td>
       <td class="mut">${Math.round(Math.pow(1 - r.rate, 5) * 100)}%</td>
       <td class="mut">${r.half ? `${dec(r.half)} anos` : "—"}</td>
@@ -1314,7 +1314,7 @@ export function renderDepreciationHub({ rows, stats, host, depositCount, builtAt
     return `<p class="fc-p">Entre os ${yg.from} e os ${yg.to} anos de idade, a mediana destes modelos perde <b>${a}% ao ano</b> (${yg.models} modelos com amostra nesse troço); dos ${od.from} anos em diante, <b>${b}%</b> (${od.models} modelos). ${verdict}</p>`;
   })() : "";
 
-  const body = crumbs([{ name: "Início", href: "/" }, { name: "Desvalorização" }]) + `
+  const body = crumbs([{ name: "Início", href: "/pt" }, { name: "Desvalorização" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">Que carros se desvalorizam mais em Portugal</h1>
       <p class="fc-p">Taxa de desvalorização por ano de idade, medida nos preços pedidos de anúncios ativos do OLX. Só entram modelos com histórico suficiente para a curva significar alguma coisa: pelo menos ${DEP_MIN_CELLS} anos com amostra e ${DEP_MIN_SPAN} anos de intervalo.</p>
@@ -1325,8 +1325,8 @@ export function renderDepreciationHub({ rows, stats, host, depositCount, builtAt
         <tbody>${tr}</tbody></table></div>
       <p class="fc-prov mono">"Metade do valor" é o tempo que o modelo leva a valer metade, ao ritmo medido. "Um ano custa &lt;500 €" é a idade a partir da qual mais um ano de matrícula vale menos de 500 € na curva ajustada; um travessão significa que isso não acontece antes dos ${CHEAP_MAX_AGE} anos, ou seja a matrícula manda no preço em toda a gama que se compra. As curvas atravessam gerações: parte da queda é modelo diferente, não idade.</p>
       ${provenance({ n: stats.listings, builtAt, measure: "Preço pedido mediano por ano de fabrico, ajuste log-linear" })}
-      ${duelHubs.length ? `<p class="fc-p" style="margin-top:18px;">Esta tabela mede o modelo inteiro, com todas as versões juntas. Onde a amostra chega para separar as curvas, separamo-las: ${duelHubs.map(d => `<a href="/${d.path}">${escapeHtml(d.question)}</a>`).join(" · ")}.</p>` : ""}
-      <p class="fc-p" style="margin-top:18px;"><a href="/precos">Todos os modelos</a> · <a href="/liquidez">Quanto tempo demoram a vender</a> · <a href="/metodologia">Como calculamos</a></p>
+      ${duelHubs.length ? `<p class="fc-p" style="margin-top:18px;">Esta tabela mede o modelo inteiro, com todas as versões juntas. Onde a amostra chega para separar as curvas, separamo-las: ${duelHubs.map(d => `<a href="/pt/${d.path}">${escapeHtml(d.question)}</a>`).join(" · ")}.</p>` : ""}
+      <p class="fc-p" style="margin-top:18px;"><a href="/pt/precos">Todos os modelos</a> · <a href="/pt/liquidez">Quanto tempo demoram a vender</a> · <a href="/pt/metodologia">Como calculamos</a></p>
     </section>
     <div style="height:60px;"></div>`;
   return layout({
@@ -1340,13 +1340,13 @@ export function renderDepreciationHub({ rows, stats, host, depositCount, builtAt
           "@type": "CollectionPage", "url": canonical, "inLanguage": "pt-PT",
           "name": "Desvalorização de carros usados em Portugal",
         },
-        breadcrumbLd(host, [{ name: "Início", href: "/" }, { name: "Desvalorização" }]),
+        breadcrumbLd(host, [{ name: "Início", href: "/pt" }, { name: "Desvalorização" }]),
       ],
     },
   });
 }
 
-// ═══ /comparar/{a}-vs-{b} ════════════════════════════════════════════════════
+// ═══ /pt/comparar/{a}-vs-{b} ═════════════════════════════════════════════════
 //
 // "{A} ou {B} qual comprar usado" is how people actually shop, and no page on
 // this market answers it with both cars' real numbers side by side.
@@ -1356,7 +1356,7 @@ export function renderDepreciationHub({ rows, stats, host, depositCount, builtAt
 // winner PER DIMENSION and says what each one costs you, which is the honest
 // version and also the more useful one.
 export function renderComparePage({ a, b, ra, rb, stats, host, depositCount, builtAt }) {
-  const canonical = `https://${host}/comparar/${a}-vs-${b}`;
+  const canonical = `https://${host}/pt/comparar/${a}-vs-${b}`;
   const nameA = `${ra.b} ${ra.m}`, nameB = `${rb.b} ${rb.m}`;
   const A = escapeHtml(nameA), Bn = escapeHtml(nameB);
   const fitA = depreciationFit(ra), fitB = depreciationFit(rb);
@@ -1381,7 +1381,7 @@ export function renderComparePage({ a, b, ra, rb, stats, host, depositCount, bui
         ${r.y0 && r.y1 ? `Anos à venda · <b>${r.y0}–${r.y1}</b><br>` : ""}
         ${Array.isArray(r.fu) && r.fu.length ? `Combustível · <b>${escapeHtml(String(r.fu[0][0]))} ${Math.round(r.fu[0][1] * 100)}%</b>` : ""}
       </div>
-      <a class="btn-dark" href="/preco/${slug}" style="display:block;text-align:center;margin-top:14px;font-size:13.5px;padding:11px;">Ver ${escapeHtml(r.m)}&nbsp;→</a>
+      <a class="btn-dark" href="/pt/preco/${slug}" style="display:block;text-align:center;margin-top:14px;font-size:13.5px;padding:11px;">Ver ${escapeHtml(r.m)}&nbsp;→</a>
     </div>`;
 
   // Per-dimension verdicts. Each row states which side wins AND why that matters,
@@ -1450,7 +1450,7 @@ export function renderComparePage({ a, b, ra, rb, stats, host, depositCount, bui
   }).join("") : "";
 
   const body = crumbs([
-    { name: "Início", href: "/" }, { name: "Comparar", href: "/comparar" },
+    { name: "Início", href: "/pt" }, { name: "Comparar", href: "/pt/comparar" },
     { name: `${nameA} vs ${nameB}` },
   ]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
@@ -1486,11 +1486,11 @@ export function renderComparePage({ a, b, ra, rb, stats, host, depositCount, bui
           <h2>Já tens um anúncio em vista?</h2>
           <p>A mediana compara modelos. Para saber se AQUELE carro está bem de preço, cola o link do anúncio.</p>
         </div>
-        <a class="btn-bright" href="/avaliar">Avaliar um anúncio&nbsp;&nbsp;→</a>
+        <a class="btn-bright" href="/pt/avaliar">Avaliar um anúncio&nbsp;&nbsp;→</a>
       </div>
     </section>
     <section class="section fc-wrap" style="padding-bottom:70px;">
-      <p class="fc-p"><a href="/preco/${a}">Preços de ${A}</a> · <a href="/preco/${b}">Preços de ${Bn}</a> · <a href="/comparar">Outras comparações</a></p>
+      <p class="fc-p"><a href="/pt/preco/${a}">Preços de ${A}</a> · <a href="/pt/preco/${b}">Preços de ${Bn}</a> · <a href="/pt/comparar">Outras comparações</a></p>
     </section>`;
 
   const faqs = [
@@ -1516,7 +1516,7 @@ export function renderComparePage({ a, b, ra, rb, stats, host, depositCount, bui
       "@context": "https://schema.org",
       "@graph": [
         breadcrumbLd(host, [
-          { name: "Início", href: "/" }, { name: "Comparar", href: "/comparar" },
+          { name: "Início", href: "/pt" }, { name: "Comparar", href: "/pt/comparar" },
           { name: `${nameA} vs ${nameB}` },
         ]),
         faqLd(faqs),
@@ -1535,7 +1535,7 @@ const CLASS_LABEL = new Map(Object.entries({
 }));
 
 export function renderCompareHub({ pairs, models, host, depositCount, builtAt }) {
-  const canonical = `https://${host}/comparar`;
+  const canonical = `https://${host}/pt/comparar`;
   const groups = new Map();
   for (const [a, b] of pairs) {
     const k = modelClass(a) || "outros";
@@ -1546,18 +1546,18 @@ export function renderCompareHub({ pairs, models, host, depositCount, builtAt })
   const items = order.filter(k => groups.has(k)).map(k => {
     const chips = groups.get(k).map(([a, b]) => {
       const ra = models[a], rb = models[b];
-      return `<a class="mchip" href="/comparar/${a}-vs-${b}">${escapeHtml(ra.b)} ${escapeHtml(ra.m)} <span class="mut">vs</span> ${escapeHtml(rb.b)} ${escapeHtml(rb.m)}</a>`;
+      return `<a class="mchip" href="/pt/comparar/${a}-vs-${b}">${escapeHtml(ra.b)} ${escapeHtml(ra.m)} <span class="mut">vs</span> ${escapeHtml(rb.b)} ${escapeHtml(rb.m)}</a>`;
     }).join("");
     return `<h2 class="fc-h2" style="font-size:16px;margin:22px 0 10px;">${escapeHtml(CLASS_LABEL.get(k) || "Outros")}</h2><div class="mchips">${chips}</div>`;
   }).join("");
-  const body = crumbs([{ name: "Início", href: "/" }, { name: "Comparar" }]) + `
+  const body = crumbs([{ name: "Início", href: "/pt" }, { name: "Comparar" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">Comparar carros usados em Portugal</h1>
       <p class="fc-p">Cada comparação usa os anúncios ativos dos dois modelos no OLX: preço, dispersão, quilometragem, tempo até vender e desvalorização. Só pomos frente a frente modelos de marcas diferentes que jogam no mesmo segmento — é entre esses que a escolha existe de facto, e é por isso que não vais encontrar aqui um citadino contra uma berlina.</p>
       <p class="fc-p">O preço é comparado <b>ao mesmo ano de modelo</b>, não pela mediana de tudo o que está à venda. Um modelo cujos anúncios são em média mais velhos parece mais barato sem o ser, e essa é a comparação que toda a gente faz por engano.</p>
       ${items}
       ${provenance({ n: null, builtAt, measure: "Preço pedido mediano dos dois modelos comparados" })}
-      <p class="fc-p" style="margin-top:18px;"><a href="/precos">Todos os modelos</a> · <a href="/depreciacao">Desvalorização</a> · <a href="/metodologia">Como calculamos</a></p>
+      <p class="fc-p" style="margin-top:18px;"><a href="/pt/precos">Todos os modelos</a> · <a href="/pt/depreciacao">Desvalorização</a> · <a href="/pt/metodologia">Como calculamos</a></p>
     </section>
     <div style="height:60px;"></div>`;
   return layout({
@@ -1568,13 +1568,13 @@ export function renderCompareHub({ pairs, models, host, depositCount, builtAt })
       "@context": "https://schema.org",
       "@graph": [
         { "@type": "CollectionPage", "url": canonical, "inLanguage": "pt-PT", "name": "Comparar carros usados em Portugal" },
-        breadcrumbLd(host, [{ name: "Início", href: "/" }, { name: "Comparar" }]),
+        breadcrumbLd(host, [{ name: "Início", href: "/pt" }, { name: "Comparar" }]),
       ],
     },
   });
 }
 
-// ═══ /liquidez — how long each model takes to sell ═══════════════════════════
+// ═══ /pt/liquidez — how long each model takes to sell ════════════════════════
 //
 // Days-to-sell is the one number here that neither Standvirtual nor a valuation
 // book publishes, because it needs listings watched over time rather than a
@@ -1624,7 +1624,7 @@ export function liquidityJson(rec, slug, { host, builtAt } = {}) {
   }));
   return {
     slug, brand: rec.b, model: rec.m,
-    url: `https://${host}/liquidez/${slug}`,
+    url: `https://${host}/pt/liquidez/${slug}`,
     measure: "days from the listing appearing on OLX to the last scrape cycle that saw it live",
     estimator: "kaplan-meier, listings still on sale censored at the last scrape",
     sample_ended: lq.n != null ? lq.n : null,
@@ -1660,7 +1660,7 @@ export function renderLiquidityPage({ rec, slug, market, hasDepreciation = false
                                       host, depositCount, builtAt }) {
   const lq = rec.lq;
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
-  const canonical = `https://${host}/liquidez/${slug}`;
+  const canonical = `https://${host}/pt/liquidez/${slug}`;
   const mkt = market || {};
   const s30 = liqPct(lq.s30);
   const still90 = lq.s90 != null ? liqPct(1 - lq.s90) : null;
@@ -1688,7 +1688,7 @@ export function renderLiquidityPage({ rec, slug, market, hasDepreciation = false
   const ab = lq.ab || [];
   const dt = lq.dt || [];
   const districtLine = dt.length >= 2
-    ? `<p class="fc-p">Entre ${escapeHtml(dt[0].lbl)} e ${escapeHtml(dt[dt.length - 1].lbl)} a diferença no primeiro mês é de ${liqPct(dt[0].s30)}% para ${liqPct(dt[dt.length - 1].s30)}%. Onde há mais oferta há normalmente mais procura, por isso o distrito costuma mexer mais com o preço do que com o tempo — os preços locais estão em <a href="/precos/${encodeURIComponent(dt[0].k)}">carros usados ${emDistrito(dt[0].k, dt[0].lbl)}</a>.</p>`
+    ? `<p class="fc-p">Entre ${escapeHtml(dt[0].lbl)} e ${escapeHtml(dt[dt.length - 1].lbl)} a diferença no primeiro mês é de ${liqPct(dt[0].s30)}% para ${liqPct(dt[dt.length - 1].s30)}%. Onde há mais oferta há normalmente mais procura, por isso o distrito costuma mexer mais com o preço do que com o tempo — os preços locais estão em <a href="/pt/precos/${encodeURIComponent(dt[0].k)}">carros usados ${emDistrito(dt[0].k, dt[0].lbl)}</a>.</p>`
     : "";
 
   const cutBlock = (lq.cu != null) ? `
@@ -1701,7 +1701,7 @@ export function renderLiquidityPage({ rec, slug, market, hasDepreciation = false
   const relistBlock = (lq.rb != null) ? `<p class="fc-p">De uns quantos sabemos que não venderam: pelo menos <b>${liqPct(lq.rb)}%</b> reapareceram semanas depois como anúncio novo do mesmo carro, que conseguimos emparelhar com o anterior. É um mínimo e não uma taxa — só contamos os reaparecimentos que identificámos, e quem saiu na semana passada ainda não teve tempo de voltar.</p>` : "";
 
   const body = crumbs([
-    { name: "Início", href: "/" }, { name: "Tempo de venda", href: "/liquidez" },
+    { name: "Início", href: "/pt" }, { name: "Tempo de venda", href: "/pt/liquidez" },
     { name: `${rec.b} ${rec.m}` },
   ]) + `
     <div style="padding-top:14px;">
@@ -1756,11 +1756,11 @@ export function renderLiquidityPage({ rec, slug, market, hasDepreciation = false
           <h2>Vais anunciar o teu ${B} ${M}?</h2>
           <p>O tempo que vai demorar depende sobretudo do preço a que o pões. Cola o link do anúncio e dizemos-te onde ele está em relação ao valor justo.</p>
         </div>
-        <a class="btn-bright" href="/avaliar?modelo=${encodeURIComponent(slug)}">Avaliar o meu carro&nbsp;&nbsp;→</a>
+        <a class="btn-bright" href="/pt/avaliar?modelo=${encodeURIComponent(slug)}">Avaliar o meu carro&nbsp;&nbsp;→</a>
       </div>
     </section>
     <section class="section fc-wrap" style="padding-bottom:70px;">
-      <p class="fc-p"><a href="/preco/${slug}">Preços de ${B} ${M} por ano</a>${hasDepreciation ? ` · <a href="/depreciacao/${slug}">Quanto se desvaloriza</a>` : ""} · <a href="/liquidez">Tempo de venda de outros modelos</a> · <a href="/sobrevalorizados">Onde se pede acima do valor justo</a> · <a href="${canonical}.json">Dados em JSON</a></p>
+      <p class="fc-p"><a href="/pt/preco/${slug}">Preços de ${B} ${M} por ano</a>${hasDepreciation ? ` · <a href="/pt/depreciacao/${slug}">Quanto se desvaloriza</a>` : ""} · <a href="/pt/liquidez">Tempo de venda de outros modelos</a> · <a href="/pt/sobrevalorizados">Onde se pede acima do valor justo</a> · <a href="${canonical}.json">Dados em JSON</a></p>
     </section>`;
 
   const faqs = [
@@ -1795,7 +1795,7 @@ export function renderLiquidityPage({ rec, slug, market, hasDepreciation = false
           "distribution": [{ "@type": "DataDownload", "encodingFormat": "application/json", "contentUrl": `${canonical}.json` }],
         },
         breadcrumbLd(host, [
-          { name: "Início", href: "/" }, { name: "Tempo de venda", href: "/liquidez" },
+          { name: "Início", href: "/pt" }, { name: "Tempo de venda", href: "/pt/liquidez" },
           { name: `${rec.b} ${rec.m}` },
         ]),
         faqLd(faqs),
@@ -1805,10 +1805,10 @@ export function renderLiquidityPage({ rec, slug, market, hasDepreciation = false
 }
 
 export function renderLiquidityHub({ rows, market, host, depositCount, builtAt }) {
-  const canonical = `https://${host}/liquidez`;
+  const canonical = `https://${host}/pt/liquidez`;
   const mkt = market || {};
   const withCurve = rows.filter(r => r.lq);
-  const name = r => `<a href="${r.page ? `/liquidez/${r.slug}` : `/preco/${r.slug}`}" style="color:#177A47;font-weight:600;">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a>`;
+  const name = r => `<a href="${r.page ? `/pt/liquidez/${r.slug}` : `/pt/preco/${r.slug}`}" style="color:#177A47;font-weight:600;">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a>`;
   const tr = rows.map(r => r.lq ? `<tr>
       <td>${name(r)}</td>
       <td>${liqPct(r.lq.s30)}%</td>
@@ -1823,7 +1823,7 @@ export function renderLiquidityHub({ rows, market, host, depositCount, builtAt }
       <td class="mut">${r.sn != null ? fmtNum(r.sn) : "—"}</td>
       <td class="mut">${fmtEur(r.fm)}</td></tr>`).join("");
   const fastest = withCurve[0], slowest = withCurve[withCurve.length - 1];
-  const body = crumbs([{ name: "Início", href: "/" }, { name: "Tempo de venda" }]) + `
+  const body = crumbs([{ name: "Início", href: "/pt" }, { name: "Tempo de venda" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">Quanto tempo demora a vender cada carro em Portugal</h1>
       <p class="fc-p">Quantos anúncios de cada modelo saem do OLX no primeiro mês, e ao fim de quantos dias sai metade. Acompanhamos os anúncios ao longo do tempo — isto não é estimado a partir do preço, é o que aconteceu — e a conta inclui os que ainda estão à venda, que é o que a impede de ficar curta.</p>
@@ -1835,7 +1835,7 @@ export function renderLiquidityHub({ rows, market, host, depositCount, builtAt }
       ${provenance({ n: rows.reduce((s, r) => s + ((r.lq && r.lq.n) || r.sn || 0), 0), builtAt,
                      unit: "anúncios acompanhados até saírem", measureId: "days-on-market-km",
                      measure: "Dias entre o anúncio aparecer no OLX e o último ciclo que o viu no ar" })}
-      <p class="fc-p" style="margin-top:18px;"><a href="/precos">Preços por modelo</a> · <a href="/depreciacao">Desvalorização</a> · <a href="/sobrevalorizados">Pedido vs. valor justo</a> · <a href="/metodologia">Como medimos</a></p>
+      <p class="fc-p" style="margin-top:18px;"><a href="/pt/precos">Preços por modelo</a> · <a href="/pt/depreciacao">Desvalorização</a> · <a href="/pt/sobrevalorizados">Pedido vs. valor justo</a> · <a href="/pt/metodologia">Como medimos</a></p>
     </section>
     <div style="height:60px;"></div>`;
   return layout({
@@ -1853,35 +1853,35 @@ export function renderLiquidityHub({ rows, market, host, depositCount, builtAt }
           "isAccessibleForFree": true, "dateModified": builtAt || undefined,
           "variableMeasured": ["Percentagem que sai em 30 dias", "Dias até sair (mediana)"],
         },
-        breadcrumbLd(host, [{ name: "Início", href: "/" }, { name: "Tempo de venda" }]),
+        breadcrumbLd(host, [{ name: "Início", href: "/pt" }, { name: "Tempo de venda" }]),
       ],
     },
   });
 }
 
-// ═══ /sobrevalorizados — asking price against our own estimate ═══════════════
+// ═══ /pt/sobrevalorizados — asking price against our own estimate ════════════
 //
-// The mirror of /mercado: that page finds individual listings below fair value,
+// The mirror of /pt/mercado: that page finds individual listings below fair value,
 // this one finds where a whole MODEL is systematically asked above (or below)
 // what we estimate it is worth. Both directions on one page on purpose — a list
 // of only "overpriced" reads as an accusation, and the underpriced half is the
 // actionable one for a buyer.
 export function renderValuationGap({ over, under, market, stats, host, depositCount, builtAt }) {
-  const canonical = `https://${host}/sobrevalorizados`;
+  const canonical = `https://${host}/pt/sobrevalorizados`;
   const mkt = market || {};
   const row = r => `<tr>
-      <td><a href="/preco/${r.slug}" style="color:#177A47;font-weight:600;">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a></td>
+      <td><a href="/pt/preco/${r.slug}" style="color:#177A47;font-weight:600;">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a></td>
       <td>${fmtEur(r.fm)}</td>
       <td class="mut">${fmtEur(r.gm)}</td>
       <td>${r.gap > 0 ? "+" : ""}${Math.round(r.gap * 100)}%</td>
-      <td class="mut">${r.s30 != null ? `${r.page ? `<a href="/liquidez/${r.slug}" style="color:#177A47;font-weight:600;">${liqPct(r.s30)}%</a>` : `${liqPct(r.s30)}%`}` : "—"}</td>
+      <td class="mut">${r.s30 != null ? `${r.page ? `<a href="/pt/liquidez/${r.slug}" style="color:#177A47;font-weight:600;">${liqPct(r.s30)}%</a>` : `${liqPct(r.s30)}%`}` : "—"}</td>
       <td class="mut">${r.n}</td></tr>`;
   const wanted = over.filter(r => r.s30 != null && mkt.s30 != null && r.s30 >= mkt.s30 * 1.12);
   const stuck = over.filter(r => r.s30 != null && mkt.s30 != null && r.s30 <= mkt.s30 * 0.88);
   const readLine = (mkt.s30 != null && (wanted.length || stuck.length))
     ? `<p class="fc-p">A coluna do tempo de venda separa duas coisas que a percentagem sozinha confunde. ${wanted.length ? `Pede-se acima da estimativa e mesmo assim sai depressa — ${wanted.slice(0, 3).map(r => `<b>${escapeHtml(r.b)} ${escapeHtml(r.m)}</b>`).join(", ")} — e aí o prémio é procura a sério: o mercado paga-o e não vais negociá-lo para baixo com uma tabela na mão. ` : ""}${stuck.length ? `Pede-se acima da estimativa <i>e</i> fica no mercado — ${stuck.slice(0, 3).map(r => `<b>${escapeHtml(r.b)} ${escapeHtml(r.m)}</b>`).join(", ")} — e aí é preço a mais à espera de descer.` : ""}</p>`
     : "";
-  const body = crumbs([{ name: "Início", href: "/" }, { name: "Preço pedido vs. valor justo" }]) + `
+  const body = crumbs([{ name: "Início", href: "/pt" }, { name: "Preço pedido vs. valor justo" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">Onde o preço pedido se afasta do valor justo</h1>
       <p class="fc-p">Para cada modelo comparamos o que o mercado <b>pede</b> com o que o nosso modelo <b>estima</b> que vale, para quilometragem e versões típicas desse modelo. Um desvio grande não significa que alguém esteja a enganar ninguém: significa que a oferta e a procura desse modelo estão desalinhadas neste momento, e é aí que se negoceia.</p>
@@ -1898,8 +1898,8 @@ export function renderValuationGap({ over, under, market, stats, host, depositCo
         <thead><tr><th>Modelo</th><th>Pedido (mediana)</th><th>Valor justo estimado</th><th>Desvio</th><th>Sai em 30 dias</th><th>Anúncios</th></tr></thead>
         <tbody>${under.map(row).join("")}</tbody></table></div>
       ${provenance({ n: null, builtAt, measure: "Preço pedido mediano vs. valor justo estimado pelo modelo" })}
-      <p class="fc-p" style="margin-top:18px;">A estimativa só é publicada onde passa os nossos limites de fiabilidade — ver <a href="/metodologia">metodologia</a>. Modelos onde não passa não aparecem aqui.</p>
-      <p class="fc-p"><a href="/mercado">Anúncios concretos abaixo do valor justo</a> · <a href="/precos">Todos os modelos</a></p>
+      <p class="fc-p" style="margin-top:18px;">A estimativa só é publicada onde passa os nossos limites de fiabilidade — ver <a href="/pt/metodologia">metodologia</a>. Modelos onde não passa não aparecem aqui.</p>
+      <p class="fc-p"><a href="/pt/mercado">Anúncios concretos abaixo do valor justo</a> · <a href="/pt/precos">Todos os modelos</a></p>
     </section>
     <div style="height:60px;"></div>`;
   return layout({
@@ -1910,7 +1910,7 @@ export function renderValuationGap({ over, under, market, stats, host, depositCo
       "@context": "https://schema.org",
       "@graph": [
         { "@type": "CollectionPage", "url": canonical, "inLanguage": "pt-PT", "name": "Preço pedido vs. valor justo por modelo" },
-        breadcrumbLd(host, [{ name: "Início", href: "/" }, { name: "Preço pedido vs. valor justo" }]),
+        breadcrumbLd(host, [{ name: "Início", href: "/pt" }, { name: "Preço pedido vs. valor justo" }]),
       ],
     },
   });
@@ -2039,12 +2039,12 @@ export function monthlyCuts(history, currentWeek = null) {
   return cuts.sort((a, b) => a.month < b.month ? -1 : 1);
 }
 
-// ═══ /mercado/indice — the market index, with a permanent weekly archive ═════
+// ═══ /pt/mercado/indice — the market index, with a permanent weekly archive ══
 //
 // Journalists and forums link to a number they can cite with a date. A page whose
 // figures change under the link is not citable, so every week gets its OWN
-// permanent URL (/mercado/indice/2026-W35) that never changes again, and the
-// bare /mercado/indice always shows the latest plus the trend.
+// permanent URL (/pt/mercado/indice/2026-W35) that never changes again, and the
+// bare /pt/mercado/indice always shows the latest plus the trend.
 export function renderMarketIndex({ snapshot, history, host, depositCount, isArchive = false, currentWeek = null, gaps = [], months = [] }) {
   const wk = snapshot.week;                 // display form, ISO: "2026-W35"
   // URL form is lower-case, because the router normalises every public path to
@@ -2053,16 +2053,16 @@ export function renderMarketIndex({ snapshot, history, host, depositCount, isArc
   const wkSlug = wk.toLowerCase();
   // The week's own address is permanent and stays what the page tells people to
   // cite, whether or not it is the canonical at this moment.
-  const permalink = `https://${host}/mercado/indice/${wkSlug}`;
+  const permalink = `https://${host}/pt/mercado/indice/${wkSlug}`;
   // While a week is still the CURRENT week, its archive page and the bare
-  // /mercado/indice are the same cut. Two self-canonical URLs over identical
+  // /pt/mercado/indice are the same cut. Two self-canonical URLs over identical
   // numbers split the signal, and Search Console showed the symptom: the hub URL
   // listed under the archive's title. So the live cut defers to the hub and only
   // becomes its own canonical once the week closes and the hub moves on.
   const isLiveCut = isArchive && currentWeek != null && wk === currentWeek;
   const canonical = (isArchive && !isLiveCut)
     ? permalink
-    : `https://${host}/mercado/indice`;
+    : `https://${host}/pt/mercado/indice`;
   const prev = history.filter(h => h.week < wk).sort((a, b) => a.week < b.week ? 1 : -1)[0] || null;
   const delta = (now, then, fmt) => {
     if (then == null || now == null || !then) return "";
@@ -2071,7 +2071,7 @@ export function renderMarketIndex({ snapshot, history, host, depositCount, isArc
     return `<div class="s" style="color:${d > 0 ? "#B4551F" : "#177A47"};">${d > 0 ? "+" : ""}${(d * 100).toFixed(1)}% vs. semana anterior</div>`;
   };
   const rows = history.slice().sort((a, b) => a.week < b.week ? 1 : -1).slice(0, 26).map(h => `<tr>
-      <td>${h.week === wk && !isArchive ? `<b>${escapeHtml(h.week)}</b>` : `<a href="/mercado/indice/${escapeHtml(h.week.toLowerCase())}" style="color:#177A47;font-weight:600;">${escapeHtml(h.week)}</a>`}</td>
+      <td>${h.week === wk && !isArchive ? `<b>${escapeHtml(h.week)}</b>` : `<a href="/pt/mercado/indice/${escapeHtml(h.week.toLowerCase())}" style="color:#177A47;font-weight:600;">${escapeHtml(h.week)}</a>`}</td>
       <td class="mut">${escapeHtml(h.date || "")}</td>
       <td>${fmtEur(h.priceMed)}</td>
       <td class="mut">${fmtNum(h.listings)}</td>
@@ -2080,7 +2080,7 @@ export function renderMarketIndex({ snapshot, history, host, depositCount, isArc
 
 
   const monthRows = months.slice().sort((a, b) => a.month < b.month ? 1 : -1).slice(0, 24).map(c => `<tr>
-      <td><a href="/mercado/indice/${escapeHtml(c.month)}" style="color:#177A47;font-weight:600;">${escapeHtml(monthLabel(c.month))}</a></td>
+      <td><a href="/pt/mercado/indice/${escapeHtml(c.month)}" style="color:#177A47;font-weight:600;">${escapeHtml(monthLabel(c.month))}</a></td>
       <td class="mut">${escapeHtml(c.from || "")} — ${escapeHtml(c.to || "")}</td>
       <td>${fmtEur(c.priceMed)}</td>
       <td class="mut">${fmtNum(c.listings)}</td>
@@ -2088,8 +2088,8 @@ export function renderMarketIndex({ snapshot, history, host, depositCount, isArc
       <td class="mut">${c.n}/${c.monthWeeks}</td></tr>`).join("");
 
   const body = crumbs(isArchive
-    ? [{ name: "Início", href: "/" }, { name: "Índice de mercado", href: "/mercado/indice" }, { name: wk }]
-    : [{ name: "Início", href: "/" }, { name: "Índice de mercado" }]) + `
+    ? [{ name: "Início", href: "/pt" }, { name: "Índice de mercado", href: "/pt/mercado/indice" }, { name: wk }]
+    : [{ name: "Início", href: "/pt" }, { name: "Índice de mercado" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">SEMANA ${escapeHtml(wk)} · ${escapeHtml(snapshot.date || "")}</span></div>
       <h1 class="fc-h1">Índice do mercado de usados em Portugal${isArchive ? ` — ${escapeHtml(wk)}` : ""}</h1>
@@ -2119,12 +2119,12 @@ export function renderMarketIndex({ snapshot, history, host, depositCount, isArc
         <thead><tr><th>Mês</th><th>Período</th><th>Preço mediano</th><th>Anúncios</th><th>Dias até vender</th><th>Semanas</th></tr></thead>
         <tbody>${monthRows}</tbody></table></div>
       <p class="fc-p" style="margin-top:12px;">O período é o das semanas ISO que fecham dentro do mês, por isso não coincide com o dia 1 nem com o último dia. A última coluna diz quantas semanas do mês entraram no cálculo.</p>`
-        : `<p class="fc-p">Ainda não há nenhum mês fechado com pelo menos ${IDX_MIN_MONTH_WEEKS} cortes semanais guardados. O primeiro abre assim que houver, no endereço <span class="mono">/mercado/indice/{AAAA}-{MM}</span>, e também não volta a mudar.</p>`}
+        : `<p class="fc-p">Ainda não há nenhum mês fechado com pelo menos ${IDX_MIN_MONTH_WEEKS} cortes semanais guardados. O primeiro abre assim que houver, no endereço <span class="mono">/pt/mercado/indice/{AAAA}-{MM}</span>, e também não volta a mudar.</p>`}
     </section>` : ""}
     <section class="section fc-wrap" style="padding-bottom:70px;">
       <h2 class="fc-h2">Podes citar isto</h2>
       <p class="fc-p">Estes números podem ser usados com atribuição a Carsbuyer e indicação da data — mudam todas as semanas, por isso a data faz parte do número. ${isArchive ? `Endereço permanente desta semana: <span class="mono fc-url">${escapeHtml(permalink)}</span>.` : ""}</p>
-      <p class="fc-p"><a href="/precos">Preços por modelo</a> · <a href="/liquidez">Tempo de venda</a> · <a href="/sobrevalorizados">Pedido vs. valor justo</a> · <a href="/metodologia">Metodologia</a></p>
+      <p class="fc-p"><a href="/pt/precos">Preços por modelo</a> · <a href="/pt/liquidez">Tempo de venda</a> · <a href="/pt/sobrevalorizados">Pedido vs. valor justo</a> · <a href="/pt/metodologia">Metodologia</a></p>
     </section>`;
 
   return layout({
@@ -2147,8 +2147,8 @@ export function renderMarketIndex({ snapshot, history, host, depositCount, isArc
           "variableMeasured": ["Preço pedido mediano (EUR)", "Anúncios ativos", "Dias até vender (mediana)"],
         },
         breadcrumbLd(host, isArchive
-          ? [{ name: "Início", href: "/" }, { name: "Índice de mercado", href: "/mercado/indice" }, { name: wk }]
-          : [{ name: "Início", href: "/" }, { name: "Índice de mercado" }]),
+          ? [{ name: "Início", href: "/pt" }, { name: "Índice de mercado", href: "/pt/mercado/indice" }, { name: wk }]
+          : [{ name: "Início", href: "/pt" }, { name: "Índice de mercado" }]),
       ],
     },
   });
@@ -2156,7 +2156,7 @@ export function renderMarketIndex({ snapshot, history, host, depositCount, isArc
 
 export function renderMarketMonth({ cut, months = [], host, depositCount }) {
   const label = monthLabel(cut.month);
-  const permalink = `https://${host}/mercado/indice/${cut.month}`;
+  const permalink = `https://${host}/pt/mercado/indice/${cut.month}`;
   const idx = months.findIndex(c => c.month === cut.month);
   const prev = idx > 0 ? months[idx - 1] : null;
   const next = idx >= 0 && idx < months.length - 1 ? months[idx + 1] : null;
@@ -2169,15 +2169,15 @@ export function renderMarketMonth({ cut, months = [], host, depositCount }) {
   };
 
   const weekRows = cut.rows.slice().sort((a, b) => a.week < b.week ? 1 : -1).map(h => `<tr>
-      <td><a href="/mercado/indice/${escapeHtml(h.week.toLowerCase())}" style="color:#177A47;font-weight:600;">${escapeHtml(h.week)}</a></td>
+      <td><a href="/pt/mercado/indice/${escapeHtml(h.week.toLowerCase())}" style="color:#177A47;font-weight:600;">${escapeHtml(h.week)}</a></td>
       <td class="mut">${escapeHtml(h.date || "")}</td>
       <td>${fmtEur(h.priceMed)}</td>
       <td class="mut">${fmtNum(h.listings)}</td>
       <td class="mut">${h.sellMed != null ? h.sellMed + " dias" : "—"}</td></tr>`).join("");
 
   const crumbItems = [
-    { name: "Início", href: "/" },
-    { name: "Índice de mercado", href: "/mercado/indice" },
+    { name: "Início", href: "/pt" },
+    { name: "Índice de mercado", href: "/pt/mercado/indice" },
     { name: label },
   ];
 
@@ -2206,8 +2206,8 @@ export function renderMarketMonth({ cut, months = [], host, depositCount }) {
     <section class="section fc-wrap" style="padding-bottom:70px;">
       <h2 class="fc-h2">Podes citar isto</h2>
       <p class="fc-p">Estes números podem ser usados com atribuição a Carsbuyer e indicação do mês. Endereço permanente: <span class="mono fc-url">${escapeHtml(permalink)}</span>.</p>
-      <p class="fc-p">${prev ? `<a href="/mercado/indice/${escapeHtml(prev.month)}" style="color:#177A47;font-weight:600;">← ${escapeHtml(monthLabel(prev.month))}</a> · ` : ""}<a href="/mercado/indice">Índice e semana atual</a>${next ? ` · <a href="/mercado/indice/${escapeHtml(next.month)}" style="color:#177A47;font-weight:600;">${escapeHtml(monthLabel(next.month))} →</a>` : ""}</p>
-      <p class="fc-p"><a href="/precos">Preços por modelo</a> · <a href="/liquidez">Tempo de venda</a> · <a href="/sobrevalorizados">Pedido vs. valor justo</a> · <a href="/metodologia">Metodologia</a></p>
+      <p class="fc-p">${prev ? `<a href="/pt/mercado/indice/${escapeHtml(prev.month)}" style="color:#177A47;font-weight:600;">← ${escapeHtml(monthLabel(prev.month))}</a> · ` : ""}<a href="/pt/mercado/indice">Índice e semana atual</a>${next ? ` · <a href="/pt/mercado/indice/${escapeHtml(next.month)}" style="color:#177A47;font-weight:600;">${escapeHtml(monthLabel(next.month))} →</a>` : ""}</p>
+      <p class="fc-p"><a href="/pt/precos">Preços por modelo</a> · <a href="/pt/liquidez">Tempo de venda</a> · <a href="/pt/sobrevalorizados">Pedido vs. valor justo</a> · <a href="/pt/metodologia">Metodologia</a></p>
     </section>`;
 
   return layout({
@@ -2234,17 +2234,17 @@ export function renderMarketMonth({ cut, months = [], host, depositCount }) {
 }
 
 export function renderArchiveHub({ weeks = [], host, depositCount = null }) {
-  const permalink = `https://${host}/historico`;
+  const permalink = `https://${host}/pt/historico`;
   const shown = weeks.slice().sort().reverse();
   const latest = shown[0] || null;
   const tok = w => escapeHtml(w.toLowerCase());
 
   const rows = shown.map(w => `<tr>
       <td class="mono">${escapeHtml(w)}</td>
-      <td><a href="/historico/${tok(w)}.json" style="color:#177A47;font-weight:600;">todos os modelos</a></td>
-      <td class="mut mono">/historico/${tok(w)}/{modelo}.json</td></tr>`).join("");
+      <td><a href="/pt/historico/${tok(w)}.json" style="color:#177A47;font-weight:600;">todos os modelos</a></td>
+      <td class="mut mono">/pt/historico/${tok(w)}/{modelo}.json</td></tr>`).join("");
 
-  const crumbItems = [{ name: "Início", href: "/" }, { name: "Arquivo datado" }];
+  const crumbItems = [{ name: "Início", href: "/pt" }, { name: "Arquivo datado" }];
 
   const body = crumbs(crumbItems) + `
     <section class="section fc-wrap" style="padding-top:16px;">
@@ -2263,9 +2263,9 @@ export function renderArchiveHub({ weeks = [], host, depositCount = null }) {
     </section>` : ""}
     <section class="section fc-wrap" style="padding-top:0;">
       <h2 class="fc-h2">O que vem em cada corte</h2>
-      <p class="fc-p">Por modelo: mediana pedida, intervalo interquartil, número de anúncios ativos e quilometragem mediana; e o mesmo por ano do carro. Os valores são <strong>preços pedidos</strong> em anúncios ativos do OLX Portugal, não preços de venda fechados — a <a href="/metodologia">metodologia</a> explica a diferença.</p>
+      <p class="fc-p">Por modelo: mediana pedida, intervalo interquartil, número de anúncios ativos e quilometragem mediana; e o mesmo por ano do carro. Os valores são <strong>preços pedidos</strong> em anúncios ativos do OLX Portugal, não preços de venda fechados — a <a href="/pt/metodologia">metodologia</a> explica a diferença.</p>
       <p class="fc-p">Cada resposta traz <span class="mono">week</span>, <span class="mono">date</span> e <span class="mono">built_at</span>, para que a data da citação não dependa de quem cita.</p>
-      <p class="fc-p"><a href="/precos">Preços de hoje por modelo</a> · <a href="/mercado/indice">Índice do mercado</a> · <a href="/llms.txt">llms.txt</a></p>
+      <p class="fc-p"><a href="/pt/precos">Preços de hoje por modelo</a> · <a href="/pt/mercado/indice">Índice do mercado</a> · <a href="/llms.txt">llms.txt</a></p>
     </section>`;
 
   return layout({
@@ -2335,17 +2335,17 @@ function modelQualityBlock(mq) {
     <p class="mono" style="color:#5B606B;font-size:13px;margin-top:-4px;">Medido em ${mq.n ? fmtNum(mq.n) + " anúncios" : "todos os anúncios com preço"}${mq.folds ? `, em ${mq.folds} partes` : ""}${mq.ts ? ` · treino de ${escapeHtml(mq.ts)}` : ""}</p>`;
 }
 
-// ═══ /metodologia ════════════════════════════════════════════════════════════
+// ═══ /pt/metodologia ═════════════════════════════════════════════════════════
 //
 // Every number on this site is an estimate, and the honest move is to publish
 // where it comes from and where it stops working — including the thresholds that
 // make us DROP a figure rather than show a weak one.
 export function renderMethodology({ stats, mq, host, depositCount, builtAt, duelHubs = [], wave = null }) {
   const duelList = duelHubs.length
-    ? duelHubs.map(d => `<a href="/${d.path}">${escapeHtml(d.question)}</a>`).join(" e ")
+    ? duelHubs.map(d => `<a href="/pt/${d.path}">${escapeHtml(d.question)}</a>`).join(" e ")
     : "diesel ou gasolina e caixa manual ou automática";
-  const canonical = `https://${host}/metodologia`;
-  const body = crumbs([{ name: "Início", href: "/" }, { name: "Metodologia" }]) + `
+  const canonical = `https://${host}/pt/metodologia`;
+  const body = crumbs([{ name: "Início", href: "/pt" }, { name: "Metodologia" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">Como calculamos os preços</h1>
       <p class="fc-p">Sem caixa preta: aqui está de onde vêm os números, o que cada um mede, e em que casos preferimos não mostrar nada a mostrar um valor fraco.</p>
@@ -2354,7 +2354,7 @@ export function renderMethodology({ stats, mq, host, depositCount, builtAt, duel
       <p class="fc-p">Recolhemos diariamente os anúncios de automóveis do <b>OLX Portugal</b> e guardamos o histórico de cada um: preço, alterações de preço, e o dia em que o anúncio desaparece. Usamos apenas anúncios <b>ativos</b> no momento do cálculo${stats.listings ? `; hoje são ${fmtNum(stats.listings)} anúncios em ${stats.models} modelos` : ""}. Não compramos nem vendemos carros, não somos stand e não recebemos de nenhum vendedor.</p>
 
       <h2 class="fc-h2">2. O que é um "preço" aqui</h2>
-      <p class="fc-p">É o <b>preço pedido</b> num anúncio ativo — não o preço a que o carro foi vendido. Ninguém em Portugal publica preços de transação, e inventá-los seria pior do que dizer o que temos. Preços pedidos e preços de venda não são a mesma coisa: a diferença costuma ser a margem de negociação, e é maior nos modelos que demoram a sair (ver <a href="/liquidez">tempo de venda</a>).</p>
+      <p class="fc-p">É o <b>preço pedido</b> num anúncio ativo — não o preço a que o carro foi vendido. Ninguém em Portugal publica preços de transação, e inventá-los seria pior do que dizer o que temos. Preços pedidos e preços de venda não são a mesma coisa: a diferença costuma ser a margem de negociação, e é maior nos modelos que demoram a sair (ver <a href="/pt/liquidez">tempo de venda</a>).</p>
 
       <h2 class="fc-h2">3. Mediana e intervalo, nunca um número sozinho</h2>
       <p class="fc-p">Para cada modelo mostramos a <b>mediana</b> (o valor que divide os anúncios ao meio) e o <b>intervalo interquartil P25-P75</b>, onde cabe metade dos anúncios. Usamos a mediana e não a média porque um único carro de coleção ou um anúncio com preço simbólico destrói uma média e não mexe numa mediana. O intervalo vai sempre junto: uma mediana sem dispersão parece uma precisão que não existe.</p>
@@ -2365,18 +2365,18 @@ export function renderMethodology({ stats, mq, host, depositCount, builtAt, duel
         <li class="fc-li"><b>20 anúncios ativos</b> — mínimo para um modelo <b>ganhar</b> página. Uma vez publicada, a página mantém-se enquanto houver <b>14</b>: o stock de um modelo oscila de dia para dia, e deixar o endereço morrer e ressuscitar ao sabor de um anúncio a mais ou a menos é pior do que publicar 14 e dizer que são 14. O número de anúncios por trás de cada mediana está sempre à vista.</li>
         <li class="fc-li"><b>5 anúncios</b> — mínimo para uma linha por ano na tabela, <b>3</b> para uma linha já publicada se manter. Anos mais finos são juntados em intervalos de dois ou mais anos, ou omitidos e contados no rodapé da tabela.</li>
         <li class="fc-li"><b>${MIN_YEAR_PAGE_N} anúncios</b> — mínimo para um ano <b>ganhar página própria</b>, <b>7</b> para a manter depois de a ter. Abaixo de ${MIN_YEAR_PAGE_N}, um único anúncio fora do normal move a mediana mais do que a diferença entre anos que estaríamos a afirmar; e um ano que já tem endereço não o deve perder por causa de um carro vendido esta semana.</li>
-        <li class="fc-li"><b>${DEP_MIN_CELLS} anos com amostra e ${DEP_MIN_SPAN} anos de intervalo</b> — mínimo para uma <a href="/depreciacao">curva de desvalorização</a>, mais um ajuste que explique de facto os pontos (R² ≥ ${DEP_MIN_R2}).</li>
+        <li class="fc-li"><b>${DEP_MIN_CELLS} anos com amostra e ${DEP_MIN_SPAN} anos de intervalo</b> — mínimo para uma <a href="/pt/depreciacao">curva de desvalorização</a>, mais um ajuste que explique de facto os pontos (R² ≥ ${DEP_MIN_R2}).</li>
         <li class="fc-li"><b>15 anúncios</b> — mínimo para um <b>corte</b> do modelo (combustível, caixa, distrito) ganhar página própria, <b>11</b> para a manter. Um corte que é praticamente o modelo inteiro — a única motorização, ou a única caixa, com mais de 85% dos anúncios — não ganha página nenhuma: seria a página do modelo outra vez noutro endereço.</li>
         <li class="fc-li"><b>3 anos com amostra dos dois lados</b> — mínimo para comparar dois cortes em percentagem. Sem isso a página mostra as duas medianas e diz que a distância entre elas ainda inclui a diferença de idades.</li>
         <li class="fc-li"><b>20 anúncios de cada lado</b>, mais uma margem estreita o suficiente para a resposta significar alguma coisa — mínimo para uma página de duelo (${duelList}).</li>
         <li class="fc-li"><b>Uma quebra na taxa só é publicada se for medida</b> — ver abaixo.</li>
       </ul>
       ${wave ? `<h3 class="fc-h3" id="vagas">Amostra suficiente e ainda sem página</h3>
-      <p class="fc-p">Passar o limite da amostra é condição necessária, não suficiente. As páginas por ano, por corte e de desvalorização são publicadas <b>por vagas</b>, começando pelos modelos com mais anúncios: neste momento existem para <b>${fmtNum(wave.models)} dos ${fmtNum(wave.total)} modelos</b>, ${fmtNum(wave.pages)} páginas ao todo. A página de <a href="/liquidez">tempo de venda</a> tem uma vaga própria, separada desta. Publicamos por vagas para conseguirmos medir se cada camada é lida antes de multiplicá-la — mil páginas de uma vez só dizem que algo não funcionou, não o quê.</p>
-      <p class="fc-p">Nos modelos que ainda não entraram, um ano com amostra suficiente devolve <b>404</b> e não aparece ligado em lado nenhum: preferimos uma página em falta a uma ligação partida. Os números desses anos não estão escondidos — estão na versão JSON de cada modelo${wave.sample ? ` (<a href="/preco/${encodeURIComponent(wave.sample)}.json">exemplo</a>)` : ""}, em <code>by_year</code>, com <code>page: null</code> a dizer que a página ainda não existe.</p>` : ""}
+      <p class="fc-p">Passar o limite da amostra é condição necessária, não suficiente. As páginas por ano, por corte e de desvalorização são publicadas <b>por vagas</b>, começando pelos modelos com mais anúncios: neste momento existem para <b>${fmtNum(wave.models)} dos ${fmtNum(wave.total)} modelos</b>, ${fmtNum(wave.pages)} páginas ao todo. A página de <a href="/pt/liquidez">tempo de venda</a> tem uma vaga própria, separada desta. Publicamos por vagas para conseguirmos medir se cada camada é lida antes de multiplicá-la — mil páginas de uma vez só dizem que algo não funcionou, não o quê.</p>
+      <p class="fc-p">Nos modelos que ainda não entraram, um ano com amostra suficiente devolve <b>404</b> e não aparece ligado em lado nenhum: preferimos uma página em falta a uma ligação partida. Os números desses anos não estão escondidos — estão na versão JSON de cada modelo${wave.sample ? ` (<a href="/pt/preco/${encodeURIComponent(wave.sample)}.json">exemplo</a>)` : ""}, em <code>by_year</code>, com <code>page: null</code> a dizer que a página ainda não existe.</p>` : ""}
 
       <h3 class="fc-h3">Comparar dois cortes do mesmo modelo</h3>
-      <p class="fc-p">As medianas de dois cortes não se subtraem. Os automáticos à venda são muito mais novos do que os manuais, por isso a razão em bruto entre as duas medianas mede sobretudo a diferença de idades e chamar-lhe prémio da caixa seria inventar um número que os dados não dizem. Cada comparação entre cortes é feita <b>dentro de cada ano de matrícula</b> e só depois juntada, ponderada pela amostra mais fina de cada ano — o mesmo método das <a href="/comparar">comparações entre modelos</a>.</p>
+      <p class="fc-p">As medianas de dois cortes não se subtraem. Os automáticos à venda são muito mais novos do que os manuais, por isso a razão em bruto entre as duas medianas mede sobretudo a diferença de idades e chamar-lhe prémio da caixa seria inventar um número que os dados não dizem. Cada comparação entre cortes é feita <b>dentro de cada ano de matrícula</b> e só depois juntada, ponderada pela amostra mais fina de cada ano — o mesmo método das <a href="/pt/comparar">comparações entre modelos</a>.</p>
       <p class="fc-p">Um corte fino — um distrito com trinta anúncios espalhados por vinte anos — raramente tem três anos com amostra dos dois lados, e é precisamente onde a mistura de idades mais engana. Nesses casos comparamos <b>anúncio a anúncio</b>: cada carro do corte é dividido pela mediana do modelo no seu próprio ano de matrícula, e a resposta é a mediana desses quocientes. Um ano só entra se o modelo tiver aí pelo menos o dobro dos anúncios do corte, senão o corte estaria a dividir-se por si próprio. A página diz sempre qual dos dois métodos usou, e abaixo de <b>5%</b> não afirmamos direção nenhuma: a essa distância os dois métodos discordam de sinal com demasiada frequência para a diferença significar alguma coisa.</p>
       <p class="fc-p">Nas páginas de duelo (${duelList}) vamos um passo mais longe, porque aí a pergunta é sobre o <i>ritmo</i> da queda e não sobre o preço de hoje: ajustamos o preço à idade <b>e</b> à quilometragem em simultâneo, e a taxa de cada lado é lida com a quilometragem igualada. Sem isso mediríamos o facto de os diesels à venda andarem muito mais e os automáticos muito menos. Cada página traz a margem de 95% da diferença que afirma, e um modelo só tem página quando essa margem é estreita o suficiente para que "não há diferença" queira dizer <b>não há vantagem apreciável</b> e não <b>não conseguimos ver</b>.</p>
 
@@ -2403,7 +2403,7 @@ export function renderMethodology({ stats, mq, host, depositCount, builtAt, duel
       <p class="fc-p">Nesses casos a página mostra só os preços pedidos. Preferimos uma página com menos números a uma página com um número errado.</p>
 
       <h2 class="fc-h2">6. Dias até vender</h2>
-      <p class="fc-p">Acompanhamos cada anúncio desde que aparece até ao último dia em que o vimos no ar, e daí sai o <a href="/liquidez">tempo de venda</a>. Três coisas nesta conta não são óbvias e mudam o resultado:</p>
+      <p class="fc-p">Acompanhamos cada anúncio desde que aparece até ao último dia em que o vimos no ar, e daí sai o <a href="/pt/liquidez">tempo de venda</a>. Três coisas nesta conta não são óbvias e mudam o resultado:</p>
       <ul class="fc-ul">
         <li class="fc-li"><b>Os anúncios ainda à venda contam.</b> Se olhássemos só para os que já acabaram, ficávamos com os que tiveram pressa — num mercado que recebe anúncios novos todos os dias, isso encurta a conta em cerca de dez dias. Cada anúncio ainda no ar entra com os dias que já leva (é o método de Kaplan-Meier, o mesmo que se usa para não deitar fora quem ainda não teve o desfecho).</li>
         <li class="fc-li"><b>O dia que conta é o último em que o vimos vivo</b>, não o dia em que reparámos que tinha saído. Quando a recolha fica bloqueada uns dias, a varredura seguinte marca tudo de uma vez, e usar essa data acrescentaria a duração da avaria ao tempo de venda de milhares de carros.</li>
@@ -2412,7 +2412,7 @@ export function renderMethodology({ stats, mq, host, depositCount, builtAt, duel
       <p class="fc-p">Um anúncio pode desaparecer por venda ou por desistência, e não distinguimos os dois: a leitura correta é <b>tempo até sair do mercado</b>. O que conseguimos afirmar é um mínimo do que não vendeu — os anúncios que reaparecem semanas depois como anúncio novo do mesmo carro, que emparelhamos pela ficha e pela quilometragem. Uma página de tempo de venda existe a partir de <b>40 anúncios acompanhados até ao fim</b>, e cada corte dentro dela (preço, idade, distrito) precisa dos seus próprios 40.</p>
 
       <h2 class="fc-h2" id="importar">7. Importar da Alemanha</h2>
-      <p class="fc-p">A conta das páginas de <a href="/importar">importação</a> tem três parcelas e todas são medidas, não estimadas por regra de três: o <b>preço pedido na Alemanha</b> vem de anúncios do AutoScout24 lidos pelo nosso próprio recolhedor, ano a ano; o <b>ISV</b> é calculado anúncio a anúncio a partir do CO2, da cilindrada e do ano de cada carro alemão (nunca a partir de um carro-tipo, porque as tabelas são progressivas e a média não passa por elas); a <b>legalização</b> é uma lista de rubricas com valores de 2026, publicada como intervalo porque transporte e certificado de conformidade variam.</p>
+      <p class="fc-p">A conta das páginas de <a href="/pt/importar">importação</a> tem três parcelas e todas são medidas, não estimadas por regra de três: o <b>preço pedido na Alemanha</b> vem de anúncios do AutoScout24 lidos pelo nosso próprio recolhedor, ano a ano; o <b>ISV</b> é calculado anúncio a anúncio a partir do CO2, da cilindrada e do ano de cada carro alemão (nunca a partir de um carro-tipo, porque as tabelas são progressivas e a média não passa por elas); a <b>legalização</b> é uma lista de rubricas com valores de 2026, publicada como intervalo porque transporte e certificado de conformidade variam.</p>
       <p class="fc-p">Emparelhamos sempre o <b>mesmo ano de matrícula</b> dos dois lados, e cada linha traz as duas amostras e as duas quilometragens medianas. Sem isso a comparação mediria sobretudo o facto de a oferta alemã ser mais nova e menos rodada do que a portuguesa. Um modelo só tem página com pelo menos dois anos comparáveis, dez anúncios alemães por ano, cinco portugueses e seis carros alemães com CO2 utilizável — o CO2 é campo livre lá, e um valor impossível é descartado em vez de virar imposto.</p>
 
       <h2 class="fc-h2">8. Desvalorização</h2>
@@ -2424,20 +2424,20 @@ export function renderMethodology({ stats, mq, host, depositCount, builtAt, duel
 
       <h2 class="fc-h2">9. O que isto não faz</h2>
       <ul class="fc-ul">
-        <li class="fc-li">Não avalia a <b>tua</b> viatura. A mediana de um modelo não sabe do teu histórico, dos teus extras nem do estado da tua embraiagem. Para o carro concreto, <a href="/avaliar">avalia o anúncio</a>.</li>
-        <li class="fc-li">Não distingue carros <b>importados por legalizar</b> na mediana do modelo. Um preço muito abaixo do normal costuma ter ISV por pagar — e o <a href="/isv">ISV</a> pode valer milhares.</li>
+        <li class="fc-li">Não avalia a <b>tua</b> viatura. A mediana de um modelo não sabe do teu histórico, dos teus extras nem do estado da tua embraiagem. Para o carro concreto, <a href="/pt/avaliar">avalia o anúncio</a>.</li>
+        <li class="fc-li">Não distingue carros <b>importados por legalizar</b> na mediana do modelo. Um preço muito abaixo do normal costuma ter ISV por pagar — e o <a href="/pt/isv">ISV</a> pode valer milhares.</li>
         <li class="fc-li">Não cobre carros vendidos fora do OLX (stands com stock próprio, particulares em grupos fechados, leilões).</li>
         <li class="fc-li">Não é aconselhamento financeiro nem uma avaliação para efeitos legais ou de seguro.</li>
       </ul>
 
       <h2 class="fc-h2" id="licenca">10. Reutilização e atribuição</h2>
-      <p class="fc-p">Os números destas páginas são estatísticas nossas, calculadas a partir de anúncios públicos do OLX Portugal. <b>Podes citá-los e reutilizá-los</b>, desde que a fonte seja atribuída ao Carsbuyer e seja indicada a data de recolha: a mediana de um modelo muda ao longo do tempo, e uma citação sem data deixa de ser verificável. Se precisares dos valores sem a marcação da página, cada modelo publica o mesmo conteúdo em JSON, bastando acrescentar <b>.json</b> ao endereço, como em <a href="/preco/opel-corsa.json">/preco/opel-corsa.json</a>.</p>
+      <p class="fc-p">Os números destas páginas são estatísticas nossas, calculadas a partir de anúncios públicos do OLX Portugal. <b>Podes citá-los e reutilizá-los</b>, desde que a fonte seja atribuída ao Carsbuyer e seja indicada a data de recolha: a mediana de um modelo muda ao longo do tempo, e uma citação sem data deixa de ser verificável. Se precisares dos valores sem a marcação da página, cada modelo publica o mesmo conteúdo em JSON, bastando acrescentar <b>.json</b> ao endereço, como em <a href="/pt/preco/opel-corsa.json">/pt/preco/opel-corsa.json</a>.</p>
 
       <h2 class="fc-h2">10. Correções</h2>
       <p class="fc-p">Se um número parece errado, provavelmente vale a pena olhar: a amostra pode estar contaminada por anúncios repetidos ou por uma versão mal classificada. Todas as páginas indicam o tamanho da amostra e a data de recolha, para que qualquer afirmação nossa seja verificável.</p>
       ${authorBlock()}
       ${provenance({ n: stats.listings, builtAt, measure: "Preço pedido em anúncios ativos (mediana e P25-P75)" })}
-      <p class="fc-p" style="margin-top:18px;"><a href="/sobre">Quem faz isto</a> · <a href="/precos">Preços por modelo</a> · <a href="/mercado/indice">Índice de mercado</a></p>
+      <p class="fc-p" style="margin-top:18px;"><a href="/pt/sobre">Quem faz isto</a> · <a href="/pt/precos">Preços por modelo</a> · <a href="/pt/mercado/indice">Índice de mercado</a></p>
     </section>
     <div style="height:60px;"></div>`;
   return layout({
@@ -2453,16 +2453,16 @@ export function renderMethodology({ stats, mq, host, depositCount, builtAt, duel
           "publisher": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           ...(SITE_AUTHOR ? { "author": { "@type": "Person", "name": SITE_AUTHOR } } : {}),
         },
-        breadcrumbLd(host, [{ name: "Início", href: "/" }, { name: "Metodologia" }]),
+        breadcrumbLd(host, [{ name: "Início", href: "/pt" }, { name: "Metodologia" }]),
       ],
     },
   });
 }
 
-// ═══ /sobre ══════════════════════════════════════════════════════════════════
+// ═══ /pt/sobre ═══════════════════════════════════════════════════════════════
 export function renderAbout({ stats, mq, host, depositCount, builtAt }) {
-  const canonical = `https://${host}/sobre`;
-  const body = crumbs([{ name: "Início", href: "/" }, { name: "Quem somos" }]) + `
+  const canonical = `https://${host}/pt/sobre`;
+  const body = crumbs([{ name: "Início", href: "/pt" }, { name: "Quem somos" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">Quem faz isto, e porquê</h1>
       <p class="fc-p">O Carsbuyer é um projeto independente que mede o mercado português de carros usados a partir dos anúncios que estão de facto à venda. Nasceu de uma pergunta simples que ninguém em Portugal respondia com números: <i>quanto vale mesmo este carro?</i></p>
@@ -2471,28 +2471,28 @@ export function renderAbout({ stats, mq, host, depositCount, builtAt }) {
       <p class="fc-p">Não somos stand, não somos intermediário e não representamos nenhum vendedor. Não temos carros para colocar, por isso não temos motivo para inflacionar nem para desvalorizar nenhum modelo. Os números que publicamos são os mesmos que usamos para as nossas próprias decisões — se estivessem enviesados, seríamos os primeiros prejudicados.</p>
 
       <h2 class="fc-h2">Como nos pagamos</h2>
-      <p class="fc-p">As avaliações e os preços por modelo são gratuitos e ficam gratuitos: ver um anúncio avaliado, o <a href="/mercado">mercado</a> ou os preços por modelo não custa nada e não exige registo. O site paga-se de duas formas: quando um vendedor pede propostas de compra e um comprador profissional paga por esse contacto, e com ligações de parceiros para relatórios de histórico do veículo. Não vendemos os teus dados, não temos publicidade paga por marcas e não aceitamos pagamento para mexer numa avaliação — nenhuma destas receitas muda os números que mostramos.</p>
+      <p class="fc-p">As avaliações e os preços por modelo são gratuitos e ficam gratuitos: ver um anúncio avaliado, o <a href="/pt/mercado">mercado</a> ou os preços por modelo não custa nada e não exige registo. O site paga-se de duas formas: quando um vendedor pede propostas de compra e um comprador profissional paga por esse contacto, e com ligações de parceiros para relatórios de histórico do veículo. Não vendemos os teus dados, não temos publicidade paga por marcas e não aceitamos pagamento para mexer numa avaliação — nenhuma destas receitas muda os números que mostramos.</p>
 
       <h2 class="fc-h2">O que temos hoje</h2>
       <ul class="fc-ul">
         <li class="fc-li"><b>${stats.models}</b> modelos com amostra suficiente para publicar preços${stats.listings ? `, sobre ${fmtNum(stats.listings)} anúncios ativos` : ""}.</li>
         <li class="fc-li">Preço mediano por modelo e <b>por ano de fabrico</b>, sempre com o intervalo onde cabe metade dos anúncios.</li>
-        <li class="fc-li"><a href="/liquidez">Tempo mediano até vender</a> — medido em anúncios reais, não estimado.</li>
-        <li class="fc-li"><a href="/depreciacao">Curvas de desvalorização</a> para os modelos com histórico suficiente.</li>
-        <li class="fc-li">Um <a href="/mercado/indice">índice semanal do mercado</a>, com registo permanente de cada semana.</li>
+        <li class="fc-li"><a href="/pt/liquidez">Tempo mediano até vender</a> — medido em anúncios reais, não estimado.</li>
+        <li class="fc-li"><a href="/pt/depreciacao">Curvas de desvalorização</a> para os modelos com histórico suficiente.</li>
+        <li class="fc-li">Um <a href="/pt/mercado/indice">índice semanal do mercado</a>, com registo permanente de cada semana.</li>
       </ul>
 
 <h2 class="fc-h2">Erramos?</h2>
       <p class="fc-p">Sim, e dizemos quanto. ${mq && mq.mape != null && mq.cov != null
-        ? `Na última medição, a estimativa de valor justo erra em média <b>${mq.mape.toFixed(1).replace(".", ",")}%</b> em anúncios que o modelo não viu no treino, e a banda de 80% que publicamos contém o preço real em <b>${Math.round(mq.cov * 100)}%</b> dos casos. Como isso é medido está na <a href="/metodologia#modelo">metodologia</a>.`
-        : `Como medimos o erro da estimativa, e o que ele deu, está na <a href="/metodologia#modelo">metodologia</a>.`}</p>
-      <p class="fc-p">Publicamos também o <a href="/metodologia">método completo</a>, o tamanho de cada amostra e a data de recolha em todas as páginas. Quando um número não é fiável, retiramo-lo em vez de o disfarçar — há modelos onde verás preços pedidos e nenhuma estimativa de valor justo, e isso é intencional.</p>
+        ? `Na última medição, a estimativa de valor justo erra em média <b>${mq.mape.toFixed(1).replace(".", ",")}%</b> em anúncios que o modelo não viu no treino, e a banda de 80% que publicamos contém o preço real em <b>${Math.round(mq.cov * 100)}%</b> dos casos. Como isso é medido está na <a href="/pt/metodologia#modelo">metodologia</a>.`
+        : `Como medimos o erro da estimativa, e o que ele deu, está na <a href="/pt/metodologia#modelo">metodologia</a>.`}</p>
+      <p class="fc-p">Publicamos também o <a href="/pt/metodologia">método completo</a>, o tamanho de cada amostra e a data de recolha em todas as páginas. Quando um número não é fiável, retiramo-lo em vez de o disfarçar — há modelos onde verás preços pedidos e nenhuma estimativa de valor justo, e isso é intencional.</p>
 
       <h2 class="fc-h2">Podes usar os nossos números</h2>
       <p class="fc-p">Com atribuição ao Carsbuyer e a data — os valores mudam todos os dias. Cada página de modelo tem uma <b>versão em JSON</b> ligada no cabeçalho, e há um <a href="/llms.txt">llms.txt</a> com a estrutura completa para quem lê o site com ferramentas automáticas.</p>
       ${authorBlock()}
       ${provenance({ n: stats.listings, builtAt, measure: "Preço pedido em anúncios ativos (mediana e P25-P75)" })}
-      <p class="fc-p" style="margin-top:18px;"><a href="/metodologia">Metodologia</a> · <a href="/precos">Preços por modelo</a> · <a href="/avaliar">Avaliar um carro</a></p>
+      <p class="fc-p" style="margin-top:18px;"><a href="/pt/metodologia">Metodologia</a> · <a href="/pt/precos">Preços por modelo</a> · <a href="/pt/avaliar">Avaliar um carro</a></p>
     </section>
     <div style="height:60px;"></div>`;
   return layout({
@@ -2512,17 +2512,17 @@ export function renderAbout({ stats, mq, host, depositCount, builtAt }) {
             ...(SITE_AUTHOR ? { "founder": { "@type": "Person", "name": SITE_AUTHOR } } : {}),
           },
         },
-        breadcrumbLd(host, [{ name: "Início", href: "/" }, { name: "Quem somos" }]),
+        breadcrumbLd(host, [{ name: "Início", href: "/pt" }, { name: "Quem somos" }]),
       ],
     },
   });
 }
 
-// ═══ /isv — imported-car tax estimator ═══════════════════════════════════════
+// ═══ /pt/isv — imported-car tax estimator ════════════════════════════════════
 //
 // "simulador ISV" is a large query and the reason importing looks cheap until it
 // isn't: a €9 000 German car with €4 000 of ISV is not a €9 000 car. We already
-// compute this server-side for flagged imports on /mercado; this exposes the
+// compute this server-side for flagged imports on /pt/mercado; this exposes the
 // same tables as a calculator, next to the one thing the ISV simulators do not
 // have — what that model actually costs in Portugal today.
 //
@@ -2597,14 +2597,14 @@ export function estimateIsv(T, { cc, co2, fuel, regYear, asOfYear, isEu }) {
 export const ISV_TABLES_FOR_TEST = ISV_TABLES;
 
 export function renderIsv({ topModels, host, depositCount, builtAt, refYear }) {
-  const canonical = `https://${host}/isv`;
+  const canonical = `https://${host}/pt/isv`;
   const year = refYear || new Date().getUTCFullYear();
   const years = [];
   for (let y = year; y >= year - 25; y--) years.push(y);
   const modelLinks = (topModels || []).slice(0, 12).map(m =>
-    `<a class="mchip" href="/preco/${encodeURIComponent(m.slug)}">${escapeHtml(m.b)} ${escapeHtml(m.m)} <span class="mut">${fmtEur(m.fm)}</span></a>`).join("");
+    `<a class="mchip" href="/pt/preco/${encodeURIComponent(m.slug)}">${escapeHtml(m.b)} ${escapeHtml(m.m)} <span class="mut">${fmtEur(m.fm)}</span></a>`).join("");
 
-  const body = crumbs([{ name: "Início", href: "/" }, { name: "Simulador ISV" }]) + `
+  const body = crumbs([{ name: "Início", href: "/pt" }, { name: "Simulador ISV" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">Simulador de ISV: quanto custa legalizar um carro importado</h1>
       <p class="fc-p">O ISV é a fatura que transforma um bom negócio na Alemanha num mau negócio em Portugal. Calcula-se a partir da <b>cilindrada</b>, das <b>emissões de CO2</b> e da <b>idade</b> do carro — e para um usado com alguns anos a redução por idade corta uma boa parte.</p>
@@ -2628,7 +2628,7 @@ export function renderIsv({ topModels, host, depositCount, builtAt, refYear }) {
       </div>
       <div class="exclusive" style="background:#F6FBF8;border:1px solid #DDEBE1;align-items:flex-start;margin-top:18px;">
         <span style="font-size:15px;">🇩🇪</span>
-        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">O ISV sozinho não responde à pergunta.</b> O que decide é o preço alemão mais o imposto mais a legalização, contra o que o mesmo carro pede em Portugal hoje. Fizemos essa conta modelo a modelo, com anúncios reais dos dois lados. <a href="/importar" style="color:#177A47;font-weight:600;">Ver em que modelos compensa&nbsp;→</a></span>
+        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">O ISV sozinho não responde à pergunta.</b> O que decide é o preço alemão mais o imposto mais a legalização, contra o que o mesmo carro pede em Portugal hoje. Fizemos essa conta modelo a modelo, com anúncios reais dos dois lados. <a href="/pt/importar" style="color:#177A47;font-weight:600;">Ver em que modelos compensa&nbsp;→</a></span>
       </div>
       <p class="fc-p" style="margin-top:14px;">A cilindrada e o CO2 estão no certificado de conformidade e no documento único do carro. Para carros de 2018 e 2019 o ciclo de medição (NEDC ou WLTP) é ambíguo pelo ano — assumimos NEDC, o que pode subestimar ou sobrestimar; confirma no documento.</p>
 
@@ -2642,7 +2642,7 @@ export function renderIsv({ topModels, host, depositCount, builtAt, refYear }) {
       <h2 class="fc-h2">A pergunta que interessa: compensa importar?</h2>
       <p class="fc-p">O ISV sozinho não responde. O que responde é: <b>preço lá fora + ISV + transporte + legalização</b> contra <b>o que esse modelo custa em Portugal hoje</b>. A segunda metade dessa conta é o que medimos todos os dias:</p>
       <div class="mchips">${modelLinks}</div>
-      <p class="fc-p" style="margin-top:14px;"><a href="/precos">Ver preço de qualquer modelo em Portugal&nbsp;→</a></p>
+      <p class="fc-p" style="margin-top:14px;"><a href="/pt/precos">Ver preço de qualquer modelo em Portugal&nbsp;→</a></p>
       ${provenance({ n: null, builtAt, measure: "Tabelas de ISV 2026 (Código do ISV, art.º 7.º e 11.º)", extra: "Estimativa, não vinculativa" })}
       <p class="fc-p" style="margin-top:18px;">Estimativa indicativa a partir das tabelas em vigor. O valor liquidado pela Autoridade Tributária no processo de admissão é o que conta.</p>
     </section>
@@ -2720,7 +2720,7 @@ export function renderIsv({ topModels, host, depositCount, builtAt, refYear }) {
           "offers": { "@type": "Offer", "price": "0", "priceCurrency": "EUR" },
           "description": "Estimativa do Imposto Sobre Veículos para admissão de um carro usado importado em Portugal.",
         },
-        breadcrumbLd(host, [{ name: "Início", href: "/" }, { name: "Simulador ISV" }]),
+        breadcrumbLd(host, [{ name: "Início", href: "/pt" }, { name: "Simulador ISV" }]),
         faqLd(faqs),
       ],
     },
@@ -2729,7 +2729,7 @@ export function renderIsv({ topModels, host, depositCount, builtAt, refYear }) {
 
 // ═══ Machine-readable twins ══════════════════════════════════════════════════
 //
-// /preco/{slug}.json and /preco/{slug}/{ano}.json — the same figures the HTML
+// /pt/preco/{slug}.json and /pt/preco/{slug}/{ano}.json — the same figures the HTML
 // shows, without the markup.
 //
 // This is the cheapest thing on the list and probably the highest-leverage for
@@ -2749,7 +2749,7 @@ function facetSummary(rec, kind, slug, base, published) {
     model_years: (c.y0 && c.y1) ? { from: c.y0, to: c.y1 } : null,
     vs_model_year_matched: Array.isArray(c.vsm) ? { ratio: c.vsm[0], shared_years: c.vsm[1] } : null,
     vs_model_age_normalized: Array.isArray(c.dr) ? { ratio: c.dr[0], listings_used: c.dr[1] } : null,
-    page: live.has(c.k) ? `${base}/preco/${slug}/${c.k}` : null,
+    page: live.has(c.k) ? `${base}/pt/preco/${slug}/${c.k}` : null,
   }));
 }
 
@@ -2760,7 +2760,7 @@ export function modelJson(rec, slug, { host, builtAt, models = null }) {
   const duels = models ? duelsFor(models, slug, rec, builtAt) : [];
   return {
     source: "Carsbuyer",
-    source_url: `${base}/preco/${slug}`,
+    source_url: `${base}/pt/preco/${slug}`,
     licence: "Citação permitida com atribuição a Carsbuyer e indicação da data.",
     measured: "asking_price",
     measured_note: "Preços PEDIDOS em anúncios ativos do OLX Portugal, não preços de venda fechados.",
@@ -2772,7 +2772,7 @@ export function modelJson(rec, slug, { host, builtAt, models = null }) {
     asking_price: { median: rec.fm, p25: rec.fl, p75: rec.fh },
     fair_value_estimate: rec.gm != null
       ? { median: rec.gm, low: rec.gl, high: rec.gh,
-          note: "Estimativa do nosso modelo para specs típicas deste modelo; publicada apenas quando passa os limites de fiabilidade descritos em /metodologia." }
+          note: "Estimativa do nosso modelo para specs típicas deste modelo; publicada apenas quando passa os limites de fiabilidade descritos em /pt/metodologia." }
       : null,
     mileage_km_median: rec.kmm != null ? rec.kmm : null,
     model_years: (rec.y0 && rec.y1) ? { from: rec.y0, to: rec.y1 } : null,
@@ -2786,22 +2786,22 @@ export function modelJson(rec, slug, { host, builtAt, models = null }) {
       asking_price: { median: c.fm, p25: c.fl, p75: c.fh },
       fair_value_estimate: c.gm != null ? { median: c.gm, low: c.gl, high: c.gh } : null,
       mileage_km_median: c.km != null ? c.km : null,
-      page: pageYears.has(c.y) ? `${base}/preco/${slug}/${c.y}` : null,
+      page: pageYears.has(c.y) ? `${base}/pt/preco/${slug}/${c.y}` : null,
       page_absent_because: pageYears.has(c.y) ? null
         : typeof c.y !== "number" ? "merged_band"
         : (c.n || 0) < MIN_YEAR_PAGE_N ? "below_year_floor"
         : "outside_publication_wave",
     })),
     years_omitted_thin_sample: rec.yt || 0,
-    page_coverage_note: `\`page\` é o endereço que existe agora; quando é nulo, \`page_absent_because\` diz porquê. \"merged_band\" é uma linha que junta anos vizinhos e nunca terá endereço próprio; \"below_year_floor\" é um ano com menos de ${MIN_YEAR_PAGE_N} anúncios, que não publicamos de propósito; \"outside_publication_wave\" é amostra suficiente num modelo que ainda não entrou na vaga de publicação — esse volta a aparecer. Em qualquer dos casos os números do ano estão aqui na mesma. Os limiares estão em /metodologia.`,
+    page_coverage_note: `\`page\` é o endereço que existe agora; quando é nulo, \`page_absent_because\` diz porquê. \"merged_band\" é uma linha que junta anos vizinhos e nunca terá endereço próprio; \"below_year_floor\" é um ano com menos de ${MIN_YEAR_PAGE_N} anúncios, que não publicamos de propósito; \"outside_publication_wave\" é amostra suficiente num modelo que ainda não entrou na vaga de publicação — esse volta a aparecer. Em qualquer dos casos os números do ano estão aqui na mesma. Os limiares estão em /pt/metodologia.`,
     related: {
       depreciation: (models && publishedDepreciation(models, slug, rec, builtAt))
-        ? `${base}/depreciacao/${slug}` : null,
+        ? `${base}/pt/depreciacao/${slug}` : null,
       liquidity: (models && publishedLiquidity(models, slug, rec, builtAt))
-        ? `${base}/liquidez/${slug}` : null,
-      facets: facets.map(k => `${base}/preco/${slug}/${k}`),
-      duels: duels.map(d => `${base}/${d.path}/${slug}`),
-      methodology: `${base}/metodologia`,
+        ? `${base}/pt/liquidez/${slug}` : null,
+      facets: facets.map(k => `${base}/pt/preco/${slug}/${k}`),
+      duels: duels.map(d => `${base}/pt/${d.path}/${slug}`),
+      methodology: `${base}/pt/metodologia`,
     },
   };
 }
@@ -2812,7 +2812,7 @@ export function depreciationJson(rec, slug, fit, av, { host, builtAt }) {
   const r3 = x => Math.round(x * 1000) / 1000;
   return {
     source: "Carsbuyer",
-    source_url: `${base}/depreciacao/${slug}`,
+    source_url: `${base}/pt/depreciacao/${slug}`,
     licence: "Citação permitida com atribuição a Carsbuyer e indicação da data.",
     measured: "asking_price",
     measured_note: "Preços PEDIDOS em anúncios ativos do OLX Portugal, não preços de venda fechados.",
@@ -2857,9 +2857,9 @@ export function depreciationJson(rec, slug, fit, av, { host, builtAt }) {
       mileage_km_median: c.km != null ? c.km : null,
     })),
     related: {
-      model: `${base}/preco/${slug}`,
-      hub: `${base}/depreciacao`,
-      methodology: `${base}/metodologia`,
+      model: `${base}/pt/preco/${slug}`,
+      hub: `${base}/pt/depreciacao`,
+      methodology: `${base}/pt/metodologia`,
     },
   };
 }
@@ -2869,7 +2869,7 @@ export function facetJson(rec, slug, kind, cell, siblings, { host, builtAt }) {
   const seg = kind === "fuel" ? "combustivel" : kind === "transmission" ? "caixa" : "distrito";
   return {
     source: "Carsbuyer",
-    source_url: `${base}/preco/${slug}/${cell.k}`,
+    source_url: `${base}/pt/preco/${slug}/${cell.k}`,
     licence: "Citação permitida com atribuição a Carsbuyer e indicação da data.",
     measured: "asking_price",
     measured_note: "Preços PEDIDOS em anúncios ativos do OLX Portugal, não preços de venda fechados.",
@@ -2893,11 +2893,11 @@ export function facetJson(rec, slug, kind, cell, siblings, { host, builtAt }) {
       : null,
     siblings: (siblings || []).filter(c => c.k !== cell.k).map(c => ({
       key: c.k, label: c.lbl, sample_size: c.n,
-      asking_price_median: c.fm, page: `${base}/preco/${slug}/${c.k}`,
+      asking_price_median: c.fm, page: `${base}/pt/preco/${slug}/${c.k}`,
       vs_this_cut_year_matched: (cell.vs && Array.isArray(cell.vs[c.k]))
         ? { ratio: cell.vs[c.k][0], shared_years: cell.vs[c.k][1] } : null,
     })),
-    related: { model: `${base}/preco/${slug}`, methodology: `${base}/metodologia` },
+    related: { model: `${base}/pt/preco/${slug}`, methodology: `${base}/pt/metodologia` },
   };
 }
 
@@ -2905,7 +2905,7 @@ export function yearJson(rec, slug, year, cell, { host, builtAt }) {
   const base = `https://${host}`;
   return {
     source: "Carsbuyer",
-    source_url: `${base}/preco/${slug}/${year}`,
+    source_url: `${base}/pt/preco/${slug}/${year}`,
     licence: "Citação permitida com atribuição a Carsbuyer e indicação da data.",
     measured: "asking_price",
     measured_note: cell.w
@@ -2922,11 +2922,11 @@ export function yearJson(rec, slug, year, cell, { host, builtAt }) {
     fair_value_estimate: cell.gm != null ? { median: cell.gm, low: cell.gl, high: cell.gh } : null,
     mileage_km_median: cell.km != null ? cell.km : null,
     share_of_model_listings: rec.n ? Math.round((cell.n / rec.n) * 1000) / 1000 : null,
-    related: { model: `${base}/preco/${slug}`, methodology: `${base}/metodologia` },
+    related: { model: `${base}/pt/preco/${slug}`, methodology: `${base}/pt/metodologia` },
   };
 }
 
-// ═══ Facets: /preco/{slug}/{combustivel} and /preco/{slug}/{distrito} ════════
+// ═══ Facets: /pt/preco/{slug}/{combustivel} and /pt/preco/{slug}/{distrito} ══
 //
 // Two query clusters the model page cannot win because it answers them mixed
 // together: "Golf diesel usado preço" and "carros usados Porto preços".
@@ -2983,7 +2983,7 @@ export function facetKeys(rec) {
 export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, host, depositCount, builtAt, duelSpec = null, altJson = null }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
   const label = escapeHtml(cell.lbl);
-  const canonical = `https://${host}/preco/${slug}/${cell.k}`;
+  const canonical = `https://${host}/pt/preco/${slug}/${cell.k}`;
   const isFuel = kind === "fuel";
   const isGear = kind === "transmission";
   // "um Golf diesel" vs "um Golf no Porto" — the preposition is the difference
@@ -3026,7 +3026,7 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
   const pairOf = o => (cell.vs && Array.isArray(cell.vs[o.k]))
     ? { pct: cell.vs[o.k][0] - 1, years: cell.vs[o.k][1] } : null;
   const compare = others.map(o => {
-    const href = `/preco/${slug}/${o.k}`;
+    const href = `/pt/preco/${slug}/${o.k}`;
     const link = `<a href="${href}">${escapeHtml(o.lbl)}</a>`;
     const km = (o.km != null && cell.km != null)
       ? ` A quilometragem mediana difere em ${fmtKm(Math.abs(cell.km - o.km))} (${cell.km > o.km ? "mais" : "menos"} deste lado).` : "";
@@ -3041,8 +3041,8 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
     : ageMoves ? ` Ajustado pela idade, este corte pede ${more(age.pct)} ${agePct}% do que ${refAll}: a mediana acima é em bruto e inclui a diferença de anos.`
     : ` Ajustado pela idade, este corte pede o mesmo que ${refAll} — a distância entre as duas medianas em bruto é a diferença de anos.`;
   const body = crumbs([
-    { name: "Início", href: "/" }, { name: "Preços", href: "/precos" },
-    { name: `${rec.b} ${rec.m}`, href: `/preco/${slug}` }, { name: cell.lbl },
+    { name: "Início", href: "/pt" }, { name: "Preços", href: "/pt/precos" },
+    { name: `${rec.b} ${rec.m}`, href: `/pt/preco/${slug}` }, { name: cell.lbl },
   ]) + `
     <div style="padding-top:14px;">
       <div class="side-card" style="max-width:680px;margin:0 auto;">
@@ -3073,8 +3073,8 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
     <section class="section fc-wrap">
       <div class="sec-label" style="margin-bottom:10px;">${sibLabel}</div>
       <div class="fc-yearlinks">${siblingsCells.map(c =>
-        c.k === cell.k ? `<a class="on" href="/preco/${slug}/${c.k}">${escapeHtml(c.lbl)}</a>`
-                       : `<a href="/preco/${slug}/${c.k}">${escapeHtml(c.lbl)}</a>`).join("")}</div>
+        c.k === cell.k ? `<a class="on" href="/pt/preco/${slug}/${c.k}">${escapeHtml(c.lbl)}</a>`
+                       : `<a href="/pt/preco/${slug}/${c.k}">${escapeHtml(c.lbl)}</a>`).join("")}</div>
     </section>` : ""}
     <section class="section fc-wide">
       <div class="cta-banner">
@@ -3082,11 +3082,11 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
           <h2>Tens um ${phrase}?</h2>
           <p>Esta é a mediana do corte. Cola o link do teu anúncio e dizemos o valor justo desse carro em concreto.</p>
         </div>
-        <a class="btn-bright" href="/avaliar?modelo=${encodeURIComponent(slug)}">Avaliar o meu carro&nbsp;&nbsp;→</a>
+        <a class="btn-bright" href="/pt/avaliar?modelo=${encodeURIComponent(slug)}">Avaliar o meu carro&nbsp;&nbsp;→</a>
       </div>
     </section>
     <section class="section fc-wrap" style="padding-bottom:70px;">
-      <p class="fc-p"><a href="/preco/${slug}">Todos os ${B} ${M}</a>${duelSpec ? ` · <a href="/${duelSpec.path}/${slug}">${escapeHtml(duelSpec.crumb)} neste modelo</a>` : ""}${isFuel || isGear ? "" : ` · <a href="/precos/${cell.k}">Carros usados ${emDistrito(cell.k, escapeHtml(cell.lbl))}</a>`} · <a href="/precos">Todos os modelos</a></p>
+      <p class="fc-p"><a href="/pt/preco/${slug}">Todos os ${B} ${M}</a>${duelSpec ? ` · <a href="/pt/${duelSpec.path}/${slug}">${escapeHtml(duelSpec.crumb)} neste modelo</a>` : ""}${isFuel || isGear ? "" : ` · <a href="/pt/precos/${cell.k}">Carros usados ${emDistrito(cell.k, escapeHtml(cell.lbl))}</a>`} · <a href="/pt/precos">Todos os modelos</a></p>
     </section>`;
 
   const faqs = [[
@@ -3136,8 +3136,8 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
           },
         },
         breadcrumbLd(host, [
-          { name: "Início", href: "/" }, { name: "Preços", href: "/precos" },
-          { name: `${rec.b} ${rec.m}`, href: `/preco/${slug}` }, { name: cell.lbl },
+          { name: "Início", href: "/pt" }, { name: "Preços", href: "/pt/precos" },
+          { name: `${rec.b} ${rec.m}`, href: `/pt/preco/${slug}` }, { name: cell.lbl },
         ]),
         faqLd(faqs),
       ],
@@ -3145,7 +3145,7 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
   });
 }
 
-// ═══ /precos/{distrito} — the market in one district ═════════════════════════
+// ═══ /pt/precos/{distrito} — the market in one district ══════════════════════
 // Portuguese district names and the definite article.
 //
 // Most districts take a bare "em Lisboa" / "em Braga" / "em Faro". Porto takes
@@ -3168,7 +3168,7 @@ export function districtRanking(districts, key) {
 }
 
 export function renderDistrictPage({ key, rec, models, districts, stats, host, depositCount, builtAt }) {
-  const canonical = `https://${host}/precos/${key}`;
+  const canonical = `https://${host}/pt/precos/${key}`;
   const L = escapeHtml(rec.lbl);
   const vsNational = stats.priceMed ? (rec.fm - stats.priceMed) / stats.priceMed : null;
   const rows = (rec.top || []).map(([slug, n, fm]) => {
@@ -3176,7 +3176,7 @@ export function renderDistrictPage({ key, rec, models, districts, stats, host, d
     if (!m) return "";
     const d = m.fm > 0 ? (fm - m.fm) / m.fm : null;
     return `<tr>
-      <td><a href="/preco/${slug}" style="color:#177A47;font-weight:600;">${escapeHtml(m.b)} ${escapeHtml(m.m)}</a></td>
+      <td><a href="/pt/preco/${slug}" style="color:#177A47;font-weight:600;">${escapeHtml(m.b)} ${escapeHtml(m.m)}</a></td>
       <td>${n}</td><td>${fmtEur(fm)}</td>
       <td class="mut">${fmtEur(m.fm)}</td>
       <td>${d == null ? "—" : `${d >= 0 ? "+" : ""}${Math.round(d * 100)}%`}</td></tr>`;
@@ -3184,7 +3184,7 @@ export function renderDistrictPage({ key, rec, models, districts, stats, host, d
 
   const rank = districtRanking(districts || {}, key);
   const ranking = rank.rows.length >= 3 ? rank.rows.map(r => `<tr>
-      <td>${r.k === key ? `<b>${escapeHtml(r.lbl)}</b>` : `<a href="/precos/${encodeURIComponent(r.k)}" style="color:#177A47;font-weight:600;">${escapeHtml(r.lbl)}</a>`}</td>
+      <td>${r.k === key ? `<b>${escapeHtml(r.lbl)}</b>` : `<a href="/pt/precos/${encodeURIComponent(r.k)}" style="color:#177A47;font-weight:600;">${escapeHtml(r.lbl)}</a>`}</td>
       <td>${fmtEur(r.fm)}</td>
       <td class="mut">${r.k === key ? "—" : `${r.fm >= rec.fm ? "+" : ""}${Math.round((r.fm / rec.fm - 1) * 100)}%`}</td>
       <td class="mut">${fmtNum(r.n)}</td></tr>`).join("") : "";
@@ -3193,7 +3193,7 @@ export function renderDistrictPage({ key, rec, models, districts, stats, host, d
     : "";
 
   const body = crumbs([
-    { name: "Início", href: "/" }, { name: "Preços", href: "/precos" }, { name: rec.lbl },
+    { name: "Início", href: "/pt" }, { name: "Preços", href: "/pt/precos" }, { name: rec.lbl },
   ]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">${L.toUpperCase()} · OLX PORTUGAL</span></div>
@@ -3214,7 +3214,7 @@ export function renderDistrictPage({ key, rec, models, districts, stats, host, d
         <tbody>${rows}</tbody></table></div>
     </section>` : `<section class="section fc-wrap">
       <h2 class="fc-h2">Modelo a modelo, aqui não dá</h2>
-      <p class="fc-p">Os ${fmtNum(rec.n)} anúncios ${emDistrito(key, L)} chegam para uma mediana do distrito, mas não para uma mediana por modelo: nenhum modelo tem anúncios que cheguem aqui para que a sua mediana signifique alguma coisa. Em vez de a inventar com quatro carros, ficamos pelo que o distrito diz no seu conjunto e pela comparação com o resto do país, aqui em baixo. Para um modelo concreto, os <a href="/precos">preços nacionais</a> são a referência mais firme que temos.</p>
+      <p class="fc-p">Os ${fmtNum(rec.n)} anúncios ${emDistrito(key, L)} chegam para uma mediana do distrito, mas não para uma mediana por modelo: nenhum modelo tem anúncios que cheguem aqui para que a sua mediana signifique alguma coisa. Em vez de a inventar com quatro carros, ficamos pelo que o distrito diz no seu conjunto e pela comparação com o resto do país, aqui em baixo. Para um modelo concreto, os <a href="/pt/precos">preços nacionais</a> são a referência mais firme que temos.</p>
     </section>`}
     ${ranking ? `<section class="section fc-wrap">
       <h2 class="fc-h2">Onde ${L} fica no país</h2>
@@ -3224,7 +3224,7 @@ export function renderDistrictPage({ key, rec, models, districts, stats, host, d
         <tbody>${ranking}</tbody></table></div>
     </section>` : ""}
     <section class="section fc-wrap" style="padding-bottom:70px;">
-      <p class="fc-p"><a href="/precos">Todos os modelos</a> · <a href="/mercado">Carros abaixo do valor justo</a> · <a href="/avaliar">Avaliar um anúncio</a></p>
+      <p class="fc-p"><a href="/pt/precos">Todos os modelos</a> · <a href="/pt/mercado">Carros abaixo do valor justo</a> · <a href="/pt/avaliar">Avaliar um anúncio</a></p>
     </section>`;
 
   return layout({
@@ -3249,7 +3249,7 @@ export function renderDistrictPage({ key, rec, models, districts, stats, host, d
           "areaServed": { "@type": "Place", "name": rec.lbl },
         },
         breadcrumbLd(host, [
-          { name: "Início", href: "/" }, { name: "Preços", href: "/precos" }, { name: rec.lbl },
+          { name: "Início", href: "/pt" }, { name: "Preços", href: "/pt/precos" }, { name: rec.lbl },
         ]),
       ],
     },
@@ -3281,7 +3281,7 @@ function importVerdict(rec) {
 export function importJson(rec, slug, costs, { host, builtAt } = {}) {
   return {
     slug, brand: rec.b, model: rec.m,
-    url: `https://${host}/importar/${slug}`,
+    url: `https://${host}/pt/importar/${slug}`,
     question: "does importing this model from Germany land under the Portuguese asking price",
     sample_de: rec.nde, sample_pt: rec.npt,
     fixed_costs_eur: costs ? { low: costs.lo, high: costs.hi, items: costs.items } : null,
@@ -3303,7 +3303,7 @@ export function importJson(rec, slug, costs, { host, builtAt } = {}) {
 export function renderImportPage({ guides = "", rec, slug, costs, stats, hasModelPage = true,
                                   host, depositCount, builtAt, historyUrl = null }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
-  const canonical = `https://${host}/importar/${slug}`;
+  const canonical = `https://${host}/pt/importar/${slug}`;
   const v = importVerdict(rec);
   const cells = rec.yr || [];
   const lo = costs ? costs.lo : null, hi = costs ? costs.hi : null;
@@ -3335,7 +3335,7 @@ export function renderImportPage({ guides = "", rec, slug, costs, stats, hasMode
       <td class="mut">${escapeHtml(i.src || "")}</td></tr>`).join("");
 
   const body = crumbs([
-    { name: "Início", href: "/" }, { name: "Importar", href: "/importar" },
+    { name: "Início", href: "/pt" }, { name: "Importar", href: "/pt/importar" },
     { name: `${rec.b} ${rec.m}` },
   ]) + `
     <div style="padding-top:14px;">
@@ -3368,7 +3368,7 @@ export function renderImportPage({ guides = "", rec, slug, costs, stats, hasMode
       <div class="fc-scroll"><table class="fc-tbl">
         <thead><tr><th>Rubrica</th><th>Valor</th><th>Nota</th></tr></thead>
         <tbody>${costRows}
-          <tr><td><b>ISV</b></td><td><b>varia com o carro</b></td><td class="mut">calculado a partir do CO2, cilindrada e ano de cada anúncio — <a href="/isv">simulador</a></td></tr>
+          <tr><td><b>ISV</b></td><td><b>varia com o carro</b></td><td class="mut">calculado a partir do CO2, cilindrada e ano de cada anúncio — <a href="/pt/isv">simulador</a></td></tr>
         </tbody></table></div>
       <p class="fc-p" style="margin-top:12px;">O IVA não aparece aqui de propósito: num usado com mais de seis meses e mais de 6 000 km o IVA é pago no país onde se compra e não volta a ser pago em Portugal. O preço alemão que usamos é o preço pedido ao público, com o IVA alemão lá dentro quando o vendedor é um stand.</p>
     </section>
@@ -3396,11 +3396,11 @@ export function renderImportPage({ guides = "", rec, slug, costs, stats, hasMode
           <h2>Tens um carro concreto em vista?</h2>
           <p>Esta página é a mediana do modelo. Para o anúncio que estás a ver, mete a cilindrada, o CO2 e o ano no simulador e fica com o ISV desse carro.</p>
         </div>
-        <a class="btn-bright" href="/isv">Simular o ISV&nbsp;&nbsp;→</a>
+        <a class="btn-bright" href="/pt/isv">Simular o ISV&nbsp;&nbsp;→</a>
       </div>
     </section>
     <section class="section fc-wrap" style="padding-bottom:70px;">
-      <p class="fc-p">${hasModelPage ? `<a href="/preco/${slug}">Preços de ${B} ${M} em Portugal</a> · ` : ""}<a href="/importar">Outros modelos que vale a pena comparar</a> · <a href="/isv">Simulador de ISV</a> · <a href="${canonical}.json">Dados em JSON</a></p>
+      <p class="fc-p">${hasModelPage ? `<a href="/pt/preco/${slug}">Preços de ${B} ${M} em Portugal</a> · ` : ""}<a href="/pt/importar">Outros modelos que vale a pena comparar</a> · <a href="/pt/isv">Simulador de ISV</a> · <a href="${canonical}.json">Dados em JSON</a></p>
     </section>${guides}`;
 
   const faqs = [
@@ -3432,7 +3432,7 @@ export function renderImportPage({ guides = "", rec, slug, costs, stats, hasMode
           "distribution": [{ "@type": "DataDownload", "encodingFormat": "application/json", "contentUrl": `${canonical}.json` }],
         },
         breadcrumbLd(host, [
-          { name: "Início", href: "/" }, { name: "Importar", href: "/importar" },
+          { name: "Início", href: "/pt" }, { name: "Importar", href: "/pt/importar" },
           { name: `${rec.b} ${rec.m}` },
         ]),
         faqLd(faqs),
@@ -3442,16 +3442,16 @@ export function renderImportPage({ guides = "", rec, slug, costs, stats, hasMode
 }
 
 export function renderImportHub({ rows, costs, host, depositCount, builtAt }) {
-  const canonical = `https://${host}/importar`;
+  const canonical = `https://${host}/pt/importar`;
   const lo = costs ? costs.lo : null, hi = costs ? costs.hi : null;
   const tr = rows.map(r => `<tr>
-      <td><a href="/importar/${r.slug}" style="color:#177A47;font-weight:600;">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a></td>
+      <td><a href="/pt/importar/${r.slug}" style="color:#177A47;font-weight:600;">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a></td>
       <td style="font-weight:600;color:${r.med_gap > 0 ? "#177A47" : "#9B2C2C"};">${r.med_gap > 0 ? "−" : "+"}${fmtEur(Math.abs(r.med_gap))}</td>
       <td class="mut">${r.wins}/${r.cells}</td>
       <td class="mut">${fmtNum(r.nde)}</td>
       <td class="mut">${fmtNum(r.npt)}</td></tr>`).join("");
   const winners = rows.filter(r => r.med_gap > 0).length;
-  const body = crumbs([{ name: "Início", href: "/" }, { name: "Importar" }]) + `
+  const body = crumbs([{ name: "Início", href: "/pt" }, { name: "Importar" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">Importar da Alemanha: em que modelos a conta fecha</h1>
       <p class="fc-p">Toda a gente que vende importação mostra o mesmo: um simulador de ISV. Um ISV sozinho não decide nada — o que decide é o preço alemão <b>mais</b> o imposto <b>mais</b> a legalização, contra o que o mesmo carro pede em Portugal hoje. É essa conta que está aqui, ano a ano, com as duas pontas medidas em anúncios reais: AutoScout24 de um lado, OLX do outro.</p>
@@ -3463,7 +3463,7 @@ export function renderImportHub({ rows, costs, host, depositCount, builtAt }) {
                      measureId: "import-landed-cost",
                      source: "AutoScout24 (Alemanha) e OLX (Portugal)",
                      measure: "Preço pedido na Alemanha + ISV estimado + legalização, contra o preço pedido em Portugal" })}
-      <p class="fc-p" style="margin-top:18px;"><a href="/isv">Simulador de ISV</a> · <a href="/precos">Preços em Portugal por modelo</a> · <a href="/metodologia">Como calculamos</a></p>
+      <p class="fc-p" style="margin-top:18px;"><a href="/pt/isv">Simulador de ISV</a> · <a href="/pt/precos">Preços em Portugal por modelo</a> · <a href="/pt/metodologia">Como calculamos</a></p>
     </section>
     <div style="height:60px;"></div>`;
   return layout({
@@ -3481,7 +3481,7 @@ export function renderImportHub({ rows, costs, host, depositCount, builtAt }) {
           "isAccessibleForFree": true, "dateModified": builtAt || undefined,
           "variableMeasured": ["Custo total à porta (EUR)", "Preço pedido em Portugal (EUR)"],
         },
-        breadcrumbLd(host, [{ name: "Início", href: "/" }, { name: "Importar" }]),
+        breadcrumbLd(host, [{ name: "Início", href: "/pt" }, { name: "Importar" }]),
       ],
     },
   });
@@ -3623,7 +3623,7 @@ export function retentionChart(av, { w = 640, h = 240 } = {}) {
 
 export function duelJson(rec, slug, av, { host, builtAt }) {
   const S = av.spec;
-  const canonical = `https://${host}/${S.path}/${slug}`;
+  const canonical = `https://${host}/pt/${S.path}/${slug}`;
   const side = s => ({ sample_size: s.n, annual_depreciation_rate: s.r,
                        median_asking_eur: s.fm, median_mileage_km: s.km });
   return {
@@ -3649,7 +3649,7 @@ export function duelJson(rec, slug, av, { host, builtAt }) {
 export function renderDuelPage({ rec, slug, av, stats, host, depositCount, builtAt, facetKeys: liveFacets = null }) {
   const S = av.spec;
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
-  const canonical = `https://${host}/${S.path}/${slug}`;
+  const canonical = `https://${host}/pt/${S.path}/${slug}`;
   const aPct = pctc(av.a.r), bPct = pctc(av.b.r);
   const win = S[av.winner], lose = S[av.winner === "a" ? "b" : "a"];
   const winSide = av[av.winner], loseSide = av[av.winner === "a" ? "b" : "a"];
@@ -3704,7 +3704,7 @@ export function renderDuelPage({ rec, slug, av, stats, host, depositCount, built
       </tbody></table></div>`;
 
   const body = crumbs([
-    { name: "Início", href: "/" }, { name: S.crumb, href: `/${S.path}` },
+    { name: "Início", href: "/pt" }, { name: S.crumb, href: `/pt/${S.path}` },
     { name: `${rec.b} ${rec.m}` },
   ]) + `
     <div style="padding-top:14px;">
@@ -3741,11 +3741,11 @@ export function renderDuelPage({ rec, slug, av, stats, host, depositCount, built
           <h2>E o TEU ${B} ${M}?</h2>
           <p>Estas são as curvas do modelo. Cola o link do teu anúncio e dizemos o valor justo desse carro concreto — com a tua versão, os teus quilómetros e a tua caixa.</p>
         </div>
-        <a class="btn-bright" href="/avaliar?modelo=${encodeURIComponent(slug)}">Avaliar o meu carro&nbsp;&nbsp;→</a>
+        <a class="btn-bright" href="/pt/avaliar?modelo=${encodeURIComponent(slug)}">Avaliar o meu carro&nbsp;&nbsp;→</a>
       </div>
     </section>
     <section class="section fc-wrap" style="padding-bottom:70px;">
-      <p class="fc-p"><a href="/preco/${slug}">Todos os ${B} ${M}</a>${[S.a, S.b].filter(side => !liveFacets || liveFacets.includes(side.facet)).map(side => ` · <a href="/preco/${slug}/${side.facet}">${side.only}</a>`).join("")} · <a href="/${S.path}">Outros modelos</a> · <a href="/metodologia">Como calculamos</a></p>
+      <p class="fc-p"><a href="/pt/preco/${slug}">Todos os ${B} ${M}</a>${[S.a, S.b].filter(side => !liveFacets || liveFacets.includes(side.facet)).map(side => ` · <a href="/pt/preco/${slug}/${side.facet}">${side.only}</a>`).join("")} · <a href="/pt/${S.path}">Outros modelos</a> · <a href="/pt/metodologia">Como calculamos</a></p>
     </section>`;
 
   const faqs = [
@@ -3778,7 +3778,7 @@ export function renderDuelPage({ rec, slug, av, stats, host, depositCount, built
           "distribution": [{ "@type": "DataDownload", "encodingFormat": "application/json", "contentUrl": `${canonical}.json` }],
         },
         breadcrumbLd(host, [
-          { name: "Início", href: "/" }, { name: S.crumb, href: `/${S.path}` },
+          { name: "Início", href: "/pt" }, { name: S.crumb, href: `/pt/${S.path}` },
           { name: `${rec.b} ${rec.m}` },
         ]),
         faqLd(faqs),
@@ -3789,20 +3789,20 @@ export function renderDuelPage({ rec, slug, av, stats, host, depositCount, built
 
 export function renderDuelHub({ spec, rows, other, stats, host, depositCount, builtAt }) {
   const S = spec;
-  const canonical = `https://${host}/${S.path}`;
+  const canonical = `https://${host}/pt/${S.path}`;
   const aWins = rows.filter(r => r.av.decisive && r.av.winner === "a").length;
   const bWins = rows.filter(r => r.av.decisive && r.av.winner === "b").length;
   const draws = rows.length - aWins - bWins;
 
   const tr = rows.map(r => `<tr>
-      <td><a href="/${S.path}/${r.slug}" style="color:#177A47;font-weight:600;">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a></td>
+      <td><a href="/pt/${S.path}/${r.slug}" style="color:#177A47;font-weight:600;">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a></td>
       <td>${pctc(r.av.a.r)}%</td>
       <td>${pctc(r.av.b.r)}%</td>
       <td class="mut">${ppc(r.av.diff)} pp ±${ppc(r.av.ci)}</td>
       <td>${r.av.decisive ? escapeHtml(S[r.av.winner].lbl) : "<span class=\"mut\">Empate</span>"}</td>
       <td class="mut">${r.av.a.n} / ${r.av.b.n}</td></tr>`).join("");
 
-  const body = crumbs([{ name: "Início", href: "/" }, { name: S.crumb }]) + `
+  const body = crumbs([{ name: "Início", href: "/pt" }, { name: S.crumb }]) + `
     <div style="padding-top:14px;">
       <div class="side-card" style="max-width:680px;margin:0 auto;">
         <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">${S.eyebrow} · ${rows.length} MODELOS</span></div>
@@ -3829,11 +3829,11 @@ export function renderDuelHub({ spec, rows, other, stats, host, depositCount, bu
           <h2>Estás a escolher entre dois carros concretos?</h2>
           <p>Cola o link de cada anúncio e dizemos o valor justo de cada um — com a motorização, os quilómetros e a versão de cada exemplar.</p>
         </div>
-        <a class="btn-bright" href="/avaliar">Avaliar um anúncio&nbsp;&nbsp;→</a>
+        <a class="btn-bright" href="/pt/avaliar">Avaliar um anúncio&nbsp;&nbsp;→</a>
       </div>
     </section>
     <section class="section fc-wrap" style="padding-bottom:70px;">
-      <p class="fc-p">${other ? `<a href="/${other.path}">${other.crumb}</a> · ` : ""}<a href="/depreciacao">Desvalorização por modelo</a> · <a href="/precos">Preços por modelo</a> · <a href="/metodologia">Como calculamos</a></p>
+      <p class="fc-p">${other ? `<a href="/pt/${other.path}">${other.crumb}</a> · ` : ""}<a href="/pt/depreciacao">Desvalorização por modelo</a> · <a href="/pt/precos">Preços por modelo</a> · <a href="/pt/metodologia">Como calculamos</a></p>
     </section>`;
 
   return layout({
@@ -3851,7 +3851,7 @@ export function renderDuelHub({ spec, rows, other, stats, host, depositCount, bu
           "isAccessibleForFree": true, "dateModified": builtAt || undefined,
           "variableMeasured": ["Desvalorização anual (%)", S.kind === "fuel" ? "Combustível" : "Caixa"],
         },
-        breadcrumbLd(host, [{ name: "Início", href: "/" }, { name: S.crumb }]),
+        breadcrumbLd(host, [{ name: "Início", href: "/pt" }, { name: S.crumb }]),
       ],
     },
   });
@@ -3907,7 +3907,7 @@ export function venderJson(rec, slug, { host, builtAt } = {}) {
   return {
     source: "Carsbuyer",
     licence: "Citação permitida com atribuição a Carsbuyer e indicação da data.",
-    url: host ? `https://${host}/vender/${slug}` : undefined,
+    url: host ? `https://${host}/pt/vender/${slug}` : undefined,
     built_at: builtAt || undefined,
     brand: rec.b, model: rec.m, listings: rec.n,
     asking: { median: rec.fm, p25: rec.fl, p75: rec.fh },
@@ -3930,12 +3930,12 @@ export function renderVenderPage({ guides = "", rec, slug, market, pageYears = [
                                    host, depositCount, builtAt }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
   const FM = fmtEur(rec.fm), FL = fmtEur(rec.fl), FH = fmtEur(rec.fh);
-  const canonical = `https://${host}/vender/${slug}`;
+  const canonical = `https://${host}/pt/vender/${slug}`;
   const f = venderFacts(rec, market);
   const years = yearCells(rec, 1);
 
   const yearRows = years.map(c => {
-    const y = pageYears.includes(c.y) ? `<a href="/preco/${slug}/${c.y}">${c.y}</a>` : String(c.y);
+    const y = pageYears.includes(c.y) ? `<a href="/pt/preco/${slug}/${c.y}">${c.y}</a>` : String(c.y);
     return `<tr><td>${y}</td><td><b>${fmtEur(c.fm)}</b></td><td class="mut">${fmtEur(c.fl)} – ${fmtEur(c.fh)}</td><td class="mut">${c.n}</td></tr>`;
   }).join("");
 
@@ -3979,7 +3979,7 @@ export function renderVenderPage({ guides = "", rec, slug, market, pageYears = [
 
   const check = VENDER_CHECKLIST.map(([t, d]) => `<li class="fc-li"><b>${t}</b> — ${d}</li>`).join("");
 
-  const body = crumbs([{ name: "Início", href: "/" }, { name: "Vender", href: "/vender" }, { name: `${rec.b} ${rec.m}` }]) + `
+  const body = crumbs([{ name: "Início", href: "/pt" }, { name: "Vender", href: "/pt/vender" }, { name: `${rec.b} ${rec.m}` }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">Vender um ${B} ${M}: quanto pedir e em quantos dias vende</h1>
       <p class="fc-p">Nos <b>${rec.n} anúncios ativos</b> de ${B} ${M} no OLX, metade pede entre <b>${FL}</b> e <b>${FH}</b>, com mediana de <b>${FM}</b>. ${speedLead}${speedMkt} Estes são os números contra os quais o teu anúncio vai ser lido.</p>
@@ -3991,12 +3991,12 @@ export function renderVenderPage({ guides = "", rec, slug, market, pageYears = [
         <thead><tr><th>Ano</th><th>Mediana pedida</th><th>Metade pede entre</th><th>Anúncios</th></tr></thead>
         <tbody>${yearRows}</tbody>
       </table></div>
-      <p class="fc-p">Preços <b>pedidos</b> em anúncios ativos, não preços de venda fechados: quem vende cede em média o que está na secção seguinte. Para o teu carro concreto, com os teus quilómetros, usa a <a href="/avaliar?modelo=${encodeURIComponent(slug)}">avaliação por modelo e ano</a>.</p>
+      <p class="fc-p">Preços <b>pedidos</b> em anúncios ativos, não preços de venda fechados: quem vende cede em média o que está na secção seguinte. Para o teu carro concreto, com os teus quilómetros, usa a <a href="/pt/avaliar?modelo=${encodeURIComponent(slug)}">avaliação por modelo e ano</a>.</p>
 
       <h2 class="fc-h2">Em quantos dias vende</h2>
       <p class="fc-p">${speedLead}${speedMkt} ${speedAdvice}</p>
       ${speedRows ? `<div class="fc-scroll"><table class="fc-tbl"><thead><tr><th>Ao fim de</th><th>Já saíram</th><th>Ainda à venda</th></tr></thead><tbody>${speedRows}</tbody></table></div>` : ""}
-      <p class="fc-p mut" style="font-size:13.5px;">Um anúncio do OLX corre em ciclos de 30 dias; contamos como saída o último ciclo em que o vimos no ar, e a conta inclui os que ainda estão à venda, que é o que a impede de ficar curta.${hasLiquidity ? ` Detalhe por preço, idade e distrito: <a href="/liquidez/${slug}">tempo de venda do ${B} ${M}</a>.` : ""}</p>
+      <p class="fc-p mut" style="font-size:13.5px;">Um anúncio do OLX corre em ciclos de 30 dias; contamos como saída o último ciclo em que o vimos no ar, e a conta inclui os que ainda estão à venda, que é o que a impede de ficar curta.${hasLiquidity ? ` Detalhe por preço, idade e distrito: <a href="/pt/liquidez/${slug}">tempo de venda do ${B} ${M}</a>.` : ""}</p>
       ${cutBlock}
       ${dtBlock}
       ${pbBlock}
@@ -4008,7 +4008,7 @@ export function renderVenderPage({ guides = "", rec, slug, market, pageYears = [
       ${leadFormBlock({ slug, name: `${rec.b} ${rec.m}`, year: null, median: rec.fm })}
     </section>
     <section class="section fc-wrap" style="padding-bottom:70px;">
-      <p class="fc-p"><a href="/preco/${slug}">Preços de ${B} ${M} por ano</a>${hasDepreciation ? ` · <a href="/depreciacao/${slug}">Desvalorização</a>` : ""}${hasLiquidity ? ` · <a href="/liquidez/${slug}">Tempo de venda</a>` : ""} · <a href="/vender">Outros modelos</a> · <a href="/guias">Guias para vender</a> · <a href="/metodologia">Como medimos</a> · <a href="${canonical}.json">Dados em JSON</a></p>
+      <p class="fc-p"><a href="/pt/preco/${slug}">Preços de ${B} ${M} por ano</a>${hasDepreciation ? ` · <a href="/pt/depreciacao/${slug}">Desvalorização</a>` : ""}${hasLiquidity ? ` · <a href="/pt/liquidez/${slug}">Tempo de venda</a>` : ""} · <a href="/pt/vender">Outros modelos</a> · <a href="/pt/guias">Guias para vender</a> · <a href="/pt/metodologia">Como medimos</a> · <a href="${canonical}.json">Dados em JSON</a></p>
     </section>${guides}`;
 
   const faqs = [
@@ -4037,7 +4037,7 @@ export function renderVenderPage({ guides = "", rec, slug, market, pageYears = [
           "variableMeasured": ["Preço pedido (EUR)", "Dias até sair do OLX", "Anúncios com descida de preço (%)"],
           "distribution": [{ "@type": "DataDownload", "encodingFormat": "application/json", "contentUrl": `${canonical}.json` }],
         },
-        breadcrumbLd(host, [{ name: "Início", href: "/" }, { name: "Vender", href: "/vender" }, { name: `${rec.b} ${rec.m}` }]),
+        breadcrumbLd(host, [{ name: "Início", href: "/pt" }, { name: "Vender", href: "/pt/vender" }, { name: `${rec.b} ${rec.m}` }]),
         faqLd(faqs),
       ],
     },
@@ -4045,16 +4045,16 @@ export function renderVenderPage({ guides = "", rec, slug, market, pageYears = [
 }
 
 export function renderVenderHub({ rows, market, host, depositCount, builtAt }) {
-  const canonical = `https://${host}/vender`;
+  const canonical = `https://${host}/pt/vender`;
   const mkt = market || {};
   const tr = rows.map(r => `<tr>
-      <td><a href="/vender/${r.slug}" style="color:#177A47;font-weight:600;">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a></td>
+      <td><a href="/pt/vender/${r.slug}" style="color:#177A47;font-weight:600;">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a></td>
       <td><b>${fmtEur(r.fm)}</b></td>
       <td class="mut">${fmtEur(r.fl)} – ${fmtEur(r.fh)}</td>
       <td class="mut">${r.s30 != null ? `${liqPct(r.s30)} em cada 100` : (r.sd != null ? `~${r.sd} dias` : "—")}</td>
       <td class="mut">${r.cu != null ? `${liqPct(r.cu)}%${r.cp != null ? ` · −${liqPct(r.cp)}%` : ""}` : "—"}</td>
       <td class="mut">${fmtNum(r.n)}</td></tr>`).join("");
-  const body = crumbs([{ name: "Início", href: "/" }, { name: "Vender" }]) + `
+  const body = crumbs([{ name: "Início", href: "/pt" }, { name: "Vender" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">Vender carro usado em Portugal: quanto pedir por modelo</h1>
       <p class="fc-p">Para cada modelo com amostra suficiente no OLX: o que os outros vendedores estão a pedir, em quantos dias os anúncios saem e quantos acabam por baixar o preço. É a referência contra a qual o teu anúncio vai ser comparado — e a que usas para ler uma proposta de compra.</p>
@@ -4062,9 +4062,9 @@ export function renderVenderHub({ rows, market, host, depositCount, builtAt }) {
       <div class="fc-scroll"><table class="fc-tbl">
         <thead><tr><th>Modelo</th><th>Mediana pedida</th><th>Metade pede entre</th><th>Sai em 30 dias</th><th>Baixam o preço</th><th>Anúncios</th></tr></thead>
         <tbody>${tr}</tbody></table></div>
-      <p class="fc-p" style="margin-top:18px;">O teu modelo não está na lista? <a href="/avaliar#escolher">Escolhe-o na avaliação por modelo e ano</a>: mostra a mediana e deixa-te pedir propostas de compra.</p>
+      <p class="fc-p" style="margin-top:18px;">O teu modelo não está na lista? <a href="/pt/avaliar#escolher">Escolhe-o na avaliação por modelo e ano</a>: mostra a mediana e deixa-te pedir propostas de compra.</p>
       ${provenance({ n: rows.reduce((s, r) => s + (r.n || 0), 0), builtAt, measure: "Preço pedido em anúncios ativos (mediana e P25-P75); dias até sair do OLX" })}
-      <p class="fc-p" style="margin-top:18px;"><a href="/precos">Preços por modelo</a> · <a href="/liquidez">Tempo de venda</a> · <a href="/depreciacao">Desvalorização</a> · <a href="/metodologia">Como medimos</a></p>
+      <p class="fc-p" style="margin-top:18px;"><a href="/pt/precos">Preços por modelo</a> · <a href="/pt/liquidez">Tempo de venda</a> · <a href="/pt/depreciacao">Desvalorização</a> · <a href="/pt/metodologia">Como medimos</a></p>
     </section>
     <div style="height:60px;"></div>`;
   return layout({
@@ -4081,7 +4081,7 @@ export function renderVenderHub({ rows, market, host, depositCount, builtAt }) {
           "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true, "dateModified": builtAt || undefined,
         },
-        breadcrumbLd(host, [{ name: "Início", href: "/" }, { name: "Vender" }]),
+        breadcrumbLd(host, [{ name: "Início", href: "/pt" }, { name: "Vender" }]),
       ],
     },
   });

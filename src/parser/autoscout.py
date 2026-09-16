@@ -83,7 +83,7 @@ SEARCH_PATH = "/lst"
 PAGE_SIZE = 20
 MAX_PAGE = 20
 USER_AGENT = ("Mozilla/5.0 (compatible; CarsbuyerBot/1.0; "
-              "+https://carsbuyer.org/sobre)")
+              "+https://carsbuyer.org/pt/sobre)")
 DELAY_MIN = 6.0
 DELAY_MAX = 10.0
 TIMEOUT = 30.0

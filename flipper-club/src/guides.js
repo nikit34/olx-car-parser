@@ -33,7 +33,7 @@ function fastestTable(models) {
     .filter(([, r]) => r.lq && r.lq.s30 != null && r.lq.n >= 100 && r.fm > 0)
     .sort((a, b) => b[1].lq.s30 - a[1].lq.s30)
     .slice(0, 8)
-    .map(([slug, r]) => `<tr><td><a href="/vender/${slug}">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a></td><td><b>${pct(r.lq.s30)} em cada 100</b></td><td class="mut">${r.lq.md != null ? `${r.lq.md} dias` : "—"}</td><td class="mut">${fmtEur(r.fm)}</td></tr>`)
+    .map(([slug, r]) => `<tr><td><a href="/pt/vender/${slug}">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a></td><td><b>${pct(r.lq.s30)} em cada 100</b></td><td class="mut">${r.lq.md != null ? `${r.lq.md} dias` : "—"}</td><td class="mut">${fmtEur(r.fm)}</td></tr>`)
     .join("");
   if (!rows) return "";
   return `<div class="fc-scroll"><table class="fc-tbl">
@@ -54,7 +54,7 @@ export const GUIDES = [
         <li class="fc-li"><b>Documento Único Automóvel (DUA).</b> É o documento do carro desde 2005, e substitui o antigo par livrete mais título de registo de propriedade. Se ainda tens os documentos antigos, servem, mas a transferência vai emitir um DUA novo em nome do comprador. Confirma que o nome no DUA é o teu: se o carro ainda está registado em nome de outra pessoa, primeiro tens de regularizar isso.</li>
         <li class="fc-li"><b>Inspeção periódica (IPO) válida.</b> Carros até 4 anos estão isentos; dos 4 aos 8 anos a inspeção é de dois em dois anos; a partir dos 8, anual. Um carro com inspeção fora de prazo vende-se pior e o comprador vai usar isso na negociação.</li>
         <li class="fc-li"><b>Imposto Único de Circulação (IUC) pago.</b> O IUC segue quem está registado como proprietário. Vender com o imposto em atraso é entregar ao comprador uma dívida que continua em teu nome até o registo mudar.</li>
-        <li class="fc-li"><b>Reserva de propriedade cancelada</b>, se o carro foi comprado a crédito. Enquanto o banco tiver a reserva, a venda não pode ser registada. O passo a passo está no guia <a href="/guias/vender-carro-com-credito">vender um carro com crédito</a>.</li>
+        <li class="fc-li"><b>Reserva de propriedade cancelada</b>, se o carro foi comprado a crédito. Enquanto o banco tiver a reserva, a venda não pode ser registada. O passo a passo está no guia <a href="/pt/guias/vender-carro-com-credito">vender um carro com crédito</a>.</li>
       </ul>
       <h2 class="fc-h2">No dia da venda</h2>
       <ul class="fc-ul">
@@ -63,7 +63,7 @@ export const GUIDES = [
         <li class="fc-li"><b>DUA, chaves, livro de revisões e faturas</b> que tenhas. Não vendem o carro, mas fecham o negócio mais depressa e com menos desconto.</li>
       </ul>
       <h2 class="fc-h2">Depois da venda</h2>
-      <p class="fc-p">O registo da transferência tem de ser feito em 60 dias e é, por lei, obrigação do comprador; o vendedor também o pode fazer com a prova da venda. Enquanto o registo não muda, o carro continua em teu nome para efeitos de IUC e de multas. O guia <a href="/guias/registo-de-propriedade-automovel">registo de propriedade</a> explica como te protegeres.</p>`,
+      <p class="fc-p">O registo da transferência tem de ser feito em 60 dias e é, por lei, obrigação do comprador; o vendedor também o pode fazer com a prova da venda. Enquanto o registo não muda, o carro continua em teu nome para efeitos de IUC e de multas. O guia <a href="/pt/guias/registo-de-propriedade-automovel">registo de propriedade</a> explica como te protegeres.</p>`,
     faq: [
       ["Preciso do livrete e do título de registo se já tenho o DUA?", "Não. O DUA substitui os dois documentos antigos. Quem ainda só tem livrete e título de registo pode vender com eles, e a transferência emite um DUA novo em nome do comprador."],
       ["O contrato de compra e venda é obrigatório?", "Não é exigido para registar a transferência, mas é a única prova escrita da data, do preço e do estado do carro. A DECO PROteste tem uma minuta gratuita; assinem os dois e fiquem cada um com uma cópia."],
@@ -132,7 +132,7 @@ export const GUIDES = [
     body: () => `
       <p class="fc-p">Um em cada cinco anúncios de particulares que acompanhamos é de um carro importado. Vendem-se todos os dias, mas com duas condições que o vendedor tem de conhecer antes de anunciar.</p>
       <h2 class="fc-h2">Só com matrícula portuguesa</h2>
-      <p class="fc-p">Um comprador em Portugal precisa de um carro que possa registar em seu nome e com o qual possa circular: isso exige matrícula portuguesa. Um carro ainda com matrícula estrangeira não está legalizado, e quem o comprar terá de pagar o ISV e tratar da legalização. Por isso, ou legalizas antes de vender, ou vendes por um preço que desconte o ISV e todo o trabalho, e dizes isso no anúncio. O nosso <a href="/isv">simulador de ISV</a> dá o valor para um carro concreto.</p>
+      <p class="fc-p">Um comprador em Portugal precisa de um carro que possa registar em seu nome e com o qual possa circular: isso exige matrícula portuguesa. Um carro ainda com matrícula estrangeira não está legalizado, e quem o comprar terá de pagar o ISV e tratar da legalização. Por isso, ou legalizas antes de vender, ou vendes por um preço que desconte o ISV e todo o trabalho, e dizes isso no anúncio. O nosso <a href="/pt/isv">simulador de ISV</a> dá o valor para um carro concreto.</p>
       <h2 class="fc-h2">O que a legalização exige</h2>
       <ul class="fc-ul">
         <li class="fc-li">Certificado de conformidade (COC) do fabricante, ou a homologação nacional quando não existe.</li>
@@ -143,7 +143,7 @@ export const GUIDES = [
       <h2 class="fc-h2">Se tiveste isenção de ISV por mudança de residência</h2>
       <p class="fc-p">Quem trouxe o carro ao mudar-se para Portugal pode ter beneficiado da isenção de ISV. O Portal das Finanças exige, entre outras condições, que o carro tenha sido propriedade do requerente no país de origem durante <b>pelo menos 6 meses</b> antes da mudança. E a mesma isenção traz uma contrapartida citada pela ANECRA e pelos despachantes: o carro não pode ser vendido durante <b>12 meses</b> depois da atribuição da matrícula sem devolver o imposto. Antes de anunciar um carro nessa situação, confirma a data e as condições na <a href="${SRC.atIsencao[1]}" rel="noopener" target="_blank">página da Autoridade Tributária</a>.</p>
       <h2 class="fc-h2">O que o comprador vai perguntar</h2>
-      <p class="fc-p">Historial do carro no país de origem, quilómetros, sinistros, número de donos. Um relatório de histórico pela matrícula estrangeira ou pelo VIN responde a isso e evita que o desconto seja «por desconfiança». Se o carro ficou mais barato do que o mesmo modelo nacional, a página <a href="/importar">importar da Alemanha</a> mostra a diferença de preços que o mercado pratica.</p>`,
+      <p class="fc-p">Historial do carro no país de origem, quilómetros, sinistros, número de donos. Um relatório de histórico pela matrícula estrangeira ou pelo VIN responde a isso e evita que o desconto seja «por desconfiança». Se o carro ficou mais barato do que o mesmo modelo nacional, a página <a href="/pt/importar">importar da Alemanha</a> mostra a diferença de preços que o mercado pratica.</p>`,
     faq: [
       ["Posso vender um carro com matrícula estrangeira em Portugal?", "Na prática só a quem esteja disposto a legalizá-lo: o comprador terá de pagar o ISV e tratar da matrícula portuguesa. Ou legalizas antes de vender, ou vendes com desconto e dizes isso no anúncio."],
       ["Tive isenção de ISV por mudança de residência. Posso vender já?", "As condições da isenção incluem ter tido o carro pelo menos 6 meses no país de origem, e a venda nos 12 meses seguintes à matrícula implica, segundo a ANECRA e os despachantes, a devolução do imposto. Confirma na Autoridade Tributária antes de anunciar."],
@@ -189,14 +189,14 @@ export const GUIDES = [
       <p class="fc-p">O preço certo não é o que o carro te custou nem o que gostavas de receber: é o que o mercado está a pedir hoje por carros como o teu, corrigido pelo teu estado e pelos teus quilómetros. Medimos isso todos os dias${stats && stats.listings ? ` em ${fmtNum(stats.listings)} anúncios ativos` : ""} e publicamos por modelo e ano.</p>
       <h2 class="fc-h2">Três números antes de escrever o preço</h2>
       <ul class="fc-ul">
-        <li class="fc-li"><b>A mediana do teu modelo e ano.</b> Metade dos anúncios pede menos, metade pede mais. Está em cada página de <a href="/precos">preços por modelo</a>, e a <a href="/avaliar">avaliação por modelo e ano</a> dá-a para o teu caso.</li>
+        <li class="fc-li"><b>A mediana do teu modelo e ano.</b> Metade dos anúncios pede menos, metade pede mais. Está em cada página de <a href="/pt/precos">preços por modelo</a>, e a <a href="/pt/avaliar">avaliação por modelo e ano</a> dá-a para o teu caso.</li>
         <li class="fc-li"><b>O intervalo onde fica metade dos anúncios.</b> Acima do limite de cima competes com carros mais novos ou com menos quilómetros; abaixo do de baixo, o comprador desconfia antes de perguntar.</li>
         <li class="fc-li"><b>Quantos baixam o preço.</b> ${marketLine(market) || "A percentagem de anúncios com descida de preço está em cada página de modelo."} A descida mediana é a folga que faz sentido deixar entre o preço que pedes e o que aceitas.</li>
       </ul>
       <h2 class="fc-h2">Quanto tempo demora</h2>
       <p class="fc-p">Um anúncio do OLX corre em ciclos de 30 dias e muitos desaparecem exatamente aí; contamos como saída o último ciclo em que vimos o anúncio no ar. Os modelos que saem mais depressa, entre os que acompanhamos com amostra grande:</p>
       ${fastestTable(models)}
-      <p class="fc-p">A lista completa, com a percentagem que sai em 30, 60 e 90 dias por modelo, está em <a href="/liquidez">tempo de venda por modelo</a>; a página do teu modelo em <a href="/vender">vender</a> junta o preço a pedir, os dias e o pedido de propostas.</p>
+      <p class="fc-p">A lista completa, com a percentagem que sai em 30, 60 e 90 dias por modelo, está em <a href="/pt/liquidez">tempo de venda por modelo</a>; a página do teu modelo em <a href="/pt/vender">vender</a> junta o preço a pedir, os dias e o pedido de propostas.</p>
       <h2 class="fc-h2">Há uma melhor altura do ano?</h2>
       <p class="fc-p">Ainda não temos um ano completo de dados para o afirmar com números, e não vamos inventar. O que já medimos é o que decide dentro de cada mês: o preço a que pões o carro e os quilómetros face à idade. Um carro ao preço da mediana sai no primeiro ciclo em muitos modelos; um carro acima do intervalo espera um segundo ciclo e acaba por baixar.</p>`,
     faq: [
@@ -263,12 +263,12 @@ export function guideBlock(kind) {
     <section class="section fc-wrap" style="padding-top:0;">
       <h2 class="fc-h2">${escapeHtml(heading)}</h2>
       <ul class="fc-ul">${items.map(([slug, anchor]) =>
-        `<li><a href="/guias/${slug}">${escapeHtml(anchor)}</a></li>`).join("")}</ul>
+        `<li><a href="/pt/guias/${slug}">${escapeHtml(anchor)}</a></li>`).join("")}</ul>
     </section>`;
 }
 
 function guideNav(current) {
-  return GUIDES.filter(g => g.slug !== current).map(g => `<li class="fc-li"><a href="/guias/${g.slug}">${escapeHtml(g.title)}</a></li>`).join("");
+  return GUIDES.filter(g => g.slug !== current).map(g => `<li class="fc-li"><a href="/pt/guias/${g.slug}">${escapeHtml(g.title)}</a></li>`).join("");
 }
 
 function sourcesBlock(keys) {
@@ -278,8 +278,8 @@ function sourcesBlock(keys) {
 }
 
 export function renderGuide({ guide, models, market, stats, host, depositCount, builtAt }) {
-  const canonical = `https://${host}/guias/${guide.slug}`;
-  const body = crumbs([{ name: "Início", href: "/" }, { name: "Guias", href: "/guias" }, { name: guide.title }]) + `
+  const canonical = `https://${host}/pt/guias/${guide.slug}`;
+  const body = crumbs([{ name: "Início", href: "/pt" }, { name: "Guias", href: "/pt/guias" }, { name: guide.title }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">${escapeHtml(guide.h1)}</h1>
       <div class="mono" style="font-size:11.5px;color:#9A9FA8;margin:-6px 0 18px;">Atualizado a ${UPDATED} · guia para vendedores particulares · não substitui aconselhamento jurídico</div>
@@ -294,7 +294,7 @@ export function renderGuide({ guide, models, market, stats, host, depositCount, 
     <section class="section fc-wrap" style="padding-bottom:70px;">
       <h2 class="fc-h2">Outros guias</h2>
       <ul class="fc-ul">${guideNav(guide.slug)}</ul>
-      <p class="fc-p"><a href="/vender">Quanto pedir por modelo</a> · <a href="/avaliar">Avaliar o meu carro</a> · <a href="/guias">Todos os guias</a></p>
+      <p class="fc-p"><a href="/pt/vender">Quanto pedir por modelo</a> · <a href="/pt/avaliar">Avaliar o meu carro</a> · <a href="/pt/guias">Todos os guias</a></p>
     </section>`;
   return layout({
     title: guide.title,
@@ -311,7 +311,7 @@ export function renderGuide({ guide, models, market, stats, host, depositCount, 
           "publisher": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "mainEntityOfPage": canonical,
         },
-        breadcrumbLd(host, [{ name: "Início", href: "/" }, { name: "Guias", href: "/guias" }, { name: guide.title }]),
+        breadcrumbLd(host, [{ name: "Início", href: "/pt" }, { name: "Guias", href: "/pt/guias" }, { name: guide.title }]),
         faqLd(guide.faq),
       ],
     },
@@ -319,16 +319,16 @@ export function renderGuide({ guide, models, market, stats, host, depositCount, 
 }
 
 export function renderGuidesHub({ market, stats, host, depositCount, builtAt }) {
-  const canonical = `https://${host}/guias`;
-  const items = GUIDES.map(g => `<li class="fc-li"><a href="/guias/${g.slug}"><b>${escapeHtml(g.title)}</b></a><br>${escapeHtml(g.description)}</li>`).join("");
-  const body = crumbs([{ name: "Início", href: "/" }, { name: "Guias" }]) + `
+  const canonical = `https://${host}/pt/guias`;
+  const items = GUIDES.map(g => `<li class="fc-li"><a href="/pt/guias/${g.slug}"><b>${escapeHtml(g.title)}</b></a><br>${escapeHtml(g.description)}</li>`).join("");
+  const body = crumbs([{ name: "Início", href: "/pt" }, { name: "Guias" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">Guias para vender um carro usado em Portugal</h1>
       <p class="fc-p">O que um vendedor particular precisa de saber, do preço aos papéis: documentos, registo de propriedade, crédito e reserva, carros importados, burlas e o que fazer depois da venda. Escritos a partir das páginas oficiais do IRN, do gov.pt e da Autoridade Tributária, com os números do nosso acompanhamento do mercado.</p>
       ${market && market.s30 != null ? `<p class="fc-p">${marketLine(market)}</p>` : ""}
       <ul class="fc-ul">${items}</ul>
       ${stats && stats.listings ? provenance({ n: stats.listings, builtAt, measure: "Preço pedido em anúncios ativos (mediana e P25-P75); dias até sair do OLX" }) : ""}
-      <p class="fc-p" style="margin-top:18px;"><a href="/vender">Quanto pedir por modelo</a> · <a href="/avaliar">Avaliar o meu carro</a> · <a href="/liquidez">Tempo de venda</a></p>
+      <p class="fc-p" style="margin-top:18px;"><a href="/pt/vender">Quanto pedir por modelo</a> · <a href="/pt/avaliar">Avaliar o meu carro</a> · <a href="/pt/liquidez">Tempo de venda</a></p>
     </section>
     <div style="height:60px;"></div>`;
   return layout({
@@ -339,7 +339,7 @@ export function renderGuidesHub({ market, stats, host, depositCount, builtAt }) 
       "@context": "https://schema.org",
       "@graph": [
         { "@type": "CollectionPage", "url": canonical, "inLanguage": "pt-PT", "name": "Guias para vender um carro usado em Portugal" },
-        breadcrumbLd(host, [{ name: "Início", href: "/" }, { name: "Guias" }]),
+        breadcrumbLd(host, [{ name: "Início", href: "/pt" }, { name: "Guias" }]),
       ],
     },
   });

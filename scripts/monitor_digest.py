@@ -14,7 +14,7 @@ import urllib.parse
 import urllib.request
 
 SITE = "https://carsbuyer.org"
-PAGES = ["/", "/avaliar", "/vender", "/preco/opel-corsa/2016", "/mercado", "/sitemap.xml"]
+PAGES = ["/pt", "/pt/avaliar", "/pt/vender", "/pt/preco/opel-corsa/2016", "/pt/mercado", "/pt/sitemap.xml"]
 SITEMAP_FLOOR = 1000
 BLOB_MAX_AGE_H = 8.0
 RELEASE_API = "https://api.github.com/repos/nikit34/olx-car-parser/releases/tags/latest-data"
@@ -26,7 +26,7 @@ WATCH_SENDERS = (
     "danielautosite@gmail.com", "serieoriginalvendas@gmail.com", "notify.cloudflare.com",
     "dekra", "verificar.pt",
 )
-YEAR_PAGE = re.compile(r"^https://carsbuyer\.org/preco/[^/]+/\d{4}$")
+YEAR_PAGE = re.compile(r"^https://carsbuyer\.org/pt/preco/[^/]+/\d{4}$")
 
 
 UA = "Mozilla/5.0 (compatible; carsbuyer-monitor/1.0; +https://carsbuyer.org)"
@@ -64,7 +64,7 @@ def check_site(fetch):
     parts = []
     for path in PAGES:
         status, body = fetch(SITE + path)
-        if path == "/sitemap.xml":
+        if path == "/pt/sitemap.xml":
             n = body.count(b"<loc>") if status == 200 else 0
             parts.append(f"sitemap {n}")
             if status != 200 or n < SITEMAP_FLOOR:
@@ -358,7 +358,7 @@ def summarise_pages(rows):
         if YEAR_PAGE.match(page):
             year["impr"] += impr
             year["clicks"] += clicks
-        if "/vender" in page:
+        if "/pt/vender" in page:
             vender["impr"] += impr
             vender["clicks"] += clicks
     return total, year, vender

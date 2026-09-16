@@ -350,13 +350,13 @@ await check("with INTL_LOCALES empty none of it exists", async () => {
 });
 
 await check("the Portuguese root is untouched", async () => {
-  const res = await get("/depreciacao", envOff);
-  assert(res.status === 200, `/depreciacao is ${res.status}`);
+  const res = await get("/pt/depreciacao", envOff);
+  assert(res.status === 200, `/pt/depreciacao is ${res.status}`);
   const html = await res.text();
-  assert(html.includes("Desvalorização"), "/depreciacao stopped speaking Portuguese");
-  assert(!html.includes("Wertverlust"), "/depreciacao leaks German");
-  const one = await get(`/depreciacao/${depSlugs[0]}`, envOff);
-  assert(one.status === 200, `/depreciacao/${depSlugs[0]} is ${one.status}`);
+  assert(html.includes("Desvalorização"), "/pt/depreciacao stopped speaking Portuguese");
+  assert(!html.includes("Wertverlust"), "/pt/depreciacao leaks German");
+  const one = await get(`/pt/depreciacao/${depSlugs[0]}`, envOff);
+  assert(one.status === 200, `/pt/depreciacao/${depSlugs[0]} is ${one.status}`);
   const off = await get("/wertverlust", envOff);
   assert(off.status === 404, "a locale segment answers at the root");
 });
@@ -364,7 +364,7 @@ await check("the Portuguese root is untouched", async () => {
 await check("the footer of a locale page links the new family", async () => {
   const html = await body(href(de, "hub"));
   assert(html.includes(`href="/de/wertverlust"`), "German footer has no depreciation link");
-  const pt = await body("/precos", envOff);
+  const pt = await body("/pt/precos", envOff);
   assert(!pt.includes("/de/wertverlust"), "the Portuguese footer picked up a locale link");
 });
 

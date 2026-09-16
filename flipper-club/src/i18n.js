@@ -1448,7 +1448,7 @@ const STRINGS_PT = {
 export const LOCALES = {
   pt: {
     code: "pt", country: "PT", lang: "pt-PT", ogLocale: "pt_PT", countryName: "Portugal",
-    prefix: "", flag: "🇵🇹", name: "Português", collate: "pt",
+    prefix: "/pt", flag: "🇵🇹", name: "Português", collate: "pt",
     source: { name: "OLX", host: "olx.pt", url: "https://www.olx.pt" },
     routes: ROUTES.pt, strings: STRINGS_PT,
   },

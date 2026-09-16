@@ -223,9 +223,9 @@ check("model page renders with its new blocks", () => {
     comparisons: [{ href: `${deep}-vs-opel-astra`, m: "Opel Astra" }],
     hasDepreciation: depreciationOk(rec),
     provenanceHtml: provenance({ n: rec.n, builtAt }),
-    altJson: `https://${HOST}/preco/${deep}.json`,
+    altJson: `https://${HOST}/pt/preco/${deep}.json`,
   });
-  assertPage(html, { indexable: true, canonical: `https://${HOST}/preco/${deep}`, label: "model" });
+  assertPage(html, { indexable: true, canonical: `https://${HOST}/pt/preco/${deep}`, label: "model" });
   const trustBox = (html.match(/Como lemos estes números\.[\s\S]*?<\/span>/) || [])[0] || "";
   assert(trustBox, "the model page lost the 'Como lemos estes números' disclosure entirely");
   assert(/não preços de venda fechados/.test(trustBox),
@@ -234,7 +234,7 @@ check("model page renders with its new blocks", () => {
     "the disclosure no longer says the prices are asking prices");
   assert(/ISV/.test(trustBox),
     "the disclosure lost the one caveat the page cannot restate elsewhere: an import's unpaid ISV");
-  assert(trustBox.includes('href="/metodologia"'),
+  assert(trustBox.includes('href="/pt/metodologia"'),
     "the disclosure cites a method it does not link");
   const sellerCta = (html.match(/Vais vender o teu[\s\S]{0,600}?<\/section>/) || [])[0] || "";
   assert(sellerCta, "the model page lost its seller CTA");
@@ -248,8 +248,8 @@ check("model page renders with its new blocks", () => {
   }
   assert(!types.has("Product"), "model page emitted Product markup for cars we do not sell");
   assert(html.includes('rel="alternate" type="application/json"'), "model page has no JSON twin link");
-  assert(html.includes(`/preco/${deep}/`), "model page does not link any year page");
-  assert(html.includes("/comparar/"), "model page does not link a comparison");
+  assert(html.includes(`/pt/preco/${deep}/`), "model page does not link any year page");
+  assert(html.includes("/pt/comparar/"), "model page does not link a comparison");
   assert(html.includes("fc-prov"), "model page has no provenance line");
 });
 
@@ -302,10 +302,10 @@ check("year page renders", () => {
     },
     liveDeals: [], pageYears: yearPageYears(rec), stats, host: HOST, depositCount: 0, builtAt,
   });
-  assertPage(html, { indexable: true, canonical: `https://${HOST}/preco/${s}/${y}`, label: "year" });
+  assertPage(html, { indexable: true, canonical: `https://${HOST}/pt/preco/${s}/${y}`, label: "year" });
   const yearMain = html.slice(html.indexOf("<main"), html.indexOf("</main>") + 7)
     .replace(/<script[\s\S]*?<\/script>/g, "").replace(/<footer[\s\S]*?<\/footer>/g, "");
-  assert(yearMain.includes('href="/metodologia"'),
+  assert(yearMain.includes('href="/pt/metodologia"'),
     "the year page body cites a method it does not link");
   assert(/preços? pedidos?/i.test(yearMain),
     "the year page body no longer says what it measures");
@@ -315,7 +315,7 @@ check("year page renders", () => {
   for (const t of ["Dataset", "AggregateOffer", "BreadcrumbList", "FAQPage"]) {
     assert(types.has(t), `year page lost its ${t} schema`);
   }
-  assert(html.includes(`/preco/${s}"`) || html.includes(`/preco/${s}<`) || html.includes(`href="/preco/${s}`),
+  assert(html.includes(`/pt/preco/${s}"`) || html.includes(`/pt/preco/${s}<`) || html.includes(`href="/pt/preco/${s}`),
     "year page does not link back to its model");
 });
 
@@ -414,7 +414,7 @@ check("every depreciation page renders without throwing", () => {
       rec, slug: s, fit: depreciationFit(rec), stats,
       pageYears: yearPageYears(rec), host: HOST, depositCount: 0, builtAt,
     });
-    assertPage(html, { indexable: true, canonical: `https://${HOST}/depreciacao/${s}`, label: `depreciacao/${s}` });
+    assertPage(html, { indexable: true, canonical: `https://${HOST}/pt/depreciacao/${s}`, label: `depreciacao/${s}` });
     assert(html.includes("<svg"), `${s}: depreciation page has no chart`);
     assert(html.includes("Quanto custa um ano de idade"), `${s}: no euro ladder`);
     assert(html.includes("Há um ponto de inflexão?"), `${s}: does not answer the inflection question`);
@@ -431,7 +431,7 @@ check("every liquidity page renders without throwing", () => {
       rec, slug: s2, market, hasDepreciation: false,
       host: HOST, depositCount: 0, builtAt,
     });
-    assertPage(html, { indexable: true, canonical: `https://${HOST}/liquidez/${s2}`, label: `liquidez/${s2}` });
+    assertPage(html, { indexable: true, canonical: `https://${HOST}/pt/liquidez/${s2}`, label: `liquidez/${s2}` });
     assert(html.includes("<svg"), `${s2}: liquidity page has no curve`);
     assert(html.includes("Sair do OLX não é o mesmo que vender"), `${s2}: drops the expiry caveat`);
     assert(/\d+ em cada 100 desaparecem no primeiro mês/.test(html), `${s2}: no headline share`);
@@ -471,7 +471,7 @@ check("every import page renders and adds up on the page", () => {
       rec, slug, costs: idoc.costs, hasModelPage: true,
       host: HOST, depositCount: 0, builtAt: idoc.built_at,
     });
-    assertPage(html, { indexable: true, canonical: `https://${HOST}/importar/${slug}`, label: `importar/${slug}` });
+    assertPage(html, { indexable: true, canonical: `https://${HOST}/pt/importar/${slug}`, label: `importar/${slug}` });
     assert(html.includes("Total à porta"), `${slug}: no landed-cost column`);
     assert(html.includes("O que esta conta não sabe"), `${slug}: drops the caveats`);
     assert(html.includes("IVA"), `${slug}: never explains the VAT side`);
@@ -502,7 +502,7 @@ check("the import hub ranks models and states both sides", () => {
              cells: (r.yr || []).length, nde: r.nde, npt: r.npt };
   });
   const html = renderImportHub({ rows, costs: idoc.costs, host: HOST, depositCount: 0, builtAt: idoc.built_at });
-  assertPage(html, { indexable: true, canonical: `https://${HOST}/importar`, label: "importar hub" });
+  assertPage(html, { indexable: true, canonical: `https://${HOST}/pt/importar`, label: "importar hub" });
   assert(html.includes("AutoScout24"), "the hub never says where the German prices come from");
   const gaps = rows.map(r => r.med_gap);
   assert(gaps.slice(1).every((g, i) => g <= gaps[i]), "the hub is not ranked by the difference");
@@ -590,8 +590,8 @@ check("every comparison page renders without throwing", () => {
     const html = renderComparePage({
       a, b, ra: models[a], rb: models[b], stats, host: HOST, depositCount: 0, builtAt,
     });
-    assertPage(html, { indexable: true, canonical: `https://${HOST}/comparar/${a}-vs-${b}`, label: `comparar/${a}-vs-${b}` });
-    assert(html.includes(`/preco/${a}`) && html.includes(`/preco/${b}`),
+    assertPage(html, { indexable: true, canonical: `https://${HOST}/pt/comparar/${a}-vs-${b}`, label: `comparar/${a}-vs-${b}` });
+    assert(html.includes(`/pt/preco/${a}`) && html.includes(`/pt/preco/${b}`),
       `${a}-vs-${b}: does not link both model pages`);
     assert(html.includes("ao mesmo ano") || html.includes("Ao mesmo ano"),
       `${a}-vs-${b}: no same-model-year price comparison on the page`);
@@ -607,40 +607,40 @@ check("hubs render", () => {
              half: av && av.halfLife, cheapAge: av && av.cheapFrom ? av.cheapFrom.age : null };
   }).sort((x, y) => y.rate - x.rate);
   assertPage(renderDepreciationHub({ rows: depRows, stats, host: HOST, depositCount: 0, builtAt }),
-    { indexable: true, canonical: `https://${HOST}/depreciacao`, label: "depreciacao hub" });
+    { indexable: true, canonical: `https://${HOST}/pt/depreciacao`, label: "depreciacao hub" });
 
   assertPage(renderCompareHub({ pairs, models, host: HOST, depositCount: 0, builtAt }),
-    { indexable: true, canonical: `https://${HOST}/comparar`, label: "comparar hub" });
+    { indexable: true, canonical: `https://${HOST}/pt/comparar`, label: "comparar hub" });
 
   const liq = Object.entries(models).filter(([, r]) => (r.lq && r.lq.s30 != null) || r.sd != null)
     .map(([slug, r]) => ({ slug, b: r.b, m: r.m, sd: r.sd, sn: r.sn, fm: r.fm,
                            lq: (r.lq && r.lq.s30 != null) ? r.lq : null, page: liquidityOk(r) }))
     .sort((x, y) => (y.lq ? y.lq.s30 : 0) - (x.lq ? x.lq.s30 : 0));
   const liqHub = renderLiquidityHub({ rows: liq, market, host: HOST, depositCount: 0, builtAt });
-  assertPage(liqHub, { indexable: true, canonical: `https://${HOST}/liquidez`, label: "liquidez" });
+  assertPage(liqHub, { indexable: true, canonical: `https://${HOST}/pt/liquidez`, label: "liquidez" });
   if (liq.some(r => r.page)) {
-    assert(liqHub.includes(`href="/liquidez/${liq.find(r => r.page).slug}"`),
+    assert(liqHub.includes(`href="/pt/liquidez/${liq.find(r => r.page).slug}"`),
       "liquidity hub does not link the per-model pages");
   }
   const noCurve = { slug: "x-y", b: "X", m: "Y", sd: 21, sn: 30, fm: 6000, lq: null, page: false };
   assertPage(renderLiquidityHub({ rows: [noCurve], market: null, host: HOST, depositCount: 0, builtAt }),
-    { indexable: true, canonical: `https://${HOST}/liquidez`, label: "liquidez (blob sem curva)" });
+    { indexable: true, canonical: `https://${HOST}/pt/liquidez`, label: "liquidez (blob sem curva)" });
 
   const gap = Object.entries(models).filter(([, r]) => r.gm > 0 && r.fm > 0)
     .map(([slug, r]) => ({ slug, b: r.b, m: r.m, fm: r.fm, gm: r.gm, n: r.n, gap: r.fm / r.gm - 1,
                            s30: (r.lq && r.lq.s30 != null) ? r.lq.s30 : null, page: liquidityOk(r) }))
     .sort((x, y) => y.gap - x.gap);
   assertPage(renderValuationGap({ over: gap.slice(0, 25), under: gap.slice(-25).reverse(), market, stats, host: HOST, depositCount: 0, builtAt }),
-    { indexable: true, canonical: `https://${HOST}/sobrevalorizados`, label: "sobrevalorizados" });
+    { indexable: true, canonical: `https://${HOST}/pt/sobrevalorizados`, label: "sobrevalorizados" });
 });
 
 check("trust pages render, and stay honest with no identity configured", () => {
   setSiteIdentity({});
   const meth = renderMethodology({ stats, host: HOST, depositCount: 0, builtAt });
-  assertPage(meth, { indexable: true, canonical: `https://${HOST}/metodologia`, label: "metodologia" });
+  assertPage(meth, { indexable: true, canonical: `https://${HOST}/pt/metodologia`, label: "metodologia" });
   assert(!meth.includes("mailto:"), "methodology invented a contact address");
   const about = renderAbout({ stats, host: HOST, depositCount: 0, builtAt });
-  assertPage(about, { indexable: true, canonical: `https://${HOST}/sobre`, label: "sobre" });
+  assertPage(about, { indexable: true, canonical: `https://${HOST}/pt/sobre`, label: "sobre" });
   assert(!about.includes("mailto:"), "about invented a contact address");
   assert(!/"author"|"founder"/.test(about), "about invented an author");
 
@@ -654,7 +654,7 @@ check("trust pages render, and stay honest with no identity configured", () => {
 check("model quality is rendered when measured, and absent when not", () => {
   const mq = { mae: 1665, mape: 25.7, r2: 0.915, cov: 0.809, n: 79532, folds: 5, ts: "2026-08-30" };
   const meth = renderMethodology({ stats, mq, host: HOST, depositCount: 0, builtAt });
-  assertPage(meth, { indexable: true, canonical: `https://${HOST}/metodologia`, label: "metodologia+mq" });
+  assertPage(meth, { indexable: true, canonical: `https://${HOST}/pt/metodologia`, label: "metodologia+mq" });
   assert(meth.includes("25,7%"), "measured MAPE not rendered on /metodologia");
   assert(meth.includes("81%"), "measured band coverage not rendered on /metodologia");
   assert(/79\D?532/.test(meth), "sample size behind the measurement not rendered");
@@ -664,7 +664,7 @@ check("model quality is rendered when measured, and absent when not", () => {
   for (const empty of [null, undefined, {}, { mae: 1665 }]) {
     for (const [label, page] of [["metodologia", renderMethodology({ stats, mq: empty, host: HOST, depositCount: 0, builtAt })],
                                  ["sobre", renderAbout({ stats, mq: empty, host: HOST, depositCount: 0, builtAt })]]) {
-      assertPage(page, { indexable: true, canonical: `https://${HOST}/${label}`, label: `${label}-no-mq` });
+      assertPage(page, { indexable: true, canonical: `https://${HOST}/pt/${label}`, label: `${label}-no-mq` });
       assert(!/undefined|NaN/.test(page), `${label} leaked a placeholder with no measurement`);
       assert(!/erra em média <b>/.test(page), `${label} claimed an error rate it was not given`);
     }
@@ -702,7 +702,7 @@ check("the ISV estimate matches src/analytics/isv.py", () => {
 check("ISV page renders and ships the one implementation", () => {
   const top = slugs.slice(0, 12).map(s => ({ slug: s, b: models[s].b, m: models[s].m, fm: models[s].fm }));
   const html = renderIsv({ topModels: top, host: HOST, depositCount: 0, builtAt, refYear: 2026 });
-  assertPage(html, { indexable: true, canonical: `https://${HOST}/isv`, label: "isv" });
+  assertPage(html, { indexable: true, canonical: `https://${HOST}/pt/isv`, label: "isv" });
   assert(ldTypes(html).has("WebApplication"), "ISV page lost its WebApplication schema");
   // Spot-check one bracket from each table against src/analytics/isv.py.
   for (const needle of ["849.03", "6194.88", "41910.96", "38271.32", "33390.12", "33447.9", '"particulas":500']) {
@@ -721,11 +721,11 @@ check("market index renders, current and archived", () => {
                  sellMed: stats.sellMed, depMed: stats.depMed };
   const prev = { ...snap, week: "2026-W34", date: "2026-08-18", priceMed: Math.round(stats.priceMed * 1.02) };
   assertPage(renderMarketIndex({ snapshot: snap, history: [prev, snap], host: HOST, depositCount: 0 }),
-    { indexable: true, canonical: `https://${HOST}/mercado/indice`, label: "indice" });
+    { indexable: true, canonical: `https://${HOST}/pt/mercado/indice`, label: "indice" });
   // The URL form of the week is lower-case (the router normalises every public
   // path); the page still SHOWS the ISO spelling.
   const archive = renderMarketIndex({ snapshot: snap, history: [prev, snap], host: HOST, depositCount: 0, isArchive: true });
-  assertPage(archive, { indexable: true, canonical: `https://${HOST}/mercado/indice/2026-w35`, label: "indice archive" });
+  assertPage(archive, { indexable: true, canonical: `https://${HOST}/pt/mercado/indice/2026-w35`, label: "indice archive" });
   assert(archive.includes("2026-W35"), "archive page does not show the ISO week");
 });
 
@@ -769,19 +769,19 @@ check("the monthly page renders and stays on its own address", () => {
   assert(cuts.length === 2, `expected July and August, got ${cuts.map(c => c.month).join()}`);
   const aug = cuts[1];
   const html = renderMarketMonth({ cut: aug, months: cuts, host: HOST, depositCount: 0 });
-  assertPage(html, { indexable: true, canonical: `https://${HOST}/mercado/indice/2026-08`, label: "indice month" });
+  assertPage(html, { indexable: true, canonical: `https://${HOST}/pt/mercado/indice/2026-08`, label: "indice month" });
   assert(html.includes("agosto de 2026"), "the month page never names its month");
-  assert(html.includes("/mercado/indice/2026-w35"), "the month page does not link the weeks behind it");
+  assert(html.includes("/pt/mercado/indice/2026-w35"), "the month page does not link the weeks behind it");
   assert(html.includes("vs. julho de 2026"), "the month page does not compare with the previous published month");
-  assert(html.includes(`https://${HOST}/mercado/indice/2026-08`), "the month page never states its permanent address");
+  assert(html.includes(`https://${HOST}/pt/mercado/indice/2026-08`), "the month page never states its permanent address");
 
   const snap = { week: "2026-W36", date: "2026-09-01", builtAt, models: stats.models, listings: stats.listings,
                  priceMed: stats.priceMed, kmMed: stats.kmMed, sellMed: stats.sellMed, depMed: stats.depMed };
   const hub = renderMarketIndex({ snapshot: snap, history: [snap], host: HOST, depositCount: 0, months: cuts });
-  assert(hub.includes("/mercado/indice/2026-08") && hub.includes("Arquivo mensal"),
+  assert(hub.includes("/pt/mercado/indice/2026-08") && hub.includes("Arquivo mensal"),
     "the hub does not link its monthly archive");
   const bare = renderMarketIndex({ snapshot: snap, history: [snap], host: HOST, depositCount: 0, months: [] });
-  assert(!bare.includes("/mercado/indice/2026-08"), "the hub links a month it has no cut for");
+  assert(!bare.includes("/pt/mercado/indice/2026-08"), "the hub links a month it has no cut for");
   assert(bare.includes("Ainda não há nenhum mês fechado"), "the empty monthly archive says nothing");
 });
 
@@ -809,7 +809,7 @@ check("a district page stands on the country when it cannot stand on models", ()
     rec: { lbl: "Bragança", n: 107, fl: 3500, fm: 6000, fh: 11000, kmm: 195000, top: [] },
     models, districts: mdoc.districts || {}, stats, host: HOST, depositCount: 0, builtAt,
   });
-  assertPage(thin, { indexable: true, canonical: `https://${HOST}/precos/braganca`, label: "precos/braganca" });
+  assertPage(thin, { indexable: true, canonical: `https://${HOST}/pt/precos/braganca`, label: "precos/braganca" });
   assert(thin.includes("Modelo a modelo, aqui não dá"), "a thin district hides why the table is missing");
   assert(!thin.includes("<th>Mediano nacional</th>"), "a thin district renders an empty model table");
 
@@ -820,10 +820,10 @@ check("a district page stands on the country when it cannot stand on models", ()
     const page = renderDistrictPage({
       key: k, rec: ds[k], models, districts: ds, stats, host: HOST, depositCount: 0, builtAt,
     });
-    assertPage(page, { indexable: true, canonical: `https://${HOST}/precos/${k}`, label: `precos/${k}` });
+    assertPage(page, { indexable: true, canonical: `https://${HOST}/pt/precos/${k}`, label: `precos/${k}` });
     assert(page.includes("mais caro</b>"), `${k}: no place in the national ranking`);
     const other = keys.find(x => x !== k);
-    assert(page.includes(`href="/precos/${other}"`), `${k}: the ranking does not link the other districts`);
+    assert(page.includes(`href="/pt/precos/${other}"`), `${k}: the ranking does not link the other districts`);
     const rank = districtRanking(ds, k);
     assert(rank.pos >= 1 && rank.pos <= rank.total, `${k}: ranking position out of range`);
   }
@@ -861,7 +861,7 @@ check("the gearbox facet reads as a gearbox, not as a fuel", () => {
     rec, slug: deep, kind: "transmission", cell: cells[1], siblingsCells: cells,
     stats, host: HOST, depositCount: 0, builtAt,
   });
-  assertPage(html, { indexable: true, canonical: `https://${HOST}/preco/${deep}/automatica`, label: "gearbox facet" });
+  assertPage(html, { indexable: true, canonical: `https://${HOST}/pt/preco/${deep}/automatica`, label: "gearbox facet" });
   assert(html.includes("com caixa automática"), "gearbox facet does not name the gearbox");
   assert(!html.includes("no distrito"), "gearbox facet reuses the district preposition");
   assert(html.includes("59% mais caro"), "gearbox facet lost the year-matched gap");
@@ -883,12 +883,12 @@ for (const kind of Object.keys(DUELS)) {
     const av = duel(rec, kind, builtAt);
     assert(av && av.decisive && av.winner === "a", "the fit was read wrong");
     const html = renderDuelPage({ rec, slug: deep, av, stats, host: HOST, depositCount: 0, builtAt });
-    assertPage(html, { indexable: true, canonical: `https://${HOST}/${S.path}/${deep}`, label: `${kind} duel` });
+    assertPage(html, { indexable: true, canonical: `https://${HOST}/pt/${S.path}/${deep}`, label: `${kind} duel` });
     assert(html.includes("6,3%") && html.includes("8,5%"), "one of the two rates is missing");
     assert(html.includes("±0,9 pp"), "the page hides the margin on its own claim");
     assert(html.includes("quilometragem igualada"), "the page never says the mileage is controlled");
     assert(html.includes("preços pedidos"), "the page passes asking prices off as sales");
-    assert(html.includes(`/preco/${deep}/${S.a.facet}`) && html.includes(`/preco/${deep}/${S.b.facet}`),
+    assert(html.includes(`/pt/preco/${deep}/${S.a.facet}`) && html.includes(`/pt/preco/${deep}/${S.b.facet}`),
       "the duel page does not link the two facet cuts it is built from");
 
     const flat = { ...rec, [S.key]: { ...DUEL, b: { ...DUEL.b, r: 0.064 }, t: 0.4 } };
@@ -908,7 +908,7 @@ for (const kind of Object.keys(DUELS)) {
       spec: S, rows: [{ slug: deep, b: rec.b, m: rec.m, av }], other: null,
       stats, host: HOST, depositCount: 0, builtAt,
     });
-    assertPage(hub, { indexable: true, canonical: `https://${HOST}/${S.path}`, label: `${kind} duel hub` });
+    assertPage(hub, { indexable: true, canonical: `https://${HOST}/pt/${S.path}`, label: `${kind} duel hub` });
     assert(hub.includes(`/${S.path}/${deep}`), "the hub does not link its own page");
   });
 }
@@ -917,7 +917,7 @@ check("404 page is noindex, links back, and never 401s in spirit", () => {
   const sugg = slugs.slice(0, 12).map(s => ({ slug: s, m: `${models[s].b} ${models[s].m}`, fm: models[s].fm }));
   const html = renderNotFound({ suggestions: sugg, depositCount: 0, host: HOST, path: "/pagina-que-nao-existe" });
   assertPage(html, { indexable: false, label: "404" });
-  assert(html.includes("/precos") && html.includes("/avaliar"), "404 page has no way back");
+  assert(html.includes("/pt/precos") && html.includes("/pt/avaliar"), "404 page has no way back");
 });
 
 check("existing product pages still render", () => {
@@ -925,15 +925,15 @@ check("existing product pages still render", () => {
     models: slugs.map(s => ({ slug: s, b: models[s].b, m: models[s].m, fm: models[s].fm, n: models[s].n })),
     depositCount: 0, builtAt, host: HOST,
   });
-  assertPage(hub, { indexable: true, canonical: `https://${HOST}/precos`, label: "precos" });
-  assert(hub.includes("/depreciacao") && hub.includes("/liquidez"), "hub does not link the new sections");
+  assertPage(hub, { indexable: true, canonical: `https://${HOST}/pt/precos`, label: "precos" });
+  assert(hub.includes("/pt/depreciacao") && hub.includes("/pt/liquidez"), "hub does not link the new sections");
 
   const av = renderAvaliar({ rec: null, olxId: null, sourceUrl: null, query: "", models, spec: null,
                              depositCount: 0, host: HOST, builtAt });
-  assertPage(av, { indexable: true, canonical: `https://${HOST}/avaliar`, label: "avaliar" });
+  assertPage(av, { indexable: true, canonical: `https://${HOST}/pt/avaliar`, label: "avaliar" });
   const t = ldTypes(av);
   for (const want of ["WebApplication", "FAQPage", "BreadcrumbList"]) {
-    assert(t.has(want), `/avaliar is missing ${want} schema`);
+    assert(t.has(want), `/pt/avaliar is missing ${want} schema`);
   }
 
   const deal = {
@@ -949,9 +949,9 @@ check("existing product pages still render", () => {
     host: HOST, builtAt,
     modelLinks: [{ slug: deep, b: models[deep].b, m: models[deep].m, fm: models[deep].fm, count: 1 }],
   });
-  assertPage(grid, { indexable: true, canonical: `https://${HOST}/mercado`, label: "mercado" });
-  assert(grid.includes(`/preco/${deep}`), "/mercado does not link any model page");
-  assert(grid.includes("/mercado/indice"), "/mercado does not link the index");
+  assertPage(grid, { indexable: true, canonical: `https://${HOST}/pt/mercado`, label: "mercado" });
+  assert(grid.includes(`/pt/preco/${deep}`), "/pt/mercado does not link any model page");
+  assert(grid.includes("/pt/mercado/indice"), "/pt/mercado does not link the index");
 
   assertPage(renderLanding({
     stats: { deals: 1, avgDisc: "17%", totalProfit: "€1 500" }, featured: deal,
@@ -960,7 +960,7 @@ check("existing product pages still render", () => {
 
   const w = renderModelWidget({ rec: models[deep], slug: deep, host: HOST });
   assert(w.includes("noindex,follow"), "widget is no longer noindex");
-  assert(w.includes(`/preco/${deep}`), "widget lost its attribution link");
+  assert(w.includes(`/pt/preco/${deep}`), "widget lost its attribution link");
 
   assertPage(renderInfo({ zone: "all", depositCount: 0, title: "T", message: "M" }),
     { indexable: false, label: "info" });
@@ -1042,7 +1042,7 @@ check("the money clicks fire their own events", () => {
                 imp: 1, ms: slug, sd: 20, dom: 70 };
   const pasted = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models, spec: null,
                                  depositCount: 0, host: HOST, builtAt, historyUrl: "https://example.test/h" });
-  assert(/href="\/ir\/historico\?from=avaliar"[^>]*onclick="[^"]*history_check/.test(pasted),
+  assert(/href="\/pt\/ir\/historico\?from=avaliar"[^>]*onclick="[^"]*history_check/.test(pasted),
     "the counted history redirect is same-origin, so without its own event GA never sees the click");
   assert(pasted.includes("&quot;from&quot;:&quot;avaliar&quot;"), "history event lost its source page");
   assert(/olx-btn[^>]*onclick="[^"]*olx_open/.test(pasted), "no event on the OLX link of a pasted listing");
@@ -1053,12 +1053,12 @@ check("the money clicks fire their own events", () => {
     city: "Porto", seller_type: "Particular", photos: [], url: "https://www.olx.pt/x.html",
   };
   const car = renderCarPage({ deal, zone: "all", view: "comprar", depositCount: 0,
-                              modelHref: `/preco/${deep}`, host: HOST, historyUrl: "https://example.test/h" });
-  assert(/href="\/ir\/historico\?from=car"[^>]*onclick="[^"]*history_check/.test(car),
+                              modelHref: `/pt/preco/${deep}`, host: HOST, historyUrl: "https://example.test/h" });
+  assert(/href="\/pt\/ir\/historico\?from=car"[^>]*onclick="[^"]*history_check/.test(car),
     "the deal page a buyer reaches from the feed carries no history CTA");
   assert(/olx-btn[^>]*onclick="[^"]*olx_open/.test(car), "no event on the OLX link of the deal page");
   const carNoPartner = renderCarPage({ deal, zone: "all", view: "comprar", depositCount: 0,
-                                       modelHref: `/preco/${deep}`, host: HOST });
+                                       modelHref: `/pt/preco/${deep}`, host: HOST });
   assert(!carNoPartner.includes("ir/historico"), "history block rendered with no partner url configured");
   setAnalyticsId("");
   const off = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models, spec: null,
@@ -1127,7 +1127,7 @@ check("brand and revenue copy: Carsbuyer everywhere, no single-revenue claim", (
   const landing = renderLanding({ stats: { deals: 1, avgDisc: "17%", totalProfit: "€1 500" }, featured: deal,
                                   depositCount: 0, host: HOST });
   assert(!landing.includes("única receita"), "landing still says the deposit is the only revenue");
-  assert(landing.includes('href="/vender"'), "landing seller chip does not lead to the seller hub");
+  assert(landing.includes('href="/pt/vender"'), "landing seller chip does not lead to the seller hub");
   assert(!landing.includes("em breve"), "seller path is still a placeholder");
 });
 
@@ -1140,7 +1140,7 @@ check("no public page still sells a deposit", () => {
     seller_type: "Particular", url: "https://www.olx.pt/d/anuncio/teste",
   };
   const car = renderCarPage({ deal, zone: "all", view: "comprar", depositCount: 0,
-                              modelHref: `/preco/${deep}`, host: HOST });
+                              modelHref: `/pt/preco/${deep}`, host: HOST });
   assertPage(car, { indexable: false, label: "car" });
   assert(car.includes(`href="${deal.url}"`), "car page does not link the seller's OLX ad");
   assert(car.includes('rel="noopener nofollow"'), "the OLX link lost rel=noopener nofollow");
@@ -1189,7 +1189,7 @@ check("titles lead with the number", () => {
     assert(!mon || title.includes(mon), `${label} title carries no freshness stamp: ${title}`);
   }
   assert(yp.includes('rel="nofollow sponsored noopener"'), "year page history link is not marked sponsored");
-  assert(yp.includes('href="/ir/historico?from=ano"') && !yp.includes("https://example.test/h"), "year page history link must go through the counted redirect");
+  assert(yp.includes('href="/pt/ir/historico?from=ano"') && !yp.includes("https://example.test/h"), "year page history link must go through the counted redirect");
 });
 
 check("the seller lead form and the history block render on /avaliar", () => {
@@ -1197,7 +1197,7 @@ check("the seller lead form and the history block render on /avaliar", () => {
   const withSpec = renderAvaliar({ rec: null, olxId: null, sourceUrl: null, query: "", models,
     spec: { rec: models[slug], slug, year: 2016, cell: null }, depositCount: 0, host: HOST, builtAt,
     historyUrl: "https://example.test/h" });
-  assert(withSpec.includes('action="/lead"'), "no lead form on the spec estimate");
+  assert(withSpec.includes('action="/pt/lead"'), "no lead form on the spec estimate");
   assert(withSpec.includes('name="consent"'), "lead form has no consent box");
   assert(withSpec.includes('id="vender"'), "lead form lost its anchor");
   assert(withSpec.includes('id="escolher"'), "model picker lost its anchor");
@@ -1206,7 +1206,7 @@ check("the seller lead form and the history block render on /avaliar", () => {
   const pasted = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models, spec: null,
                                  depositCount: 0, host: HOST, builtAt, historyUrl: "https://example.test/h" });
   assert(pasted.includes('rel="nofollow sponsored noopener"'), "partner link is not marked sponsored");
-  assert(pasted.includes('href="/ir/historico?from=avaliar"') && !pasted.includes("https://example.test/h"), "history link must go through the counted redirect");
+  assert(pasted.includes('href="/pt/ir/historico?from=avaliar"') && !pasted.includes("https://example.test/h"), "history link must go through the counted redirect");
   assert(pasted.includes("importação"), "import reason not listed");
   assert(pasted.includes("baixou 2 vezes"), "price-cut reason not listed");
   assert(pasted.includes("#vender"), "no path from a pasted listing to the seller form");
@@ -1223,11 +1223,11 @@ check("seller pages render with the numbers, the form and the JSON twin", () => 
   const page = renderVenderPage({ rec, slug: s, market: mdoc.lqm || null, pageYears: yearPageYears(rec),
                                   hasLiquidity: liquidityOk(rec), hasDepreciation: false,
                                   host: HOST, depositCount: 0, builtAt });
-  assertPage(page, { indexable: true, canonical: `https://${HOST}/vender/${s}`, label: "vender" });
+  assertPage(page, { indexable: true, canonical: `https://${HOST}/pt/vender/${s}`, label: "vender" });
   const t = page.match(/<title>([^<]*)<\/title>/)[1];
   assert(t.includes("€") && /^Vender /.test(t), `seller title is off: ${t}`);
-  assert(page.includes('action="/lead"') && page.includes('id="vender"'), "seller page has no lead form");
-  assert(page.includes(`/preco/${s}`), "seller page does not link the price page");
+  assert(page.includes('action="/pt/lead"') && page.includes('id="vender"'), "seller page has no lead form");
+  assert(page.includes(`/pt/preco/${s}`), "seller page does not link the price page");
   assert(page.includes("Quanto pedir"), "seller page lost its main section");
   const types = ldTypes(page);
   for (const want of ["Dataset", "BreadcrumbList", "FAQPage"]) assert(types.has(want), `seller page is missing ${want}`);
@@ -1236,8 +1236,8 @@ check("seller pages render with the numbers, the form and the JSON twin", () => 
   const hub = renderVenderHub({ rows: eligible.slice(0, 5).map(x => ({ slug: x, b: models[x].b, m: models[x].m, n: models[x].n,
     fm: models[x].fm, fl: models[x].fl, fh: models[x].fh, sd: models[x].sd, s30: null, cu: null, cp: null })),
     market: mdoc.lqm || null, host: HOST, depositCount: 0, builtAt });
-  assertPage(hub, { indexable: true, canonical: `https://${HOST}/vender`, label: "vender hub" });
-  assert(hub.includes(`/vender/${eligible[0]}`), "hub does not link the seller pages");
+  assertPage(hub, { indexable: true, canonical: `https://${HOST}/pt/vender`, label: "vender hub" });
+  assert(hub.includes(`/pt/vender/${eligible[0]}`), "hub does not link the seller pages");
 });
 
 check("a six-month window cell is labelled honestly on the year page and the JSON twin", () => {
@@ -1270,7 +1270,7 @@ check("the bare /avaliar page carries the valuation guide with real numbers", ()
   assert(bare.includes("Perguntas frequentes"), "visible FAQ missing");
   assert((bare.match(/<details class="indep-note"/g) || []).length >= 4, "FAQ entries are not rendered");
   assert(ldTypes(bare).has("FAQPage"), "FAQ schema lost");
-  assert(bare.includes("/vender") && bare.includes("/depreciacao"), "guide does not link the seller and depreciation layers");
+  assert(bare.includes("/pt/vender") && bare.includes("/pt/depreciacao"), "guide does not link the seller and depreciation layers");
   const rows = ageTable(models, builtAt);
   assert(rows.length >= 3 && rows.every(r => r.med > 0 && r.n >= 50), "age table rows are malformed");
   const withQuery = renderAvaliar({ rec: null, olxId: null, sourceUrl: null, query: "abc", models, spec: null,
@@ -1285,11 +1285,11 @@ check("year pages carry the seller path and a prefilled lead form", () => {
   const base = { rec, slug: s, year: y, cell, neighbours: { older: null, newer: null, window: [cell] },
                  liveDeals: [], pageYears: [y], stats, host: HOST, depositCount: 0, builtAt };
   const withVender = renderYearPage({ ...base, hasVender: true });
-  assert(withVender.includes(`/vender/${s}#vender`), "year page does not link the seller page");
-  assert(withVender.includes('action="/lead"') && withVender.includes(`name="ano" min="1980" max="2027" required value="${y}"`),
+  assert(withVender.includes(`/pt/vender/${s}#vender`), "year page does not link the seller page");
+  assert(withVender.includes('action="/pt/lead"') && withVender.includes(`name="ano" min="1980" max="2027" required value="${y}"`),
     "year page lead form is missing or not prefilled with the year");
   const without = renderYearPage({ ...base, hasVender: false });
-  assert(without.includes(`/avaliar?modelo=${encodeURIComponent(s)}&ano=${y}#vender`), "fallback seller path missing");
+  assert(without.includes(`/pt/avaliar?modelo=${encodeURIComponent(s)}&ano=${y}#vender`), "fallback seller path missing");
 });
 
 check("valuation results offer a WhatsApp share link back to the page", () => {
@@ -1297,11 +1297,11 @@ check("valuation results offer a WhatsApp share link back to the page", () => {
   const pasted = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models, spec: null,
                                  depositCount: 0, host: HOST, builtAt });
   assert(pasted.includes("https://wa.me/?text="), "no WhatsApp link on the pasted result");
-  assert(pasted.includes(encodeURIComponent(`https://${HOST}/avaliar?q=JqGTZ`)), "share link does not point back to the result");
+  assert(pasted.includes(encodeURIComponent(`https://${HOST}/pt/avaliar?q=JqGTZ`)), "share link does not point back to the result");
   const slug = deep;
   const spec = renderAvaliar({ rec: null, olxId: null, sourceUrl: null, query: "", models,
                                spec: { rec: models[slug], slug, year: 2016, cell: null }, depositCount: 0, host: HOST, builtAt });
-  assert(spec.includes(encodeURIComponent(`https://${HOST}/avaliar?modelo=${slug}&ano=2016`)), "spec result share link is wrong");
+  assert(spec.includes(encodeURIComponent(`https://${HOST}/pt/avaliar?modelo=${slug}&ano=2016`)), "spec result share link is wrong");
   const noHost = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models, spec: null, depositCount: 0, host: null, builtAt });
   assert(!noHost.includes("wa.me"), "share link rendered without a host to point at");
 });
@@ -1312,17 +1312,17 @@ check("every seller guide renders as an indexable article with FAQ, sources and 
   for (const guide of GUIDES) {
     const page = renderGuide({ guide, models, market: mdoc.lqm || { s30: 0.6, md: 29, cu: 0.35, cp: 0.08 }, stats: st,
                                host: HOST, depositCount: 0, builtAt });
-    assertPage(page, { indexable: true, canonical: `https://${HOST}/guias/${guide.slug}`, label: `guia ${guide.slug}` });
+    assertPage(page, { indexable: true, canonical: `https://${HOST}/pt/guias/${guide.slug}`, label: `guia ${guide.slug}` });
     const t = ldTypes(page);
     for (const want of ["Article", "FAQPage", "BreadcrumbList"]) assert(t.has(want), `${guide.slug} is missing ${want}`);
-    assert(page.includes('action="/lead"') && page.includes('name="nome_modelo" required'), `${guide.slug} has no free-text lead form`);
+    assert(page.includes('action="/pt/lead"') && page.includes('name="nome_modelo" required'), `${guide.slug} has no free-text lead form`);
     assert(!page.includes("undefined") && !page.includes("NaN"), `${guide.slug} leaks undefined/NaN`);
     const words = page.replace(/<script[\s\S]*?<\/script>/g, "").replace(/<[^>]+>/g, " ").split(/\s+/).filter(Boolean).length;
     assert(words >= 450, `${guide.slug} is thin: ${words} words`);
   }
   const hub = renderGuidesHub({ market: mdoc.lqm || null, stats: st, host: HOST, depositCount: 0, builtAt });
-  assertPage(hub, { indexable: true, canonical: `https://${HOST}/guias`, label: "guias hub" });
-  for (const guide of GUIDES) assert(hub.includes(`/guias/${guide.slug}`), `hub does not link ${guide.slug}`);
+  assertPage(hub, { indexable: true, canonical: `https://${HOST}/pt/guias`, label: "guias hub" });
+  for (const guide of GUIDES) assert(hub.includes(`/pt/guias/${guide.slug}`), `hub does not link ${guide.slug}`);
 });
 
 check("the localised shell stays out of the Portuguese pages", () => {
@@ -1331,7 +1331,7 @@ check("the localised shell stays out of the Portuguese pages", () => {
   assert(page.includes('<meta property="og:locale" content="pt_PT">'), "the shell changed og:locale");
   assert(!/hreflang=|Deutsch|Italiano|Français/.test(page),
     "a language switcher rendered while no locale is live");
-  assert(page.includes('href="/mercado"') && page.includes("Ver mercado"),
+  assert(page.includes('href="/pt/mercado"') && page.includes("Ver mercado"),
     "the Portuguese header lost its own nav");
 });
 
