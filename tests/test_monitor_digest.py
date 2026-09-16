@@ -76,9 +76,9 @@ def test_watched_senders_and_forwarded_mailbox():
 
 def test_gsc_page_buckets():
     rows = [
-        {"keys": ["https://carsbuyer.org/preco/opel-corsa/2016"], "impressions": 100, "clicks": 3},
-        {"keys": ["https://carsbuyer.org/preco/opel-corsa"], "impressions": 50, "clicks": 0},
-        {"keys": ["https://carsbuyer.org/vender/opel-corsa"], "impressions": 20, "clicks": 1},
+        {"keys": ["https://carsbuyer.org/pt/preco/opel-corsa/2016"], "impressions": 100, "clicks": 3},
+        {"keys": ["https://carsbuyer.org/pt/preco/opel-corsa"], "impressions": 50, "clicks": 0},
+        {"keys": ["https://carsbuyer.org/pt/vender/opel-corsa"], "impressions": 20, "clicks": 1},
     ]
     total, year, vender = md.summarise_pages(rows)
     assert total["impr"] == 170 and year["impr"] == 100 and vender["clicks"] == 1

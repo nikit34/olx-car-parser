@@ -467,8 +467,8 @@ await check("with INTL_LOCALES unset every page of this layer is gone", async ()
 });
 
 await check("the Portuguese root is untouched by this layer", async () => {
-  const r = await get("/precos", envOff);
-  assert(r.status === 200, `/precos → ${r.status}`);
+  const r = await get("/pt/precos", envOff);
+  assert(r.status === 200, `/pt/precos → ${r.status}`);
   const html = await r.text();
   assert(!html.includes("regionen") && !html.includes("regioni"),
     "a locale segment leaked into the Portuguese hub");

@@ -48,7 +48,7 @@ workers_dev = true
 
 # Assets are served via env.ASSETS.fetch() — the Worker chooses which paths
 # get to them (Basic-Auth-gated /analytics dashboard + /files /data assets)
-# vs. which are the public product routes (/, /mercado, /car, /avaliar).
+# vs. which are the public product routes (/pt, /pt/mercado, /pt/car, /pt/avaliar).
 [assets]
 binding = "ASSETS"
 directory = "./dashboard-static"
@@ -86,7 +86,7 @@ GA4_MEASUREMENT_ID = "G-2RSXJHJJYP"
 # bound, and the edge serving 200 under a valid CN=carsbuyer.org certificate.
 CANONICAL_HOST = "carsbuyer.org"
 
-# Who stands behind the numbers, shown on /sobre and /metodologia and emitted as
+# Who stands behind the numbers, shown on /pt/sobre and /pt/metodologia and emitted as
 # schema.org author/founder + Organization email.
 #
 # Deliberately empty by default. For a money topic, naming a person and a
@@ -134,7 +134,7 @@ HISTORY_REPORT_URL = "https://www.carvertical.com/pt"
 LEADS_TELEGRAM_CHAT_ID = "604665081"
 VENDER_WAVE_MODELS = "80"
 
-# Cron. Records the weekly market cut for /mercado/indice.
+# Cron. Records the weekly market cut for /pt/mercado/indice.
 #
 # Daily, not weekly, and the handler writes only when the current ISO week has
 # no row yet. Weekly would mean one shot per week: a failed Monday run, or a

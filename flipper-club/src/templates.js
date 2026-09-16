@@ -6,7 +6,7 @@
 // signal accent (amber/red for risk grades). Type: Space Grotesk (display),
 // Hanken Grotesk (UI), JetBrains Mono (all prices/metrics). Portuguese UI.
 //
-// Screens: Landing (/) → Mercado feed (/mercado) → Car detail (/car).
+// Screens: Landing (/pt) → Mercado feed (/pt/mercado) → Car detail (/pt/car).
 
 import { t, href as ihref, languageSwitcher, consentBannerL, alternatePaths, navExtras } from "./i18n.js";
 
@@ -94,7 +94,7 @@ function stripAccents(s) {
   return (s == null ? "" : String(s)).toLowerCase()
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
-// URL slug for /preco/{slug}. LOCK-STEP with src/analytics/model_pages.py::slugify
+// URL slug for /pt/preco/{slug}. LOCK-STEP with src/analytics/model_pages.py::slugify
 // \u2014 keep byte-identical (NFD-strip \u2192 lower \u2192 non-alnum runs to '-' \u2192 trim).
 export function slugify(s) {
   return stripAccents(s).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -232,7 +232,7 @@ export function present(deal) {
     loc: deal.city || deal.district || "—",
     firstSeenDays: days0,
     verdict: deal.verdict || null,
-    href: olxId => `/car?olx_id=${encodeURIComponent(deal.olx_id)}`,
+    href: olxId => `/pt/car?olx_id=${encodeURIComponent(deal.olx_id)}`,
   };
 }
 
@@ -829,7 +829,7 @@ function consentBanner() {
   if (!GA4_MEASUREMENT_ID) return "";
   return `<div id="fc-consent" hidden class="fc-consent">
   <div class="fc-consent-text">Usamos estatísticas anónimas para saber que páginas ajudam.
-    Sem elas o site funciona igual. <a href="/privacidade">Privacidade</a></div>
+    Sem elas o site funciona igual. <a href="/pt/privacidade">Privacidade</a></div>
   <div class="fc-consent-btns">
     <button type="button" data-consent="denied" class="fc-consent-no">Recusar</button>
     <button type="button" data-consent="granted" class="fc-consent-yes">Aceitar</button>
@@ -891,21 +891,21 @@ export function layout({ title, body, zone, nav, depositCount, index = false, de
   const navItem = (key, label, href) =>
     `<a href="${href}" class="${nav === key ? "active" : ""}">${label}</a>`;
   // Public valuation pages are indexable (SEO). Everything else is noindex but
-  // still "follow" — ephemeral /car and /avaliar-result pages link to the stable
-  // /preco and /mercado pages, and follow keeps that link equity flowing.
+  // still "follow" — ephemeral /pt/car and /avaliar-result pages link to the stable
+  // /pt/preco and /pt/mercado pages, and follow keeps that link equity flowing.
   const robots = index ? "index,follow" : "noindex,follow";
 
   // Open Graph + Twitter cards — the growth channel is organic sharing in
   // Facebook groups, Telegram, Reddit, WhatsApp; a link with no preview card
   // gets a fraction of the clicks. Emitted whenever we know the host (all public
   // pages thread it in). og:image falls back to the branded 1200×630 card;
-  // /car passes its real cover photo (raster, absolute) instead.
+  // /pt/car passes its real cover photo (raster, absolute) instead.
   const origin = host ? `https://${host}` : null;
   // og:url must identify THIS page. Falling back to the origin root made every
-  // shared /car link report the homepage, so Facebook and Telegram attributed
+  // shared /pt/car link report the homepage, so Facebook and Telegram attributed
   // the share to "/" instead of the car. Noindex pages have no canonical, hence
   // the explicit override.
-  const ogUrl = ogUrlOverride || canonical || (origin ? `${origin}/` : null);
+  const ogUrl = ogUrlOverride || canonical || (origin ? `${origin}${L ? (L.prefix || "/") : "/pt"}` : null);
   const ogImage = image || (origin ? `${origin}/og-default.png` : null);
   const usingDefaultImage = !image; // only the default card is known 1200×630
   const social = origin ? [
@@ -965,18 +965,18 @@ export function layout({ title, body, zone, nav, depositCount, index = false, de
   </div>
 </header>` : `<header class="fc-header">
   <div class="fc-header-in">
-    <a class="fc-brand" href="/">
+    <a class="fc-brand" href="/pt">
       <div class="fc-logo">€</div>
       <span class="fc-word">Carsbuyer</span>
     </a>
     <nav class="fc-nav">
-      ${navItem("feed", "Mercado", "/mercado")}
-      ${navItem("precos", "Preços", "/precos")}
-      ${navItem("avaliar", "Avaliar", "/avaliar")}
-      ${navItem("landing", "Como funciona", "/")}
+      ${navItem("feed", "Mercado", "/pt/mercado")}
+      ${navItem("precos", "Preços", "/pt/precos")}
+      ${navItem("avaliar", "Avaliar", "/pt/avaliar")}
+      ${navItem("landing", "Como funciona", "/pt")}
     </nav>
     <div class="fc-right">
-      <a class="fc-cta-dark" href="/mercado">Ver mercado</a>
+      <a class="fc-cta-dark" href="/pt/mercado">Ver mercado</a>
     </div>
   </div>
 </header>`;
@@ -993,8 +993,8 @@ export function layout({ title, body, zone, nav, depositCount, index = false, de
 </footer>` : `<footer class="footer">
   <div class="footer-in">
     <span class="mono">AVALIAÇÃO INDEPENDENTE&nbsp;· dados de anúncios públicos OLX&nbsp;· estimativas indicativas, não vinculativas&nbsp;· não somos stand nem intermediário</span>
-    <span class="mono"><a href="/precos" style="color:#5B606B;">Preços por modelo</a>&nbsp;· <a href="/depreciacao" style="color:#5B606B;">Desvalorização</a>&nbsp;· <a href="/comparar" style="color:#5B606B;">Comparar</a>&nbsp;· <a href="/liquidez" style="color:#5B606B;">Tempo de venda</a>&nbsp;· <a href="/mercado/indice" style="color:#5B606B;">Índice de mercado</a>&nbsp;· <a href="/avaliar" style="color:#5B606B;">Quanto vale o meu carro</a>&nbsp;· <a href="/vender" style="color:#5B606B;">Vender o meu carro</a>&nbsp;· <a href="/guias" style="color:#5B606B;">Guias para vender</a></span>
-    <span class="mono"><a href="/metodologia" style="color:#5B606B;">Metodologia</a>&nbsp;· <a href="/sobre" style="color:#5B606B;">Quem somos</a>&nbsp;· <a href="/isv" style="color:#5B606B;">Simulador ISV</a>&nbsp;· <a href="/importar" style="color:#5B606B;">Importar da Alemanha</a>&nbsp;· Portugal&nbsp;🇵🇹</span>${switcherLine}
+    <span class="mono"><a href="/pt/precos" style="color:#5B606B;">Preços por modelo</a>&nbsp;· <a href="/pt/depreciacao" style="color:#5B606B;">Desvalorização</a>&nbsp;· <a href="/pt/comparar" style="color:#5B606B;">Comparar</a>&nbsp;· <a href="/pt/liquidez" style="color:#5B606B;">Tempo de venda</a>&nbsp;· <a href="/pt/mercado/indice" style="color:#5B606B;">Índice de mercado</a>&nbsp;· <a href="/pt/avaliar" style="color:#5B606B;">Quanto vale o meu carro</a>&nbsp;· <a href="/pt/vender" style="color:#5B606B;">Vender o meu carro</a>&nbsp;· <a href="/pt/guias" style="color:#5B606B;">Guias para vender</a></span>
+    <span class="mono"><a href="/pt/metodologia" style="color:#5B606B;">Metodologia</a>&nbsp;· <a href="/pt/sobre" style="color:#5B606B;">Quem somos</a>&nbsp;· <a href="/pt/isv" style="color:#5B606B;">Simulador ISV</a>&nbsp;· <a href="/pt/importar" style="color:#5B606B;">Importar da Alemanha</a>&nbsp;· Portugal&nbsp;🇵🇹</span>${switcherLine}
   </div>
 </footer>`;
   return `<!doctype html>
@@ -1023,13 +1023,13 @@ ${footer}
 </body></html>`;
 }
 
-// ── Landing (/) ───────────────────────────────────────────────────────────────
+// ── Landing (/pt) ─────────────────────────────────────────────────────────────
 export function renderLanding({ stats, featured, depositCount, host }) {
   const f = featured ? present(featured) : null;
   const featureCard = f ? `
     <div class="feature-wrap">
       <div class="feature-lead"><span class="e-dot" style="background:#177A47;"></span>Destaque de hoje</div>
-      <a class="feature-card" href="/car?olx_id=${encodeURIComponent(featured.olx_id)}">
+      <a class="feature-card" href="/pt/car?olx_id=${encodeURIComponent(featured.olx_id)}">
         <div class="thumb" style="position:relative;height:200px;">
           ${thumbBlock(f, 200, 34, true)}
           ${gradeChip(f)}
@@ -1064,16 +1064,16 @@ export function renderLanding({ stats, featured, depositCount, host }) {
           <h1 class="hero-title">Antes de comprares, sabe quanto vale mesmo.</h1>
           <p class="lede">Comparamos cada anúncio do OLX com dezenas de carros semelhantes e dizemos-te o preço justo de mercado — e o que o vendedor não te conta: importação por legalizar, indícios de dano, tempo a encalhar. Não pagues a mais.</p>
           <div class="hero-actions">
-            <a class="btn-dark" href="/mercado">Ver os ${stats.deals} carros abaixo do preço&nbsp;&nbsp;→</a>
-            <a class="btn-outline" href="/avaliar" style="font-size:15px;padding:14px 22px;">Quanto vale o meu carro?&nbsp;&nbsp;→</a>
+            <a class="btn-dark" href="/pt/mercado">Ver os ${stats.deals} carros abaixo do preço&nbsp;&nbsp;→</a>
+            <a class="btn-outline" href="/pt/avaliar" style="font-size:15px;padding:14px 22px;">Quanto vale o meu carro?&nbsp;&nbsp;→</a>
           </div>
           <div class="note" style="margin-top:10px;">Comprar ou vender · sem registo · grátis</div>
           <div style="margin-top:24px;">
             <div class="mono" style="font-size:12px;color:#8A8F98;margin-bottom:9px;">O que queres fazer?</div>
             <div class="chips">
-              <a class="chip active" href="/mercado?view=comprar">🛒 Comprar bem</a>
-              <a class="chip" href="/mercado?view=revender">📈 Revender com margem</a>
-              <a class="chip" href="/vender">Vender o meu carro</a>
+              <a class="chip active" href="/pt/mercado?view=comprar">🛒 Comprar bem</a>
+              <a class="chip" href="/pt/mercado?view=revender">📈 Revender com margem</a>
+              <a class="chip" href="/pt/vender">Vender o meu carro</a>
             </div>
           </div>
           <div class="hero-stats">
@@ -1101,7 +1101,7 @@ export function renderLanding({ stats, featured, depositCount, host }) {
           <h2 style="color:#16181D;">Vais vender o teu carro?</h2>
           <p style="color:#5B606B;">Diz-nos o modelo e o ano e fazemos-te uma avaliação independente — para saberes por quanto anunciar sem deixar dinheiro em cima da mesa.</p>
         </div>
-        <a class="btn-dark" href="/avaliar" style="font-size:15px;padding:14px 26px;">Avaliar o meu carro&nbsp;&nbsp;→</a>
+        <a class="btn-dark" href="/pt/avaliar" style="font-size:15px;padding:14px 26px;">Avaliar o meu carro&nbsp;&nbsp;→</a>
       </div>
     </section>
 
@@ -1115,7 +1115,7 @@ export function renderLanding({ stats, featured, depositCount, host }) {
             <p>Não cobramos comissão ao vendedor e ninguém paga para aparecer melhor avaliado. Ganhamos de duas formas: quando um vendedor pede propostas de compra e um comprador profissional paga por esse contacto, e quando um comprador encomenda um relatório de histórico através da nossa ligação de parceiro. Se um dia houver publicidade nas páginas de preços, estará assinalada como tal. Nenhuma destas receitas depende do valor que mostramos — a avaliação sai dos anúncios e do modelo, não de quem paga.</p>
           </details>
         </div>
-        <a class="btn-bright" href="/mercado">Ver os carros avaliados&nbsp;&nbsp;→</a>
+        <a class="btn-bright" href="/pt/mercado">Ver os carros avaliados&nbsp;&nbsp;→</a>
       </div>
     </section>`;
 
@@ -1140,7 +1140,7 @@ export function renderLanding({ stats, featured, depositCount, host }) {
         "publisher": { "@id": `${origin}/#org` },
         "potentialAction": {
           "@type": "SearchAction",
-          "target": { "@type": "EntryPoint", "urlTemplate": `${origin}/avaliar?q={search_term_string}` },
+          "target": { "@type": "EntryPoint", "urlTemplate": `${origin}/pt/avaliar?q={search_term_string}` },
           "query-input": "required name=search_term_string",
         },
       },
@@ -1150,11 +1150,11 @@ export function renderLanding({ stats, featured, depositCount, host }) {
     title: "Avaliação grátis de carros usados em Portugal",
     description: "Avaliação independente e grátis de carros usados em Portugal a partir de anúncios do OLX: preço justo de mercado, avisos de importação/ISV e carros abaixo do preço. Não pagues a mais.",
     body, zone: "all", nav: "landing", depositCount, index: true,
-    host, canonical: origin ? `${origin}/` : null, jsonLd,
+    host, canonical: origin ? `${origin}/pt` : null, jsonLd,
   });
 }
 
-// ── Mercado feed (/mercado) ─────────────────────────────────────────────────────
+// ── Mercado feed (/pt/mercado) ──────────────────────────────────────────────────
 // `view` is the intent lens: "comprar" (default, buyer-first) or "revender"
 // (importer/flipper). It only RELABELS the same decision_score-ranked feed —
 // never re-sorts or filters — so we never imply a precision the ranking lacks.
@@ -1165,7 +1165,7 @@ export function renderGrid({ deals, zone, sort, view, depositCount,
   const lens = view === "revender" ? "revender" : "comprar";
   const profitLabel = lens === "comprar" ? "💰 Maior poupança" : "💰 Maior margem";
   const tabLabel = s => s === "score" ? "🏆 Melhor aposta" : s === "profit" ? profitLabel : "🆕 Mais recentes";
-  const q = extra => `/mercado?zone=${extra.zone ?? zone}&sort=${extra.sort ?? sort}&view=${lens}`;
+  const q = extra => `/pt/mercado?zone=${extra.zone ?? zone}&sort=${extra.sort ?? sort}&view=${lens}`;
   const sortChip = s => `<a href="${q({ sort: s })}" class="chip ${sort === s ? "active" : ""}">${tabLabel(s)}</a>`;
   const zoneChip = z => {
     const labels = { all: "Todas", norte: "Norte", centro: "Centro", sul: "Sul" };
@@ -1173,11 +1173,11 @@ export function renderGrid({ deals, zone, sort, view, depositCount,
     const count = c != null ? ` <span class="chip-count">${c}</span>` : "";
     return `<a href="${q({ zone: z })}" class="chip ${zone === z ? "active" : ""}">${labels[z]}${count}</a>`;
   };
-  const lensChip = (v, label) => `<a href="/mercado?zone=${zone}&sort=${sort}&view=${v}" class="chip ${lens === v ? "active" : ""}">${label}</a>`;
+  const lensChip = (v, label) => `<a href="/pt/mercado?zone=${zone}&sort=${sort}&view=${v}" class="chip ${lens === v ? "active" : ""}">${label}</a>`;
 
   const tiles = deals.map(deal => {
     const p = present(deal);
-    const href = `/car?zone=${zone}&view=${lens}&olx_id=${encodeURIComponent(deal.olx_id)}`;
+    const href = `/pt/car?zone=${zone}&view=${lens}&olx_id=${encodeURIComponent(deal.olx_id)}`;
     const photoCount = p.photos.length ? `<span class="photo-count">FOTO 1/${p.photos.length}</span>` : "";
     // Buyer cares "how much under fair" (poupas); reseller cares raw margin
     // (which a flagged import overstates → asterisk + footnote, never a fake cut).
@@ -1224,24 +1224,24 @@ export function renderGrid({ deals, zone, sort, view, depositCount,
 
   // Model links for the models in today's feed.
   //
-  // Every link on this page used to point at /car?olx_id=… — pages that are
+  // Every link on this page used to point at /pt/car?olx_id=… — pages that are
   // noindex by design because the listing disappears when the car sells. So the
   // site's most-updated page passed nothing onward: a crawler saw a wall of
-  // dead-end links and a banner. These chips point at the stable /preco pages
+  // dead-end links and a banner. These chips point at the stable /pt/preco pages
   // for the models actually on offer right now, which is both a real crawl path
   // and the next question a visitor has ("is this a good price for a Golf?").
   const modelChips = (modelLinks && modelLinks.length) ? `
     <section class="section" style="padding:34px 0 0;">
       <div class="sec-label">PREÇO DE MERCADO DOS MODELOS COM NEGÓCIOS AGORA</div>
       <div class="mchips">${modelLinks.slice(0, 24).map(m =>
-        `<a class="mchip" href="/preco/${encodeURIComponent(m.slug)}">${escapeHtml(m.b)} ${escapeHtml(m.m)} <span class="mut">mediana ${fmtEur(m.fm)}${m.count > 1 ? ` · ${m.count} negócios` : ""}</span></a>`).join("")}</div>
+        `<a class="mchip" href="/pt/preco/${encodeURIComponent(m.slug)}">${escapeHtml(m.b)} ${escapeHtml(m.m)} <span class="mut">mediana ${fmtEur(m.fm)}${m.count > 1 ? ` · ${m.count} negócios` : ""}</span></a>`).join("")}</div>
       ${chipRow("O ANO EXATO DESTES CARROS", yearLinks)}
       ${chipRow("QUANTO PERDEM E QUANTO DEMORAM A VENDER", contextLinks)}
       ${chipRow("O MERCADO DOS DISTRITOS COM NEGÓCIOS AGORA", districtLinks)}
       <p style="font-size:13.5px;color:#5B606B;margin:16px 0 0;">
-        <a href="/precos" style="color:#177A47;font-weight:600;">Todos os modelos</a> ·
-        <a href="/mercado/indice" style="color:#177A47;font-weight:600;">Índice semanal do mercado</a> ·
-        <a href="/sobrevalorizados" style="color:#177A47;font-weight:600;">Onde se pede acima do valor justo</a>
+        <a href="/pt/precos" style="color:#177A47;font-weight:600;">Todos os modelos</a> ·
+        <a href="/pt/mercado/indice" style="color:#177A47;font-weight:600;">Índice semanal do mercado</a> ·
+        <a href="/pt/sobrevalorizados" style="color:#177A47;font-weight:600;">Onde se pede acima do valor justo</a>
       </p>
       ${(feedBuiltAt || builtAt) ? `<p class="mono fc-prov" data-updated="${escapeHtml(String(feedBuiltAt || builtAt).slice(0, 10))}" data-measure="live-deal-feed" data-source="OLX Portugal">Anúncios ativos recolhidos até ${escapeHtml(String(feedBuiltAt || builtAt).slice(0, 10))}${builtAt && feedBuiltAt && String(builtAt).slice(0, 10) !== String(feedBuiltAt).slice(0, 10) ? `, com os preços de referência de ${escapeHtml(String(builtAt).slice(0, 10))}` : ""} · fonte: OLX Portugal</p>` : ""}
     </section>` : "";
@@ -1281,11 +1281,11 @@ export function renderGrid({ deals, zone, sort, view, depositCount,
     title, description, body, zone, nav: "feed", depositCount, index: true,
     // Collapse the zone×sort×view variants onto one indexable URL — the feed is
     // transient and not the SEO target, so folding the params avoids ~24 dupes.
-    host, canonical: origin ? `${origin}/mercado` : null, jsonLd,
+    host, canonical: origin ? `${origin}/pt/mercado` : null, jsonLd,
   });
 }
 
-// ── Car detail (/car) ───────────────────────────────────────────────────────────
+// ── Car detail (/pt/car) ────────────────────────────────────────────────────────
 export function renderCarPage({ deal, zone, view, depositCount, modelHref, host, historyUrl = null }) {
   const p = present(deal);
   const lens = view === "revender" ? "revender" : "comprar";
@@ -1393,7 +1393,7 @@ export function renderCarPage({ deal, zone, view, depositCount, modelHref, host,
 
   const body = `
     <div class="detail">
-      <a class="back" href="/mercado?zone=${escapeHtml(zone)}&view=${lens}">‹&nbsp;&nbsp;Voltar ao mercado</a>
+      <a class="back" href="/pt/mercado?zone=${escapeHtml(zone)}&view=${lens}">‹&nbsp;&nbsp;Voltar ao mercado</a>
       <div class="detail-grid">
         <div class="dg-gallery">
           ${gallery}
@@ -1452,10 +1452,10 @@ export function renderCarPage({ deal, zone, view, depositCount, modelHref, host,
       </div>
     </div>`;
 
-  // noindex,follow: /car backs transient 5-min-rotating listings that vanish
+  // noindex,follow: /pt/car backs transient 5-min-rotating listings that vanish
   // (soft-404 risk) and republish the seller's OLX description verbatim
-  // (duplicate content). Ranking consolidates on the stable /preco pages; the
-  // page stays crawlable so link equity still flows to /preco and /mercado.
+  // (duplicate content). Ranking consolidates on the stable /pt/preco pages; the
+  // page stays crawlable so link equity still flows to /pt/preco and /pt/mercado.
   // Share image is the car's own cover photo when present (absolute OLX URL).
   const ogImg = (typeof p.cover === "string" && /^https?:\/\//.test(p.cover)) ? p.cover : null;
   const desc = `${p.name}: pedido ${p.priceStr}, preço justo ${p.fairStr}${p.saving != null ? `, poupas ${fmtEur(p.saving)}` : ""}. Avaliação independente do anúncio no OLX Portugal.`;
@@ -1463,7 +1463,7 @@ export function renderCarPage({ deal, zone, view, depositCount, modelHref, host,
     title: p.name, description: desc, body, zone, nav: "feed", depositCount,
     index: false, host, image: ogImg, type: ogImg ? "product" : "website",
     // Normalised: zone/view are display state, not part of the car's identity.
-    ogUrl: host ? `https://${host}/car?olx_id=${encodeURIComponent(deal.olx_id)}` : null,
+    ogUrl: host ? `https://${host}/pt/car?olx_id=${encodeURIComponent(deal.olx_id)}` : null,
   });
 }
 
@@ -1476,7 +1476,7 @@ export function renderPrivacy({ depositCount, host, contact = null }) {
   const to = (contact || "").trim();
   const contactHtml = to
     ? `<a href="mailto:${escapeHtml(to)}">${escapeHtml(to)}</a>`
-    : `o contacto indicado em <a href="/sobre">Quem somos</a>`;
+    : `o contacto indicado em <a href="/pt/sobre">Quem somos</a>`;
   const body = `
     <section class="fc-doc">
       <h1>Privacidade</h1>
@@ -1519,7 +1519,7 @@ export function renderPrivacy({ depositCount, host, contact = null }) {
     title: "Privacidade",
     description: "O que o Carsbuyer guarda: nenhum cookie próprio, estatísticas anónimas só com consentimento e pedidos de propostas guardados 90 dias.",
     body, zone: "all", nav: null, depositCount, index: true,
-    host, canonical: origin ? `${origin}/privacidade` : null,
+    host, canonical: origin ? `${origin}/pt/privacidade` : null,
   });
 }
 
@@ -1529,15 +1529,15 @@ export function renderInfo({ zone, title, message, depositCount }) {
       <div class="ic">🚗</div>
       <h1>${escapeHtml(title)}</h1>
       <p>${escapeHtml(message)}</p>
-      <a class="btn-dark" href="/mercado">Ver mercado</a>
+      <a class="btn-dark" href="/pt/mercado">Ver mercado</a>
     </div>`;
   return layout({ title, body, zone, nav: null, depositCount });
 }
 
-// ── Avaliar (/avaliar) — seller-lens teaser ──────────────────────────────────
+// ── Avaliar (/pt/avaliar) — seller-lens teaser ───────────────────────────────
 // Tier-0: no real "value MY car" tool yet (needs an inference endpoint). Ships a
 // waitlist teaser whose CTA is a mailto. A real form is Tier-1.
-// ── Avaliar (/avaliar) — paste-a-link valuation of ANY OLX listing (Tier-2) ──
+// ── Avaliar (/pt/avaliar) — paste-a-link valuation of ANY OLX listing (Tier-2)
 // rec = the valuations.json record for the looked-up olx_id (or null). query =
 // the raw user input (URL or id). The verdict is derived from where the asking
 // price sits in the model's fair band [fl, fh].
@@ -1636,12 +1636,12 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
     // olx.pt URL would 404), otherwise omit the button.
     const olxHref = sourceUrl || (olxId && !olxId.startsWith("8") ? `https://www.olx.pt/d/anuncio/-ID${encodeURIComponent(olxId)}.html` : null);
     // Contextual link into the model SEO page, when this model has one.
-    const modelHref = (rec.ms && models && models[rec.ms]) ? `/preco/${encodeURIComponent(rec.ms)}` : null;
+    const modelHref = (rec.ms && models && models[rec.ms]) ? `/pt/preco/${encodeURIComponent(rec.ms)}` : null;
     const sub = `${rec.y ?? "—"} · ${rec.km != null ? fmtKm(rec.km) : "—"} · ${escapeHtml(rec.fu || "—")}`;
     const hist = historyCheckBlock({ url: historyUrl, reasons: historyReasons(rec, models), price, from: "avaliar" });
     const sellHref = (rec.ms && models && models[rec.ms])
-      ? `/avaliar?modelo=${encodeURIComponent(rec.ms)}${rec.y ? `&ano=${encodeURIComponent(rec.y)}` : ""}#vender`
-      : "/avaliar#escolher";
+      ? `/pt/avaliar?modelo=${encodeURIComponent(rec.ms)}${rec.y ? `&ano=${encodeURIComponent(rec.y)}` : ""}#vender`
+      : "/pt/avaliar#escolher";
     result = `
     <div class="detail" style="max-width:640px;margin:0 auto;padding-top:0;">
       <div class="side-card">
@@ -1668,12 +1668,12 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
         ${stallBlock}
         ${hist}
         ${olxHref ? `<a class="olx-btn" style="display:block;margin-top:18px;" href="${escapeHtml(olxHref)}" target="_blank" rel="noopener nofollow"${analyticsClick("olx_open", { source: "avaliar", olx_id: String(olxId || "") })}>Ver anúncio original&nbsp;&nbsp;↗</a>` : ""}
-        ${whatsappShare(`${rec.t || "Viatura"}: pedido ${fmtEur(price)}, justo ${fmtEur(fm)} (${fmtEur(fl)}–${fmtEur(fh)}). Avaliação independente:`, host ? `https://${host}/avaliar?q=${encodeURIComponent(olxId || "")}` : "")}
+        ${whatsappShare(`${rec.t || "Viatura"}: pedido ${fmtEur(price)}, justo ${fmtEur(fm)} (${fmtEur(fl)}–${fmtEur(fh)}). Avaliação independente:`, host ? `https://${host}/pt/avaliar?q=${encodeURIComponent(olxId || "")}` : "")}
         ${modelHref ? `<a href="${modelHref}" style="display:block;text-align:center;margin-top:12px;font-size:13.5px;color:#177A47;font-weight:600;">Ver preços deste modelo por ano&nbsp;→</a>` : ""}
         <a href="${sellHref}" style="display:block;text-align:center;margin-top:10px;font-size:13.5px;color:#5B606B;">É o teu carro? Recebe propostas de compra&nbsp;→</a>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;">
-          <a class="btn-outline" style="flex:1 1 auto;padding:11px 14px;font-size:13.5px;text-align:center;" href="/avaliar">Avaliar outro carro</a>
-          <a class="btn-dark" style="flex:1 1 auto;padding:11px 14px;font-size:13.5px;text-align:center;" href="/mercado">Ver carros abaixo do preço&nbsp;→</a>
+          <a class="btn-outline" style="flex:1 1 auto;padding:11px 14px;font-size:13.5px;text-align:center;" href="/pt/avaliar">Avaliar outro carro</a>
+          <a class="btn-dark" style="flex:1 1 auto;padding:11px 14px;font-size:13.5px;text-align:center;" href="/pt/mercado">Ver carros abaixo do preço&nbsp;→</a>
         </div>
       </div>
       <div class="side-foot">Estimativa a partir de anúncios comparáveis em Portugal · avaliação independente, não somos o vendedor.</div>
@@ -1709,11 +1709,11 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
         </div>
         ${caveat}${sl}
         <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap;">
-          <a class="btn-outline" style="padding:11px 16px;font-size:14px;" href="/preco/${encodeURIComponent(spec.slug)}">Ver preço por ano&nbsp;→</a>
-          <a class="btn-dark" style="padding:11px 16px;font-size:14px;" href="/avaliar">Tens o anúncio? Cola o link</a>
+          <a class="btn-outline" style="padding:11px 16px;font-size:14px;" href="/pt/preco/${encodeURIComponent(spec.slug)}">Ver preço por ano&nbsp;→</a>
+          <a class="btn-dark" style="padding:11px 16px;font-size:14px;" href="/pt/avaliar">Tens o anúncio? Cola o link</a>
         </div>
-        ${whatsappShare(`${mr.b} ${mr.m}${cell ? ` ${cell.y}` : ""}: mediana pedida ${fmtEur(sfm)} (${fmtEur(sfl)}–${fmtEur(sfh)}) no OLX. Avaliação independente:`, host ? `https://${host}/avaliar?modelo=${encodeURIComponent(spec.slug)}${spec.year ? `&ano=${encodeURIComponent(spec.year)}` : ""}` : "")}
-        ${spec.vender ? `<a href="/vender/${encodeURIComponent(spec.slug)}" style="display:block;text-align:center;margin-top:12px;font-size:13.5px;color:#177A47;font-weight:600;">Quanto pedir e em quantos dias vende&nbsp;→</a>` : ""}
+        ${whatsappShare(`${mr.b} ${mr.m}${cell ? ` ${cell.y}` : ""}: mediana pedida ${fmtEur(sfm)} (${fmtEur(sfl)}–${fmtEur(sfh)}) no OLX. Avaliação independente:`, host ? `https://${host}/pt/avaliar?modelo=${encodeURIComponent(spec.slug)}${spec.year ? `&ano=${encodeURIComponent(spec.year)}` : ""}` : "")}
+        ${spec.vender ? `<a href="/pt/vender/${encodeURIComponent(spec.slug)}" style="display:block;text-align:center;margin-top:12px;font-size:13.5px;color:#177A47;font-weight:600;">Quanto pedir e em quantos dias vende&nbsp;→</a>` : ""}
       </div>
       <div class="side-foot">Preços PEDIDOS em anúncios ativos do OLX — estimativa indicativa, não o valor da tua viatura concreta.</div>
       ${leadFormBlock({
@@ -1738,7 +1738,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
     <section id="escolher" class="section" style="padding:10px 22px 0;max-width:620px;">
       <div class="side-card">
         <div class="panel-title" style="font-size:16px;margin-bottom:12px;">Não tens anúncio? Escolhe o teu carro</div>
-        <form action="/avaliar" method="get" style="display:flex;gap:10px;flex-wrap:wrap;">
+        <form action="/pt/avaliar" method="get" style="display:flex;gap:10px;flex-wrap:wrap;">
           <select name="modelo" required style="flex:1 1 230px;min-width:180px;padding:12px;border:1px solid #E2DFD8;border-radius:11px;font-size:15px;background:#fff;color:#16181D;">
             <option value="">Modelo…</option>${opts}
           </select>
@@ -1757,7 +1757,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
     </div>` : "";
 
   const form = `
-    <form action="/avaliar" method="get" style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;max-width:620px;margin:0 auto;">
+    <form action="/pt/avaliar" method="get" style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;max-width:620px;margin:0 auto;">
       <input name="q" value="${escapeHtml(query || "")}" placeholder="Cola o link OLX ou StandVirtual (ou o ID)" autocomplete="off"
         style="flex:1 1 340px;min-width:220px;padding:13px 15px;border:1px solid #E2DFD8;border-radius:12px;font-family:'Hanken Grotesk',sans-serif;font-size:15px;background:#fff;color:#16181D;">
       <button type="submit" class="btn-dark" style="font-size:15px;padding:13px 24px;">Avaliar&nbsp;&nbsp;→</button>
@@ -1820,7 +1820,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
       {
         "@type": "WebApplication",
         "name": "Avaliação de carros usados",
-        "url": `${origin}/avaliar`,
+        "url": `${origin}/pt/avaliar`,
         "applicationCategory": "FinanceApplication",
         "operatingSystem": "Web",
         "inLanguage": "pt-PT",
@@ -1838,7 +1838,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
       {
         "@type": "BreadcrumbList",
         "itemListElement": [
-          { "@type": "ListItem", "position": 1, "name": "Início", "item": `${origin}/` },
+          { "@type": "ListItem", "position": 1, "name": "Início", "item": `${origin}/pt` },
           { "@type": "ListItem", "position": 2, "name": "Avaliar o meu carro" },
         ],
       },
@@ -1857,7 +1857,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
       : "Quanto vale o meu carro? Avaliação grátis de carros usados",
     description: "Cola o link de qualquer anúncio OLX ou StandVirtual e sabe o preço justo do carro, quanto poupas ou pagas a mais, e se tem ISV por pagar. Avaliação independente e grátis.",
     body: body + valuation, zone: "all", nav: "avaliar", depositCount, index: isBare, jsonLd,
-    host, canonical: origin ? `${origin}/avaliar` : null,
+    host, canonical: origin ? `${origin}/pt/avaliar` : null,
   });
 }
 
@@ -1868,7 +1868,7 @@ export function fmtBuilt(iso) {
   return m ? `${+m[3]} ${PT_MON[+m[2] - 1]} ${m[1]}` : "";
 }
 
-// ── Per-model SEO valuation page (/preco/{slug}) ─────────────────────────────
+// ── Per-model SEO valuation page (/pt/preco/{slug}) ──────────────────────────
 // rec = the models.json record. liveDeals = raw hot_deals matching this model
 // (below fair), already filtered by the worker. siblings = same-brand models.
 // builtAt = models.json build stamp (freshness signal). rec.gl/gm/gh = the
@@ -1917,7 +1917,7 @@ export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, h
   // Framing: the asking MEDIAN of a whole model virtually always sits INSIDE
   // this (wide, CQR) fair band — comparing two central tendencies can't yield a
   // hard "overpaying €X vs fair value" claim (that signal is per-LISTING, on
-  // /mercado). So we state WHERE in the fair range the market sits, never a
+  // /pt/mercado). So we state WHERE in the fair range the market sits, never a
   // fabricated €-overpay against the point estimate.
   let bandMsg = "";
   if (hasG) {
@@ -1940,7 +1940,7 @@ export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, h
           <div class="side-fair"><div class="cap">intervalo estimado</div><div class="v">${fmtEur(rec.gl)} – ${fmtEur(rec.gh)}</div></div>
         </div>
         ${bandMsg}
-        <div class="mono" style="font-size:11.5px;color:#9A9FA8;margin-top:12px;line-height:1.5;">Estimativa do nosso modelo para um ${B} ${M} com quilometragem e specs típicas deste modelo — não considera o estado específico da tua viatura. Para o teu carro concreto, <a href="/avaliar" style="color:#177A47;font-weight:600;">avalia o anúncio</a>.</div>
+        <div class="mono" style="font-size:11.5px;color:#9A9FA8;margin-top:12px;line-height:1.5;">Estimativa do nosso modelo para um ${B} ${M} com quilometragem e specs típicas deste modelo — não considera o estado específico da tua viatura. Para o teu carro concreto, <a href="/pt/avaliar" style="color:#177A47;font-weight:600;">avalia o anúncio</a>.</div>
       </div>
     </section>` : "";
 
@@ -1963,7 +1963,7 @@ export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, h
   if (liveDeals && liveDeals.length) {
     const cards = liveDeals.slice(0, 3).map(d => {
       const p = present(d);
-      return `<a class="tile" href="/car?olx_id=${encodeURIComponent(d.olx_id)}" style="max-width:none;">
+      return `<a class="tile" href="/pt/car?olx_id=${encodeURIComponent(d.olx_id)}" style="max-width:none;">
         <div class="thumb">${thumbBlock(p, 168, 28)}${gradeChip(p)}</div>
         <div class="tbody">
           <div class="tile-title">${escapeHtml(p.name)}</div>
@@ -1975,19 +1975,19 @@ export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, h
       <section class="section" style="padding:30px 22px 0;max-width:1180px;">
         <div class="sec-label">${B} ${M} ABAIXO DO PREÇO JUSTO AGORA</div>
         <div class="grid">${cards}</div>
-        <a class="btn-dark" href="/mercado" style="display:inline-block;margin-top:18px;font-size:14px;padding:12px 22px;">Ver todos os ${B} ${M} no mercado&nbsp;&nbsp;→</a>
+        <a class="btn-dark" href="/pt/mercado" style="display:inline-block;margin-top:18px;font-size:14px;padding:12px 22px;">Ver todos os ${B} ${M} no mercado&nbsp;&nbsp;→</a>
       </section>`;
   } else {
     bridge1 = `
       <section class="section" style="padding:24px 22px 0;max-width:680px;">
-        <div class="info" style="padding:18px 0 0;"><p style="margin:0;">Sem ${B} ${M} abaixo do preço justo neste momento. <a href="/avaliar" style="color:#177A47;font-weight:600;">Avalia o teu ${B} ${M}</a> ou <a href="/mercado" style="color:#177A47;font-weight:600;">vê o mercado completo</a>.</p></div>
+        <div class="info" style="padding:18px 0 0;"><p style="margin:0;">Sem ${B} ${M} abaixo do preço justo neste momento. <a href="/pt/avaliar" style="color:#177A47;font-weight:600;">Avalia o teu ${B} ${M}</a> ou <a href="/pt/mercado" style="color:#177A47;font-weight:600;">vê o mercado completo</a>.</p></div>
       </section>`;
   }
 
   // 3. Per-year table
   // Years that cleared the year-page floor become links: this is the crawl path
   // into the 565 model-year pages, and the one a reader wants anyway.
-  const yearHref = y => `/preco/${slug}/${y}`;
+  const yearHref = y => `/pt/preco/${slug}/${y}`;
   const yrRows = (rec.yr || []).map(c => `<tr>
       <td>${(typeof c.y === "number" && yearPages.includes(c.y))
         ? `<a href="${yearHref(c.y)}" style="color:#177A47;font-weight:600;">${c.y}</a>`
@@ -2007,7 +2007,7 @@ export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, h
       </table></div>
       ${(rec.yr || []).some(c => c.w) ? `<div class="mono" style="font-size:11.5px;color:#9A9FA8;margin-top:10px;">* anos com poucos anúncios ativos: mediana dos anúncios dos últimos 6 meses, ativos e já fechados.</div>` : ""}
       ${rec.yt ? `<div class="mono" style="font-size:11.5px;color:#9A9FA8;margin-top:10px;">Mais ${rec.yt} ano(s) com poucos anúncios para mostrar um preço fiável.</div>` : ""}
-      <div style="font-size:13px;color:#5B606B;margin-top:12px;">Tens um ${B} ${M}${yrRange ? " de " + yrRange : ""}? <a href="/avaliar" style="color:#177A47;font-weight:600;">Avalia o teu&nbsp;→</a></div>
+      <div style="font-size:13px;color:#5B606B;margin-top:12px;">Tens um ${B} ${M}${yrRange ? " de " + yrRange : ""}? <a href="/pt/avaliar" style="color:#177A47;font-weight:600;">Avalia o teu&nbsp;→</a></div>
     </section>` : "";
 
   // 3b. Fuel and district cuts of this same model.
@@ -2023,7 +2023,7 @@ export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, h
       <div style="margin-bottom:16px;">
         <div class="sec-label" style="margin:0 0 9px;">${label}</div>
         <div class="fc-yearlinks">${list.map(f =>
-          `<a href="/preco/${encodeURIComponent(slug)}/${encodeURIComponent(f.k)}">${escapeHtml(f.lbl)} <span class="mut">${fmtEur(f.fm)}</span></a>`).join("")}</div>
+          `<a href="/pt/preco/${encodeURIComponent(slug)}/${encodeURIComponent(f.k)}">${escapeHtml(f.lbl)} <span class="mut">${fmtEur(f.fm)}</span></a>`).join("")}</div>
       </div>` : "";
   const facetBlock = (fuelFacets.length || gearFacets.length || geoFacets.length) ? `
     <section class="section" style="padding:30px 22px 0;max-width:680px;">
@@ -2040,7 +2040,7 @@ export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, h
           <h2>Vê o preço exato do TEU anúncio</h2>
           <p>Esta é a média do modelo. Cola o link do teu ${B} ${M} no OLX e dizemos-te o preço justo desse carro específico — quanto poupas ou pagas a mais.</p>
         </div>
-        <a class="btn-bright" href="/avaliar">Avaliar o meu anúncio&nbsp;&nbsp;→</a>
+        <a class="btn-bright" href="/pt/avaliar">Avaliar o meu anúncio&nbsp;&nbsp;→</a>
       </div>
     </section>`;
 
@@ -2055,7 +2055,7 @@ export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, h
       ${sellLine}
       <div class="exclusive" style="background:#FAFAF8;border:1px solid #EFECE6;align-items:flex-start;">
         <span style="font-size:15px;">📊</span>
-        <span class="x" style="color:#5B606B;"><b style="color:#16181D;">Como lemos estes números.</b> Mediana e intervalo P25-P75 dos preços <b>pedidos</b> em ${rec.n} anúncios ativos do OLX — não preços de venda fechados, e não uma avaliação da tua viatura: quilómetros, estado, histórico e o ISV por pagar num importado mudam o valor real. <a href="/metodologia" style="color:#177A47;font-weight:600;">O método, em detalhe</a> · <a href="/avaliar" style="color:#177A47;font-weight:600;">avaliar o meu anúncio</a>.</span>
+        <span class="x" style="color:#5B606B;"><b style="color:#16181D;">Como lemos estes números.</b> Mediana e intervalo P25-P75 dos preços <b>pedidos</b> em ${rec.n} anúncios ativos do OLX — não preços de venda fechados, e não uma avaliação da tua viatura: quilómetros, estado, histórico e o ISV por pagar num importado mudam o valor real. <a href="/pt/metodologia" style="color:#177A47;font-weight:600;">O método, em detalhe</a> · <a href="/pt/avaliar" style="color:#177A47;font-weight:600;">avaliar o meu anúncio</a>.</span>
       </div>
     </section>`;
 
@@ -2067,7 +2067,7 @@ export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, h
           <h2 style="color:#16181D;">Vais vender o teu ${B} ${M}?</h2>
           <p style="color:#5B606B;">Metade dos ${B} ${M} anunciados no OLX pede entre ${FL} e ${FH}. Sabe onde cai o teu antes de anunciar — grátis.</p>
         </div>
-        <a class="btn-dark" href="/avaliar" style="font-size:15px;padding:14px 26px;">Avaliar o meu carro&nbsp;&nbsp;→</a>
+        <a class="btn-dark" href="/pt/avaliar" style="font-size:15px;padding:14px 26px;">Avaliar o meu carro&nbsp;&nbsp;→</a>
       </div>
     </section>`;
 
@@ -2077,10 +2077,10 @@ export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, h
       ? (Math.abs(c.ratio - 1) < 0.025 ? "igual"
         : `${c.ratio > 1 ? "+" : "−"}${Math.round((c.ratio > 1 ? c.ratio - 1 : 1 - c.ratio) * 100)}%`)
       : fmtEur(c.fm);
-    return `<a class="mchip" href="/preco/${encodeURIComponent(c.slug)}">${escapeHtml(c.b)} ${escapeHtml(c.m)} <span class="mut">${rel}</span></a>`;
+    return `<a class="mchip" href="/pt/preco/${encodeURIComponent(c.slug)}">${escapeHtml(c.b)} ${escapeHtml(c.m)} <span class="mut">${rel}</span></a>`;
   }).join("");
   const cmpChips = (comparisons || []).slice(0, 4).map(c =>
-    `<a class="mchip" href="/comparar/${c.href}">${escapeHtml(rec.m)} <span class="mut">vs</span> ${escapeHtml(c.m)}</a>`).join("");
+    `<a class="mchip" href="/pt/comparar/${c.href}">${escapeHtml(rec.m)} <span class="mut">vs</span> ${escapeHtml(c.m)}</a>`).join("");
   const rivals = (compChips || cmpChips) ? `
     <section class="section" style="padding:34px 22px 0;max-width:1180px;">
       ${compChips ? `<div class="sec-label">${bySegment ? `ALTERNATIVAS NO MESMO SEGMENTO · PREÇO AO MESMO ANO QUE O ${B} ${M}` : "ALTERNATIVAS NA MESMA FAIXA DE PREÇO"}</div><div class="mchips">${compChips}</div>` : ""}
@@ -2092,7 +2092,7 @@ export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, h
     <section class="section" style="padding:26px 22px 0;max-width:680px;">
       <div class="exclusive" style="background:#F6FBF8;border:1px solid #DDEBE1;align-items:flex-start;">
         <span style="font-size:15px;">📉</span>
-        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">Quanto perde por ano.</b> Temos histórico suficiente para traçar a curva de desvalorização do ${B} ${M} e dizer quanto custa, em euros, cada ano de matrícula. <a href="/depreciacao/${slug}" style="color:#177A47;font-weight:600;">Ver a curva&nbsp;→</a></span>
+        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">Quanto perde por ano.</b> Temos histórico suficiente para traçar a curva de desvalorização do ${B} ${M} e dizer quanto custa, em euros, cada ano de matrícula. <a href="/pt/depreciacao/${slug}" style="color:#177A47;font-weight:600;">Ver a curva&nbsp;→</a></span>
       </div>
     </section>` : "";
 
@@ -2100,7 +2100,7 @@ export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, h
     <section class="section" style="padding:26px 22px 0;max-width:680px;">
       <div class="exclusive" style="background:#F4F6FB;border:1px solid #D9E0F0;align-items:flex-start;">
         <span style="font-size:15px;">🏷️</span>
-        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">Vais vender o teu ${B} ${M}?</b> Quanto pedir por ano, em quantos dias sai e quantos vendedores acabam por baixar o preço — e propostas de compra sem compromisso. <a href="/vender/${slug}" style="color:#177A47;font-weight:600;">Ver quanto pedir&nbsp;→</a></span>
+        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">Vais vender o teu ${B} ${M}?</b> Quanto pedir por ano, em quantos dias sai e quantos vendedores acabam por baixar o preço — e propostas de compra sem compromisso. <a href="/pt/vender/${slug}" style="color:#177A47;font-weight:600;">Ver quanto pedir&nbsp;→</a></span>
       </div>
     </section>` : "";
 
@@ -2108,7 +2108,7 @@ export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, h
     <section class="section" style="padding:26px 22px 0;max-width:680px;">
       <div class="exclusive" style="background:#F6FBF8;border:1px solid #DDEBE1;align-items:flex-start;">
         <span style="font-size:15px;">⏱️</span>
-        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">Quanto tempo demora a vender.</b> Acompanhámos anúncios de ${B} ${M} suficientes para dizer quantos saem no primeiro mês, e como isso muda com o preço a que os pões. <a href="/liquidez/${slug}" style="color:#177A47;font-weight:600;">Ver o tempo de venda&nbsp;→</a></span>
+        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">Quanto tempo demora a vender.</b> Acompanhámos anúncios de ${B} ${M} suficientes para dizer quantos saem no primeiro mês, e como isso muda com o preço a que os pões. <a href="/pt/liquidez/${slug}" style="color:#177A47;font-weight:600;">Ver o tempo de venda&nbsp;→</a></span>
       </div>
     </section>` : "";
 
@@ -2123,28 +2123,28 @@ export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, h
     <section class="section" style="padding:26px 22px 0;max-width:680px;">
       <div class="exclusive" style="background:#F6FBF8;border:1px solid #DDEBE1;align-items:flex-start;">
         <span style="font-size:15px;">${c.icon}</span>
-        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">${c.head}</b> Neste modelo há anúncios ativos que cheguem para ajustar ${c.what} em separado, com a quilometragem igualada, e dizer ${c.which} segura melhor o preço. <a href="/${d.path}/${encodeURIComponent(slug)}" style="color:#177A47;font-weight:600;">Ver a resposta&nbsp;→</a></span>
+        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">${c.head}</b> Neste modelo há anúncios ativos que cheguem para ajustar ${c.what} em separado, com a quilometragem igualada, e dizer ${c.which} segura melhor o preço. <a href="/pt/${d.path}/${encodeURIComponent(slug)}" style="color:#177A47;font-weight:600;">Ver a resposta&nbsp;→</a></span>
       </div>
     </section>`;
   }).join("");
 
   // 8. Sibling models footer
   const sibChips = (siblings || []).slice(0, 8).map(s =>
-    `<a class="mchip" href="/preco/${encodeURIComponent(s.slug)}">${escapeHtml(s.m)} <span class="mut">${fmtEur(s.fm)}</span></a>`).join("");
+    `<a class="mchip" href="/pt/preco/${encodeURIComponent(s.slug)}">${escapeHtml(s.m)} <span class="mut">${fmtEur(s.fm)}</span></a>`).join("");
   const sib = sibChips ? `
     <section class="section" style="padding:34px 22px 70px;max-width:1180px;">
       <div class="sec-label">OUTROS MODELOS ${B.toUpperCase()}</div>
       <div class="mchips">${sibChips}</div>
-      <div style="margin-top:16px;"><a href="/precos" style="font-size:13px;color:#177A47;font-weight:600;">Ver todos os modelos&nbsp;→</a></div>
-    </section>` : `<section class="section" style="padding:34px 22px 70px;"><a href="/precos" style="font-size:13px;color:#177A47;font-weight:600;">Ver preços de todos os modelos&nbsp;→</a></section>`;
+      <div style="margin-top:16px;"><a href="/pt/precos" style="font-size:13px;color:#177A47;font-weight:600;">Ver todos os modelos&nbsp;→</a></div>
+    </section>` : `<section class="section" style="padding:34px 22px 70px;"><a href="/pt/precos" style="font-size:13px;color:#177A47;font-weight:600;">Ver preços de todos os modelos&nbsp;→</a></section>`;
 
   // Visible breadcrumb — mirrors the BreadcrumbList JSON-LD and adds real
-  // internal links back to / and /precos (reinforcing the crawl spine).
+  // internal links back to /pt and /pt/precos (reinforcing the crawl spine).
   const crumb = `<nav class="section" aria-label="Breadcrumb" style="max-width:680px;padding:22px 22px 0;font-size:12.5px;color:#8A8F98;">`
-    + `<a href="/" style="color:#8A8F98;">Início</a> › <a href="/precos" style="color:#8A8F98;">Preços</a> › <span style="color:#16181D;">${B} ${M}</span></nav>`;
+    + `<a href="/pt" style="color:#8A8F98;">Início</a> › <a href="/pt/precos" style="color:#8A8F98;">Preços</a> › <span style="color:#16181D;">${B} ${M}</span></nav>`;
   const body = `${crumb}<div style="padding-top:14px;">${hero}</div>${gbmCard}${insightBlock}${bridge1}${table}${facetBlock}${duelLink}${depLink}${liqLink}${venderLink}${bridge2}${trust}${rivals}${sellerCta}${sib}${guides}`;
 
-  const canonical = `https://${host}/preco/${slug}`;
+  const canonical = `https://${host}/pt/preco/${slug}`;
   const faq = (q, a) => ({
     "@type": "Question", "name": q,
     "acceptedAnswer": { "@type": "Answer", "text": a },
@@ -2194,9 +2194,9 @@ export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, h
     "@graph": [
       {
         "@type": "Dataset",
-        // Те же условия, что и на /metodologia#licenca. Строкой, а не импортом
+        // Те же условия, что и на /pt/metodologia#licenca. Строкой, а не импортом
         // из seo-pages.js: зависимость между модулями односторонняя.
-        "license": `https://${host}/metodologia#licenca`,
+        "license": `https://${host}/pt/metodologia#licenca`,
         "name": `Preços de ${rec.b} ${rec.m} usado em Portugal`,
         "description": `Resumo estatístico (mediana, P25–P75) de ${rec.n} anúncios ativos de ${rec.b} ${rec.m} no OLX Portugal, por ano.`,
         "creator": { "@type": "Organization", "name": "Carsbuyer" },
@@ -2240,8 +2240,8 @@ export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, h
       {
         "@type": "BreadcrumbList",
         "itemListElement": [
-          { "@type": "ListItem", "position": 1, "name": "Início", "item": `https://${host}/` },
-          { "@type": "ListItem", "position": 2, "name": "Preços", "item": `https://${host}/precos` },
+          { "@type": "ListItem", "position": 1, "name": "Início", "item": `https://${host}/pt` },
+          { "@type": "ListItem", "position": 2, "name": "Preços", "item": `https://${host}/pt/precos` },
           { "@type": "ListItem", "position": 3, "name": `${rec.b} ${rec.m}` },
         ],
       },
@@ -2261,7 +2261,7 @@ export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, h
   });
 }
 
-// ── Models hub (/precos) — the crawl spine: one link to every model page ─────
+// ── Models hub (/pt/precos) — the crawl spine: one link to every model page ──
 export function renderModelsHub({ models, depositCount, builtAt, host, districts = [] }) {
   const FRESH = fmtBuilt(builtAt);
   // models = [{slug, b, m, fm, n}], pre-sorted by the worker. Group by brand.
@@ -2273,7 +2273,7 @@ export function renderModelsHub({ models, depositCount, builtAt, host, districts
   const brands = [...byBrand.keys()].sort((a, b) => a.localeCompare(b, "pt"));
   const groups = brands.map(b => {
     const chips = byBrand.get(b).map(m =>
-      `<a class="mchip" href="/preco/${encodeURIComponent(m.slug)}">${escapeHtml(m.m)} <span class="mut">· mediana ${fmtEur(m.fm)} · ${m.n}</span></a>`).join("");
+      `<a class="mchip" href="/pt/preco/${encodeURIComponent(m.slug)}">${escapeHtml(m.m)} <span class="mut">· mediana ${fmtEur(m.fm)} · ${m.n}</span></a>`).join("");
     return `<div style="margin-bottom:22px;"><h2 class="sec-label" style="margin:0 0 10px;">${escapeHtml(b)}</h2><div class="mchips">${chips}</div></div>`;
   }).join("");
 
@@ -2284,57 +2284,57 @@ export function renderModelsHub({ models, depositCount, builtAt, host, districts
         <h1 class="hero-title" style="font-size:38px;">Preço de carros usados em Portugal por modelo</h1>
         <p class="lede">Avaliação independente a partir de anúncios ativos do OLX. Escolhe o modelo para ver o preço mediano e o intervalo por ano.</p>
         <div class="hero-actions">
-          <a class="btn-dark" href="/avaliar">Avaliar o TEU carro&nbsp;&nbsp;→</a>
-          <a class="chip" href="/mercado">Ver mercado</a>
+          <a class="btn-dark" href="/pt/avaliar">Avaliar o TEU carro&nbsp;&nbsp;→</a>
+          <a class="chip" href="/pt/mercado">Ver mercado</a>
         </div>
         <p style="font-size:13.5px;color:#5B606B;margin:20px 0 0;line-height:1.9;">
           Também aqui:
-          <a href="/depreciacao" style="color:#177A47;font-weight:600;">que modelos perdem mais valor</a> ·
-          <a href="/liquidez" style="color:#177A47;font-weight:600;">quanto tempo demoram a vender</a> ·
-          <a href="/comparar" style="color:#177A47;font-weight:600;">comparações diretas</a> ·
-          <a href="/sobrevalorizados" style="color:#177A47;font-weight:600;">pedido vs. valor justo</a> ·
-          <a href="/mercado/indice" style="color:#177A47;font-weight:600;">índice semanal</a> ·
-          <a href="/metodologia" style="color:#177A47;font-weight:600;">como calculamos</a>
+          <a href="/pt/depreciacao" style="color:#177A47;font-weight:600;">que modelos perdem mais valor</a> ·
+          <a href="/pt/liquidez" style="color:#177A47;font-weight:600;">quanto tempo demoram a vender</a> ·
+          <a href="/pt/comparar" style="color:#177A47;font-weight:600;">comparações diretas</a> ·
+          <a href="/pt/sobrevalorizados" style="color:#177A47;font-weight:600;">pedido vs. valor justo</a> ·
+          <a href="/pt/mercado/indice" style="color:#177A47;font-weight:600;">índice semanal</a> ·
+          <a href="/pt/metodologia" style="color:#177A47;font-weight:600;">como calculamos</a>
         </p>
       </div>
     </section>
     ${districts.length ? `<section class="section" style="padding:18px 22px 0;max-width:1180px;">
       <h2 class="sec-label" style="margin:0 0 10px;">PREÇOS POR DISTRITO</h2>
       <div class="mchips">${districts.map(d =>
-        `<a class="mchip" href="/precos/${encodeURIComponent(d.k)}">${escapeHtml(d.lbl)} <span class="mut">· mediana ${fmtEur(d.fm)} · ${fmtNum(d.n)}</span></a>`).join("")}</div>
+        `<a class="mchip" href="/pt/precos/${encodeURIComponent(d.k)}">${escapeHtml(d.lbl)} <span class="mut">· mediana ${fmtEur(d.fm)} · ${fmtNum(d.n)}</span></a>`).join("")}</div>
     </section>` : ""}
     <section class="section" style="padding:18px 22px 70px;max-width:1180px;">${groups}</section>`;
   const origin = host ? `https://${host}` : "";
   // Lightweight CollectionPage (no 465-item ItemList — the visible mchips + the
-  // sitemap already give Google every /preco link; a full ItemList would ~double
+  // sitemap already give Google every /pt/preco link; a full ItemList would ~double
   // this page's HTML weight for marginal gain).
   const jsonLd = origin ? {
     "@context": "https://schema.org",
     "@type": "CollectionPage",
     "name": "Preço de carros usados em Portugal por modelo",
     "description": "Preço mediano e intervalo por ano de carros usados em Portugal, a partir de anúncios ativos do OLX.",
-    "url": `${origin}/precos`,
+    "url": `${origin}/pt/precos`,
     "inLanguage": "pt-PT",
     "isPartOf": { "@id": `${origin}/#site` },
   } : null;
   return layout({
     title: "Preço de carros usados em Portugal por modelo",
     description: "Preço mediano e intervalo por ano de carros usados em Portugal, a partir de anúncios ativos do OLX. Avaliação independente e grátis por modelo.",
-    canonical: origin ? `${origin}/precos` : null, jsonLd,
+    canonical: origin ? `${origin}/pt/precos` : null, jsonLd,
     body, zone: "all", nav: "precos", depositCount, index: true, host,
   });
 }
 
-// ── Embeddable widget (/widget/preco/{slug}) — the backlink lever ────────────
+// ── Embeddable widget (/pt/widget/preco/{slug}) — the backlink lever ─────────
 // A self-contained, iframe-friendly valuation card any site can embed:
-//   <iframe src="https://HOST/widget/preco/opel-corsa" width="340" height="300"
+//   <iframe src="https://HOST/pt/widget/preco/opel-corsa" width="340" height="300"
 //           style="border:0" loading="lazy"></iframe>
-// Own minimal HTML (no shared header/footer/cookie), noindex (the /preco page is
+// Own minimal HTML (no shared header/footer/cookie), noindex (the /pt/preco page is
 // canonical), and a prominent link back to the full page for attribution.
 export function renderModelWidget({ rec, slug, host }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
   const hasG = rec.gm != null && rec.gl != null && rec.gh != null;
-  const full = `https://${escapeHtml(host)}/preco/${encodeURIComponent(slug)}`;
+  const full = `https://${escapeHtml(host)}/pt/preco/${encodeURIComponent(slug)}`;
   const fairRow = hasG ? `
     <div class="w-fair">
       <div class="w-cap">Valor justo estimado</div>
@@ -2396,7 +2396,7 @@ export function leadFormBlock({ slug = "", name = "", year = null, median = null
       <section id="vender" class="side-card" style="margin-top:16px;">
         <div class="panel-title" style="font-size:16px;margin-bottom:6px;">${heading ? escapeHtml(heading) : `Queres vender${name ? ` o teu ${escapeHtml(name)}` : " este carro"}?`}</div>
         <p style="font-size:14px;color:#5B606B;margin:0 0 14px;line-height:1.5;">Deixa o contacto e recebes propostas de compra de compradores profissionais — stands e serviços de compra imediata — normalmente em 24 a 48 horas. Sem compromisso: comparas com ${median != null ? `a mediana de ${fmtEur(median)}` : "o valor acima"} e decides.</p>
-        <form action="/lead" method="post" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">
+        <form action="/pt/lead" method="post" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">
           <input type="hidden" name="modelo" value="${escapeHtml(slug)}">
           ${slug ? `<input type="hidden" name="nome_modelo" value="${escapeHtml(name)}">` : `<input type="text" name="nome_modelo" required maxlength="80" placeholder="Marca e modelo" style="${inp}grid-column:1 / -1;">`}
           <input type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;">
@@ -2407,7 +2407,7 @@ export function leadFormBlock({ slug = "", name = "", year = null, median = null
           <input type="text" name="nome" maxlength="80" placeholder="Nome (opcional)" autocomplete="name" style="${inp}grid-column:1 / -1;">
           <label style="grid-column:1 / -1;display:flex;gap:9px;align-items:flex-start;font-size:13px;color:#5B606B;line-height:1.45;">
             <input type="checkbox" name="consent" value="1" required style="margin-top:3px;">
-            <span>Autorizo o Carsbuyer a guardar estes dados durante 90 dias e a enviá-los a compradores profissionais para me apresentarem propostas. <a href="/privacidade">Privacidade</a>.</span>
+            <span>Autorizo o Carsbuyer a guardar estes dados durante 90 dias e a enviá-los a compradores profissionais para me apresentarem propostas. <a href="/pt/privacidade">Privacidade</a>.</span>
           </label>
           <button type="submit" class="btn-dark" style="grid-column:1 / -1;padding:13px 20px;font-size:15px;">Receber propostas de compra&nbsp;&nbsp;→</button>
         </form>
@@ -2417,7 +2417,7 @@ export function leadFormBlock({ slug = "", name = "", year = null, median = null
 
 export function historyCheckBlock({ url, reasons = [], price = null, title = null, from = "outro" }) {
   if (!url) return "";
-  const href = `/ir/historico?from=${encodeURIComponent(from)}`;
+  const href = `/pt/ir/historico?from=${encodeURIComponent(from)}`;
   const items = reasons.filter(Boolean).map(r => `<li style="margin:0 0 4px;">${r}</li>`).join("");
   const head = title || `Antes de pagar${price != null ? ` ${fmtEur(price)}` : ""}, verifica o histórico`;
   return `
@@ -2460,8 +2460,8 @@ export function renderLeadThanks({ name = "", year = null, depositCount = null, 
       <div class="ic">✅</div>
       <h1>Pedido recebido</h1>
       <p>${car ? `Vamos apresentar o teu ${escapeHtml(car)} a compradores profissionais. ` : ""}Se houver interesse, recebes propostas em 24 a 48 horas pelo contacto que deixaste. Não há compromisso: aceitas só se a proposta te servir.</p>
-      <p style="font-size:13.5px;color:#5B606B;">Entretanto, vê <a href="/avaliar">o que o mercado pede por carros como o teu</a> — é a referência para comparar as propostas.</p>
-      <a class="btn-dark" href="/avaliar">Voltar à avaliação</a>
+      <p style="font-size:13.5px;color:#5B606B;">Entretanto, vê <a href="/pt/avaliar">o que o mercado pede por carros como o teu</a> — é a referência para comparar as propostas.</p>
+      <a class="btn-dark" href="/pt/avaliar">Voltar à avaliação</a>
     </div>
     ${analyticsEvent("generate_lead", { model: car })}`;
   return layout({ title: "Pedido recebido", body, zone: "all", nav: "avaliar", depositCount, index: false, host });
@@ -2512,14 +2512,14 @@ export function avaliarHub({ models, market, stats, builtAt }) {
   const mk = market || {};
   const ageRows = rows.map(r => `<tr><td>${r.label}</td><td><b>${fmtEur(r.med)}</b></td><td class="mut">${fmtNum(r.n)}</td><td class="mut">${r.models}</td></tr>`).join("");
   const top = Object.entries(models).filter(([, r]) => r.n > 0).sort((a, b) => b[1].n - a[1].n).slice(0, 12)
-    .map(([slug, r]) => `<a href="/preco/${encodeURIComponent(slug)}">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a>`).join(" · ");
+    .map(([slug, r]) => `<a href="/pt/preco/${encodeURIComponent(slug)}">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a>`).join(" · ");
   const faq = AVALIAR_FAQ.map(([q, a]) => `<details class="indep-note" style="margin:0 0 8px;"><summary>${escapeHtml(q)}</summary><p style="margin:8px 0 0;">${escapeHtml(a)}</p></details>`).join("");
   return `
     <section class="section fc-wrap" style="padding-top:34px;">
       <h2 class="fc-h2">Como se calcula o valor de um carro usado em Portugal</h2>
       <p class="fc-p">Não há tabela oficial de valores. O valor de mercado é o que os compradores estão dispostos a pagar por carros como o teu, e a melhor aproximação disponível são os anúncios: o que pedem hoje os vendedores do mesmo modelo e ano, e a que preço esses anúncios acabam por sair. É isso que medimos todos os dias${st.listings ? ` em <b>${fmtNum(st.listings)} anúncios ativos</b> de <b>${st.models} modelos</b>` : ""} no OLX Portugal.</p>
       <ul class="fc-ul">
-        <li class="fc-li"><b>Comparáveis.</b> Para cada modelo e ano, a mediana pedida e o intervalo onde fica metade dos anúncios (P25–P75). É o número das <a href="/precos">páginas de preços</a> e da estimativa por modelo e ano acima.</li>
+        <li class="fc-li"><b>Comparáveis.</b> Para cada modelo e ano, a mediana pedida e o intervalo onde fica metade dos anúncios (P25–P75). É o número das <a href="/pt/precos">páginas de preços</a> e da estimativa por modelo e ano acima.</li>
         <li class="fc-li"><b>Valor justo estimado.</b> Um modelo estatístico que corrige a mediana pelos quilómetros, combustível, caixa e região do carro concreto. Só o publicamos quando passa nos nossos testes de confiança; caso contrário ficas com a mediana e dizemos porquê.</li>
         <li class="fc-li"><b>O que o anúncio não diz.</b> Quantas vezes o preço já baixou, há quantos dias está à venda, se o texto fala de avarias, se há indícios de importação com ISV por pagar. É a diferença entre saber o preço e saber quanto pagar.</li>
       </ul>
@@ -2530,19 +2530,19 @@ export function avaliarHub({ models, market, stats, builtAt }) {
         <thead><tr><th>Idade</th><th>Mediana pedida</th><th>Anúncios</th><th>Modelos</th></tr></thead>
         <tbody>${ageRows}</tbody>
       </table></div>` : ""}
-      ${st.depMed ? `<p class="fc-p">Por cada ano de idade um carro perde, em mediana, <b>${pct(st.depMed)}%</b> do valor que ainda tem, e o ritmo não abranda com os anos: a percentagem é a mesma aos 4 e aos 12, só os euros são menos. <a href="/depreciacao">Desvalorização por modelo</a>.</p>` : ""}
+      ${st.depMed ? `<p class="fc-p">Por cada ano de idade um carro perde, em mediana, <b>${pct(st.depMed)}%</b> do valor que ainda tem, e o ritmo não abranda com os anos: a percentagem é a mesma aos 4 e aos 12, só os euros são menos. <a href="/pt/depreciacao">Desvalorização por modelo</a>.</p>` : ""}
 
       <h2 class="fc-h2">O que faz o preço subir ou descer</h2>
       <ul class="fc-ul">
         <li class="fc-li"><b>Quilómetros.</b> ${st.kmMed ? `A mediana do mercado anda nos ${fmtKm(st.kmMed)}; ` : ""}um carro bem abaixo do habitual para a idade vale mais, e um relatório de histórico confirma que o conta-quilómetros diz a verdade.</li>
-        <li class="fc-li"><b>Combustível e caixa.</b> Diesel e gasolina, manual e automática seguram o valor de forma diferente consoante o modelo: <a href="/diesel-ou-gasolina">diesel ou gasolina</a>, <a href="/manual-ou-automatica">manual ou automática</a>.</li>
-        <li class="fc-li"><b>Importação.</b> Um carro com matrícula estrangeira vale menos o ISV que falta pagar: <a href="/isv">simulador de ISV</a> e <a href="/importar">quando compensa importar</a>.</li>
+        <li class="fc-li"><b>Combustível e caixa.</b> Diesel e gasolina, manual e automática seguram o valor de forma diferente consoante o modelo: <a href="/pt/diesel-ou-gasolina">diesel ou gasolina</a>, <a href="/pt/manual-ou-automatica">manual ou automática</a>.</li>
+        <li class="fc-li"><b>Importação.</b> Um carro com matrícula estrangeira vale menos o ISV que falta pagar: <a href="/pt/isv">simulador de ISV</a> e <a href="/pt/importar">quando compensa importar</a>.</li>
         <li class="fc-li"><b>Estado e histórico.</b> Sinistros, número de donos e manutenção não estão no anúncio. Um dano visível desconta mais do que custa a reparar, porque o comprador desconfia do resto.</li>
         ${st.spreadMed ? `<li class="fc-li"><b>A versão e o estado pesam tanto como o modelo.</b> Metade dos anúncios de um mesmo modelo fica numa faixa de cerca de ±${Math.round(st.spreadMed * 50)}% à volta da mediana: é a margem que os quilómetros, a versão e o estado decidem.</li>` : ""}
       </ul>
 
       ${mk.s30 != null ? `<h2 class="fc-h2">Vais vender? Quanto pedir e quanto tempo demora</h2>
-      <p class="fc-p">No conjunto do mercado saem <b>${pct(mk.s30)} em cada 100</b> anúncios no primeiro mês${mk.md != null ? `, com mediana de <b>${mk.md} dias</b>` : ""}${mk.cu != null ? `; <b>${pct(mk.cu)} em cada 100</b> baixam o preço antes de sair${mk.cp != null ? `, em mediana ${pct(mk.cp)}%` : ""}` : ""}. Começar perto da mediana do teu ano evita a descida. <a href="/vender">Quanto pedir, modelo a modelo</a> · <a href="/liquidez">tempo de venda por modelo</a>.</p>` : ""}
+      <p class="fc-p">No conjunto do mercado saem <b>${pct(mk.s30)} em cada 100</b> anúncios no primeiro mês${mk.md != null ? `, com mediana de <b>${mk.md} dias</b>` : ""}${mk.cu != null ? `; <b>${pct(mk.cu)} em cada 100</b> baixam o preço antes de sair${mk.cp != null ? `, em mediana ${pct(mk.cp)}%` : ""}` : ""}. Começar perto da mediana do teu ano evita a descida. <a href="/pt/vender">Quanto pedir, modelo a modelo</a> · <a href="/pt/liquidez">tempo de venda por modelo</a>.</p>` : ""}
 
       ${top ? `<p class="fc-p"><b>Modelos mais anunciados:</b> ${top}.</p>` : ""}
 

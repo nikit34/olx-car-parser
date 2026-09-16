@@ -90,11 +90,11 @@ await check("unknown paths are 404, not 401", async () => {
 
 await check("trailing slash and case 301 to the canonical spelling", async () => {
   const cases = [
-    ["/precos/", "/precos"],
-    ["/PRECO/VOLKSWAGEN-GOLF", "/preco/volkswagen-golf"],
-    ["/Mercado", "/mercado"],
-    ["/avaliar//", "/avaliar"],
-    ["/preco/volkswagen-golf/", "/preco/volkswagen-golf"],
+    ["/pt/precos/", "/pt/precos"],
+    ["/PRECO/VOLKSWAGEN-GOLF", "/pt/preco/volkswagen-golf"],
+    ["/Mercado", "/pt/mercado"],
+    ["/pt/avaliar//", "/pt/avaliar"],
+    ["/pt/preco/volkswagen-golf/", "/pt/preco/volkswagen-golf"],
   ];
   for (const [from, to] of cases) {
     const r = await get(from);
@@ -103,14 +103,16 @@ await check("trailing slash and case 301 to the canonical spelling", async () =>
       `${from} → ${r.headers.get("location")}, expected ${to}`);
   }
   const root = await get("/");
-  assert(root.status === 200, `/ → ${root.status} (root must not redirect to "")`);
+  assert(root.status === 301, `/ → ${root.status}, expected the move to /pt`);
+  assert(new URL(root.headers.get("location")).pathname === "/pt",
+    `/ → ${root.headers.get("location")}, expected /pt`);
 });
 
 await check("the query string survives normalisation", async () => {
-  const r = await get("/mercado/?zone=norte&sort=profit");
+  const r = await get("/pt/mercado/?zone=norte&sort=profit");
   assert(r.status === 301, `→ ${r.status}`);
   const loc = new URL(r.headers.get("location"));
-  assert(loc.pathname === "/mercado" && loc.search === "?zone=norte&sort=profit",
+  assert(loc.pathname === "/pt/mercado" && loc.search === "?zone=norte&sort=profit",
     `lost the query: ${loc}`);
 });
 
@@ -140,18 +142,48 @@ const slugs = Object.keys(models);
 const deep = slugs.slice().sort((a, b) => models[b].n - models[a].n)[0];
 const deepYear = yearPageYears(models[deep])[0];
 
+await check("every address the site used to answer at the root moves to /pt in one hop", async () => {
+  const depSlug = depreciationSlugs(models)[0];
+  const [pa, pb] = comparePairs(models)[0];
+  const moved = ["/", "/mercado", "/precos", "/avaliar", "/metodologia", "/sobre", "/isv",
+    "/privacidade", "/historico", "/guias", "/vender", "/liquidez", "/depreciacao", "/comparar",
+    "/sobrevalorizados", "/mercado/indice", `/preco/${deep}`, `/preco/${deep}/${deepYear}`,
+    `/preco/${deep}.json`, `/depreciacao/${depSlug}`, `/comparar/${pa}-vs-${pb}`,
+    `/guias/${GUIDES[0].slug}`, "/ir/historico", "/widget/preco/" + deep];
+  for (const from of moved) {
+    const r = await get(from);
+    assert(r.status === 301, `${from} → ${r.status}, expected the move to /pt`);
+    const to = new URL(r.headers.get("location"));
+    assert(to.pathname === (from === "/" ? "/pt" : `/pt${from}`),
+      `${from} → ${to.pathname}, expected /pt${from}`);
+    const landed = await get(to.pathname + to.search);
+    assert(landed.status !== 301,
+      `${from} lands on ${to.pathname}, which redirects again — a chain, not a move`);
+  }
+  const query = await get("/preco/" + deep + "?utm_source=x");
+  assert(new URL(query.headers.get("location")).search === "?utm_source=x", "the move dropped the query");
+  const post = await worker.fetch(new Request(`https://${HOST}/lead`,
+    { method: "POST", body: "consent=1", headers: { Origin: `https://${HOST}`, "Content-Type": "application/x-www-form-urlencoded" } }), env);
+  assert(post.status === 308, `POST /lead → ${post.status}, expected the method-preserving move`);
+  assert(new URL(post.headers.get("location")).pathname === "/pt/lead", "POST /lead moved elsewhere");
+  for (const stranger of ["/faq", "/sobre-nos", "/preco", "/blog/x", "/en/precos"]) {
+    const r = await get(stranger);
+    assert(r.status === 404, `${stranger} → ${r.status}: an unknown path must 404, not redirect`);
+  }
+});
+
 await check("model, year and JSON routes answer", async () => {
   for (const [path, ctype] of [
-    [`/preco/${deep}`, "text/html"],
-    [`/preco/${deep}/${deepYear}`, "text/html"],
-    [`/preco/${deep}.json`, "application/json"],
-    [`/preco/${deep}/${deepYear}.json`, "application/json"],
+    [`/pt/preco/${deep}`, "text/html"],
+    [`/pt/preco/${deep}/${deepYear}`, "text/html"],
+    [`/pt/preco/${deep}.json`, "application/json"],
+    [`/pt/preco/${deep}/${deepYear}.json`, "application/json"],
   ]) {
     const r = await get(path);
     assert(r.status === 200, `${path} → ${r.status}`);
     assert((r.headers.get("content-type") || "").includes(ctype), `${path}: wrong content-type`);
   }
-  const j = await (await get(`/preco/${deep}.json`)).json();
+  const j = await (await get(`/pt/preco/${deep}.json`)).json();
   assert(j.sample_size === models[deep].n, "JSON sample size disagrees with the blob");
   assert(j.collected_until, "JSON has no collection date");
 });
@@ -161,19 +193,19 @@ await check("a year we hold data for but do not publish points at the model", as
   const published = new Set(yearPageYears(rec));
   const thin = (rec.yr || []).find(c => typeof c.y === "number" && !published.has(c.y));
   if (!thin) return;                       // this model has no thin years — fine
-  const r = await get(`/preco/${deep}/${thin.y}`);
+  const r = await get(`/pt/preco/${deep}/${thin.y}`);
   assert(r.status === 301, `thin year ${thin.y} → ${r.status}, should redirect to the model`);
-  assert(new URL(r.headers.get("location")).pathname === `/preco/${deep}`,
+  assert(new URL(r.headers.get("location")).pathname === `/pt/preco/${deep}`,
     `thin year ${thin.y} redirects to ${r.headers.get("location")}, not to its model`);
-  const j = await get(`/preco/${deep}/${thin.y}.json`);
-  assert(j.status === 301 && new URL(j.headers.get("location")).pathname === `/preco/${deep}.json`,
+  const j = await get(`/pt/preco/${deep}/${thin.y}.json`);
+  assert(j.status === 301 && new URL(j.headers.get("location")).pathname === `/pt/preco/${deep}.json`,
     "the JSON twin of a thin year does not point at the model's JSON twin");
-  const never = await get(`/preco/${deep}/1900`);
+  const never = await get(`/pt/preco/${deep}/1900`);
   assert(never.status === 404, `a year we never had data for → ${never.status}, should be 404`);
 });
 
 await check("HEAD answers whatever GET answers", async () => {
-  for (const p of ["/", `/preco/${deep}`, "/sitemap.xml", "/robots.txt", "/mercado", "/precos"]) {
+  for (const p of ["/", `/pt/preco/${deep}`, "/pt/sitemap.xml", "/robots.txt", "/pt/mercado", "/pt/precos"]) {
     const g = await get(p);
     const h = await get(p, "HEAD");
     assert(h.status === g.status, `HEAD ${p} → ${h.status}, GET → ${g.status}`);
@@ -186,19 +218,19 @@ await check("HEAD answers whatever GET answers", async () => {
 });
 
 await check("plain http upgrades to https instead of answering", async () => {
-  const r = await worker.fetch(new Request(`http://${HOST}/preco/${deep}`), env);
+  const r = await worker.fetch(new Request(`http://${HOST}/pt/preco/${deep}`), env);
   assert(r.status === 301, `http:// → ${r.status}, should redirect`);
-  assert(r.headers.get("location") === `https://${HOST}/preco/${deep}`,
+  assert(r.headers.get("location") === `https://${HOST}/pt/preco/${deep}`,
     `http:// redirects to ${r.headers.get("location")}`);
-  const viaHeader = await worker.fetch(new Request(`https://${HOST}/preco/${deep}`,
+  const viaHeader = await worker.fetch(new Request(`https://${HOST}/pt/preco/${deep}`,
     { headers: { "cf-visitor": '{"scheme":"http"}' } }), env);
   assert(viaHeader.status === 301, "a proxied http request was served instead of upgraded");
-  const secure = await get(`/preco/${deep}`);
+  const secure = await get(`/pt/preco/${deep}`);
   assert(secure.status === 200, "https stopped working");
 });
 
 await check("nonsense under /preco 404s instead of 500ing", async () => {
-  for (const p of [`/preco/nao-existe`, `/preco/${deep}/abc`, `/preco/${deep}/2014/extra`, `/preco/%`, `/preco/${deep}/9999`]) {
+  for (const p of [`/pt/preco/nao-existe`, `/pt/preco/${deep}/abc`, `/pt/preco/${deep}/2014/extra`, `/pt/preco/%`, `/pt/preco/${deep}/9999`]) {
     const r = await get(p);
     assert(r.status === 404, `${p} → ${r.status}`);
   }
@@ -209,22 +241,22 @@ await check("the privacy page survives the new routing", async () => {
   // so it has to clear normalisation, the 404 fallthrough and the asset gate —
   // and it is what the consent banner links to, so a 401 or 404 here breaks
   // consent, not just SEO.
-  const r = await get("/privacidade");
-  assert(r.status === 200, `/privacidade → ${r.status}`);
+  const r = await get("/pt/privacidade");
+  assert(r.status === 200, `/pt/privacidade → ${r.status}`);
   const body = await r.text();
-  assert(body.includes("index,follow"), "/privacidade is not indexable");
+  assert(body.includes("index,follow"), "/pt/privacidade is not indexable");
   assert(body.includes("fc-consent"), "consent banner CSS was lost in the merge");
-  const slash = await get("/privacidade/");
-  assert(slash.status === 301, `/privacidade/ → ${slash.status}`);
-  const xml = await (await get("/sitemap.xml")).text();
-  assert(xml.includes(`<loc>https://${HOST}/privacidade</loc>`), "/privacidade missing from sitemap");
+  const slash = await get("/pt/privacidade/");
+  assert(slash.status === 301, `/pt/privacidade/ → ${slash.status}`);
+  const xml = await (await get("/pt/sitemap.xml")).text();
+  assert(xml.includes(`<loc>https://${HOST}/pt/privacidade</loc>`), "/pt/privacidade missing from sitemap");
 });
 
 await check("the second-layer hubs and pages answer", async () => {
   const depSlug = depreciationSlugs(models)[0];
   const [pa, pb] = comparePairs(models)[0];
-  for (const p of ["/depreciacao", `/depreciacao/${depSlug}`, "/comparar", `/comparar/${pa}-vs-${pb}`,
-                   "/liquidez", "/sobrevalorizados", "/metodologia", "/sobre", "/isv", "/mercado/indice"]) {
+  for (const p of ["/pt/depreciacao", `/pt/depreciacao/${depSlug}`, "/pt/comparar", `/pt/comparar/${pa}-vs-${pb}`,
+                   "/pt/liquidez", "/pt/sobrevalorizados", "/pt/metodologia", "/pt/sobre", "/pt/isv", "/pt/mercado/indice"]) {
     const r = await get(p);
     assert(r.status === 200, `${p} → ${r.status}`);
   }
@@ -234,23 +266,23 @@ await check("a liquidity page exists exactly where the curve does", async () => 
   const withLq = slugs.filter(s2 => models[s2].lq && models[s2].lq.s30 != null);
   assert(withLq.length, "fixture carries no liquidity records");
   const slug = withLq[0];
-  const r = await get(`/liquidez/${slug}`);
-  assert(r.status === 200, `/liquidez/${slug} → ${r.status}`);
+  const r = await get(`/pt/liquidez/${slug}`);
+  assert(r.status === 200, `/pt/liquidez/${slug} → ${r.status}`);
   const body = await r.text();
   assert(body.includes("primeiro mês"), "liquidity page never states the 30-day share");
   assert(body.includes("ciclos de 30 dias"), "liquidity page hides the expiry caveat");
   const without = slugs.find(s2 => !(models[s2].lq && models[s2].lq.s30 != null));
   if (without) {
-    assert((await get(`/liquidez/${without}`)).status === 404,
+    assert((await get(`/pt/liquidez/${without}`)).status === 404,
       "a liquidity page exists for a model with no curve");
   }
-  assert((await get("/liquidez/nao-existe")).status === 404, "unknown slug is not a 404");
+  assert((await get("/pt/liquidez/nao-existe")).status === 404, "unknown slug is not a 404");
 });
 
 await check("the liquidity page has a JSON twin and is linked, not orphaned", async () => {
   const slug = slugs.find(s2 => models[s2].lq && models[s2].lq.s30 != null);
-  const r = await get(`/liquidez/${slug}.json`);
-  assert(r.status === 200, `/liquidez/${slug}.json → ${r.status}`);
+  const r = await get(`/pt/liquidez/${slug}.json`);
+  assert(r.status === 200, `/pt/liquidez/${slug}.json → ${r.status}`);
   assert((r.headers.get("content-type") || "").includes("application/json"), "JSON twin is not served as JSON");
   const j = JSON.parse(await r.text());
   assert(j.slug === slug, "JSON twin is about another model");
@@ -258,30 +290,30 @@ await check("the liquidity page has a JSON twin and is linked, not orphaned", as
   assert(j.sample_ended > 0, "JSON twin has no sample size");
   assert(typeof j.caveat === "string" && j.caveat.length > 20, "JSON twin drops the caveat");
 
-  const modelPage = await (await get(`/preco/${slug}`)).text();
-  assert(modelPage.includes(`/liquidez/${slug}`), "model page does not link its liquidity page");
-  const hub = await (await get("/liquidez")).text();
-  assert(hub.includes(`href="/liquidez/${slug}"`), "/liquidez does not link the per-model pages");
-  const xml = await (await get("/sitemap.xml")).text();
-  assert(xml.includes(`<loc>https://${HOST}/liquidez/${slug}</loc>`), "sitemap missing the liquidity page");
+  const modelPage = await (await get(`/pt/preco/${slug}`)).text();
+  assert(modelPage.includes(`/pt/liquidez/${slug}`), "model page does not link its liquidity page");
+  const hub = await (await get("/pt/liquidez")).text();
+  assert(hub.includes(`href="/pt/liquidez/${slug}"`), "/pt/liquidez does not link the per-model pages");
+  const xml = await (await get("/pt/sitemap.xml")).text();
+  assert(xml.includes(`<loc>https://${HOST}/pt/liquidez/${slug}</loc>`), "sitemap missing the liquidity page");
 });
 
 await check("the import pages exist only where both markets have the same year", async () => {
   const slugs = importSlugs(idoc);
   assert(slugs.length, "import fixture carries no models");
-  const hub = await get("/importar");
-  assert(hub.status === 200, `/importar → ${hub.status}`);
+  const hub = await get("/pt/importar");
+  assert(hub.status === 200, `/pt/importar → ${hub.status}`);
   const hubBody = await hub.text();
-  assert(hubBody.includes(`href="/importar/${slugs[0]}"`), "hub does not link its models");
+  assert(hubBody.includes(`href="/pt/importar/${slugs[0]}"`), "hub does not link its models");
 
-  const r = await get(`/importar/${slugs[0]}`);
-  assert(r.status === 200, `/importar/${slugs[0]} → ${r.status}`);
+  const r = await get(`/pt/importar/${slugs[0]}`);
+  assert(r.status === 200, `/pt/importar/${slugs[0]} → ${r.status}`);
   const body = await r.text();
   assert(body.includes("Total à porta"), "the landed-cost column is missing");
   assert(body.includes("ISV"), "the page never mentions the tax");
-  assert((await get("/importar/nao-existe")).status === 404, "unknown import slug is not a 404");
+  assert((await get("/pt/importar/nao-existe")).status === 404, "unknown import slug is not a 404");
 
-  const j = await get(`/importar/${slugs[0]}.json`);
+  const j = await get(`/pt/importar/${slugs[0]}.json`);
   assert(j.status === 200, "import JSON twin missing");
   const doc = JSON.parse(await j.text());
   assert(doc.slug === slugs[0], "JSON twin is about another model");
@@ -294,9 +326,9 @@ await check("the import pages exist only where both markets have the same year",
     assert(y.de_listings >= 10 && y.pt_listings >= 5, `${y.year}: a cell below its floor shipped`);
   }
 
-  const xml = await (await get("/sitemap.xml")).text();
-  assert(xml.includes(`<loc>https://${HOST}/importar</loc>`), "sitemap missing the import hub");
-  assert(xml.includes(`<loc>https://${HOST}/importar/${slugs[0]}</loc>`), "sitemap missing the import page");
+  const xml = await (await get("/pt/sitemap.xml")).text();
+  assert(xml.includes(`<loc>https://${HOST}/pt/importar</loc>`), "sitemap missing the import hub");
+  assert(xml.includes(`<loc>https://${HOST}/pt/importar/${slugs[0]}</loc>`), "sitemap missing the import page");
 });
 
 await check("no German data means no import layer at all, not an empty page", async () => {
@@ -307,18 +339,18 @@ await check("no German data means no import layer at all, not an empty page", as
     return prevFetch(input, init);
   };
   try {
-    assert((await get("/importar")).status === 404, "/importar answered without data behind it");
-    assert((await get(`/importar/${importSlugs(idoc)[0]}`)).status === 404,
+    assert((await get("/pt/importar")).status === 404, "/pt/importar answered without data behind it");
+    assert((await get(`/pt/importar/${importSlugs(idoc)[0]}`)).status === 404,
       "an import page answered without data behind it");
-    const xml = await (await get("/sitemap.xml")).text();
-    assert(!xml.includes("/importar"), "sitemap advertises the import layer with no data");
+    const xml = await (await get("/pt/sitemap.xml")).text();
+    assert(!xml.includes("/pt/importar"), "sitemap advertises the import layer with no data");
   } finally { globalThis.fetch = prevFetch; }
 });
 
 await check("the depreciation curve has a JSON twin", async () => {
   const depSlug = depreciationSlugs(models)[0];
-  const r = await get(`/depreciacao/${depSlug}.json`);
-  assert(r.status === 200, `/depreciacao/${depSlug}.json → ${r.status}`);
+  const r = await get(`/pt/depreciacao/${depSlug}.json`);
+  assert(r.status === 200, `/pt/depreciacao/${depSlug}.json → ${r.status}`);
   assert((r.headers.get("content-type") || "").includes("application/json"), "JSON twin is not served as JSON");
   const j = JSON.parse(await r.text());
   assert(j.slug === depSlug, "JSON twin is about another model");
@@ -326,66 +358,85 @@ await check("the depreciation curve has a JSON twin", async () => {
   assert(Array.isArray(j.cost_of_one_year_of_age) && j.cost_of_one_year_of_age.length > 0,
     "JSON twin has no euro ladder");
   assert(j.rate_bend || j.rate_bend_note, "JSON twin is silent about the bend test");
-  const html = await (await get(`/depreciacao/${depSlug}`)).text();
-  assert(html.includes(`/depreciacao/${depSlug}.json`), "the page never points at its own JSON");
+  const html = await (await get(`/pt/depreciacao/${depSlug}`)).text();
+  assert(html.includes(`/pt/depreciacao/${depSlug}.json`), "the page never points at its own JSON");
 });
 
 await check("generated pages outside the published set 404", async () => {
   const notDep = slugs.find(s => !depreciationSlugs(models).includes(s));
-  assert((await get(`/depreciacao/${notDep}`)).status === 404, "served a depreciation page with no curve");
-  assert((await get(`/depreciacao/${notDep}.json`)).status === 404, "served JSON for a curve we do not publish");
-  assert((await get("/comparar/volkswagen-golf-vs-volkswagen-golf")).status === 404, "served a self-comparison");
-  assert((await get("/mercado/indice/1999-w03")).status === 404, "served an index week we never recorded");
-  assert((await get("/mercado/indice/lixo")).status === 404, "served a malformed index week");
-  assert((await get("/mercado/indice/1999-03")).status === 404, "served an index month we never recorded");
-  assert((await get("/mercado/indice/2026-13")).status === 404, "served a month that does not exist");
+  assert((await get(`/pt/depreciacao/${notDep}`)).status === 404, "served a depreciation page with no curve");
+  assert((await get(`/pt/depreciacao/${notDep}.json`)).status === 404, "served JSON for a curve we do not publish");
+  assert((await get("/pt/comparar/volkswagen-golf-vs-volkswagen-golf")).status === 404, "served a self-comparison");
+  assert((await get("/pt/mercado/indice/1999-w03")).status === 404, "served an index week we never recorded");
+  assert((await get("/pt/mercado/indice/lixo")).status === 404, "served a malformed index week");
+  assert((await get("/pt/mercado/indice/1999-03")).status === 404, "served an index month we never recorded");
+  assert((await get("/pt/mercado/indice/2026-13")).status === 404, "served a month that does not exist");
   // The ISO spelling is what a human copies out of the page text; it must land
   // on the lower-case URL rather than 404.
-  const upper = await get("/mercado/indice/1999-W03");
-  assert(upper.status === 301 && new URL(upper.headers.get("location")).pathname === "/mercado/indice/1999-w03",
+  const upper = await get("/pt/mercado/indice/1999-W03");
+  assert(upper.status === 301 && new URL(upper.headers.get("location")).pathname === "/pt/mercado/indice/1999-w03",
     `ISO-cased week did not normalise (${upper.status})`);
 });
 
 await check("the weekly index writes exactly one snapshot per week", async () => {
   kv.clear();
-  await get("/mercado/indice");
+  await get("/pt/mercado/indice");
   const afterFirst = [...kv.keys()].filter(k => k.startsWith("idx:week:"));
   assert(afterFirst.length === 1, `expected 1 week key, got ${afterFirst.length}`);
   const written = kv.get(afterFirst[0]);
-  await get("/mercado/indice");
-  await get("/mercado/indice");
+  await get("/pt/mercado/indice");
+  await get("/pt/mercado/indice");
   assert([...kv.keys()].filter(k => k.startsWith("idx:week:")).length === 1, "wrote a second key for the same week");
   assert(kv.get(afterFirst[0]) === written, "rewrote an archived week — the URL is no longer citable");
   // …and that week is now reachable at its permanent address.
   const wk = afterFirst[0].replace("idx:week:", "");
-  assert((await get(`/mercado/indice/${wk.toLowerCase()}`)).status === 200, "archived week is not reachable");
+  assert((await get(`/pt/mercado/indice/${wk.toLowerCase()}`)).status === 200, "archived week is not reachable");
 });
 
 // ── sitemap ↔ router agreement ──────────────────────────────────────────────
+await check("the root sitemap is an index over the per-market files", async () => {
+  const r = await get("/sitemap.xml");
+  assert(r.status === 200, `/sitemap.xml → ${r.status}`);
+  assert((r.headers.get("content-type") || "").includes("xml"), "the index is not served as XML");
+  const xml = await r.text();
+  assert(xml.includes("<sitemapindex"), "/sitemap.xml is still a flat urlset");
+  assert(!xml.includes("<urlset"), "the index carries page URLs of its own");
+  const children = [...xml.matchAll(/<sitemap><loc>([^<]+)<\/loc>/g)].map(m => new URL(m[1]).pathname);
+  assert(children.length === 1 && children[0] === "/pt/sitemap.xml",
+    `with no locale live the index should hold Portugal alone, got ${children.join(", ")}`);
+  const pt = await get("/pt/sitemap.xml");
+  assert(pt.status === 200, `/pt/sitemap.xml → ${pt.status}`);
+  assert((await pt.text()).includes("<urlset"), "/pt/sitemap.xml is not a urlset");
+  const robots = await (await get("/robots.txt")).text();
+  const lines = robots.split("\n").filter(l => l.startsWith("Sitemap:"));
+  assert(lines.length === 1 && lines[0] === `Sitemap: https://${HOST}/sitemap.xml`,
+    `robots should point at the index alone: ${lines.join(" | ")}`);
+});
+
 await check("sitemap lists the model-year pages", async () => {
-  const xml = await (await get("/sitemap.xml")).text();
+  const xml = await (await get("/pt/sitemap.xml")).text();
   const locs = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => new URL(m[1]).pathname);
   const expectedYears = slugs.reduce((n, s) => n + yearPageYears(models[s]).length, 0);
-  const gotYears = locs.filter(p => /^\/preco\/[^/]+\/\d{4}$/.test(p)).length;
+  const gotYears = locs.filter(p => /^\/pt\/preco\/[^/]+\/\d{4}$/.test(p)).length;
   assert(gotYears === expectedYears, `sitemap has ${gotYears} year URLs, router serves ${expectedYears}`);
-  assert(locs.includes("/metodologia") && locs.includes("/sobre"), "trust pages missing from sitemap");
-  assert(locs.filter(p => p.startsWith("/comparar/")).length === comparePairs(models).length,
+  assert(locs.includes("/pt/metodologia") && locs.includes("/pt/sobre"), "trust pages missing from sitemap");
+  assert(locs.filter(p => p.startsWith("/pt/comparar/")).length === comparePairs(models).length,
     "sitemap comparison count disagrees with the generator");
   assert(new Set(locs).size === locs.length, "sitemap contains duplicate URLs");
 });
 
 await check("every sitemap URL resolves to a 200", async () => {
-  const xml = await (await get("/sitemap.xml")).text();
+  const xml = await (await get("/pt/sitemap.xml")).text();
   const locs = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => new URL(m[1]).pathname);
   // Sample rather than fetch ~1 200 pages: one of every shape, plus a spread.
   const shapes = new Map();
   for (const p of locs) {
-    const shape = p.replace(/\/preco\/[^/]+\/\d{4}/, "/preco/*/YYYY")
-                   .replace(/\/preco\/[^/]+/, "/preco/*")
-                   .replace(/\/depreciacao\/[^/]+/, "/depreciacao/*")
-                   .replace(/\/liquidez\/[^/]+/, "/liquidez/*")
-                   .replace(/\/comparar\/[^/]+/, "/comparar/*")
-                   .replace(/\/mercado\/indice\/[^/]+/, "/mercado/indice/*");
+    const shape = p.replace(/\/pt\/preco\/[^/]+\/\d{4}/, "/pt/preco/*/YYYY")
+                   .replace(/\/pt\/preco\/[^/]+/, "/pt/preco/*")
+                   .replace(/\/pt\/depreciacao\/[^/]+/, "/pt/depreciacao/*")
+                   .replace(/\/pt\/liquidez\/[^/]+/, "/pt/liquidez/*")
+                   .replace(/\/pt\/comparar\/[^/]+/, "/pt/comparar/*")
+                   .replace(/\/pt\/mercado\/indice\/[^/]+/, "/pt/mercado/indice/*");
     if (!shapes.has(shape)) shapes.set(shape, []);
     if (shapes.get(shape).length < 8) shapes.get(shape).push(p);
   }
@@ -404,7 +455,7 @@ await check("robots and llms.txt describe the new surface", async () => {
   assert(groups.length >= 8, `robots has ${groups.length} groups, expected the wildcard plus the answer engines`);
   for (const g of groups) {
     const who = g.split("\n")[0];
-    for (const path of ["/analytics", "/_olx", "/lead"]) {
+    for (const path of ["/analytics", "/_olx", "/pt/lead"]) {
       assert(g.includes(`Disallow: ${path}`), `${who} is not told to skip ${path}`);
     }
     assert(g.includes("Allow: /"), `${who} lost its Allow`);
@@ -416,8 +467,8 @@ await check("robots and llms.txt describe the new surface", async () => {
   assert(/## Publicação por vagas/.test(gatedLlms),
     "llms.txt hides the wave that decides which of its address templates resolve");
   assert(/page: null/.test(gatedLlms), "llms.txt does not say where the withheld numbers are");
-  for (const needle of ["/preco/{slug}/{ano}", "/depreciacao/{slug}", "/comparar/{slug-a}-vs-{slug-b}",
-                        "/preco/{slug}.json", "/mercado/indice"]) {
+  for (const needle of ["/pt/preco/{slug}/{ano}", "/pt/depreciacao/{slug}", "/pt/comparar/{slug-a}-vs-{slug-b}",
+                        "/pt/preco/{slug}.json", "/pt/mercado/indice"]) {
     assert(llms.includes(needle), `llms.txt does not document ${needle}`);
   }
 });
@@ -477,25 +528,50 @@ await check("a car page links the OLX ad and no page mentions a deposit", async 
     return prev(input, init);
   };
   try {
-    const r = await worker.fetch(new Request(`https://${HOST}/car?olx_id=TESTCAR1`), dealEnv);
-    assert(r.status === 200, `/car with a live deal → ${r.status}`);
+    const r = await worker.fetch(new Request(`https://${HOST}/pt/car?olx_id=TESTCAR1`), dealEnv);
+    assert(r.status === 200, `/pt/car with a live deal → ${r.status}`);
     const car = await r.text();
-    assert(car.includes(`href="${deal.url}"`), "/car does not link the seller's OLX ad");
+    assert(car.includes(`href="${deal.url}"`), "/pt/car does not link the seller's OLX ad");
     assert(car.includes('rel="noopener nofollow"'), "the OLX link lost rel=noopener nofollow");
-    const feed = await (await worker.fetch(new Request(`https://${HOST}/mercado`), dealEnv)).text();
+    const feed = await (await worker.fetch(new Request(`https://${HOST}/pt/mercado`), dealEnv)).text();
     for (const word of [/dep[óo]sito/i, /\bStripe\b/, /\/reservas/, /\/claim/, /desbloquear/i]) {
-      assert(!word.test(car), `/car still says ${word}`);
-      assert(!word.test(feed), `/mercado still says ${word}`);
+      assert(!word.test(car), `/pt/car still says ${word}`);
+      assert(!word.test(feed), `/pt/mercado still says ${word}`);
     }
   } finally {
     globalThis.fetch = prev;
   }
 });
 
+await check("an old address on any hostname reaches its /pt page in one hop", async () => {
+  const starts = [
+    [`https://olx-car-parser.permikov134.workers.dev/preco/${deep}`, `/pt/preco/${deep}`],
+    ["https://www.carsbuyer.org/precos", "/pt/precos"],
+    [`http://${HOST}/mercado/indice`, "/pt/mercado/indice"],
+    [`https://www.carsbuyer.org/PRECO/${deep.toUpperCase()}/`, `/pt/preco/${deep}`],
+    [`https://${HOST}/guias/`, "/pt/guias"],
+  ];
+  for (const [from, want] of starts) {
+    const r = await worker.fetch(new Request(from), env);
+    assert(r.status === 301, `${from} → ${r.status}, expected 301`);
+    const to = new URL(r.headers.get("location"));
+    assert(to.hostname === HOST && to.protocol === "https:",
+      `${from} lands on ${to.origin}, not the canonical host`);
+    assert(to.pathname === want, `${from} → ${to.pathname}, expected ${want}`);
+    const landed = await worker.fetch(new Request(to.toString()), env);
+    assert(landed.status === 200,
+      `${from} needs a second hop: ${to.pathname} answers ${landed.status}`);
+  }
+  const dash = await worker.fetch(
+    new Request("https://olx-car-parser.permikov134.workers.dev/analytics/Market_Direction"), env);
+  assert(new URL(dash.headers.get("location")).pathname === "/analytics/Market_Direction",
+    "the off-host redirect lower-cased a case-sensitive analytics path");
+});
+
 await check("the canonical-host redirect still bypasses healthz", async () => {
   const hz = await worker.fetch(new Request("https://olx-car-parser.permikov134.workers.dev/healthz"), env);
   assert(hz.status === 200, `healthz was redirected (${hz.status})`);
-  const page = await worker.fetch(new Request("https://olx-car-parser.permikov134.workers.dev/precos"), env);
+  const page = await worker.fetch(new Request("https://olx-car-parser.permikov134.workers.dev/pt/precos"), env);
   assert(page.status === 301, `off-host page not redirected (${page.status})`);
 });
 
@@ -508,16 +584,16 @@ await check("the canonical-host redirect still bypasses healthz", async () => {
 
 await check("facet URLs 404 while the blob has no facet cells", async () => {
   if (models[deep].fx || models[deep].dt || models[deep].tx) return;   // data has landed; skip
-  for (const p of [`/preco/${deep}/diesel`, `/preco/${deep}/porto`, "/precos/porto",
-                   `/preco/${deep}/automatica`,
-                   ...Object.values(DUELS).flatMap(d => [`/${d.path}`, `/${d.path}/${deep}`])]) {
+  for (const p of [`/pt/preco/${deep}/diesel`, `/pt/preco/${deep}/porto`, "/pt/precos/porto",
+                   `/pt/preco/${deep}/automatica`,
+                   ...Object.values(DUELS).flatMap(d => [`/pt/${d.path}`, `/pt/${d.path}/${deep}`])]) {
     const r = await get(p);
     assert(r.status === 404, `${p} → ${r.status}, must 404 before the data exists`);
   }
-  for (const p of ["/", "/precos", `/preco/${deep}`, "/depreciacao", "/metodologia"]) {
+  for (const p of ["/", "/pt/precos", `/pt/preco/${deep}`, "/pt/depreciacao", "/pt/metodologia"]) {
     const body = await (await get(p)).text();
     const links = Object.values(DUELS).flatMap(d =>
-      [...body.matchAll(new RegExp(`href="(/${d.path}[^"]*)"`, "g"))].map(m => m[1]));
+      [...body.matchAll(new RegExp(`href="(/pt/${d.path}[^"]*)"`, "g"))].map(m => m[1]));
     assert(links.length === 0, `${p} links ${links[0]} while no model carries the fit`);
   }
 });
@@ -556,9 +632,9 @@ await check("facet pages appear when the blob carries the cells", async () => {
     return prevFetch(input, init);
   };
   try {
-    for (const p of [`/preco/${deep}/diesel`, `/preco/${deep}/gasolina`, `/preco/${deep}/porto`, "/precos/porto",
-                     `/preco/${deep}/manual`, `/preco/${deep}/automatica`,
-                     ...Object.values(DUELS).flatMap(d => [`/${d.path}`, `/${d.path}/${deep}`])]) {
+    for (const p of [`/pt/preco/${deep}/diesel`, `/pt/preco/${deep}/gasolina`, `/pt/preco/${deep}/porto`, "/pt/precos/porto",
+                     `/pt/preco/${deep}/manual`, `/pt/preco/${deep}/automatica`,
+                     ...Object.values(DUELS).flatMap(d => [`/pt/${d.path}`, `/pt/${d.path}/${deep}`])]) {
       const r = await get(p);
       assert(r.status === 200, `${p} → ${r.status}`);
       const body = await r.text();
@@ -568,40 +644,40 @@ await check("facet pages appear when the blob carries the cells", async () => {
       assert(!body.replace(/<script[\s\S]*?<\/script>/g, "").includes("undefined"),
         `${p}: rendered "undefined"`);
     }
-    const diesel = await (await get(`/preco/${deep}/diesel`)).text();
-    assert(diesel.includes(`/preco/${deep}/gasolina`), "fuel facet does not link its sibling");
+    const diesel = await (await get(`/pt/preco/${deep}/diesel`)).text();
+    assert(diesel.includes(`/pt/preco/${deep}/gasolina`), "fuel facet does not link its sibling");
     assert(diesel.includes("20% mais caro") && diesel.includes("comparando ano a ano"),
       "fuel facet states no year-matched gap");
     assert(!diesel.includes("21% mais caro"), "fuel facet fell back to the raw medians");
 
-    const auto = await (await get(`/preco/${deep}/automatica`)).text();
+    const auto = await (await get(`/pt/preco/${deep}/automatica`)).text();
     assert(!/% (mais caro|mais barato)/.test(auto),
       "gearbox facet claims a price gap it cannot measure year-matched");
     assert(auto.includes("inclui a diferença de anos"), "gearbox facet hides why there is no percentage");
-    assert(auto.includes(`/preco/${deep}/manual`), "gearbox facet does not link its sibling");
+    assert(auto.includes(`/pt/preco/${deep}/manual`), "gearbox facet does not link its sibling");
 
     for (const d of Object.values(DUELS)) {
-      const page = await (await get(`/${d.path}/${deep}`)).text();
-      for (const href of [...page.matchAll(/href="(\/preco\/[^"]+)"/g)].map(m => m[1])) {
+      const page = await (await get(`/pt/${d.path}/${deep}`)).text();
+      for (const href of [...page.matchAll(/href="(\/pt\/preco\/[^"]+)"/g)].map(m => m[1])) {
         assert((await get(href)).status === 200,
           `${d.path}/${deep} links ${href}, which does not resolve`);
       }
       assert(/6,6%/.test(page) && /8,6%/.test(page), `${d.path}: lost one of the two rates`);
       assert(page.includes("±1,0 pp"), `${d.path}: hides the interval`);
-      assert(page.includes(`/preco/${deep}/${d.a.facet}`), `${d.path}: does not link its facet cuts`);
-      const dj = await (await get(`/${d.path}/${deep}.json`)).json();
+      assert(page.includes(`/pt/preco/${deep}/${d.a.facet}`), `${d.path}: does not link its facet cuts`);
+      const dj = await (await get(`/pt/${d.path}/${deep}.json`)).json();
       assert(dj.distinguishable_at_95 === true && dj.holds_value_better === d.a.json,
         `${d.path}: JSON twin disagrees with the page`);
       assert(dj.measured === "asking_price", `${d.path}: JSON does not say what it measures`);
-      const hub = await (await get(`/${d.path}`)).text();
-      assert(hub.includes(`/${d.path}/${deep}`), `${d.path}: hub does not link its own page`);
+      const hub = await (await get(`/pt/${d.path}`)).text();
+      assert(hub.includes(`/pt/${d.path}/${deep}`), `${d.path}: hub does not link its own page`);
     }
 
     for (const k of ["diesel", "manual", "porto"]) {
-      const r = await get(`/preco/${deep}/${k}.json`);
-      assert(r.status === 200, `/preco/${deep}/${k}.json → ${r.status}`);
+      const r = await get(`/pt/preco/${deep}/${k}.json`);
+      assert(r.status === 200, `/pt/preco/${deep}/${k}.json → ${r.status}`);
       assert((r.headers.get("content-type") || "").includes("application/json"),
-        `/preco/${deep}/${k}.json still answers with the HTML page`);
+        `/pt/preco/${deep}/${k}.json still answers with the HTML page`);
       const fj = await r.json();
       assert(fj.facet && fj.facet.key === k, `${k}.json does not name its own cut`);
       assert(fj.measured === "asking_price", `${k}.json does not say what it measures`);
@@ -611,8 +687,8 @@ await check("facet pages appear when the blob carries the cells", async () => {
           `${k}.json advertises ${sib.page} but it answers otherwise`);
       }
     }
-    const facetHtml = await (await get(`/preco/${deep}/diesel`)).text();
-    assert(facetHtml.includes(`/preco/${deep}/diesel.json`),
+    const facetHtml = await (await get(`/pt/preco/${deep}/diesel`)).text();
+    assert(facetHtml.includes(`/pt/preco/${deep}/diesel.json`),
       "the facet page hides its own JSON twin");
 
     const solo = slugs.find(s2 => {
@@ -627,43 +703,43 @@ await check("facet pages appear when the blob carries the cells", async () => {
       const r = models[solo];
       const kind = (r.fx || []).length === 1 && r.fx[0].n / r.n >= 0.85 ? "fx" : "tx";
       const key = r[kind][0].k;
-      const red = await get(`/preco/${solo}/${key}`);
+      const red = await get(`/pt/preco/${solo}/${key}`);
       assert(red.status === 301,
         `a retired near-duplicate facet answered ${red.status}, throwing away an indexed URL`);
-      assert(new URL(red.headers.get("location")).pathname === `/preco/${solo}`,
+      assert(new URL(red.headers.get("location")).pathname === `/pt/preco/${solo}`,
         "a retired facet does not fold into its model page");
-      const xml2 = await (await get("/sitemap.xml")).text();
-      assert(!xml2.includes(`<loc>https://${HOST}/preco/${solo}/${key}</loc>`),
+      const xml2 = await (await get("/pt/sitemap.xml")).text();
+      assert(!xml2.includes(`<loc>https://${HOST}/pt/preco/${solo}/${key}</loc>`),
         "sitemap still advertises a retired facet");
     }
 
-    const unknown = await get(`/preco/${deep}/nao-existe`);
+    const unknown = await get(`/pt/preco/${deep}/nao-existe`);
     assert(unknown.status === 404, `unknown facet → ${unknown.status}`);
     for (const d of Object.values(DUELS)) {
       const noDuel = slugs.find(s2 => s2 !== deep && !augmented.models[s2][d.key]);
       if (!noDuel) continue;
-      assert((await get(`/${d.path}/${noDuel}`)).status === 404,
+      assert((await get(`/pt/${d.path}/${noDuel}`)).status === 404,
         `${d.path}: a page exists for a model with no fit`);
     }
-    assert((await get("/precos/nao-existe")).status === 404, "served a district we have no data for");
+    assert((await get("/pt/precos/nao-existe")).status === 404, "served a district we have no data for");
 
-    const xml = await (await get("/sitemap.xml")).text();
-    for (const want of [`/preco/${deep}/diesel`, `/preco/${deep}/porto`, "/precos/porto",
-                        `/preco/${deep}/automatica`,
-                        ...Object.values(DUELS).flatMap(d => [`/${d.path}`, `/${d.path}/${deep}`])]) {
+    const xml = await (await get("/pt/sitemap.xml")).text();
+    for (const want of [`/pt/preco/${deep}/diesel`, `/pt/preco/${deep}/porto`, "/pt/precos/porto",
+                        `/pt/preco/${deep}/automatica`,
+                        ...Object.values(DUELS).flatMap(d => [`/pt/${d.path}`, `/pt/${d.path}/${deep}`])]) {
       assert(xml.includes(`<loc>https://carsbuyer.org${want}</loc>`), `sitemap missing ${want}`);
     }
 
     // In the sitemap is not enough. A page nothing on the site links to is an
     // orphan: a crawler reaches it once and a reader never does.
-    const modelPage = await (await get(`/preco/${deep}`)).text();
-    for (const want of [`/preco/${deep}/diesel`, `/preco/${deep}/gasolina`, `/preco/${deep}/porto`,
-                        `/preco/${deep}/manual`, `/preco/${deep}/automatica`,
-                        ...Object.values(DUELS).map(d => `/${d.path}/${deep}`)]) {
+    const modelPage = await (await get(`/pt/preco/${deep}`)).text();
+    for (const want of [`/pt/preco/${deep}/diesel`, `/pt/preco/${deep}/gasolina`, `/pt/preco/${deep}/porto`,
+                        `/pt/preco/${deep}/manual`, `/pt/preco/${deep}/automatica`,
+                        ...Object.values(DUELS).map(d => `/pt/${d.path}/${deep}`)]) {
       assert(modelPage.includes(want), `model page does not link ${want}`);
     }
-    const hub = await (await get("/precos")).text();
-    assert(hub.includes('href="/precos/porto"'), "/precos does not link the district pages");
+    const hub = await (await get("/pt/precos")).text();
+    assert(hub.includes('href="/pt/precos/porto"'), "/pt/precos does not link the district pages");
   } finally {
     globalThis.fetch = prevFetch;
   }
@@ -680,19 +756,19 @@ await check("a wave gates the router, the sitemap and the on-page links together
   assert(outside, "fixture has no model outside a 5-model wave");
 
   // The model page itself stays live — only the second layer is staged.
-  assert((await g(`/preco/${outside}`)).status === 200, "wave hid a model page");
+  assert((await g(`/pt/preco/${outside}`)).status === 200, "wave hid a model page");
   const yr = yearPageYears(models[outside])[0];
-  assert((await g(`/preco/${outside}/${yr}`)).status === 404,
+  assert((await g(`/pt/preco/${outside}/${yr}`)).status === 404,
     "a year page outside the wave is still reachable");
   const insideYear = yearPageYears(models[inWave[0]])[0];
-  assert((await g(`/preco/${inWave[0]}/${insideYear}`)).status === 200,
+  assert((await g(`/pt/preco/${inWave[0]}/${insideYear}`)).status === 200,
     "a year page inside the wave is not reachable");
 
   // Unreachable AND unlinked: an in-page link to a 404 is worse than no page.
-  const page = await (await g(`/preco/${outside}`)).text();
-  assert(!page.includes(`/preco/${outside}/${yr}`), "model page links a year page the wave hides");
+  const page = await (await g(`/pt/preco/${outside}`)).text();
+  assert(!page.includes(`/pt/preco/${outside}/${yr}`), "model page links a year page the wave hides");
 
-  const feed = await (await g(`/preco/${outside}.json`)).json();
+  const feed = await (await g(`/pt/preco/${outside}.json`)).json();
   const advertised = feed.by_year.filter(c => c.page);
   assert(advertised.length === 0,
     `JSON feed advertises ${advertised.length} year pages the wave hides`);
@@ -702,7 +778,7 @@ await check("a wave gates the router, the sitemap and the on-page links together
     "JSON feed advertises related pages the wave hides");
   assert(feed.by_fuel.every(c => c.page === null) && feed.by_transmission.every(c => c.page === null),
     "JSON feed advertises facet pages the wave hides");
-  const insideFeed = await (await g(`/preco/${inWave[0]}.json`)).json();
+  const insideFeed = await (await g(`/pt/preco/${inWave[0]}.json`)).json();
   const advertisedInside = insideFeed.by_year.filter(x => x.page);
   assert(advertisedInside.length > 0,
     "the deepest model in the wave advertises no year page at all — the feed lost its link graph");
@@ -726,17 +802,17 @@ await check("a wave gates the router, the sitemap and the on-page links together
     && Object.values(DUELS).some(d => models[s2][d.key]));
   if (duelOutside) {
     const d = Object.values(DUELS).find(x => models[duelOutside][x.key]);
-    const page = await (await g(`/${d.path}/${duelOutside}`)).text();
-    for (const href of [...page.matchAll(/href="(\/preco\/[^"]+)"/g)].map(m => m[1])) {
+    const page = await (await g(`/pt/${d.path}/${duelOutside}`)).text();
+    for (const href of [...page.matchAll(/href="(\/pt\/preco\/[^"]+)"/g)].map(m => m[1])) {
       assert((await g(href)).status === 200,
         `a duel page outside the wave links ${href}, which the wave hides`);
     }
   }
 
-  const xml = await (await g("/sitemap.xml")).text();
-  assert(!xml.includes(`<loc>https://${HOST}/preco/${outside}/${yr}</loc>`),
+  const xml = await (await g("/pt/sitemap.xml")).text();
+  assert(!xml.includes(`<loc>https://${HOST}/pt/preco/${outside}/${yr}</loc>`),
     "sitemap advertises a page outside the wave");
-  const gatedYears = [...xml.matchAll(/<loc>[^<]*\/preco\/[^/<]+\/\d{4}<\/loc>/g)].length;
+  const gatedYears = [...xml.matchAll(/<loc>[^<]*\/pt\/preco\/[^/<]+\/\d{4}<\/loc>/g)].length;
   const allYears = slugs.reduce((n, s2) => n + yearPageYears(models[s2]).length, 0);
   assert(gatedYears > 0 && gatedYears < allYears,
     `wave did not narrow the sitemap (${gatedYears} of ${allYears})`);
@@ -768,13 +844,13 @@ await check("the deal feed carries its own markup, and only on the canonical vie
     return prevFetch(input, init);
   };
   try {
-    const page = await (await worker.fetch(new Request(`https://${HOST}/mercado`), fresh)).text();
+    const page = await (await worker.fetch(new Request(`https://${HOST}/pt/mercado`), fresh)).text();
     const m = page.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/);
-    assert(m, "/mercado still ships no JSON-LD");
+    assert(m, "/pt/mercado still ships no JSON-LD");
     const graph = JSON.parse(m[1])["@graph"];
     const types = graph.map(n => n["@type"]);
     for (const t of ["CollectionPage", "ItemList", "BreadcrumbList"]) {
-      assert(types.includes(t), `/mercado JSON-LD is missing ${t}`);
+      assert(types.includes(t), `/pt/mercado JSON-LD is missing ${t}`);
     }
     const coll = graph.find(n => n["@type"] === "CollectionPage");
     assert(coll.dateModified === feedStamp,
@@ -792,9 +868,9 @@ await check("the deal feed carries its own markup, and only on the canonical vie
       assert((await worker.fetch(new Request(`https://${HOST}${path}`), fresh)).status === 200,
         `ItemList advertises ${path} but it answers otherwise`);
     }
-    assert(page.includes(`/preco/${deep}/${yr}`), "the feed does not link the year of the car it shows");
+    assert(page.includes(`/pt/preco/${deep}/${yr}`), "the feed does not link the year of the car it shows");
 
-    const zoned = await (await worker.fetch(new Request(`https://${HOST}/mercado?zone=norte`), fresh)).text();
+    const zoned = await (await worker.fetch(new Request(`https://${HOST}/pt/mercado?zone=norte`), fresh)).text();
     assert(!zoned.includes("application/ld+json"),
       "a filtered view ships an ItemList the canonical URL does not serve");
   } finally {
@@ -813,14 +889,14 @@ await check("lastmod tells a frozen archive cut apart from a page rebuilt daily"
   } };
   const frozen = { week: "2026-W10", date: "2026-03-09", builtAt: "2026-03-09T06:00:00Z" };
   await env2.KV.put("idx:weeks", JSON.stringify([frozen]));
-  const xml = await (await worker.fetch(new Request(`https://${HOST}/sitemap.xml`), env2)).text();
+  const xml = await (await worker.fetch(new Request(`https://${HOST}/pt/sitemap.xml`), env2)).text();
   const row = re => (xml.match(re) || [""])[0];
-  const archive = row(new RegExp(`<url><loc>https://${HOST}/mercado/indice/2026-w10</loc>[^]*?</url>`));
+  const archive = row(new RegExp(`<url><loc>https://${HOST}/pt/mercado/indice/2026-w10</loc>[^]*?</url>`));
   assert(archive.includes("<lastmod>2026-03-09</lastmod>"),
     `a permanent weekly cut claims it changed today: ${archive}`);
-  const priv = row(new RegExp(`<url><loc>https://${HOST}/privacidade</loc>[^]*?</url>`));
+  const priv = row(new RegExp(`<url><loc>https://${HOST}/pt/privacidade</loc>[^]*?</url>`));
   assert(!priv.includes("<lastmod>"), `the one static page still dates itself to the build: ${priv}`);
-  const model = row(new RegExp(`<url><loc>https://${HOST}/preco/${deep}</loc>[^]*?</url>`));
+  const model = row(new RegExp(`<url><loc>https://${HOST}/pt/preco/${deep}</loc>[^]*?</url>`));
   assert(model.includes(`<lastmod>${String(mdoc.built_at).slice(0, 10)}</lastmod>`),
     "a page rebuilt every few hours lost its build stamp");
   assert(model.includes("<changefreq>daily</changefreq>"),
@@ -833,7 +909,7 @@ await check("the liquidity layer is staged on its own knob, not the price wave",
     || (a < b ? -1 : 1)).slice(5).find(s2 => liquidityOk(models[s2]));
   assert(outside, "fixture has no liquidity model outside a 5-model price wave");
   const g = (p, e) => worker.fetch(new Request(`https://${HOST}${p}`), e);
-  assert((await g(`/liquidez/${outside}`, priceWaved)).status === 200,
+  assert((await g(`/pt/liquidez/${outside}`, priceWaved)).status === 200,
     "the price wave still hides a liquidity page it does not stage");
 
   const liqCapped = { ...priceWaved, LIQ_WAVE_MODELS: "1" };
@@ -841,22 +917,22 @@ await check("the liquidity layer is staged on its own knob, not the price wave",
     .filter(([, r]) => liquidityOk(r))
     .sort((a, b) => ((b[1].lq && b[1].lq.n) || 0) - ((a[1].lq && a[1].lq.n) || 0)
                  || (a[0] < b[0] ? -1 : 1))[0][0];
-  assert((await g(`/liquidez/${deepest}`, liqCapped)).status === 200,
+  assert((await g(`/pt/liquidez/${deepest}`, liqCapped)).status === 200,
     "the liquidity wave hid its own deepest model");
   const hidden = Object.keys(models).find(s2 => s2 !== deepest && liquidityOk(models[s2]));
   if (hidden) {
-    assert((await g(`/liquidez/${hidden}`, liqCapped)).status === 404,
+    assert((await g(`/pt/liquidez/${hidden}`, liqCapped)).status === 404,
       "a liquidity page outside its own wave is still reachable");
-    const xml = await (await g("/sitemap.xml", liqCapped)).text();
-    assert(!xml.includes(`<loc>https://${HOST}/liquidez/${hidden}</loc>`),
+    const xml = await (await g("/pt/sitemap.xml", liqCapped)).text();
+    assert(!xml.includes(`<loc>https://${HOST}/pt/liquidez/${hidden}</loc>`),
       "sitemap advertises a liquidity page outside its own wave");
   }
 });
 
 await check("a cacheable page carries nothing that belongs to one visitor", async () => {
-  const PUBLIC = ["/precos", `/preco/${deep}`, `/preco/${deep}/${deepYear}`, "/liquidez",
-    "/depreciacao", "/comparar", "/metodologia", "/sobre", "/isv", "/privacidade",
-    "/sobrevalorizados", "/mercado/indice"];
+  const PUBLIC = ["/pt/precos", `/pt/preco/${deep}`, `/pt/preco/${deep}/${deepYear}`, "/pt/liquidez",
+    "/pt/depreciacao", "/pt/comparar", "/pt/metodologia", "/pt/sobre", "/pt/isv", "/pt/privacidade",
+    "/pt/sobrevalorizados", "/pt/mercado/indice"];
   const withCookie = p => worker.fetch(new Request(`https://${HOST}${p}`,
     { headers: { cookie: "fc_uid=deadbeefdeadbeefdeadbeefdeadbeef" } }), env);
   for (const p of PUBLIC) {
@@ -870,7 +946,7 @@ await check("a cacheable page carries nothing that belongs to one visitor", asyn
     assert((await anon.text()) === (await mine.text()),
       `${p} renders differently for a visitor with a cookie — a shared cache would leak it`);
   }
-  for (const p of ["/", "/mercado", "/avaliar"]) {
+  for (const p of ["/pt", "/pt/mercado", "/pt/avaliar"]) {
     const r = await get(p);
     const cc = r.headers.get("cache-control") || "";
     assert(/private/.test(cc), `${p} carries per-visitor state but is cacheable (${cc})`);
@@ -880,9 +956,9 @@ await check("a cacheable page carries nothing that belongs to one visitor", asyn
 // ── KV must not be load-bearing for a render ────────────────────────────────
 // The outage these exist for: KV refused ops, every rendered page answered
 // 1101, and /healthz plus the sitemap stayed green the whole time.
-const PAGES = ["/", "/mercado", "/precos", "/privacidade", "/sobre", "/metodologia", "/isv",
-  "/liquidez", "/depreciacao", "/comparar", "/mercado/indice", "/sobrevalorizados", "/avaliar",
-  "/car?olx_id=x", `/preco/${deep}`, `/preco/${deep}/${deepYear}`];
+const PAGES = ["/", "/pt/mercado", "/pt/precos", "/pt/privacidade", "/pt/sobre", "/pt/metodologia", "/pt/isv",
+  "/pt/liquidez", "/pt/depreciacao", "/pt/comparar", "/pt/mercado/indice", "/pt/sobrevalorizados", "/pt/avaliar",
+  "/pt/car?olx_id=x", `/pt/preco/${deep}`, `/pt/preco/${deep}/${deepYear}`];
 
 await check("a KV that fails every op degrades the page, never 500s", async () => {
   const bang = op => { throw new Error(`KV ${op} failed: 429 Too Many Requests`); };
@@ -902,7 +978,7 @@ await check("rendering a page spends no KV list op", async () => {
   let lists = 0;
   const counted = { ...env, KV: { ...env.KV, async list(arg) { lists++; return env.KV.list(arg); } } };
   for (const p of PAGES) await worker.fetch(new Request(`https://${HOST}${p}`), counted);
-  const r = await worker.fetch(new Request(`https://${HOST}/mercado`,
+  const r = await worker.fetch(new Request(`https://${HOST}/pt/mercado`,
     { headers: { cookie: "fc_uid=deadbeefdeadbeefdeadbeefdeadbeef" } }), counted);
   assert(r.status === 200, `returning visitor → ${r.status}`);
   assert(lists === 0, `${lists} list op(s) on a plain render`);
@@ -979,7 +1055,7 @@ await check("a week the cron missed shows on the page as a gap", async () => {
   kv.set("idx:weeks", JSON.stringify([row(twoAgo)]));
   kv.set(`idx:week:${twoAgo}`, JSON.stringify(row(twoAgo)));
 
-  const page = await (await get("/mercado/indice")).text();
+  const page = await (await get("/pt/mercado/indice")).text();
   assert(JSON.parse(kv.get(`idx:week:${nowWk}`)).src === "web",
     "a row written by a page request is not marked as such");
   assert(page.includes(oneAgo), `the missing week ${oneAgo} is not named on the page`);
@@ -1004,29 +1080,29 @@ await check("a closed month gets a permanent address, the open one does not", as
   assert(cuts.length >= 1, "eight weeks back did not close a single month");
 
   for (const c of cuts) {
-    const r = await get(`/mercado/indice/${c.month}`);
-    assert(r.status === 200, `/mercado/indice/${c.month} → ${r.status}`);
+    const r = await get(`/pt/mercado/indice/${c.month}`);
+    assert(r.status === 200, `/pt/mercado/indice/${c.month} → ${r.status}`);
     const body = await r.text();
-    assert(body.includes(`https://${HOST}/mercado/indice/${c.month}`), `${c.month}: no permanent address on the page`);
-    assert(body.includes(`<link rel="canonical" href="https://${HOST}/mercado/indice/${c.month}">`),
+    assert(body.includes(`https://${HOST}/pt/mercado/indice/${c.month}`), `${c.month}: no permanent address on the page`);
+    assert(body.includes(`<link rel="canonical" href="https://${HOST}/pt/mercado/indice/${c.month}">`),
       `${c.month}: the month page is not its own canonical`);
   }
   const open = isoWeekMonth(nowWk);
-  assert((await get(`/mercado/indice/${open}`)).status === 404, "served the month still in progress");
+  assert((await get(`/pt/mercado/indice/${open}`)).status === 404, "served the month still in progress");
 
   const before = kv.get("idx:weeks");
-  await get(`/mercado/indice/${cuts[0].month}`);
-  await get("/mercado/indice");
+  await get(`/pt/mercado/indice/${cuts[0].month}`);
+  await get("/pt/mercado/indice");
   const after = JSON.parse(kv.get("idx:weeks"));
   for (const h of JSON.parse(before)) {
     const same = after.find(x => x.week === h.week);
     assert(same && JSON.stringify(same) === JSON.stringify(h), `week ${h.week} changed under its own URL`);
   }
 
-  const xml = await (await get("/sitemap.xml")).text();
+  const xml = await (await get("/pt/sitemap.xml")).text();
   const locs = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => new URL(m[1]).pathname);
-  const listed = locs.filter(p => /^\/mercado\/indice\/\d{4}-\d{2}$/.test(p)).sort();
-  const expected = cuts.map(c => `/mercado/indice/${c.month}`).sort();
+  const listed = locs.filter(p => /^\/pt\/mercado\/indice\/\d{4}-\d{2}$/.test(p)).sort();
+  const expected = cuts.map(c => `/pt/mercado/indice/${c.month}`).sort();
   assert(listed.join() === expected.join(), `sitemap months ${listed.join()} vs router ${expected.join()}`);
 });
 
@@ -1046,7 +1122,7 @@ await check("no data means no row, not a row of nulls", async () => {
 });
 
 await check("every icon the pages link to is served without the auth gate", async () => {
-  const head = await (await worker.fetch(new Request(`https://${HOST}/`), env, {})).text();
+  const head = await (await worker.fetch(new Request(`https://${HOST}/pt`), env, {})).text();
   const linked = [...head.matchAll(/<link rel="(?:icon|apple-touch-icon)"[^>]*href="([^"]+)"/g)]
     .map(m => m[1]);
   assert(linked.length >= 2, "the pages stopped linking any icon at all");
@@ -1062,7 +1138,7 @@ await check("every icon the pages link to is served without the auth gate", asyn
 await check("seller lead POST stores the lead and answers with the thanks page", async () => {
   const stored = () => [...kv.keys()].filter(k => k.startsWith("lead:")).length;
   const before = stored();
-  const post = (params, origin = `https://${HOST}`) => worker.fetch(new Request(`https://${HOST}/lead`, {
+  const post = (params, origin = `https://${HOST}`) => worker.fetch(new Request(`https://${HOST}/pt/lead`, {
     method: "POST", body: params,
     headers: { Origin: origin, "Content-Type": "application/x-www-form-urlencoded" },
   }), env);
@@ -1083,43 +1159,43 @@ await check("seller lead POST stores the lead and answers with the thanks page",
   assert(stored() === before + 1, "honeypot submission was stored");
   const foreign = await post(full(), "https://evil.example");
   assert(foreign.status === 403, `cross-origin POST → ${foreign.status}`);
-  const g = await get("/lead");
+  const g = await get("/pt/lead");
   assert(g.status === 302, `GET /lead → ${g.status}`);
   const admin = await get("/analytics/leads.json");
   assert(admin.status === 401, `leads.json without auth → ${admin.status}`);
   const robots = await (await get("/robots.txt")).text();
-  assert(robots.includes("Disallow: /lead"), "robots does not block /lead");
+  assert(robots.includes("Disallow: /pt/lead"), "robots does not block /pt/lead");
 });
 
 await check("seller pages resolve, the hub links them and the sitemap lists them", async () => {
-  const hub = await get("/vender");
-  assert(hub.status === 200, `/vender → ${hub.status}`);
+  const hub = await get("/pt/vender");
+  assert(hub.status === 200, `/pt/vender → ${hub.status}`);
   const hubBody = await hub.text();
   const eligible = slugs.filter(s => venderOk(models[s]));
   assert(eligible.length > 0, "no eligible seller model in the fixture");
   const s = eligible[0];
-  assert(hubBody.includes(`/vender/${s}`), "hub does not link an eligible model");
-  const page = await get(`/vender/${s}`);
-  assert(page.status === 200, `/vender/${s} → ${page.status}`);
-  const j = await get(`/vender/${s}.json`);
+  assert(hubBody.includes(`/pt/vender/${s}`), "hub does not link an eligible model");
+  const page = await get(`/pt/vender/${s}`);
+  assert(page.status === 200, `/pt/vender/${s} → ${page.status}`);
+  const j = await get(`/pt/vender/${s}.json`);
   assert(j.status === 200 && (j.headers.get("content-type") || "").includes("json"), "seller JSON twin is not served");
-  const miss = await get("/vender/modelo-que-nao-existe");
+  const miss = await get("/pt/vender/modelo-que-nao-existe");
   assert(miss.status === 404, `unknown seller page → ${miss.status}`);
-  const sm = await (await get("/sitemap.xml")).text();
-  assert(sm.includes(`/vender/${s}<`) || sm.includes(`/vender/${s}</loc>`), "sitemap does not list the seller page");
-  assert(sm.includes(`https://${HOST}/vender</loc>`), "sitemap does not list the seller hub");
+  const sm = await (await get("/pt/sitemap.xml")).text();
+  assert(sm.includes(`/pt/vender/${s}<`) || sm.includes(`/pt/vender/${s}</loc>`), "sitemap does not list the seller page");
+  assert(sm.includes(`https://${HOST}/pt/vender</loc>`), "sitemap does not list the seller hub");
 });
 
 await check("seller guides resolve and are listed in the sitemap", async () => {
-  const hub = await get("/guias");
-  assert(hub.status === 200, `/guias → ${hub.status}`);
+  const hub = await get("/pt/guias");
+  assert(hub.status === 200, `/pt/guias → ${hub.status}`);
   const first = GUIDES[0].slug;
-  const page = await get(`/guias/${first}`);
-  assert(page.status === 200, `/guias/${first} → ${page.status}`);
-  const miss = await get("/guias/guia-que-nao-existe");
+  const page = await get(`/pt/guias/${first}`);
+  assert(page.status === 200, `/pt/guias/${first} → ${page.status}`);
+  const miss = await get("/pt/guias/guia-que-nao-existe");
   assert(miss.status === 404, `unknown guide → ${miss.status}`);
-  const sm = await (await get("/sitemap.xml")).text();
-  for (const g of GUIDES) assert(sm.includes(`/guias/${g.slug}</loc>`), `sitemap does not list ${g.slug}`);
+  const sm = await (await get("/pt/sitemap.xml")).text();
+  for (const g of GUIDES) assert(sm.includes(`/pt/guias/${g.slug}</loc>`), `sitemap does not list ${g.slug}`);
 });
 
 await check("sitemap lastmod follows the page's own change stamp when the blob carries one", async () => {
@@ -1128,10 +1204,10 @@ await check("sitemap lastmod follows the page's own change stamp when the blob c
   rec.u = "2026-01-02";
   try {
     kv.delete("cache:models");
-    const sm = await (await get("/sitemap.xml")).text();
-    const line = sm.split("<url>").find(x => x.includes(`/preco/${deep}</loc>`)) || "";
+    const sm = await (await get("/pt/sitemap.xml")).text();
+    const line = sm.split("<url>").find(x => x.includes(`/pt/preco/${deep}</loc>`)) || "";
     assert(line.includes("<lastmod>2026-01-02</lastmod>"), `model page lastmod ignores rec.u: ${line.slice(0, 160)}`);
-    const guide = sm.split("<url>").find(x => x.includes(`/guias/${GUIDES[0].slug}</loc>`)) || "";
+    const guide = sm.split("<url>").find(x => x.includes(`/pt/guias/${GUIDES[0].slug}</loc>`)) || "";
     assert(/<lastmod>\d{4}-\d{2}-\d{2}<\/lastmod>/.test(guide), "guide lastmod missing");
   } finally {
     if (had === undefined) delete rec.u; else rec.u = had;
@@ -1142,28 +1218,28 @@ await check("the guides are linked from the pages that carry the traffic, with o
   let slug = null;
   for (const s of Object.keys(models)) {
     if (!yearPageYears(models[s]).length) continue;
-    if ((await get(`/vender/${s}`)).status === 200) { slug = s; break; }
+    if ((await get(`/pt/vender/${s}`)).status === 200) { slug = s; break; }
   }
   assert(slug, "no model has both a seller page and a year page — the fixture cannot test this");
   const year = yearPageYears(models[slug])[0];
 
   const pages = {
-    "/preco/": await (await get(`/preco/${slug}`)).text(),
-    "/preco/{ano}": await (await get(`/preco/${slug}/${year}`)).text(),
-    "/vender/": await (await get(`/vender/${slug}`)).text(),
+    "/pt/preco/": await (await get(`/pt/preco/${slug}`)).text(),
+    "/pt/preco/{ano}": await (await get(`/pt/preco/${slug}/${year}`)).text(),
+    "/pt/vender/": await (await get(`/pt/vender/${slug}`)).text(),
   };
   for (const [name, html] of Object.entries(pages)) {
-    const deep = [...html.matchAll(/href="\/guias\/([a-z0-9-]+)"/g)].map(m => m[1]);
+    const deep = [...html.matchAll(/href="\/pt\/guias\/([a-z0-9-]+)"/g)].map(m => m[1]);
     assert(deep.length > 0, `${name} still links no guide at all, only the hub`);
     assert(deep.includes("documentos-para-vender-carro"),
       `${name} does not reach the guide that owns the sale-document queries`);
   }
 
-  const sellerGuides = [...pages["/vender/"].matchAll(/href="\/guias\/([a-z0-9-]+)"/g)].map(m => m[1]);
+  const sellerGuides = [...pages["/pt/vender/"].matchAll(/href="\/pt\/guias\/([a-z0-9-]+)"/g)].map(m => m[1]);
   assert(sellerGuides.includes("registo-de-propriedade-automovel"),
     "the seller page does not reach the registo guide, the one query family with real volume");
 
-  const anchor = /<a href="\/guias\/([a-z0-9-]+)">[^<]*contrato de compra e venda[^<]*<\/a>/g;
+  const anchor = /<a href="\/pt\/guias\/([a-z0-9-]+)">[^<]*contrato de compra e venda[^<]*<\/a>/g;
   const owners = new Set();
   for (const html of Object.values(pages)) {
     for (const m of html.matchAll(anchor)) owners.add(m[1]);
@@ -1177,57 +1253,57 @@ await check("a dated snapshot keeps saying the same thing after the live numbers
   const slug = Object.keys(models)[0];
   const before = models[slug].fm;
 
-  await get("/mercado/indice");
+  await get("/pt/mercado/indice");
   const weeks = JSON.parse(kv.get("snap:models:weeks") || "[]");
   assert(weeks.length === 1, `one week should be archived, got ${weeks.length}`);
   const token = weeks[0].toLowerCase();
 
-  const full = await (await get(`/historico/${token}.json`)).json();
+  const full = await (await get(`/pt/historico/${token}.json`)).json();
   assert(full.week === weeks[0] && full.date, "the cut does not carry its own week and date");
   assert(full.models[slug].fm === before, "the archived median is not the one that was live");
 
   models[slug].fm = before + 12345;
   try {
-    const live = await (await get(`/preco/${slug}.json`)).json();
+    const live = await (await get(`/pt/preco/${slug}.json`)).json();
     assert(JSON.stringify(live).includes(String(before + 12345)), "the live page did not move");
-    const again = await (await get(`/historico/${token}.json`)).json();
+    const again = await (await get(`/pt/historico/${token}.json`)).json();
     assert(again.models[slug].fm === before,
       "the archive moved with the live data — then citing it is worth nothing");
-    const one = await (await get(`/historico/${token}/${slug}.json`)).json();
+    const one = await (await get(`/pt/historico/${token}/${slug}.json`)).json();
     assert(one.slug === slug && one.fm === before && one.week === weeks[0],
       "the per-model cut disagrees with the full cut");
     assert(Array.isArray(one.yr), "the per-model cut lost its per-year cells");
   } finally { models[slug].fm = before; }
 
-  await get("/mercado/indice");
+  await get("/pt/mercado/indice");
   assert(JSON.parse(kv.get("snap:models:weeks")).length === 1, "the same week was archived twice");
 
-  for (const bad of ["/historico/1999-w03.json", "/historico/nonsense.json", `/historico/${token}/no-such-model.json`,
-                     `/historico/${token}`, `/historico/${token}/a/b.json`]) {
+  for (const bad of ["/pt/historico/1999-w03.json", "/pt/historico/nonsense.json", `/pt/historico/${token}/no-such-model.json`,
+                     `/pt/historico/${token}`, `/pt/historico/${token}/a/b.json`]) {
     const r = await get(bad);
     assert(r.status === 404, `${bad} → ${r.status}, expected 404`);
   }
-  const hub = await get("/historico");
-  assert(hub.status === 200, `/historico → ${hub.status}`);
-  assert((await hub.text()).includes(`/historico/${token}.json`), "the hub does not link the week it has");
+  const hub = await get("/pt/historico");
+  assert(hub.status === 200, `/pt/historico → ${hub.status}`);
+  assert((await hub.text()).includes(`/pt/historico/${token}.json`), "the hub does not link the week it has");
 
-  const head = (await get(`/historico/${token}.json`)).headers.get("cache-control") || "";
+  const head = (await get(`/pt/historico/${token}.json`)).headers.get("cache-control") || "";
   assert(head.includes("immutable"), `frozen data served as mutable: ${head}`);
 
   const llms = await (await get("/llms.txt")).text();
-  assert(llms.includes("/historico"), "llms.txt never mentions the archive an agent should cite");
-  assert(/historico\/\{AAAA\}-w\{SS\}\/\{slug\}\.json/.test(llms), "llms.txt does not give the per-model address shape");
-  const sm = await (await get("/sitemap.xml")).text();
-  assert(sm.includes("<loc>https://carsbuyer.org/historico</loc>"), "the archive hub is not in the sitemap");
-  assert(!sm.includes("/historico/"), "frozen cuts must stay out of the sitemap, they are for citing not for ranking");
+  assert(llms.includes("/pt/historico"), "llms.txt never mentions the archive an agent should cite");
+  assert(/\/pt\/historico\/\{AAAA\}-w\{SS\}\/\{slug\}\.json/.test(llms), "llms.txt does not give the per-model address shape");
+  const sm = await (await get("/pt/sitemap.xml")).text();
+  assert(sm.includes("<loc>https://carsbuyer.org/pt/historico</loc>"), "the archive hub is not in the sitemap");
+  assert(!sm.includes("/pt/historico/"), "frozen cuts must stay out of the sitemap, they are for citing not for ranking");
 
-  const page = await (await get(`/preco/${slug}`)).text();
-  assert(page.includes('href="/historico"'), "a page full of numbers does not point at the dated archive");
+  const page = await (await get(`/pt/preco/${slug}`)).text();
+  assert(page.includes('href="/pt/historico"'), "a page full of numbers does not point at the dated archive");
 });
 
 await check("AI fetches are counted by agent, and only a live answer leaves a sample", async () => {
   for (const k of [...kv.keys()]) if (k.startsWith("ai:hit:") || k.startsWith("aihit:")) kv.delete(k);
-  const visit = (ua, path = "/precos") =>
+  const visit = (ua, path = "/pt/precos") =>
     worker.fetch(new Request(`https://${HOST}${path}`, { headers: { "user-agent": ua } }), env);
 
   await visit("Mozilla/5.0 (compatible; ChatGPT-User/1.0; +https://openai.com/bot)");
@@ -1241,7 +1317,7 @@ await check("AI fetches are counted by agent, and only a live answer leaves a sa
 
   const samples = [...kv.keys()].filter(k => k.startsWith("aihit:")).map(k => JSON.parse(kv.get(k)));
   assert(samples.length === 1, `a live answer must leave exactly one sample, got ${samples.length}`);
-  assert(samples[0].agent === "chatgpt-user" && samples[0].path === "/precos",
+  assert(samples[0].agent === "chatgpt-user" && samples[0].path === "/pt/precos",
     "the sample does not say who asked for what");
 
   await visit("Mozilla/5.0 (compatible; Claude-User/1.0; +Claude-User@anthropic.com)");
@@ -1259,39 +1335,39 @@ await check("AI fetches are counted by agent, and only a live answer leaves a sa
 });
 
 await check("the history link is a counted redirect to the partner url", async () => {
-  const miss = await get("/ir/historico?from=ano");
+  const miss = await get("/pt/ir/historico?from=ano");
   assert(miss.status === 404, `redirect without a partner url → ${miss.status}`);
   env.HISTORY_REPORT_URL = "https://partner.example/pt";
   try {
     const before = [...kv.keys()].filter(k => k.startsWith("click:hist:")).length;
-    const r = await worker.fetch(new Request(`https://${HOST}/ir/historico?from=ano`, { headers: { "user-agent": "Mozilla/5.0 (iPhone)" } }), env);
+    const r = await worker.fetch(new Request(`https://${HOST}/pt/ir/historico?from=ano`, { headers: { "user-agent": "Mozilla/5.0 (iPhone)" } }), env);
     assert(r.status === 302 && r.headers.get("location") === "https://partner.example/pt", `redirect → ${r.status} ${r.headers.get("location")}`);
     const keys = [...kv.keys()].filter(k => k.startsWith("click:hist:"));
     assert(keys.length === before + 1 && keys.some(k => k.endsWith(":ano")), "click was not counted under its source");
-    const bot = await worker.fetch(new Request(`https://${HOST}/ir/historico?from=ano`, { headers: { "user-agent": "Googlebot/2.1" } }), env);
+    const bot = await worker.fetch(new Request(`https://${HOST}/pt/ir/historico?from=ano`, { headers: { "user-agent": "Googlebot/2.1" } }), env);
     assert(bot.status === 302, `bot redirect → ${bot.status}`);
     assert(kv.get(keys[0]) === "1", "a bot click was counted");
-    const odd = await worker.fetch(new Request(`https://${HOST}/ir/historico?from=<script>`, { headers: { "user-agent": "Mozilla/5.0" } }), env);
+    const odd = await worker.fetch(new Request(`https://${HOST}/pt/ir/historico?from=<script>`, { headers: { "user-agent": "Mozilla/5.0" } }), env);
     assert(odd.status === 302 && [...kv.keys()].some(k => k.endsWith(":outro")), "unknown source is not folded into outro");
-    const pre = await worker.fetch(new Request(`https://${HOST}/ir/historico?from=ano`, {
+    const pre = await worker.fetch(new Request(`https://${HOST}/pt/ir/historico?from=ano`, {
       headers: { "user-agent": "Mozilla/5.0 (Macintosh) Safari/605", "sec-purpose": "prefetch;anonymous-client-ip" },
     }), env);
     assert(pre.status === 302, `prefetch redirect → ${pre.status}`);
     assert(kv.get(keys[0]) === "1", "a prefetch was counted as a click");
     assert([...kv.keys()].some(k => k.startsWith("click:drop:") && k.endsWith(":prefetch")), "prefetch was dropped without leaving a trace");
-    const blank = await worker.fetch(new Request(`https://${HOST}/ir/historico?from=ano`), env);
+    const blank = await worker.fetch(new Request(`https://${HOST}/pt/ir/historico?from=ano`), env);
     assert(blank.status === 302 && [...kv.keys()].some(k => k.endsWith(":sem-ua")), "a request with no user-agent was counted as a click");
     const samples = [...kv.keys()].filter(k => k.startsWith("histhit:"));
     assert(samples.length === 5, `every hit must leave one sample, got ${samples.length}`);
     const asBot = JSON.parse(kv.get(samples.find(k => JSON.parse(kv.get(k)).drop === "bot")));
     assert(asBot.ua.includes("Googlebot") && asBot.from === "ano", "the dropped sample does not carry what was dropped");
-    const page = await (await get(`/preco/${deep}/${yearPageYears(models[deep])[0]}`)).text();
-    assert(page.includes('href="/ir/historico?from=ano"'), "year page history link does not go through the counter");
+    const page = await (await get(`/pt/preco/${deep}/${yearPageYears(models[deep])[0]}`)).text();
+    assert(page.includes('href="/pt/ir/historico?from=ano"'), "year page history link does not go through the counter");
     assert(!page.includes("partner.example"), "partner url leaks into the page instead of the redirect");
     const admin = await get("/analytics/clicks.json");
     assert(admin.status === 401, `clicks.json without auth → ${admin.status}`);
     const robots = await (await get("/robots.txt")).text();
-    assert(robots.includes("Disallow: /ir/"), "robots does not block the redirect path");
+    assert(robots.includes("Disallow: /pt/ir/"), "robots does not block the redirect path");
   } finally { delete env.HISTORY_REPORT_URL; }
 });
 

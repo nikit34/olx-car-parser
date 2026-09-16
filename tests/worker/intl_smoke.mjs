@@ -345,12 +345,20 @@ await check("only the configured prefixes exist", async () => {
 await check("robots and llms.txt publish the live locales", async () => {
   const robots = await body("/robots.txt");
   const sitemaps = robots.split("\n").filter(l => l.startsWith("Sitemap:"));
-  assert(sitemaps.includes(`Sitemap: https://${HOST}/sitemap.xml`), "the Portuguese sitemap line is gone");
+  assert(sitemaps.length === 1 && sitemaps[0] === `Sitemap: https://${HOST}/sitemap.xml`,
+    `robots should advertise the index alone, got: ${sitemaps.join(" | ")}`);
+  const index = await body("/sitemap.xml");
+  const children = [...index.matchAll(/<sitemap><loc>([^<]+)<\/loc>/g)].map(m => new URL(m[1]).pathname);
+  assert(children[0] === "/pt/sitemap.xml", `the index does not lead with Portuguese: ${children[0]}`);
   for (const cc of ["de", "fr", "it"]) {
-    assert(sitemaps.includes(`Sitemap: https://${HOST}/${cc}/sitemap.xml`),
-      `robots.txt does not point at the ${cc} sitemap`);
+    assert(children.includes(`/${cc}/sitemap.xml`), `the index does not list the ${cc} sitemap`);
   }
-  assert(sitemaps.length === 4, `robots has ${sitemaps.length} Sitemap lines, expected 4`);
+  assert(children.length === 4, `the index lists ${children.length} sitemaps, expected 4`);
+  for (const child of children) {
+    const r = await get(child);
+    assert(r.status === 200, `the index advertises ${child} but it answers ${r.status}`);
+    assert((await r.text()).includes("<urlset"), `${child} is not a urlset`);
+  }
 
   const llms = await body("/llms.txt");
   for (const cc of ["de", "fr", "it"]) {
@@ -362,16 +370,16 @@ await check("robots and llms.txt publish the live locales", async () => {
 });
 
 await check("the Portuguese root is untouched by the expansion", async () => {
-  const r = await get("/");
+  const r = await get("/pt");
   assert(r.status === 200, `/ → ${r.status}`);
   const html = await r.text();
   assert(html.includes('<html lang="pt-PT">'), "the Portuguese root changed language");
   assert(html.includes("Português") && html.includes("Deutsch"),
     "the language switcher is missing while locales are live");
-  const hub = await body("/precos");
-  assert(hub.includes('<html lang="pt-PT">'), "/precos changed language");
-  assert(hub.includes('<meta property="og:locale" content="pt_PT">'), "/precos changed og:locale");
-  assert(hub.includes('href="/preco/'), "/precos lost its Portuguese model links");
+  const hub = await body("/pt/precos");
+  assert(hub.includes('<html lang="pt-PT">'), "/pt/precos changed language");
+  assert(hub.includes('<meta property="og:locale" content="pt_PT">'), "/pt/precos changed og:locale");
+  assert(hub.includes('href="/pt/preco/'), "/pt/precos lost its Portuguese model links");
 });
 
 await check("with INTL_LOCALES unset the locale prefixes do not exist", async () => {
@@ -386,9 +394,13 @@ await check("with INTL_LOCALES unset the locale prefixes do not exist", async ()
   const sitemaps = robots.split("\n").filter(l => l.startsWith("Sitemap:"));
   assert(sitemaps.length === 1 && sitemaps[0] === `Sitemap: https://${HOST}/sitemap.xml`,
     `robots has ${sitemaps.length} Sitemap lines with no locales live`);
+  const index = await body("/sitemap.xml", envOff);
+  const children = [...index.matchAll(/<sitemap><loc>([^<]+)<\/loc>/g)].map(m => new URL(m[1]).pathname);
+  assert(children.length === 1 && children[0] === "/pt/sitemap.xml",
+    `the index lists ${children.join(", ")} with no locales live`);
   const llms = await body("/llms.txt", envOff);
   assert(!llms.includes("Deutschland"), "llms.txt advertises a market that is not live");
-  const home = await body("/", envOff);
+  const home = await body("/pt", envOff);
   assert(!home.includes("Deutsch"), "the language switcher shows with no locales live");
   kv.clear();
 });
@@ -410,23 +422,23 @@ await check("a locale page lists every live language, itself included", async ()
   const by = Object.fromEntries(alts.map(a => [a.lang, a.href]));
   assert(by["de-DE"] === `https://${HOST}/de/preis/${deep}`,
     "the page does not point hreflang at itself");
-  assert(by["pt-PT"] === `https://${HOST}/preco/${deep}`, `pt alternate is ${by["pt-PT"]}`);
+  assert(by["pt-PT"] === `https://${HOST}/pt/preco/${deep}`, `pt alternate is ${by["pt-PT"]}`);
   assert(by["fr-FR"] === `https://${HOST}/fr/cote/${deep}`, `fr alternate is ${by["fr-FR"]}`);
   assert(by["it-IT"] === `https://${HOST}/it/prezzo/${deep}`, `it alternate is ${by["it-IT"]}`);
   assert(by["x-default"] === by["pt-PT"], "x-default is not the Portuguese page");
 
   const year = alternates(await body(`/de/preis/${deep}/${deepYears[0]}`));
   const yby = Object.fromEntries(year.map(a => [a.lang, a.href]));
-  assert(yby["pt-PT"] === `https://${HOST}/preco/${deep}/${deepYears[0]}`,
+  assert(yby["pt-PT"] === `https://${HOST}/pt/preco/${deep}/${deepYears[0]}`,
     "the year page alternate is not the same year in Portuguese");
   assert(yby["it-IT"] === `https://${HOST}/it/prezzo/${deep}/${deepYears[0]}`,
     "the year page alternate is not the same year in Italian");
 });
 
 await check("the Portuguese root carries the same reciprocal set", async () => {
-  for (const [ptPath, dePath] of [["/precos", "/de/preise"], [`/preco/${ptDeep}`, `/de/preis/${ptDeep}`],
-                                  ["/metodologia", "/de/methodik"], ["/sobre", "/de/ueber-uns"],
-                                  ["/privacidade", "/de/datenschutz"], ["/avaliar", "/de/bewerten"]]) {
+  for (const [ptPath, dePath] of [["/pt/precos", "/de/preise"], [`/pt/preco/${ptDeep}`, `/de/preis/${ptDeep}`],
+                                  ["/pt/metodologia", "/de/methodik"], ["/pt/sobre", "/de/ueber-uns"],
+                                  ["/pt/privacidade", "/de/datenschutz"], ["/pt/avaliar", "/de/bewerten"]]) {
     const alts = alternates(await body(ptPath));
     const langs = alts.filter(a => a.lang !== "x-default").map(a => a.lang);
     for (const want of LANGS) assert(langs.includes(want), `${ptPath} has no hreflang for ${want}`);
@@ -445,8 +457,8 @@ await check("the Portuguese root carries the same reciprocal set", async () => {
 
 await check("x-default points at the Portuguese root on the home family", async () => {
   const by = Object.fromEntries(alternates(await body("/de")).map(a => [a.lang, a.href]));
-  assert(by["x-default"] === `https://${HOST}/`, `x-default is ${by["x-default"]}, expected the root`);
-  assert(by["pt-PT"] === `https://${HOST}/`, "the Portuguese alternate of /de is not the root");
+  assert(by["x-default"] === `https://${HOST}/pt`, `x-default is ${by["x-default"]}, expected the Portuguese landing`);
+  assert(by["pt-PT"] === `https://${HOST}/pt`, "the Portuguese alternate of /de is not the Portuguese landing");
   assert(by["de-DE"] === `https://${HOST}/de`, "/de does not list itself");
   assert(by["fr-FR"] === `https://${HOST}/fr` && by["it-IT"] === `https://${HOST}/it`,
     "the home family is missing a live locale");
@@ -455,8 +467,8 @@ await check("x-default points at the Portuguese root on the home family", async 
 await check("a page with no counterpart claims no alternate at all", async () => {
   const district = Object.keys(mdoc.districts || {})[0];
   assert(district, "the fixture has no district to test with");
-  const html = await body(`/precos/${district}`);
-  assert(html.includes(`<link rel="canonical" href="https://${HOST}/precos/${district}">`),
+  const html = await body(`/pt/precos/${district}`);
+  assert(html.includes(`<link rel="canonical" href="https://${HOST}/pt/precos/${district}">`),
     "the district page lost its canonical, so the test proves nothing");
   assert(alternates(html).length === 0,
     "a Portugal-only page advertises a translation that does not exist");
@@ -464,7 +476,7 @@ await check("a page with no counterpart claims no alternate at all", async () =>
 
 await check("with INTL_LOCALES unset no hreflang is emitted anywhere", async () => {
   kv.clear();
-  for (const p of ["/", "/precos", `/preco/${ptDeep}`, "/metodologia", "/sobre", "/privacidade"]) {
+  for (const p of ["/pt", "/pt/precos", `/pt/preco/${ptDeep}`, "/pt/metodologia", "/pt/sobre", "/pt/privacidade"]) {
     const html = await body(p, envOff);
     assert(alternates(html).length === 0, `${p} emits hreflang with no locales live`);
     assert(!html.includes('rel="alternate" hreflang='), `${p} emits a stray hreflang link`);

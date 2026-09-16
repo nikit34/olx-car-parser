@@ -1,25 +1,25 @@
 // Cloudflare Worker entry — public car-valuation site over live OLX listings.
 //
 // Product model (no auth, no accounts, nothing to pay for):
-//   GET  /                  → one car at a time (top-ranked by decision_score).
-//                             Photos, specs, signals and the seller's own OLX
-//                             link are all public.
-//   POST /lead              → a seller asks professional buyers for offers.
-//   GET  /healthz           → unauthenticated liveness.
+//   GET  /pt                   → one car at a time (top-ranked by decision_score).
+//                                Photos, specs, signals and the seller's own OLX
+//                                link are all public.
+//   POST /pt/lead              → a seller asks professional buyers for offers.
+//   GET  /healthz              → unauthenticated liveness.
 //
 // Public valuation surface (indexable; seo-pages.js renders it):
-//   /precos                    every model
-//   /preco/{slug}              one model, by year          (+ .json)
-//   /preco/{slug}/{ano}        one model in one year       (+ .json)
-//   /preco/{slug}/{facet}      one model, one fuel/district
-//   /precos/{distrito}         the market in one district
-//   /depreciacao[/{slug}]      how fast a model loses value
-//   /comparar[/{a}-vs-{b}]     two models side by side
-//   /liquidez                  how long each model takes to sell
-//   /sobrevalorizados          asking price vs. our estimate
-//   /mercado/indice[/{semana|mes}]  weekly market index + permanent weekly
-//                               and monthly archive
-//   /metodologia /sobre /isv   how the numbers are made, by whom, and ISV
+//   /pt/precos                    every model
+//   /pt/preco/{slug}              one model, by year          (+ .json)
+//   /pt/preco/{slug}/{ano}        one model in one year       (+ .json)
+//   /pt/preco/{slug}/{facet}      one model, one fuel/district
+//   /pt/precos/{distrito}         the market in one district
+//   /pt/depreciacao[/{slug}]      how fast a model loses value
+//   /pt/comparar[/{a}-vs-{b}]     two models side by side
+//   /pt/liquidez                  how long each model takes to sell
+//   /pt/sobrevalorizados          asking price vs. our estimate
+//   /pt/mercado/indice[/{semana|mes}]  weekly market index + permanent weekly
+//                                  and monthly archive
+//   /pt/metodologia /pt/sobre /pt/isv  how the numbers are made, by whom, and ISV
 //
 // Every one of those exists only where its sample clears a floor, and both the
 // router and sitemap.xml decide that with the SAME functions in seo-pages.js.
@@ -85,14 +85,14 @@ const ICON_PATHS = new Set([
 
 const PRODUCT_PATHS = new Set([
   "/", "/mercado", "/car", "/avaliar", "/lead", "/ir/historico",
-  "/precos", "/sitemap.xml", "/robots.txt", "/llms.txt", "/historico",
+  "/precos", "/historico",
   // Приватность обязана быть здесь: гейт стоит ВЫШЕ её обработчика, и без
   // записи в этом списке Basic-Auth отдавал бы 401 и Googlebot, и человеку,
   // пришедшему по ссылке из баннера согласия. (Неизвестные пути теперь отдают
   // настоящую 404, но известный роут всё равно обязан быть в этом списке.)
   "/privacidade",
   // Second-layer SEO pages (seo-pages.js). Hubs are exact paths; their per-item
-  // children (/depreciacao/{slug}, /comparar/{a}-vs-{b}, /mercado/indice/{week|month})
+  // children (/pt/depreciacao/{slug}, /pt/comparar/{a}-vs-{b}, /pt/mercado/indice/{week|month})
   // are prefix-routed above the asset gate.
   "/depreciacao", "/comparar", "/liquidez", "/sobrevalorizados", "/importar", "/vender", "/guias",
   "/metodologia", "/sobre", "/isv",
@@ -102,7 +102,7 @@ const PRODUCT_PATHS = new Set([
 // Paths that belong to the internal analytics bundle rather than the product.
 //
 // This list is what makes a real 404 possible. Before, ANY unknown path fell
-// into the Basic-Auth asset gate and answered 401 — /sobre, /faq, /blog, a
+// into the Basic-Auth asset gate and answered 401 — /pt/sobre, /faq, /blog, a
 // mistyped link, a stray trailing slash, all of them. Googlebot reads 401 as
 // "there is something here you may not have", so those URLs sat in Search
 // Console as site-wide access errors and kept getting re-crawled instead of
@@ -122,6 +122,124 @@ const NO_NORMALISE = ["/analytics", "/files/", "/data/", "/fonts/", "/_olx", "/w
 function isInternalAsset(pathname) {
   return INTERNAL_ASSET_EXACT.has(pathname)
     || INTERNAL_ASSET_PREFIXES.some(pre => pathname.startsWith(pre));
+}
+
+const PT_PREFIX = "/pt";
+
+const PT_CHILD_PREFIXES = ["/preco/", "/precos/", "/depreciacao/", "/comparar/", "/liquidez/",
+  "/vender/", "/historico/", "/guias/", "/importar/", "/mercado/", "/widget/preco/", "/ir/",
+  ...Object.values(DUELS).map(d => `/${d.path}/`)];
+
+function ptRest(pathname) {
+  if (pathname === PT_PREFIX) return "/";
+  if (pathname.startsWith(`${PT_PREFIX}/`)) return pathname.slice(PT_PREFIX.length);
+  return null;
+}
+
+function ptLegacyPath(pathname) {
+  if (pathname === "/") return PT_PREFIX;
+  if (PRODUCT_PATHS.has(pathname) || PT_CHILD_PREFIXES.some(pre => pathname.startsWith(pre))) {
+    return `${PT_PREFIX}${pathname}`;
+  }
+  return null;
+}
+
+function canonicalPath(pathname) {
+  if (NO_NORMALISE.some(pre => pathname.startsWith(pre))) return pathname;
+  let norm = pathname;
+  if (norm.length > 1 && norm.endsWith("/")) norm = norm.replace(/\/+$/, "") || "/";
+  if (/[A-Z]/.test(norm)) norm = norm.toLowerCase();
+  return ptLegacyPath(norm) || norm;
+}
+
+async function handlePt(request, env, url, pathname, method) {
+  const u = new URL(url);
+  u.pathname = pathname;
+  // Per-model SEO pages — prefix route, BEFORE the asset gate.
+  //   /pt/preco/{slug}            model
+  //   /pt/preco/{slug}.json       model, machine-readable
+  //   /pt/preco/{slug}/{ano}      one model year
+  //   /pt/preco/{slug}/{ano}.json one model year, machine-readable
+  if (pathname.startsWith("/preco/") && method === "GET") {
+    return handleModelPage(request, env, u);
+  }
+  // District pages (/pt/precos/{distrito}). Prefix route; the bare /pt/precos hub
+  // stays in PRODUCT_PATHS below.
+  if (pathname.startsWith("/precos/") && method === "GET") {
+    return handleDistrict(request, env, u);
+  }
+  // Depreciation curve + its hub.
+  if (pathname.startsWith("/depreciacao/") && method === "GET") {
+    return handleDepreciation(request, env, u);
+  }
+  // Head-to-head comparisons + their hub.
+  if (pathname.startsWith("/comparar/") && method === "GET") {
+    return handleCompare(request, env, u);
+  }
+  if (pathname.startsWith("/liquidez/") && method === "GET") {
+    return handleLiquidityPage(request, env, u);
+  }
+  if (pathname.startsWith("/vender/") && method === "GET") {
+    return handleVenderPage(request, env, u);
+  }
+  if (pathname.startsWith("/historico/") && method === "GET") {
+    return handleArchive(request, env, u);
+  }
+  if (pathname.startsWith("/guias/") && method === "GET") {
+    return handleGuide(request, env, u);
+  }
+  if (pathname.startsWith("/importar/") && method === "GET") {
+    return handleImportPage(request, env, u);
+  }
+  const duelPrefix = Object.values(DUELS).find(d => pathname.startsWith(`/${d.path}/`));
+  if (duelPrefix && method === "GET") {
+    return handleDuel(request, env, u, duelPrefix);
+  }
+  // Market index archive (/pt/mercado/indice[/{YYYY-Www}|/{YYYY-MM}]).
+  if (pathname === "/mercado/indice" || pathname.startsWith("/mercado/indice/")) {
+    if (method !== "GET") return notFound();
+    return handleMarketIndex(request, env, u);
+  }
+  // Embeddable valuation widget (/pt/widget/preco/{slug}) — public, iframe-able,
+  // cached, cookie-less. Also a prefix route before the asset gate.
+  if (pathname.startsWith("/widget/preco/") && method === "GET") {
+    return handleModelWidget(request, env, u);
+  }
+  if (pathname === "/sitemap.xml" && method === "GET") return handleSitemap(request, env, u);
+
+  // Internal assets keep the Basic-Auth gate. Everything else that is not a
+  // product route is genuinely not here → real 404 (see notFoundPage).
+  if (!PRODUCT_PATHS.has(pathname)) return notFoundPage(request, env, url);
+
+  if (pathname === "/" && method === "GET") return handleLanding(request, env, u);
+  if (pathname === "/depreciacao" && method === "GET") return handleDepreciationHub(request, env, u);
+  if (pathname === "/comparar" && method === "GET") return handleCompareHub(request, env, u);
+  const duelHub = Object.values(DUELS).find(d => pathname === `/${d.path}`);
+  if (duelHub && method === "GET") return handleDuelHub(request, env, u, duelHub);
+  if (pathname === "/liquidez" && method === "GET") return handleLiquidity(request, env, u);
+  if (pathname === "/vender" && method === "GET") return handleVenderHub(request, env, u);
+  if (pathname === "/guias" && method === "GET") return handleGuidesHub(request, env, u);
+  if (pathname === "/historico" && method === "GET") return handleArchiveHub(request, env, u);
+  if (pathname === "/sobrevalorizados" && method === "GET") return handleValuationGap(request, env, u);
+  if (pathname === "/importar" && method === "GET") return handleImportHub(request, env, u);
+  if (pathname === "/metodologia" && method === "GET") return handleMethodology(request, env, u);
+  if (pathname === "/sobre" && method === "GET") return handleAbout(request, env, u);
+  if (pathname === "/isv" && method === "GET") return handleIsv(request, env, u);
+  if (pathname === "/precos" && method === "GET") return handleModelsHub(request, env, u);
+  if (pathname === "/avaliar" && method === "GET") return handleAvaliar(request, env, u);
+  if (pathname === "/mercado" && method === "GET") return handleFeed(request, env, u);
+  if (pathname === "/car" && method === "GET") return handleCar(request, env, u);
+  if (pathname === "/lead" && method === "POST") return handleLead(request, env, u);
+  if (pathname === "/lead" && method === "GET") return redirect("/pt/avaliar#escolher", 302);
+  if (pathname === "/ir/historico" && method === "GET") return handleHistoryRedirect(request, env, u);
+  // Страница приватности публичная и индексируемая: на неё ссылается баннер
+  // согласия, и за Basic-Auth она отдавала бы 401 и Googlebot, и человеку.
+  if (pathname === "/privacidade" && method === "GET") {
+    return publicHtml(renderPrivacy({ depositCount: null, host: u.host, contact: env.SITE_CONTACT_EMAIL || null }));
+  }
+
+  // A known path reached with a method it does not answer.
+  return notFoundPage(request, env, url);
 }
 
 const worker = {
@@ -186,13 +304,14 @@ const worker = {
         dest.hostname = canonicalHost;
         dest.protocol = "https:";
         dest.port = "";
+        dest.pathname = canonicalPath(pathname);
         // 301 on GET/HEAD (cacheable, passes ranking signals to the new host);
         // 308 elsewhere, which is the only redirect that preserves method+body.
         const perm = (method === "GET" || method === "HEAD") ? 301 : 308;
         return Response.redirect(dest.toString(), perm);
       }
 
-      // Identity for the trust pages (/sobre, /metodologia). Unset in [vars]
+      // Identity for the trust pages (/pt/sobre, /pt/metodologia). Unset in [vars]
       // ⇒ those blocks render the brand-level version instead of inventing a
       // name and an address the site cannot honour.
       setSiteIdentity({ author: env.SITE_AUTHOR, contact: env.SITE_CONTACT_EMAIL });
@@ -227,17 +346,15 @@ const worker = {
 
       // URL normalisation — one canonical spelling per page, 301 to it.
       //
-      // /precos/ and /PRECO/AUDI-A1 used to fall past every branch into the
+      // /pt/precos/ and /PRECO/AUDI-A1 used to fall past every branch into the
       // asset gate and answer 401. They are not errors, they are the same page
       // typed differently: a trailing slash from a pasted link, an upper-case
       // path from a copied-out-of-a-document URL. A 301 keeps whatever link
       // equity they carry instead of throwing it away.
       //
       // Skipped for /analytics and the asset paths, whose case is meaningful.
-      if ((method === "GET" || method === "HEAD") && !NO_NORMALISE.some(pre => pathname.startsWith(pre))) {
-        let norm = pathname;
-        if (norm.length > 1 && norm.endsWith("/")) norm = norm.replace(/\/+$/, "") || "/";
-        if (/[A-Z]/.test(norm)) norm = norm.toLowerCase();
+      if (method === "GET" || method === "HEAD") {
+        const norm = canonicalPath(pathname);
         if (norm !== pathname) {
           const dest = new URL(url);
           dest.pathname = norm;
@@ -260,56 +377,6 @@ const worker = {
         return out;
       }
 
-      // Per-model SEO pages — prefix route, BEFORE the asset gate.
-      //   /preco/{slug}            model
-      //   /preco/{slug}.json       model, machine-readable
-      //   /preco/{slug}/{ano}      one model year
-      //   /preco/{slug}/{ano}.json one model year, machine-readable
-      if (pathname.startsWith("/preco/") && method === "GET") {
-        return handleModelPage(request, env, url);
-      }
-      // District pages (/precos/{distrito}). Prefix route; the bare /precos hub
-      // stays in PRODUCT_PATHS below.
-      if (pathname.startsWith("/precos/") && method === "GET") {
-        return handleDistrict(request, env, url);
-      }
-      // Depreciation curve + its hub.
-      if (pathname.startsWith("/depreciacao/") && method === "GET") {
-        return handleDepreciation(request, env, url);
-      }
-      // Head-to-head comparisons + their hub.
-      if (pathname.startsWith("/comparar/") && method === "GET") {
-        return handleCompare(request, env, url);
-      }
-      if (pathname.startsWith("/liquidez/") && method === "GET") {
-        return handleLiquidityPage(request, env, url);
-      }
-      if (pathname.startsWith("/vender/") && method === "GET") {
-        return handleVenderPage(request, env, url);
-      }
-      if (pathname.startsWith("/historico/") && method === "GET") {
-        return handleArchive(request, env, url);
-      }
-      if (pathname.startsWith("/guias/") && method === "GET") {
-        return handleGuide(request, env, url);
-      }
-      if (pathname.startsWith("/importar/") && method === "GET") {
-        return handleImportPage(request, env, url);
-      }
-      const duelPrefix = Object.values(DUELS).find(d => pathname.startsWith(`/${d.path}/`));
-      if (duelPrefix && method === "GET") {
-        return handleDuel(request, env, url, duelPrefix);
-      }
-      // Market index archive (/mercado/indice[/{YYYY-Www}|/{YYYY-MM}]).
-      if (pathname === "/mercado/indice" || pathname.startsWith("/mercado/indice/")) {
-        if (method !== "GET") return notFound();
-        return handleMarketIndex(request, env, url);
-      }
-      // Embeddable valuation widget (/widget/preco/{slug}) — public, iframe-able,
-      // cached, cookie-less. Also a prefix route before the asset gate.
-      if (pathname.startsWith("/widget/preco/") && method === "GET") {
-        return handleModelWidget(request, env, url);
-      }
       // Google Search Console ownership proof for the https://carsbuyer.org/
       // URL-prefix property. Googlebot re-checks this file periodically, so it
       // has to stay reachable for as long as the property exists — removing it
@@ -339,44 +406,21 @@ const worker = {
         out.headers.set("Cache-Control", "public, max-age=604800");
         return out;
       }
-      // Internal assets keep the Basic-Auth gate. Everything else that is not a
-      // product route is genuinely not here → real 404 (see notFoundPage).
-      if (!PRODUCT_PATHS.has(pathname)) {
-        if (isInternalAsset(pathname)) return handleAssetGated(request, env);
-        return notFoundPage(request, env, url);
-      }
-
-      if (pathname === "/" && method === "GET") return handleLanding(request, env, url);
-      if (pathname === "/depreciacao" && method === "GET") return handleDepreciationHub(request, env, url);
-      if (pathname === "/comparar" && method === "GET") return handleCompareHub(request, env, url);
-      const duelHub = Object.values(DUELS).find(d => pathname === `/${d.path}`);
-      if (duelHub && method === "GET") return handleDuelHub(request, env, url, duelHub);
-      if (pathname === "/liquidez" && method === "GET") return handleLiquidity(request, env, url);
-      if (pathname === "/vender" && method === "GET") return handleVenderHub(request, env, url);
-      if (pathname === "/guias" && method === "GET") return handleGuidesHub(request, env, url);
-      if (pathname === "/historico" && method === "GET") return handleArchiveHub(request, env, url);
-      if (pathname === "/sobrevalorizados" && method === "GET") return handleValuationGap(request, env, url);
-      if (pathname === "/importar" && method === "GET") return handleImportHub(request, env, url);
-      if (pathname === "/metodologia" && method === "GET") return handleMethodology(request, env, url);
-      if (pathname === "/sobre" && method === "GET") return handleAbout(request, env, url);
-      if (pathname === "/isv" && method === "GET") return handleIsv(request, env, url);
-      if (pathname === "/precos" && method === "GET") return handleModelsHub(request, env, url);
-      if (pathname === "/sitemap.xml" && method === "GET") return handleSitemap(request, env, url);
+      if (pathname === "/sitemap.xml" && method === "GET") return handleSitemapIndex(request, env, url);
       if (pathname === "/robots.txt" && method === "GET") return handleRobots(request, env, url);
       if (pathname === "/llms.txt" && method === "GET") return handleLlmsTxt(request, env, url);
-      if (pathname === "/avaliar" && method === "GET") return handleAvaliar(request, env, url);
-      if (pathname === "/mercado" && method === "GET") return handleFeed(request, env, url);
-      if (pathname === "/car" && method === "GET") return handleCar(request, env, url);
-      if (pathname === "/lead" && method === "POST") return handleLead(request, env, url);
-      if (pathname === "/lead" && method === "GET") return redirect("/avaliar#escolher", 302);
-      if (pathname === "/ir/historico" && method === "GET") return handleHistoryRedirect(request, env, url);
-      // Страница приватности публичная и индексируемая: на неё ссылается баннер
-      // согласия, и за Basic-Auth она отдавала бы 401 и Googlebot, и человеку.
-      if (pathname === "/privacidade" && method === "GET") {
-        return publicHtml(renderPrivacy({ depositCount: null, host: url.host, contact: env.SITE_CONTACT_EMAIL || null }));
-      }
 
-      // A known path reached with a method it does not answer.
+      const pt = ptRest(pathname);
+      if (pt !== null) return handlePt(request, env, url, pt, method);
+
+      if (isInternalAsset(pathname)) return handleAssetGated(request, env);
+
+      const moved = ptLegacyPath(pathname);
+      if (moved) {
+        const dest = new URL(url);
+        dest.pathname = moved;
+        return redirect(dest.toString(), (method === "GET" || method === "HEAD") ? 301 : 308);
+      }
       return notFoundPage(request, env, url);
     } catch (err) {
       console.error("worker error", err && err.stack || err);
@@ -410,7 +454,7 @@ export default worker;
 
 // ── Product handlers ────────────────────────────────────────────────────────
 
-// Landing (/) — marketing hero with live market stats + a featured top deal.
+// Landing (/pt) — marketing hero with live market stats + a featured top deal.
 async function handleLanding(request, env, url) {
   const { deals, degraded } = await getDeals(env, "all");
 
@@ -441,7 +485,7 @@ async function handleLanding(request, env, url) {
   }), 200);
 }
 
-// Avaliar (/avaliar) — paste-a-link valuation of ANY OLX listing (Tier-2).
+// Avaliar (/pt/avaliar) — paste-a-link valuation of ANY OLX listing (Tier-2).
 // ?q = an OLX URL or a bare olx_id; we extract the id, look it up in the
 // precomputed valuations blob, and render a fair-price verdict (or a graceful
 // "not found / ask by email" fallback). No q ⇒ just the lookup form + teaser.
@@ -462,7 +506,7 @@ async function handleAvaliar(request, env, url) {
     }
   }
 
-  // Model index — for the paste-hit's contextual /preco link, the spec-form
+  // Model index — for the paste-hit's contextual /pt/preco link, the spec-form
   // options, and the spec lookup. (cf-cached; cheap.)
   const mdoc = await getModels(env);
   const models = mdoc && mdoc.models;
@@ -505,12 +549,12 @@ function parseOlxId(q) {
   return /^[A-Za-z0-9]{4,14}$/.test(t) ? t : null;
 }
 
-// Per-model SEO pages under /preco/.
+// Per-model SEO pages under /pt/preco/.
 //
-//   /preco/{slug}              the model page
-//   /preco/{slug}.json         same figures, machine-readable
-//   /preco/{slug}/{ano}        one model year (10+ active listings)
-//   /preco/{slug}/{ano}.json   same, machine-readable
+//   /pt/preco/{slug}              the model page
+//   /pt/preco/{slug}.json         same figures, machine-readable
+//   /pt/preco/{slug}/{ano}        one model year (10+ active listings)
+//   /pt/preco/{slug}/{ano}.json   same, machine-readable
 //
 // Exact slug lookup, never a re-split on "-" (models contain hyphens). Unknown
 // slug, unknown year, or a year below the publishing floor → real 404: a page
@@ -519,7 +563,7 @@ function parseOlxId(q) {
 async function handleModelPage(request, env, url) {
   let rest;
   try {
-    // decodeURIComponent throws URIError on a malformed %-escape (/preco/%) —
+    // decodeURIComponent throws URIError on a malformed %-escape (/pt/preco/%) —
     // a garbage URL must 404, not 500.
     rest = decodeURIComponent(url.pathname.slice("/preco/".length)).replace(/\/+$/, "").toLowerCase();
   } catch (_) {
@@ -618,11 +662,11 @@ async function handleModelPage(request, env, url) {
     hasVender: publishedVender(models, slug, rec, builtAt),
     duels: duelsFor(models, slug, rec, builtAt).map(d => ({ path: d.path, kind: d.kind })),
     provenanceHtml: provenance({ n: rec.n, builtAt }),
-    altJson: `https://${url.host}/preco/${slug}.json`,
+    altJson: `https://${url.host}/pt/preco/${slug}.json`,
   }));
 }
 
-// /preco/{slug}/{ano} — one model year.
+// /pt/preco/{slug}/{ano} — one model year.
 async function renderYear({ request, env, url, models, rec, slug, year, builtAt, wantsJson }) {
   const published = publishedYearPages(models, slug, rec, builtAt);
   const cell = published.includes(year) ? yearCell(rec, year) : null;
@@ -630,7 +674,7 @@ async function renderYear({ request, env, url, models, rec, slug, year, builtAt,
     if (published.length && (rec.yr || []).some(c => c.y === year)) {
       return new Response(null, {
         status: 301,
-        headers: { location: `https://${url.host}/preco/${encodeURIComponent(slug)}${wantsJson ? ".json" : ""}` },
+        headers: { location: `https://${url.host}/pt/preco/${encodeURIComponent(slug)}${wantsJson ? ".json" : ""}` },
       });
     }
     return notFoundPage(request, env, url);
@@ -677,7 +721,7 @@ async function renderYear({ request, env, url, models, rec, slug, year, builtAt,
   }));
 }
 
-// Embeddable widget (/widget/preco/{slug}) — a standalone valuation card other
+// Embeddable widget (/pt/widget/preco/{slug}) — a standalone valuation card other
 // sites iframe. Public + cacheable + cookie-less; permissive frame-ancestors so
 // any host can embed. Unknown/sub-threshold slug → 404 (never an empty frame).
 async function handleModelWidget(request, env, url) {
@@ -701,7 +745,7 @@ async function handleModelWidget(request, env, url) {
   });
 }
 
-// /preco/{slug}/{combustivel} and /preco/{slug}/{distrito}.
+// /pt/preco/{slug}/{combustivel} and /pt/preco/{slug}/{distrito}.
 //
 // Both live off `fx` / `dt` cells in models.json. Until the pipeline that emits
 // them has run, facetKind() finds nothing and every such URL 404s — which is
@@ -713,7 +757,7 @@ async function renderFacet({ request, env, url, models, rec, slug, facet, builtA
     if (retiredFacetKind(rec, facet)) {
       return new Response(null, {
         status: 301,
-        headers: { location: `https://${url.host}/preco/${encodeURIComponent(slug)}` },
+        headers: { location: `https://${url.host}/pt/preco/${encodeURIComponent(slug)}` },
       });
     }
     return notFoundPage(request, env, url);
@@ -724,7 +768,7 @@ async function renderFacet({ request, env, url, models, rec, slug, facet, builtA
                                  { host: url.host, builtAt }));
   }
   return publicHtml(renderFacetPage({
-    rec, slug, kind, cell, altJson: `https://${url.host}/preco/${slug}/${cell.k}.json`,
+    rec, slug, kind, cell, altJson: `https://${url.host}/pt/preco/${slug}/${cell.k}.json`,
     duelSpec: (kind === "fuel" && publishedDuel(models, slug, rec, builtAt, "fuel")) ? DUELS.fuel
             : (kind === "transmission" && publishedDuel(models, slug, rec, builtAt, "gear")) ? DUELS.gear
             : null,
@@ -734,7 +778,7 @@ async function renderFacet({ request, env, url, models, rec, slug, facet, builtA
   }));
 }
 
-// /precos/{distrito}
+// /pt/precos/{distrito}
 async function handleDistrict(request, env, url) {
   let key;
   try {
@@ -753,7 +797,7 @@ async function handleDistrict(request, env, url) {
 
 // ── Second-layer SEO handlers ───────────────────────────────────────────────
 //
-// All of them read the same models.json the /preco pages read. Each answers a
+// All of them read the same models.json the /pt/preco pages read. Each answers a
 // query the model pages could not: how fast this loses value, which of these two
 // to buy, how long either takes to sell, and what the market as a whole did this
 // week.
@@ -774,7 +818,7 @@ async function withModels(request, env, url, fn) {
               stats: corpusStats(models, mdoc.built_at) });
 }
 
-// /depreciacao/{slug} and /depreciacao/{slug}.json
+// /pt/depreciacao/{slug} and /pt/depreciacao/{slug}.json
 async function handleDepreciation(request, env, url) {
   let slug;
   try {
@@ -798,7 +842,7 @@ async function handleDepreciation(request, env, url) {
   });
 }
 
-// /depreciacao — ranked hub, fastest-losing first.
+// /pt/depreciacao — ranked hub, fastest-losing first.
 async function handleDepreciationHub(request, env, url) {
   return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, stats }) => {
     const rows = depreciationSlugs(models).filter(slug => publishedDepreciation(models, slug, models[slug], builtAt)).map(slug => {
@@ -846,7 +890,7 @@ async function handleDuelHub(request, env, url, spec) {
   });
 }
 
-// /comparar/{a}-vs-{b}
+// /pt/comparar/{a}-vs-{b}
 async function handleCompare(request, env, url) {
   let rest;
   try {
@@ -863,13 +907,13 @@ async function handleCompare(request, env, url) {
   });
 }
 
-// /comparar
+// /pt/comparar
 async function handleCompareHub(request, env, url) {
   return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie }) =>
     publicHtml(renderCompareHub({ pairs: publishedPairs(models), models, host: url.host, depositCount, builtAt })));
 }
 
-// /liquidez
+// /pt/liquidez
 async function handleLiquidity(request, env, url) {
   return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, market }) => {
     const rows = Object.entries(models)
@@ -908,7 +952,7 @@ async function handleLiquidityPage(request, env, url) {
   });
 }
 
-// /sobrevalorizados — both directions of the asking-vs-estimate gap.
+// /pt/sobrevalorizados — both directions of the asking-vs-estimate gap.
 async function handleValuationGap(request, env, url) {
   return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, stats, market }) => {
     const withGap = Object.entries(models)
@@ -977,7 +1021,7 @@ async function handleImportPage(request, env, url) {
   }));
 }
 
-// /metodologia, /sobre, /isv
+// /pt/metodologia, /pt/sobre, /pt/isv
 async function handleMethodology(request, env, url) {
   return withModels(request, env, url, ({ models, builtAt, depositCount, stats, mq }) =>
     publicHtml(renderMethodology({
@@ -1014,12 +1058,12 @@ async function handleIsv(request, env, url) {
   });
 }
 
-// ── /mercado/indice — weekly market index with a permanent archive ──────────
+// ── /pt/mercado/indice — weekly market index with a permanent archive ───────
 //
 // The index has to be citable, and a figure that changes under its own URL is
 // not. So each ISO week is written ONCE to KV, at the first request that sees
-// that week, and never rewritten — /mercado/indice/2026-W35 says the same thing
-// next year as it does today. The bare /mercado/indice shows the current week
+// that week, and never rewritten — /pt/mercado/indice/2026-W35 says the same thing
+// next year as it does today. The bare /pt/mercado/indice shows the current week
 // plus the trend.
 //
 // One KV write per week (guarded by a read), so the write-on-read is bounded no
@@ -1151,7 +1195,7 @@ async function handleArchive(request, env, url) {
 
   const base = {
     week: snap.week, date: snap.date, built_at: snap.builtAt,
-    source: `https://${url.host}/historico/${parts[0]}.json`,
+    source: `https://${url.host}/pt/historico/${parts[0]}.json`,
     note: "Valores congelados nesta semana. Não mudam: cita-os com a data.",
   };
   const frozen = payload => {
@@ -1166,7 +1210,7 @@ async function handleArchive(request, env, url) {
   if (!rec) return notFoundPage(request, env, url);
   return frozen({
     ...base,
-    source: `https://${url.host}/historico/${parts[0]}/${parts[1]}.json`,
+    source: `https://${url.host}/pt/historico/${parts[0]}/${parts[1]}.json`,
     slug: parts[1], ...rec,
   });
 }
@@ -1187,7 +1231,7 @@ async function handleMarketIndex(request, env, url) {
         return publicHtml(renderMarketMonth({ cut, months, host: url.host, depositCount }));
       }
       // An archived week. Only weeks we actually recorded exist — an invented
-      // /mercado/indice/1999-w03 is a 404, not an empty page.
+      // /pt/mercado/indice/1999-w03 is a 404, not an empty page.
       // Normalisation has already lower-cased the path, so the URL token is
       // "2026-w35"; the stored key and the display form are ISO ("2026-W35").
       const m = /^(\d{4})-w(\d{2})$/i.exec(tail);
@@ -1521,7 +1565,7 @@ async function intlSitemap(env, url, loc) {
   });
 }
 
-// Models hub (/precos) — the crawl spine linking every model page.
+// Models hub (/pt/precos) — the crawl spine linking every model page.
 async function handleModelsHub(request, env, url) {
   const mdoc = await getModels(env);
   const models = mdoc && mdoc.models;
@@ -1552,6 +1596,28 @@ async function handleModelsHub(request, env, url) {
 // one the sitemap never listed), Search Console would report it as a site-wide
 // error and the crawler would learn to distrust the file. One source, both
 // consumers. Degrades to the static set (never 500) if models.json is missing.
+async function handleSitemapIndex(request, env, url) {
+  const base = `https://${url.host}`;
+  const markets = [{ prefix: PT_PREFIX, country: null },
+                   ...liveLocales().map(l => ({ prefix: l.prefix, country: l.country }))];
+  const rows = [];
+  for (const m of markets) {
+    let built = "";
+    try {
+      const mdoc = await getModels(env, m.country);
+      built = String((mdoc && mdoc.built_at) || "").slice(0, 10);
+    } catch (_) { built = ""; }
+    const lm = /^\d{4}-\d{2}-\d{2}$/.test(built) ? `<lastmod>${built}</lastmod>` : "";
+    rows.push(`<sitemap><loc>${base}${m.prefix}/sitemap.xml</loc>${lm}</sitemap>`);
+  }
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n`
+    + `<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${rows.join("\n")}\n</sitemapindex>`;
+  return new Response(xml, {
+    status: 200,
+    headers: { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=3600" },
+  });
+}
+
 async function handleSitemap(request, env, url) {
   const base = `https://${url.host}`;
   const mdoc = await getModels(env);
@@ -1576,72 +1642,72 @@ async function handleSitemap(request, env, url) {
   const add = (path, freq, prio, when) =>
     urls.push(`<url><loc>${base}${path}</loc>${when === undefined ? lm : stamp(when)}<changefreq>${freq}</changefreq><priority>${prio}</priority></url>`);
 
-  add("/", "daily", "1.0");
-  add("/mercado", "daily", "0.9");
-  add("/avaliar", "weekly", "0.8");
-  add("/precos", "weekly", "0.7");
-  add("/mercado/indice", "weekly", "0.7");
+  add("/pt", "daily", "1.0");
+  add("/pt/mercado", "daily", "0.9");
+  add("/pt/avaliar", "weekly", "0.8");
+  add("/pt/precos", "weekly", "0.7");
+  add("/pt/mercado/indice", "weekly", "0.7");
   // Trust pages: they change rarely but they are what an evaluator looks for.
-  add("/historico", "weekly", "0.5");
-  add("/metodologia", "monthly", "0.6");
-  add("/sobre", "monthly", "0.6");
-  add("/isv", "monthly", "0.6");
+  add("/pt/historico", "weekly", "0.5");
+  add("/pt/metodologia", "monthly", "0.6");
+  add("/pt/sobre", "monthly", "0.6");
+  add("/pt/isv", "monthly", "0.6");
   // Consent banner links here, so it has to be crawlable and listed.
-  add("/privacidade", "yearly", "0.2", null);
+  add("/pt/privacidade", "yearly", "0.2", null);
 
   if (models) {
-    add("/depreciacao", "weekly", "0.7");
-    add("/comparar", "weekly", "0.7");
+    add("/pt/depreciacao", "weekly", "0.7");
+    add("/pt/comparar", "weekly", "0.7");
     for (const d of Object.values(DUELS)) {
-      if (duelSlugs(models, d.kind, lastmodSrc).length) add(`/${d.path}`, "weekly", "0.7");
+      if (duelSlugs(models, d.kind, lastmodSrc).length) add(`/pt/${d.path}`, "weekly", "0.7");
     }
-    add("/liquidez", "weekly", "0.7");
-    add("/vender", "weekly", "0.7");
-    add("/guias", "monthly", "0.6");
-    for (const g of GUIDES) add(`/guias/${g.slug}`, "monthly", "0.6", GUIDES_UPDATED);
-    add("/sobrevalorizados", "weekly", "0.6");
+    add("/pt/liquidez", "weekly", "0.7");
+    add("/pt/vender", "weekly", "0.7");
+    add("/pt/guias", "monthly", "0.6");
+    for (const g of GUIDES) add(`/pt/guias/${g.slug}`, "monthly", "0.6", GUIDES_UPDATED);
+    add("/pt/sobrevalorizados", "weekly", "0.6");
 
     for (const [slug, rec] of Object.entries(models)) {
-      add(`/preco/${encodeURIComponent(slug)}`, "daily", "0.6", rec.u);
+      add(`/pt/preco/${encodeURIComponent(slug)}`, "daily", "0.6", rec.u);
       // Model-year pages — only the ones that clear the publishing floor, which
       // is exactly the set handleModelPage will serve.
       for (const y of publishedYearPages(models, slug, rec, lastmodSrc)) {
         const c = yearCell(rec, y);
-        add(`/preco/${encodeURIComponent(slug)}/${y}`, "daily", "0.5", (c && c.u) || rec.u);
+        add(`/pt/preco/${encodeURIComponent(slug)}/${y}`, "daily", "0.5", (c && c.u) || rec.u);
       }
       // Fuel / district facets, where the sample supports them.
       for (const k of publishedFacets(models, slug, rec, lastmodSrc)) {
-        add(`/preco/${encodeURIComponent(slug)}/${encodeURIComponent(k)}`, "daily", "0.5", rec.u);
+        add(`/pt/preco/${encodeURIComponent(slug)}/${encodeURIComponent(k)}`, "daily", "0.5", rec.u);
       }
-      if (publishedDepreciation(models, slug, rec, lastmodSrc)) add(`/depreciacao/${encodeURIComponent(slug)}`, "weekly", "0.5", rec.u);
-      if (publishedLiquidity(models, slug, rec, lastmodSrc)) add(`/liquidez/${encodeURIComponent(slug)}`, "weekly", "0.5", rec.u);
-      if (publishedVender(models, slug, rec, lastmodSrc)) add(`/vender/${encodeURIComponent(slug)}`, "weekly", "0.6", rec.u);
+      if (publishedDepreciation(models, slug, rec, lastmodSrc)) add(`/pt/depreciacao/${encodeURIComponent(slug)}`, "weekly", "0.5", rec.u);
+      if (publishedLiquidity(models, slug, rec, lastmodSrc)) add(`/pt/liquidez/${encodeURIComponent(slug)}`, "weekly", "0.5", rec.u);
+      if (publishedVender(models, slug, rec, lastmodSrc)) add(`/pt/vender/${encodeURIComponent(slug)}`, "weekly", "0.6", rec.u);
       for (const d of Object.values(DUELS)) {
-        if (publishedDuel(models, slug, rec, lastmodSrc, d.kind)) add(`/${d.path}/${encodeURIComponent(slug)}`, "weekly", "0.5", rec.u);
+        if (publishedDuel(models, slug, rec, lastmodSrc, d.kind)) add(`/pt/${d.path}/${encodeURIComponent(slug)}`, "weekly", "0.5", rec.u);
       }
     }
     for (const k of Object.keys((mdoc && mdoc.districts) || {})) {
-      add(`/precos/${encodeURIComponent(k)}`, "weekly", "0.6");
+      add(`/pt/precos/${encodeURIComponent(k)}`, "weekly", "0.6");
     }
     for (const [a, b] of publishedPairs(models)) {
       const pairStamp = [models[a] && models[a].u, models[b] && models[b].u].filter(Boolean).sort().pop();
-      add(`/comparar/${encodeURIComponent(a)}-vs-${encodeURIComponent(b)}`, "weekly", "0.5", pairStamp);
+      add(`/pt/comparar/${encodeURIComponent(a)}-vs-${encodeURIComponent(b)}`, "weekly", "0.5", pairStamp);
     }
     // Archived index weeks: permanent URLs, so they belong in the sitemap.
     try {
       const history = await env.KV.get(IDX_LIST_KEY, "json");
       if (Array.isArray(history)) {
-        // The current week is still exactly what /mercado/indice serves, so listing
+        // The current week is still exactly what /pt/mercado/indice serves, so listing
         // it here is what created the duplicate. It joins the sitemap next week,
         // when it has closed and become a permanent cut.
         const liveWeek = isoWeek(new Date());
         for (const h of history.slice(-52)) {
           if (h.week === liveWeek) continue;
-          add(`/mercado/indice/${h.week.toLowerCase()}`, "yearly", "0.3", [h.builtAt, h.date]);
+          add(`/pt/mercado/indice/${h.week.toLowerCase()}`, "yearly", "0.3", [h.builtAt, h.date]);
         }
         for (const c of monthlyCuts(history, liveWeek).slice(-24)) {
           const last = c.rows && c.rows.length ? c.rows[c.rows.length - 1] : null;
-          add(`/mercado/indice/${c.month}`, "yearly", "0.4", [c.builtAt, last && last.date, c.to]);
+          add(`/pt/mercado/indice/${c.month}`, "yearly", "0.4", [c.builtAt, last && last.date, c.to]);
         }
       }
     } catch (_) { /* archive is optional */ }
@@ -1652,8 +1718,8 @@ async function handleSitemap(request, env, url) {
     if (idoc) {
       const slugs = importSlugs(idoc);
       if (slugs.length) {
-        add("/importar", "weekly", "0.7");
-        for (const slug of slugs) add(`/importar/${encodeURIComponent(slug)}`, "weekly", "0.6");
+        add("/pt/importar", "weekly", "0.7");
+        for (const slug of slugs) add(`/pt/importar/${encodeURIComponent(slug)}`, "weekly", "0.6");
       }
     }
   } catch (_) { /* the import layer is optional */ }
@@ -1754,7 +1820,7 @@ async function handleLlmsTxt(request, env, url) {
     ? Object.entries(models)
         .sort((a, b) => (b[1].n || 0) - (a[1].n || 0))
         .slice(0, 12)
-        .map(([slug, r]) => `- [${r.b} ${r.m}](${base}/preco/${slug}): mediana pedida €${r.fm}, ${r.n} anúncios ativos`)
+        .map(([slug, r]) => `- [${r.b} ${r.m}](${base}/pt/preco/${slug}): mediana pedida €${r.fm}, ${r.n} anúncios ativos`)
     : [];
   const body = [
     "# Carsbuyer",
@@ -1780,23 +1846,23 @@ async function handleLlmsTxt(request, env, url) {
     "",
     "## Páginas",
     "",
-    `- [Índice de preços por modelo](${base}/precos)`,
-    `- [Avaliar um anúncio concreto](${base}/avaliar)`,
-    `- [Mercado: carros abaixo do valor justo](${base}/mercado)`,
-    `- [Índice do mercado, com arquivo semanal e mensal permanente](${base}/mercado/indice)`,
-    `- [Arquivo datado por modelo: os números como estavam nessa semana](${base}/historico)`,
-    `- [Desvalorização por modelo](${base}/depreciacao)`,
-    `- [Quanto tempo demora a vender cada modelo](${base}/liquidez)`,
-    `- [Vender: quanto pedir por modelo e em quantos dias vende](${base}/vender)`,
-    `- [Guias para vender um carro usado: documentos, registo, crédito, importados, burlas](${base}/guias)`,
-    `- [Comparações diretas entre modelos](${base}/comparar)`,
-    ...duelHubs.map(d => `- [${d.hubTitle}](${base}/${d.path})`),
-    `- [Preço pedido vs. valor justo estimado](${base}/sobrevalorizados)`,
-    `- [Importar da Alemanha: em que modelos a conta fecha](${base}/importar)`,
-    `- [Simulador de ISV](${base}/isv)`,
-    `- [Metodologia](${base}/metodologia)`,
-    `- [Quem somos](${base}/sobre)`,
-    `- [Sitemap](${base}/sitemap.xml)`,
+    `- [Índice de preços por modelo](${base}/pt/precos)`,
+    `- [Avaliar um anúncio concreto](${base}/pt/avaliar)`,
+    `- [Mercado: carros abaixo do valor justo](${base}/pt/mercado)`,
+    `- [Índice do mercado, com arquivo semanal e mensal permanente](${base}/pt/mercado/indice)`,
+    `- [Arquivo datado por modelo: os números como estavam nessa semana](${base}/pt/historico)`,
+    `- [Desvalorização por modelo](${base}/pt/depreciacao)`,
+    `- [Quanto tempo demora a vender cada modelo](${base}/pt/liquidez)`,
+    `- [Vender: quanto pedir por modelo e em quantos dias vende](${base}/pt/vender)`,
+    `- [Guias para vender um carro usado: documentos, registo, crédito, importados, burlas](${base}/pt/guias)`,
+    `- [Comparações diretas entre modelos](${base}/pt/comparar)`,
+    ...duelHubs.map(d => `- [${d.hubTitle}](${base}/pt/${d.path})`),
+    `- [Preço pedido vs. valor justo estimado](${base}/pt/sobrevalorizados)`,
+    `- [Importar da Alemanha: em que modelos a conta fecha](${base}/pt/importar)`,
+    `- [Simulador de ISV](${base}/pt/isv)`,
+    `- [Metodologia](${base}/pt/metodologia)`,
+    `- [Quem somos](${base}/pt/sobre)`,
+    `- [Sitemap](${base}/pt/sitemap.xml)`,
     "",
     "## Estrutura dos endereços",
     "",
@@ -1804,21 +1870,21 @@ async function handleLlmsTxt(request, env, url) {
     "`marca-modelo` sem acentos e em minúsculas (`volkswagen-golf`,",
     "`alfa-romeo-giulietta`); `{ano}` são quatro dígitos.",
     "",
-    `- \`${base}/preco/{slug}\` — preços de um modelo, por ano`,
-    `- \`${base}/preco/{slug}/{ano}\` — um modelo num ano concreto (a partir de 10 anúncios ativos nesse ano${waveCount ? ", nos modelos já publicados: ver \"Publicação por vagas\"" : ""})`,
-    `- \`${base}/preco/{slug}/{combustivel}\` — o mesmo modelo só em diesel, gasolina ou GPL`,
-    `- \`${base}/preco/{slug}/{caixa}\` — o mesmo modelo só com caixa manual ou automática`,
-    ...duelHubs.map(d => `- \`${base}/${d.path}/{slug}\` — ${d.question}: qual segura melhor o preço desse modelo (+ .json)`),
-    `- \`${base}/preco/{slug}/{distrito}\` — o mesmo modelo num distrito`,
-    `- \`${base}/precos/{distrito}\` — o mercado de um distrito`,
-    `- \`${base}/depreciacao/{slug}\` — curva de desvalorização, custo de cada ano de idade e onde a queda abranda (existe onde há histórico suficiente)`,
-    `- \`${base}/liquidez/{slug}\` — quanto tempo esse modelo demora a sair do OLX: percentagem que sai em 30/60/90 dias, mediana, e os mesmos cortes por faixa de preço, idade e distrito (+ .json)`,
-    `- \`${base}/importar/{slug}\` — preço pedido na Alemanha + ISV + legalização contra o preço pedido em Portugal, ano a ano (+ .json)`,
-    `- \`${base}/comparar/{slug-a}-vs-{slug-b}\` — comparação entre dois modelos`,
-    `- \`${base}/mercado/indice/{AAAA}-W{SS}\` — corte semanal permanente do mercado`,
-    `- \`${base}/mercado/indice/{AAAA}-{MM}\` — corte mensal permanente, mediana dos cortes semanais desse mês`,
-    `- \`${base}/historico/{AAAA}-w{SS}.json\` — corte semanal congelado de todos os modelos`,
-    `- \`${base}/historico/{AAAA}-w{SS}/{slug}.json\` — um modelo como estava nessa semana`,
+    `- \`${base}/pt/preco/{slug}\` — preços de um modelo, por ano`,
+    `- \`${base}/pt/preco/{slug}/{ano}\` — um modelo num ano concreto (a partir de 10 anúncios ativos nesse ano${waveCount ? ", nos modelos já publicados: ver \"Publicação por vagas\"" : ""})`,
+    `- \`${base}/pt/preco/{slug}/{combustivel}\` — o mesmo modelo só em diesel, gasolina ou GPL`,
+    `- \`${base}/pt/preco/{slug}/{caixa}\` — o mesmo modelo só com caixa manual ou automática`,
+    ...duelHubs.map(d => `- \`${base}/pt/${d.path}/{slug}\` — ${d.question}: qual segura melhor o preço desse modelo (+ .json)`),
+    `- \`${base}/pt/preco/{slug}/{distrito}\` — o mesmo modelo num distrito`,
+    `- \`${base}/pt/precos/{distrito}\` — o mercado de um distrito`,
+    `- \`${base}/pt/depreciacao/{slug}\` — curva de desvalorização, custo de cada ano de idade e onde a queda abranda (existe onde há histórico suficiente)`,
+    `- \`${base}/pt/liquidez/{slug}\` — quanto tempo esse modelo demora a sair do OLX: percentagem que sai em 30/60/90 dias, mediana, e os mesmos cortes por faixa de preço, idade e distrito (+ .json)`,
+    `- \`${base}/pt/importar/{slug}\` — preço pedido na Alemanha + ISV + legalização contra o preço pedido em Portugal, ano a ano (+ .json)`,
+    `- \`${base}/pt/comparar/{slug-a}-vs-{slug-b}\` — comparação entre dois modelos`,
+    `- \`${base}/pt/mercado/indice/{AAAA}-W{SS}\` — corte semanal permanente do mercado`,
+    `- \`${base}/pt/mercado/indice/{AAAA}-{MM}\` — corte mensal permanente, mediana dos cortes semanais desse mês`,
+    `- \`${base}/pt/historico/{AAAA}-w{SS}.json\` — corte semanal congelado de todos os modelos`,
+    `- \`${base}/pt/historico/{AAAA}-w{SS}/{slug}.json\` — um modelo como estava nessa semana`,
     "",
     "## Como citar um número sem que envelheça",
     "",
@@ -1826,7 +1892,7 @@ async function handleLlmsTxt(request, env, url) {
     "citares esta semana já não é a que lá está na próxima. Isso não torna a",
     "citação falsa, torna-a sem data — e sem data parece errada.",
     "",
-    `Para citar um valor estável usa o arquivo: [${base}/historico](${base}/historico).`,
+    `Para citar um valor estável usa o arquivo: [${base}/pt/historico](${base}/pt/historico).`,
     "Cada semana fica congelada e o seu endereço não volta a mudar. Cada",
     "resposta traz `week`, `date` e `built_at`, por isso a data da citação não",
     "depende de quem cita.",
@@ -1842,13 +1908,13 @@ async function handleLlmsTxt(request, env, url) {
     waveCount ? `publicadas por vagas e neste momento existem para os **${waveCount} modelos**` : null,
     waveCount ? `com mais anúncios ativos. Nos restantes, um ano com amostra suficiente` : null,
     waveCount ? `devolve **404** — mas os números desse ano estão na mesma em` : null,
-    waveCount ? `\`${base}/preco/{slug}.json\`, no campo \`by_year\`, com \`page: null\`.` : null,
+    waveCount ? `\`${base}/pt/preco/{slug}.json\`, no campo \`by_year\`, com \`page: null\`.` : null,
     waveCount ? `O mesmo vale para \`by_fuel\`, \`by_transmission\` e \`by_district\`.` : null,
     waveCount ? `Constrói o endereço a partir de \`page\`, não a partir do padrão.` : null,
     waveCount ? `` : null,
     liqCount ? `## Publicação por vagas (liquidez)` : null,
     liqCount ? `` : null,
-    liqCount ? `\`${base}/liquidez/{slug}\` tem uma vaga própria, separada da de cima:` : null,
+    liqCount ? `\`${base}/pt/liquidez/{slug}\` tem uma vaga própria, separada da de cima:` : null,
     liqCount ? `${liqCount} modelos publicados. O número de dias até vender aparece na mesma` : null,
     liqCount ? `na página do modelo, mesmo quando o modelo ainda não tem página de liquidez.` : null,
     liqCount ? `` : null,
@@ -1860,11 +1926,11 @@ async function handleLlmsTxt(request, env, url) {
     "`<link rel=\"alternate\" type=\"application/json\">`. Traz os mesmos números",
     "com nomes por extenso, mais o tamanho da amostra e a data de recolha.",
     "",
-    `- \`${base}/preco/{slug}.json\``,
-    `- \`${base}/preco/{slug}/{ano}.json\``,
-    `- \`${base}/preco/{slug}/{combustivel|caixa|distrito}.json\` — o mesmo corte, com a razão contra o modelo controlada pela idade (ano a ano onde a amostra chega, anúncio a anúncio onde não chega)`,
-    `- \`${base}/depreciacao/{slug}.json\` — taxa anual, meia-vida do valor, custo de um ano de idade por idade, e se a taxa quebra em alguma idade`,
-    `- \`${base}/liquidez/{slug}.json\` — dias até sair do anúncio, percentagem que sai em 30/60/90 dias, quantos voltam a ser anunciados e quanto se costuma baixar no preço`,
+    `- \`${base}/pt/preco/{slug}.json\``,
+    `- \`${base}/pt/preco/{slug}/{ano}.json\``,
+    `- \`${base}/pt/preco/{slug}/{combustivel|caixa|distrito}.json\` — o mesmo corte, com a razão contra o modelo controlada pela idade (ano a ano onde a amostra chega, anúncio a anúncio onde não chega)`,
+    `- \`${base}/pt/depreciacao/{slug}.json\` — taxa anual, meia-vida do valor, custo de um ano de idade por idade, e se a taxa quebra em alguma idade`,
+    `- \`${base}/pt/liquidez/{slug}.json\` — dias até sair do anúncio, percentagem que sai em 30/60/90 dias, quantos voltam a ser anunciados e quanto se costuma baixar no preço`,
     "",
     waveCount
       ? "Um endereço que não exista devolve 404: ou a amostra é fina demais, ou o modelo ainda não entrou na vaga de publicação."
@@ -1903,14 +1969,14 @@ function llmsLocaleSection(base) {
 // /robots.txt — allow public, block transactional/internal, point at the sitemap.
 const ROBOTS_RULES = [
   "Allow: /",
-  "Disallow: /analytics", "Disallow: /_olx", "Disallow: /lead", "Disallow: /ir/",
+  "Disallow: /analytics", "Disallow: /_olx", "Disallow: /pt/lead", "Disallow: /pt/ir/",
 ];
 
 async function handleRobots(request, env, url) {
   const body = [
     "User-agent: *", ...ROBOTS_RULES,
-    // /widget stays crawlable on purpose: it is noindex,follow and links back to
-    // the canonical /preco page, so it works as a backlink lever when embedded.
+    // /pt/widget stays crawlable on purpose: it is noindex,follow and links back to
+    // the canonical /pt/preco page, so it works as a backlink lever when embedded.
     "",
     // Answer engines are named explicitly rather than left to the wildcard.
     // The wildcard already allows them, but naming them states the intent so a
@@ -1927,7 +1993,6 @@ async function handleRobots(request, env, url) {
     "User-agent: CCBot", ...ROBOTS_RULES,
     "",
     `Sitemap: https://${url.host}/sitemap.xml`,
-    ...liveLocales().map(l => `Sitemap: https://${url.host}${l.prefix}/sitemap.xml`),
     // Not a search-ranking signal — no engine ranks on it. It is an
     // agent-readiness convenience: a single fetch that tells a tool-using
     // model what this site holds and how to reach it.
@@ -1939,7 +2004,7 @@ async function handleRobots(request, env, url) {
   });
 }
 
-// Mercado feed (/mercado) — the grid of car tiles, zone + sort filtered.
+// Mercado feed (/pt/mercado) — the grid of car tiles, zone + sort filtered.
 async function handleFeed(request, env, url) {
   const zone = pickZone(url.searchParams.get("zone"));
   const view = pickView(url.searchParams.get("view"));
@@ -1974,16 +2039,16 @@ async function handleFeed(request, env, url) {
     return html(renderInfo({
       zone, depositCount: null,
       title: "Sem negócios quentes",
-      message: "Sem carros abaixo do preço nesta zona agora — a lista renova ao longo do dia. Entretanto, cola o link de qualquer anúncio em /avaliar para saber se está bem cotado.",
+      message: "Sem carros abaixo do preço nesta zona agora — a lista renova ao longo do dia. Entretanto, cola o link de qualquer anúncio em /pt/avaliar para saber se está bem cotado.",
     }), 200);
   }
 
   // Model links for the models on offer right now.
   //
-  // Every link the feed emitted pointed at /car?olx_id=… — noindex by design,
+  // Every link the feed emitted pointed at /pt/car?olx_id=… — noindex by design,
   // because the listing vanishes when the car sells. So the site's freshest page
   // passed nothing onward and read, to a crawler, as a static advert. These
-  // chips connect it to the stable /preco pages, which is also the next thing a
+  // chips connect it to the stable /pt/preco pages, which is also the next thing a
   // visitor wants to know ("is that a good price for this model?").
   const mdoc = await getModels(env);
   const mmap = (mdoc && mdoc.models) || null;
@@ -2012,14 +2077,14 @@ async function handleFeed(request, env, url) {
         const y = Number(d.year);
         if (!pub.includes(y) || seenYear.has(`${sl}/${y}`)) continue;
         seenYear.add(`${sl}/${y}`);
-        yearLinks.push({ href: `/preco/${encodeURIComponent(sl)}/${y}`, name: `${rec.b} ${rec.m} ${y}` });
+        yearLinks.push({ href: `/pt/preco/${encodeURIComponent(sl)}/${y}`, name: `${rec.b} ${rec.m} ${y}` });
       }
       if (publishedDepreciation(mmap, sl, rec, mBuiltAt)) {
-        contextLinks.push({ href: `/depreciacao/${encodeURIComponent(sl)}`,
+        contextLinks.push({ href: `/pt/depreciacao/${encodeURIComponent(sl)}`,
                             name: `Desvalorização ${rec.b} ${rec.m}` });
       }
       if (publishedLiquidity(mmap, sl, rec, mBuiltAt)) {
-        contextLinks.push({ href: `/liquidez/${encodeURIComponent(sl)}`,
+        contextLinks.push({ href: `/pt/liquidez/${encodeURIComponent(sl)}`,
                             name: `Tempo de venda ${rec.b} ${rec.m}` });
       }
       void c;
@@ -2029,14 +2094,14 @@ async function handleFeed(request, env, url) {
       const k = slugify(String(d.district || ""));
       if (!k || dseen.has(k) || !((mdoc && mdoc.districts) || {})[k]) continue;
       dseen.add(k);
-      districtLinks.push({ href: `/precos/${encodeURIComponent(k)}`,
+      districtLinks.push({ href: `/pt/precos/${encodeURIComponent(k)}`,
                            name: `Preços em ${d.district}` });
     }
   }
 
   const canonicalView = zone === "all" && sort === "score" && view !== "revender";
   const items = [
-    ...modelLinks.slice(0, 24).map(m => ({ href: `/preco/${encodeURIComponent(m.slug)}`,
+    ...modelLinks.slice(0, 24).map(m => ({ href: `/pt/preco/${encodeURIComponent(m.slug)}`,
                                           name: `${m.b} ${m.m}` })),
     ...yearLinks.slice(0, 24), ...contextLinks.slice(0, 24), ...districtLinks.slice(0, 24),
   ];
@@ -2046,8 +2111,8 @@ async function handleFeed(request, env, url) {
     "@graph": [
       {
         "@type": "CollectionPage",
-        "@id": `${origin}/mercado#page`,
-        "url": `${origin}/mercado`,
+        "@id": `${origin}/pt/mercado#page`,
+        "url": `${origin}/pt/mercado`,
         "name": "Carros usados abaixo do preço em Portugal (OLX)",
         "description": "Carros usados no OLX Portugal abaixo do preço justo de mercado, com desconto, lucro estimado e nota de risco.",
         "inLanguage": "pt-PT",
@@ -2056,14 +2121,14 @@ async function handleFeed(request, env, url) {
       },
       {
         "@type": "ItemList",
-        "@id": `${origin}/mercado#lista`,
+        "@id": `${origin}/pt/mercado#lista`,
         "name": "Preço de mercado dos modelos com negócios agora",
         "numberOfItems": items.length,
         "itemListElement": items.map((it, i) => ({
           "@type": "ListItem", "position": i + 1, "name": it.name, "url": `${origin}${it.href}`,
         })),
       },
-      breadcrumbLd(url.host, [{ name: "Início", href: "/" }, { name: "Carros abaixo do preço" }]),
+      breadcrumbLd(url.host, [{ name: "Início", href: "/pt" }, { name: "Carros abaixo do preço" }]),
     ],
   } : null;
 
@@ -2088,12 +2153,12 @@ async function handleCar(request, env, url) {
     }), 503);
   }
   const deal = (deals || []).find(d => d.olx_id === olxId);
-  if (!deal) return redirect(`/mercado?zone=${zone}`, 302);
+  if (!deal) return redirect(`/pt/mercado?zone=${zone}`, 302);
   // Contextual link into the model SEO page, when this model has one.
   const mdoc = await getModels(env);
   const models = mdoc && mdoc.models;
   const mslug = slugify(`${deal.brand}-${deal.model}`);
-  const modelHref = (models && models[mslug]) ? `/preco/${encodeURIComponent(mslug)}` : null;
+  const modelHref = (models && models[mslug]) ? `/pt/preco/${encodeURIComponent(mslug)}` : null;
   return html(renderCarPage({
     deal, zone, view, depositCount: null, modelHref, host: url.host,
     historyUrl: env.HISTORY_REPORT_URL || null,
@@ -2203,7 +2268,7 @@ async function degrade(env, cacheKey) {
 
 // valuations.json — the public "value any listing" lookup (Tier-2). ~0.9 MB
 // gzipped; fetched from the Release and edge-cached. Parsed per request (the
-// /avaliar tool is low-traffic). Returns the {olx_id: rec} map, or null if the
+// /pt/avaliar tool is low-traffic). Returns the {olx_id: rec} map, or null if the
 // blob isn't published yet / fetch fails (handler then shows the fallback).
 async function getValuations(env, country = null) {
   const cc = country ? String(country).toLowerCase() : null;
@@ -2232,7 +2297,7 @@ async function getValuations(env, country = null) {
   return null;
 }
 
-// models.json — the per-model SEO blob (Tier-3) for /preco/*, /precos, /sitemap.
+// models.json — the per-model SEO blob (Tier-3) for /pt/preco/*, /pt/precos, /sitemap.
 // Same edge-cache (success-only) pattern as getValuations; ~50 KB gzipped.
 // Returns the full doc { models: {slug: rec}, built_at }, or null (handlers
 // then 404/degrade). Callers read `.models`; `.built_at` drives the public
@@ -2324,7 +2389,7 @@ function isLocalHost(h) {
 function notFound() { return new Response("Not found", { status: 404 }); }
 function forbidden() { return new Response("Forbidden", { status: 403 }); }
 
-// CSRF guard for the /lead POST: verify the request came from our own host.
+// CSRF guard for the /pt/lead POST: verify the request came from our own host.
 function sameOrigin(request, url) {
   const origin = request.headers.get("Origin");
   if (origin) {
@@ -2519,7 +2584,7 @@ const AI_AGENTS = [
 ];
 const AI_CAP = { ask: 120, index: 120, bulk: 20 };
 const AI_SAMPLE_CAP = 30;
-const AI_SKIP = ["/analytics", "/_olx", "/ir/", "/fonts/", "/healthz", "/og-default.png"];
+const AI_SKIP = ["/analytics", "/_olx", "/pt/ir/", "/fonts/", "/healthz", "/og-default.png"];
 
 function aiAgent(ua) {
   for (const [name, kind, re] of AI_AGENTS) if (re.test(ua)) return { name, kind };
