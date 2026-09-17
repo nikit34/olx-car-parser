@@ -1576,7 +1576,8 @@ async function intlCar(env, url, loc) {
   if (degraded) return intlUnavailable(loc, url.host, "info.deals_unavailable");
   const deal = (deals || []).find(d => String(d.olx_id) === id);
   if (!deal) return redirect(ihref(loc, "mercado"), 302);
-  const cars = await getValuations(env, loc.country);
+  const doc = await getValuations(env, loc.country);
+  const cars = (doc && doc.cars) ? doc.cars : doc;
   const rec = (cars && cars[String(deal.olx_id)]) || null;
   const c = await intlCorpus(env, loc);
   return publicHtml(renderIntlCar({
