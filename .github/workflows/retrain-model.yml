@@ -160,6 +160,9 @@ jobs:
         timeout-minutes: 15
         env:
           PYTHONPATH: ${{ github.workspace }}
+          OLX_RELAY_URL: ${{ secrets.OLX_RELAY_URL }}
+          OLX_RELAY_TOKEN: ${{ secrets.OLX_RELAY_TOKEN }}
+          HTTPS_PROXY: ${{ secrets.OLX_PROXY }}
         run: |
           .venv/bin/python scripts/build_hot_deals.py
           ls -lh data/hot_deals/
