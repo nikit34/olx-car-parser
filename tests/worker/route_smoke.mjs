@@ -12,7 +12,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import worker from "../../flipper-club/src/index.js";
-import { yearPageYears, liquidityOk, depreciationSlugs, comparePairs, isoWeek, isoWeekStart, missingWeeks, DUELS, isoWeekMonth, monthlyCuts, importSlugs, venderOk } from "../../flipper-club/src/seo-pages.js";
+import { yearPageYears, liquidityOk, depreciationSlugs, comparePairs, isoWeek, isoWeekStart, missingWeeks, DUELS, isoWeekMonth, monthlyCuts, importSlugs, venderOk, publishedYearPages } from "../../flipper-club/src/seo-pages.js";
 import { GUIDES } from "../../flipper-club/src/guides.js";
 
 const HOST = "carsbuyer.org";
@@ -394,6 +394,52 @@ await check("the weekly index writes exactly one snapshot per week", async () =>
 });
 
 // ── sitemap ↔ router agreement ──────────────────────────────────────────────
+await check("the hub links every published year page, so none sits three clicks deep", async () => {
+  const hub = await (await get("/pt/precos")).text();
+  const linked = new Set([...hub.matchAll(/href="(\/pt\/preco\/[^"]+\/\d{4})"/g)].map(m => m[1]));
+  const expected = new Set();
+  for (const [slug, rec] of Object.entries(models)) {
+    for (const y of publishedYearPages(models, slug, rec, mdoc.built_at)) {
+      expected.add(`/pt/preco/${encodeURIComponent(slug)}/${y}`);
+    }
+  }
+  assert(expected.size > 0, "the fixture publishes no year page at all");
+  for (const p of expected) assert(linked.has(p), `the hub does not link ${p}`);
+  for (const p of linked) assert(expected.has(p), `the hub links ${p}, which is not published`);
+  for (const p of [...linked].slice(0, 12)) {
+    assert((await get(p)).status === 200, `the hub links ${p} but it answers otherwise`);
+  }
+});
+
+await check("year pages sit two clicks from the landing and nothing in the sitemap is orphaned", async () => {
+  const seen = new Map([["/pt", 0]]);
+  let frontier = ["/pt"];
+  const skip = /\.(json|xml|txt|png|ico|woff2)$|^\/pt\/(car|lead|avaliar|ir)\b|\?/;
+  while (frontier.length) {
+    const next = [];
+    for (const p of frontier) {
+      const r = await get(p);
+      if (r.status !== 200) continue;
+      if (!(r.headers.get("content-type") || "").includes("text/html")) continue;
+      const body = await r.text();
+      for (const h of new Set([...body.matchAll(/href="(\/pt[^"#?]*)"/g)].map(m => m[1]))) {
+        if (skip.test(h) || seen.has(h)) continue;
+        seen.set(h, seen.get(p) + 1);
+        next.push(h);
+      }
+    }
+    frontier = next;
+  }
+  const deep = [...seen].filter(([p, d]) => d > 2 && /^\/pt\/preco\/[^/]+\/\d{4}$/.test(p));
+  assert(deep.length === 0,
+    `${deep.length} year pages sit deeper than two clicks, e.g. ${deep[0] && deep[0][0]}`);
+  const xml = await (await get("/pt/sitemap.xml")).text();
+  const locs = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => new URL(m[1]).pathname);
+  const orphans = locs.filter(p => !seen.has(p) && !skip.test(p));
+  assert(orphans.length === 0, `${orphans.length} sitemap URLs are unreachable by link, e.g. ${orphans[0]}`);
+  console.log(`       (${seen.size} pages reachable, deepest ${Math.max(...seen.values())} clicks)`);
+});
+
 await check("the root sitemap is an index over the per-market files", async () => {
   const r = await get("/sitemap.xml");
   assert(r.status === 200, `/sitemap.xml → ${r.status}`);
@@ -767,6 +813,9 @@ await check("a wave gates the router, the sitemap and the on-page links together
   // Unreachable AND unlinked: an in-page link to a 404 is worse than no page.
   const page = await (await g(`/pt/preco/${outside}`)).text();
   assert(!page.includes(`/pt/preco/${outside}/${yr}`), "model page links a year page the wave hides");
+  const gatedHub = await (await g("/pt/precos")).text();
+  assert(!gatedHub.includes(`/pt/preco/${outside}/${yr}`), "the hub links a year page the wave hides");
+  assert(gatedHub.includes(`/pt/preco/${inWave[0]}/${insideYear}`), "the hub dropped a year page inside the wave");
 
   const feed = await (await g(`/pt/preco/${outside}.json`)).json();
   const advertised = feed.by_year.filter(c => c.page);

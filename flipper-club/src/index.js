@@ -1576,7 +1576,10 @@ async function handleModelsHub(request, env, url) {
     }), 503);
   }
   const list = Object.entries(models)
-    .map(([s, r]) => ({ slug: s, b: r.b, m: r.m, fm: r.fm, n: r.n }))
+    .map(([s, r]) => ({
+      slug: s, b: r.b, m: r.m, fm: r.fm, n: r.n,
+      ys: publishedYearPages(models, s, r, mdoc.built_at).slice().sort((x, y) => y - x),
+    }))
     .sort((a, b) => (b.n || 0) - (a.n || 0));
   // District pages hang off this hub. Without the row they would exist only in
   // the sitemap — crawlable in principle, orphaned in practice.
