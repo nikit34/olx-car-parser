@@ -12,6 +12,9 @@ on:
     - cron: "0 6 * * 0"   # Sundays 06:00 UTC
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 # Own group so it never cancels (or is cancelled by) a scrape; the single
 # self-hosted runner serialises them anyway.
 concurrency:
@@ -54,8 +57,12 @@ jobs:
 
       - name: Sweep watchlist constants (time-aware sensitivity)
         # Exits 1 if any constant flipped noise→REAL → job fails → GitHub pings.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
         run: |
           set -o pipefail
+          rm -rf /tmp/olx-release
           PYTHONWARNINGS=ignore .venv/bin/python -m scripts.sweep_constant --all \
             | tee sensitivity_report.txt
 
