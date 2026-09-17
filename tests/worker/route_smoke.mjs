@@ -64,13 +64,14 @@ const env = {
 
 // getModels/getDeals go through global fetch; serve the blob from memory and
 // give the deals feed an empty-but-valid answer so the bridges are exercised.
+let valuationsDoc = {};
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
   const u = typeof input === "string" ? input : input.url;
   if (u.includes("import.json")) return new Response(JSON.stringify(idoc), { status: 200 });
   if (u.includes("models.json")) return new Response(JSON.stringify(mdoc), { status: 200 });
   if (u.includes("hot_deals_")) return new Response(JSON.stringify({ deals: [] }), { status: 200 });
-  if (u.includes("valuations.json")) return new Response(JSON.stringify({}), { status: 200 });
+  if (u.includes("valuations.json")) return new Response(JSON.stringify(valuationsDoc), { status: 200 });
   return realFetch(input, init);
 };
 
@@ -1442,6 +1443,59 @@ await check("the history link is a counted redirect to the partner url", async (
     const robots = await (await get("/robots.txt")).text();
     assert(robots.includes("Disallow: /pt/ir/"), "robots does not block the redirect path");
   } finally { delete env.HISTORY_REPORT_URL; }
+});
+
+await check("a year page lists the cars of that year with a verdict and a working link", async () => {
+  const slug = "audi-a3", year = publishedYearPages(models, slug, models[slug], mdoc.built_at)[0];
+  const cars = {
+    JAaHl: { t: "Audi A3 1.6 TDI", y: year, km: 210000, fu: "Diesel", ct: "Porto", dom: 41,
+             p: 6000, fl: 7000, fm: 8000, fh: 9000, ms: slug },
+    "8Q0Y1p": { t: "Audi A3 2.0 TDI Sport", y: year, km: 150000, fu: "Diesel", ct: "Braga", dom: 9,
+                p: 12000, fl: 8000, fm: 9000, fh: 10000, ms: slug, sv: 1 },
+    JzYMq: { t: "Audi A3 Attraction", y: year, km: 180000, fu: "Diesel", ct: "Lisboa", dom: 22,
+             p: 8500, fl: 8000, fm: 8600, fh: 9200, ms: slug },
+    JvXvf: { t: "Audi A3 de outro ano", y: year + 1, km: 90000, fu: "Diesel", ct: "Faro", dom: 3,
+             p: 5000, fl: 9000, fm: 9500, fh: 10000, ms: slug },
+    JApYF: { t: "Golf de outro modelo", y: year, km: 90000, fu: "Diesel", ct: "Faro", dom: 3,
+             p: 5000, fl: 9000, fm: 9500, fh: 10000, ms: "volkswagen-golf" },
+    JxyRw: { t: "Audi A3 avaria de motor", y: year, km: 300000, fu: "Diesel", ct: "Beja", dom: 26,
+             p: 900, fl: 7000, fm: 8000, fh: 9000, ms: slug, hb: "avaria de motor" },
+  };
+  valuationsDoc = { v: 2, cars };
+  try {
+    const page = await (await get(`/pt/preco/${slug}/${year}`)).text();
+    assert(page.includes("À VENDA AGORA"), "the live-cars block is missing");
+    assert(page.includes("https://www.olx.pt/d/anuncio/audi-a3-1-6-tdi-IDJAaHl.html"),
+      "the OLX link is not rebuilt from the id");
+    assert(page.includes("https://www.standvirtual.com/carros/anuncio/audi-a3-2-0-tdi-sport-ID8Q0Y1p.html"),
+      "a StandVirtual car was linked to OLX");
+    assert(page.includes("abaixo do justo") && page.includes("acima do justo") && page.includes("dentro do justo"),
+      "the three verdicts do not all render");
+    assert(!page.includes("Audi A3 de outro ano"), "a car from a neighbouring year leaked into the list");
+    assert(!page.includes("Golf de outro modelo"), "a car from another model leaked into the list");
+    assert(page.indexOf("Audi A3 1.6 TDI") < page.indexOf("Audi A3 Attraction"),
+      "the list is not ordered by the gap to fair value");
+    assert(/rel="noopener nofollow"/.test(page), "outbound listing links are not nofollowed");
+    assert(page.includes("4 Audi A3 DE"), "the heading does not count the cars we actually have");
+    assert(page.indexOf("Audi A3 avaria de motor") > page.indexOf("Audi A3 Attraction"),
+      "a car that declares a breakdown is not pushed to the end");
+    assert(page.includes("avaria declarada") && page.includes("justo não se aplica"),
+      "a declared breakdown is still priced against the fair band");
+    assert(page.includes("Um está a pedir abaixo do valor justo"),
+      "a declared breakdown was counted as a bargain");
+    assert(page.includes("o anúncio diz «avaria de motor»"), "the seller's own words are not quoted");
+  } finally { valuationsDoc = {}; }
+});
+
+await check("an old valuations blob leaves the year page exactly as it was", async () => {
+  const slug = "audi-a3", year = publishedYearPages(models, slug, models[slug], mdoc.built_at)[0];
+  const cars = { JAaHl: { t: "Audi A3 1.6 TDI", y: year, p: 6000, fl: 7000, fm: 8000, fh: 9000, ms: slug } };
+  valuationsDoc = { v: 1, cars };
+  try {
+    const page = await (await get(`/pt/preco/${slug}/${year}`)).text();
+    assert(!page.includes("À VENDA AGORA"), "a blob without source flags still produced outbound links");
+    assert(!page.includes("olx.pt/d/anuncio"), "a listing url was rebuilt from a blob that cannot name the source");
+  } finally { valuationsDoc = {}; }
 });
 
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall route checks passed");

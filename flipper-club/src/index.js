@@ -39,7 +39,7 @@
 import {
   renderGrid, renderCarPage, renderInfo,
   renderLanding,
-  renderAvaliar, renderModelPage, renderModelsHub, renderModelWidget, slugify,
+  renderAvaliar, renderModelPage, renderModelsHub, renderModelWidget, slugify, listingUrl,
   setAnalyticsId,
   renderPrivacy, renderLeadThanks,
 } from "./templates.js";
@@ -515,8 +515,8 @@ async function handleAvaliar(request, env, url) {
     olxId = parseOlxId(query);
     if (/^https?:\/\//i.test(query)) sourceUrl = query;
     if (olxId) {
-      const cars = await getValuations(env);
-      rec = cars ? (cars[olxId] || null) : null;
+      const doc = await getValuations(env);
+      rec = (doc && doc.cars) ? (doc.cars[olxId] || null) : null;
     }
   }
 
@@ -561,6 +561,19 @@ function parseOlxId(q) {
   if (m) return m[1];
   const t = q.trim();
   return /^[A-Za-z0-9]{4,14}$/.test(t) ? t : null;
+}
+
+function yearCarsFrom(doc, slug, year, skipIds) {
+  if (!doc || !doc.cars || (doc.v || 0) < VALUATIONS_LINKABLE_V) return [];
+  const out = [];
+  for (const [id, r] of Object.entries(doc.cars)) {
+    if (r.ms !== slug || Number(r.y) !== year) continue;
+    if (skipIds && skipIds.has(id)) continue;
+    if (!Number.isFinite(Number(r.p)) || !Number.isFinite(Number(r.fm))) continue;
+    out.push({ id, url: listingUrl(id, r), ...r, gap: Number(r.fm) - Number(r.p) });
+  }
+  out.sort((a, b) => (a.hb ? 1 : 0) - (b.hb ? 1 : 0) || b.gap - a.gap);
+  return out;
 }
 
 // Per-model SEO pages under /pt/preco/.
@@ -725,9 +738,17 @@ async function renderYear({ request, env, url, models, rec, slug, year, builtAt,
     }
   } catch (_) { /* best-effort */ }
 
+  let yearCars = [], yearCarsTotal = 0;
+  try {
+    const shown = new Set(liveDeals.map(d => String(d.olx_id)));
+    const all = yearCarsFrom(await getValuations(env), slug, year, shown);
+    yearCarsTotal = all.length;
+    yearCars = all.slice(0, YEAR_CARS_MAX);
+  } catch (_) { /* best-effort */ }
+
   return publicHtml(renderYearPage({
     guides: guideBlock("preco"),
-    rec, slug, year, cell,
+    rec, slug, year, cell, yearCars, yearCarsTotal,
     neighbours: { older, newer, window: win },
     liveDeals, dealsNear, pageYears: publishedYearPages(models, slug, rec, builtAt), stats,
     host: url.host, depositCount: null, builtAt,
@@ -1541,8 +1562,8 @@ async function intlAvaliar(env, url, loc) {
     carId = parseAs24Id(query);
     if (/^https?:\/\//i.test(query)) sourceUrl = query;
     if (carId) {
-      const cars = await getValuations(env, loc.country);
-      rec = cars ? (cars[valuationKey(loc, carId)] || null) : null;
+      const doc = await getValuations(env, loc.country);
+      rec = (doc && doc.cars) ? (doc.cars[valuationKey(loc, carId)] || null) : null;
     }
   }
   const c = await intlCorpus(env, loc);
@@ -2347,6 +2368,8 @@ const HOT_DEALS_BASE =
   "https://github.com/nikit34/olx-car-parser/releases/download/latest-data";
 const DEALS_CACHE_TTL_SEC = 900;
 const DEALS_NEAR_YEARS = 2;
+const VALUATIONS_LINKABLE_V = 2;
+const YEAR_CARS_MAX = 12;
 
 const COMPETITOR_MIN_YEARS = 4;
 const COMPETITOR_TOL = 0.6;
@@ -2427,7 +2450,7 @@ async function getValuations(env, country = null) {
         ? new Response(r.body.pipeThrough(new DecompressionStream("gzip")))
         : r;
       const data = await body.json();
-      if (data && data.cars) return data.cars;
+      if (data && data.cars) return data;
       console.warn(`valuations ${url} → no cars in the blob`);
     } catch (err) {
       console.warn("valuations fetch error", url, err && err.message);

@@ -30,6 +30,7 @@
 import {
   layout, escapeHtml, fmtEur, fmtKm, fmtNum, fmtBuilt, slugify,
   present, thumbBlock, gradeChip, historyCheckBlock, leadFormBlock, monthTag,
+  analyticsClick,
 } from "./templates.js";
 
 // ── Publishing thresholds ────────────────────────────────────────────────────
@@ -839,6 +840,7 @@ export function yearGap(a, b) {
 // Thinner years stay as a row in the parent table — visible, linked, honest, and
 // not a URL asking to be indexed on four data points.
 export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours, liveDeals, dealsNear, pageYears,
+                                 yearCars = [], yearCarsTotal = 0,
                                  stats, host, depositCount, builtAt, historyUrl = null, hasVender = false }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
   const FM = fmtEur(cell.fm), FL = fmtEur(cell.fl), FH = fmtEur(cell.fh);
@@ -952,6 +954,50 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
         y === year ? `<a class="on" href="/pt/preco/${slug}/${y}">${y}</a>` : `<a href="/pt/preco/${slug}/${y}">${y}</a>`).join("")}</div>
     </section>` : "";
 
+  const carVerdict = c => {
+    if (c.hb) return { lbl: "avaria declarada", fg: "#8A3A2E", bg: "#FBEDEA", bd: "#F0CFC8" };
+    if (c.fl != null && c.p < c.fl) return { lbl: "abaixo do justo", fg: "#0B6B3A", bg: "#E6F4EC", bd: "#BFE3D0" };
+    if (c.fh != null && c.p > c.fh) return { lbl: "acima do justo", fg: "#8A3A2E", bg: "#FBEDEA", bd: "#F0CFC8" };
+    return { lbl: "dentro do justo", fg: "#4A5160", bg: "#F4F6FB", bd: "#D9E0F0" };
+  };
+  const carQuote = v => typeof v === "string" && v.trim() ? `«${escapeHtml(v.trim())}»` : "";
+  const ordered = yearCars || [];
+  const nBelow = ordered.filter(c => !c.hb && c.fl != null && c.p < c.fl).length;
+  const carRows = ordered.map(c => {
+    const v = carVerdict(c);
+    const sub = [
+      c.km != null ? fmtKm(c.km) : "",
+      c.fu ? escapeHtml(c.fu) : "",
+      c.ct ? escapeHtml(c.ct) : "",
+      c.dom != null ? `${c.dom}d no mercado` : "",
+      c.hb ? `o anúncio diz ${carQuote(c.hb)}` : (c.mf ? `menciona ${carQuote(c.mf)}` : ""),
+    ].filter(Boolean).join(" · ");
+    return `<a href="${escapeHtml(c.url)}" target="_blank" rel="noopener nofollow"${analyticsClick("olx_open", { source: "ano", olx_id: String(c.id) })} style="display:flex;gap:14px;align-items:baseline;justify-content:space-between;flex-wrap:wrap;padding:13px 0;border-top:1px solid #E7EAF1;text-decoration:none;color:inherit;">
+      <span style="flex:1 1 230px;min-width:0;">
+        <span style="display:block;font-size:14.5px;font-weight:600;color:#16181D;">${escapeHtml(c.t || `${rec.b} ${rec.m}`)}</span>
+        <span style="display:block;font-size:12.5px;color:#8A8F98;margin-top:3px;">${sub}</span>
+      </span>
+      <span style="flex:0 0 auto;text-align:right;">
+        <span style="display:block;font-size:15px;font-weight:700;color:#16181D;">${fmtEur(c.p)}</span>
+        <span style="display:block;font-size:12px;color:#8A8F98;margin-top:2px;">${c.hb ? "justo não se aplica" : `justo ${fmtEur(c.fm)}`}</span>
+      </span>
+      <span style="flex:0 0 auto;font-size:11.5px;font-weight:600;color:${v.fg};background:${v.bg};border:1px solid ${v.bd};border-radius:999px;padding:4px 10px;white-space:nowrap;">${v.lbl}</span>
+    </a>`;
+  }).join("");
+  const moreCars = yearCarsTotal > (yearCars || []).length
+    ? `<p class="fc-p" style="margin:14px 0 0;font-size:13px;color:#8A8F98;">Mostramos os ${yearCars.length} com maior diferença face ao valor justo, de ${yearCarsTotal} anúncios de ${year} que acompanhamos. <a href="/pt/avaliar">Avalia qualquer outro anúncio</a>.</p>`
+    : `<p class="fc-p" style="margin:14px 0 0;font-size:13px;color:#8A8F98;">Tens outro à vista? <a href="/pt/avaliar">Cola o link e avaliamos</a>.</p>`;
+  const cars = (yearCars || []).length ? `
+    <section class="section fc-wide">
+      <div class="sec-label">${escapeHtml(String(yearCarsTotal))} ${B} ${M} DE ${year} À VENDA AGORA</div>
+      <p class="fc-p" style="margin:0 0 4px;">${nBelow
+        ? `${nBelow === 1 ? "Um está" : `${nBelow} estão`} a pedir abaixo do valor justo que estimamos para o exemplar concreto, quilómetros e versão incluídos.`
+        : `Nenhum destes pede abaixo do valor justo que estimamos para o exemplar concreto. O preço pedido não é o valor do carro.`}${
+        ordered.some(c => c.hb) ? ` Os que declaram avaria vão no fim: o intervalo justo é de um carro em condições normais e não se aplica a eles.` : ""}</p>
+      <div style="border-bottom:1px solid #E7EAF1;">${carRows}</div>
+      ${moreCars}
+    </section>` : "";
+
   const deals = (liveDeals || []).length ? `
     <section class="section fc-wide">
       <div class="sec-label">${dealsNear ? `${B} ${M} DE ANOS PRÓXIMOS ABAIXO DO PREÇO JUSTO AGORA` : `${B} ${M} DE ${year} ABAIXO DO PREÇO JUSTO AGORA`}</div>
@@ -1011,7 +1057,7 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
   const body = crumbs([
     { name: "Início", href: "/pt" }, { name: "Preços", href: "/pt/precos" },
     { name: `${rec.b} ${rec.m}`, href: `/pt/preco/${slug}` }, { name: String(year) },
-  ]) + `<div style="padding-top:14px;">${hero}</div>${sellBlock}${histBlock}${stepBlock}${table}${yearNav}${deals}${cta}${sellForm}${links}${guides}`;
+  ]) + `<div style="padding-top:14px;">${hero}</div>${cars}${sellBlock}${histBlock}${stepBlock}${table}${yearNav}${deals}${cta}${sellForm}${links}${guides}`;
 
   const faqs = [[
     `Quanto vale um ${rec.b} ${rec.m} de ${year} em Portugal?`,
