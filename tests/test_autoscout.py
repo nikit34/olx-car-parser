@@ -535,3 +535,76 @@ class TestTheQueriesTheCountryCrawlMakes:
             lambda r: pytest.fail("a spent budget must not reach the site")))
         assert client.search("volkswagen", "golf") == ([], {})
         assert client.make_page("volkswagen") == ([], {})
+
+
+def _next_data(payload: dict) -> str:
+    import json as _json
+    return ('<html><script id="__NEXT_DATA__" type="application/json">'
+            + _json.dumps(payload) + "</script></html>")
+
+
+class TestTheAdvertPage:
+    """The advert is read on the two markets whose robots.txt leaves it open."""
+
+    def test_germany_closes_its_advert_path_and_the_others_do_not(self):
+        """``autoscout24.de`` disallows ``/angebote/`` outright; ``.fr`` closes
+        only the malformed ``/offres/-`` and ``.it`` says nothing about
+        ``/annunci/``. One shared list would get two of the three wrong."""
+        assert not robots_allows("/angebote/vw-golf-abc", "de")
+        assert robots_allows("/offres/vw-golf-abc", "fr")
+        assert not robots_allows("/offres/-vw-golf", "fr")
+        assert robots_allows("/annunci/vw-golf-abc", "it")
+
+    def test_an_unnamed_market_gets_the_strictest_answer(self):
+        assert not robots_allows("/angebote/x")
+
+    def test_the_search_rules_still_apply_to_every_market(self):
+        for tld in ("de", "fr", "it"):
+            assert not robots_allows("/lst?make=bmw", tld)
+            assert robots_allows("/lst/volkswagen/golf", tld)
+
+    def test_the_advert_yields_what_no_card_carries(self):
+        from src.parser.autoscout import parse_detail
+
+        page = _next_data({"props": {"pageProps": {"listingDetails": {
+            "description": "Scheckheft<br />gepflegt &#x27;24",
+            "vehicle": {
+                "rawData": {"bodyType": {"raw": "StationWagon", "formatted": "Kombi"},
+                            "bodyColor": {"raw": "Black", "formatted": "Schwarz"}},
+                "driveTrain": "Anteriore",
+                "numberOfDoors": 5, "numberOfSeats": 5,
+                "co2emissionInGramPerKmWithFallback": {"raw": 118},
+                "motorTypeName": "2.0 TDI", "noOfPreviousOwners": 2,
+            },
+            "seller": {"isDealer": True, "companyName": "Naz Auto"},
+            "location": {"zip": "25030", "city": "Barbariga"},
+            "createdTimestampWithOffset": "2026-09-15T11:10:28.688Z",
+        }}}})
+        patch = parse_detail(page, "it")
+        assert patch["body_type"] == "Carrinha" and patch["segment"] == "Carrinha"
+        assert patch["color"] == "Preto", "colours arrive in Portuguese, not as raw codes"
+        assert patch["drive_type"] == "Dianteira"
+        assert (patch["doors"], patch["seats"]) == ("4-5", 5)
+        assert patch["co2_g_km"] == 118
+        assert patch["seller_type"] == "Profissional"
+        assert patch["seller_displayed_as"] == "Naz Auto"
+        assert (patch["zip_code"], patch["city"]) == ("25030", "Barbariga")
+        assert patch["sub_model"] == "2.0 TDI"
+        assert patch["description"] == "Scheckheft\ngepflegt '24", "entities are unescaped"
+        assert patch["extras"]["previous_owners"] == 2
+        assert patch["extras"]["posted_at"].startswith("2026-09-15")
+
+    def test_a_page_without_a_listing_is_a_parse_error(self):
+        from src.parser.autoscout import AutoScoutUnreadable, parse_detail
+
+        with pytest.raises(AutoScoutUnreadable):
+            parse_detail("<html>blocked</html>", "it")
+        with pytest.raises(AutoScoutUnreadable):
+            parse_detail(_next_data({"props": {"pageProps": {}}}), "it")
+
+    def test_the_card_is_never_corrected_by_the_advert(self):
+        """Card and advert come from one database, so where they overlap the
+        card is not the one to doubt."""
+        from src.parser.autoscout import CORRECTS
+
+        assert CORRECTS == ()

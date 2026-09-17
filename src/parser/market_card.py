@@ -24,6 +24,38 @@ import json
 from dataclasses import asdict, dataclass, field
 
 
+def merge_patch(row: dict, patch: dict, corrects: tuple[str, ...] = ()) -> dict:
+    """Lay an advert's fields over a card without overwriting what it knew.
+
+    The advert is richer but not uniformly better. Kleinanzeigen prints the
+    exact mileage on the card and rounds it to a bracket on the advert, so a
+    patch fills gaps by default, and only the keys a reader names in its own
+    ``CORRECTS`` — the ones its card is known to get wrong — may replace a
+    value. AutoScout24 names none, because its card and its advert come from
+    one database and agree.
+
+    ``extras`` is the exception and merges rather than replacing, so a card's
+    note and an advert's note both survive. Returns the same dict it was given.
+    """
+    for key, value in (patch or {}).items():
+        if value is None or value == "":
+            continue
+        if key == "extras":
+            current = row.get("extras")
+            if isinstance(current, str):
+                try:
+                    current = json.loads(current)
+                except ValueError:
+                    current = {}
+            merged = dict(current or {})
+            merged.update(value if isinstance(value, dict) else {})
+            row["extras"] = merged
+            continue
+        if key in corrects or row.get(key) in (None, "", 0):
+            row[key] = value
+    return row
+
+
 @dataclass
 class MarketCard:
     source: str

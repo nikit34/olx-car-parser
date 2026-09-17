@@ -192,11 +192,11 @@ class TestKleinanzeigenAdvert:
 class TestTheMerge:
 
     def test_an_advert_fills_gaps_without_overwriting_the_card(self):
-        from scripts.crawl_classifieds import _merge
+        from src.parser.market_card import merge_patch
 
         row = ka.parse_search(_german_card(), "volkswagen")[0][0].as_row()
         assert row["mileage_km"] == 160581
-        _merge(row, ka.parse_detail(_german_advert()), ka.CORRECTS)
+        merge_patch(row, ka.parse_detail(_german_advert()), ka.CORRECTS)
 
         assert row["mileage_km"] == 160581, "the advert's bracket overwrote the card"
         assert row["brand"] == "Volkswagen" and row["model"] == "Polo"

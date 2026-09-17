@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Read the German, French and Italian used-car markets from AutoScout24.
 
-Each country becomes its own corpus in ``import_listings`` under the source
+Each country becomes its own corpus in ``listings`` under the source
 ``src.countries`` assigns it (``as24_de``, ``as24_fr``, ``as24_it``), from which
-it gets its own price model and its own pages. Nothing here touches the
-Portuguese corpus, and nothing here touches the weekly German benchmark crawl
+it gets its own price model and its own pages. Every market shares one table
+now, kept apart by ``country_code``; nothing here touches the Portuguese
+corpus, and nothing here touches the weekly German benchmark crawl
 (``scripts/crawl_autoscout.py``, source ``autoscout24``), which keeps stamping
 its rows with Portuguese model names for the import pages.
 
@@ -23,6 +24,20 @@ budget:
    A cell whose result count fits in the pages read was enumerated in full, and
    the rows it no longer lists are retired then and there; everything else is
    retired by age at the end of the pass.
+4. Adverts. Every card read in the harvest is then opened, because the search
+   card does not carry a body type, a colour, a drive train, the seller's text,
+   or — outside Germany — CO2, and those are the difference between a row that
+   can be priced beside a Portuguese one and a row that cannot.
+
+   This is what a pass now costs: a cell of twenty cars is twenty-one requests
+   rather than one. The budget is unchanged and therefore buys roughly a
+   twentieth of the cars it used to, which is the trade and not an oversight —
+   ``--no-adverts`` returns to the old, shallow behaviour.
+
+   Germany is the exception and not by our choice: ``autoscout24.de`` disallows
+   ``/angebote/`` in ``robots.txt``, so ``robots_allows`` refuses the path, no
+   budget is spent, and German rows stay exactly as deep as they were. France
+   (``/offres/``) and Italy (``/annunci/``) are open and are read in full.
 
 Discovery and inventory live in a JSON state file so a run that is killed or
 runs out of budget loses at most one make of work. Harvest progress lives in
@@ -39,6 +54,7 @@ Use:
     python scripts/crawl_eu_market.py --dry-run
     python scripts/crawl_eu_market.py --country DE --budget 300
     python scripts/crawl_eu_market.py --pages 1 --years 10
+    python scripts/crawl_eu_market.py --country IT --no-adverts
 """
 from __future__ import annotations
 
@@ -48,7 +64,7 @@ import os
 import sys
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -59,7 +75,9 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from src.analytics.model_pages import slugify  # noqa: E402
 from src.countries import EU_COUNTRIES, Country, country  # noqa: E402
+from src.parser import autoscout  # noqa: E402
 from src.parser.autoscout import AutoScoutBlocked  # noqa: E402
+from src.parser.market_card import merge_patch  # noqa: E402
 from src.parser.brand_normalize import normalize_brand  # noqa: E402
 from src.storage.repository import (  # noqa: E402
     _utcnow,
@@ -243,6 +261,8 @@ class CountryResult:
     cells_failed: int = 0
     inserted: int = 0
     updated: int = 0
+    adverts_read: int = 0
+    adverts_missed: int = 0
     deactivated: int = 0
     expired: int = 0
     requests: int = 0
@@ -286,9 +306,63 @@ def discover(client, cfg: MarketConfig, state: CrawlState, code: str, *,
     return read, empty
 
 
+def advert_path(url: str) -> str:
+    """A card's advert as a path the client can ask for.
+
+    The card stores an absolute URL and ``AutoScoutClient.fetch`` prepends the
+    national host, so the origin has to come off or the request is built twice.
+    """
+    text = str(url or "")
+    if not text.startswith("http"):
+        return text if text.startswith("/") else "/" + text
+    rest = text.split("//", 1)[-1]
+    slash = rest.find("/")
+    return rest[slash:] if slash >= 0 else "/"
+
+
+def enrich(client, rows: list[dict], result: CountryResult) -> None:
+    """Open each card's advert and fold what it says into the row.
+
+    This is the expensive half of a pass and the reason a cell of twenty cars
+    now costs twenty-one requests rather than one. What it buys is the fields
+    no search card carries: the body type, which is why ``segment`` was null
+    for every foreign row; CO2, which the ISV formula needs and which the
+    French and Italian cards omit; and the colour, the doors, the drive train
+    and the seller's own text, which is what a Portuguese row has always had.
+
+    On ``autoscout24.de`` it buys nothing, because ``robots.txt`` disallows
+    ``/angebote/`` and ``fetch`` refuses the path without spending budget. The
+    German rows therefore stay exactly as rich as they were and a German run
+    costs exactly what it cost before. That asymmetry is the site's decision,
+    not a switch to flip.
+
+    A missing advert is never a missing car: the row is stored either way, and
+    ``adverts_missed`` counts the difference so a pass that quietly stopped
+    enriching shows up in the summary rather than only in the data.
+    """
+    for row in rows:
+        if not _budget_left(client):
+            result.adverts_missed += 1
+            continue
+        patch = client.advert(advert_path(row.get("url")))
+        if patch:
+            merge_patch(row, patch, autoscout.CORRECTS)
+            result.adverts_read += 1
+        else:
+            result.adverts_missed += 1
+
+
 def probe_inventory(client, cfg: MarketConfig, state: CrawlState, cty: Country, session, *,
-                    now: datetime, result: CountryResult, log=print) -> None:
-    """One newest-first page per (make, model) not probed inside a month."""
+                    now: datetime, result: CountryResult, adverts: bool = True,
+                    log=print) -> None:
+    """One newest-first page per (make, model) not probed inside a month.
+
+    The page is asked for its result count, but its twenty cars are real and
+    are stored, so their adverts are opened here too. Without that, a model
+    under ``min_model_results`` — one this pass will never walk year by year —
+    would keep its rows card-shallow for as long as it stays small, which is
+    exactly the corner where nobody would think to look for the gap.
+    """
     cstate = state.country(cty.code)
     since_flush = 0
     for make in cfg.makes:
@@ -317,7 +391,10 @@ def probe_inventory(client, cfg: MarketConfig, state: CrawlState, cty: Country, 
                 cstate["inventory"][key] = {"results": int(meta["results"]), "at": _iso(now)}
             if listings:
                 stamp(listings, cty.source, brand, model["label"])
-                ins, upd = upsert_import_listings(session, listings)
+                rows = [asdict(item) for item in listings]
+                if adverts:
+                    enrich(client, rows, result)
+                ins, upd = upsert_import_listings(session, rows)
                 result.inserted += ins
                 result.updated += upd
             since_flush += 1
@@ -379,7 +456,8 @@ def cell_last_seen(session, source: str) -> dict[tuple, datetime]:
 
 
 def harvest(client, cfg: MarketConfig, cells: list[Cell], state: CrawlState, cty: Country,
-            session, *, pages_per_cell: int, result: CountryResult, log=print) -> None:
+            session, *, pages_per_cell: int, result: CountryResult, adverts: bool = True,
+            log=print) -> None:
     """Read each cell's newest pages, store them, retire what a full read no longer lists."""
     for index, cell in enumerate(cells, start=1):
         if not _budget_left(client):
@@ -409,7 +487,10 @@ def harvest(client, cfg: MarketConfig, cells: list[Cell], state: CrawlState, cty
         stamp(batch, cty.source, cell.brand, cell.model)
         seen_ids = {str(item.external_id) for item in batch}
         if batch:
-            ins, upd = upsert_import_listings(session, batch)
+            rows = [asdict(item) for item in batch]
+            if adverts:
+                enrich(client, rows, result)
+            ins, upd = upsert_import_listings(session, rows)
             result.inserted += ins
             result.updated += upd
         if results is not None and int(results) <= PAGE_SIZE * pages_fetched:
@@ -421,7 +502,8 @@ def harvest(client, cfg: MarketConfig, cells: list[Cell], state: CrawlState, cty
 
 def crawl_country(cty: Country, cfg: MarketConfig, state: CrawlState, client, session, *,
                   now: datetime | None = None, pages_per_cell: int | None = None,
-                  years_back: int | None = None, log=print) -> CountryResult:
+                  years_back: int | None = None, adverts: bool = True,
+                  log=print) -> CountryResult:
     """The three passes for one country, then the age-based expiry."""
     now = now or _utcnow()
     pages = pages_per_cell if pages_per_cell is not None else cfg.pages_per_cell
@@ -431,7 +513,8 @@ def crawl_country(cty: Country, cfg: MarketConfig, state: CrawlState, client, se
     try:
         result.makes_read, result.makes_empty = discover(client, cfg, state, cty.code,
                                                          now=now, log=log)
-        probe_inventory(client, cfg, state, cty, session, now=now, result=result, log=log)
+        probe_inventory(client, cfg, state, cty, session, now=now, result=result,
+                        adverts=adverts, log=log)
         kept = kept_models(cfg, state, cty.code)
         result.models_kept = len(kept)
         cells = order_cells(build_cells(kept, now_year=now.year, years_back=years),
@@ -439,7 +522,7 @@ def crawl_country(cty: Country, cfg: MarketConfig, state: CrawlState, client, se
                             now=now, cell_max_age_days=cfg.cell_max_age_days)
         result.cells_pending = len(cells)
         harvest(client, cfg, cells, state, cty, session, pages_per_cell=pages,
-                result=result, log=log)
+                result=result, adverts=adverts, log=log)
     except AutoScoutBlocked as exc:
         result.blocked = True
         log(f"[{cty.source}] stopped: {exc} — the site asked us to back off", flush=True)
@@ -459,6 +542,8 @@ def summary(result: CountryResult) -> str:
             f"{result.cells_read}/{result.cells_pending} cells read "
             f"({result.cells_empty} with nothing, {result.cells_failed} failed), "
             f"{result.inserted} new listings, {result.updated} refreshed, "
+            f"{result.adverts_read} adverts read "
+            f"({result.adverts_missed} not read), "
             f"{result.deactivated} retired, {result.expired} expired, "
             f"{result.requests} requests in {result.seconds:.0f}s"
             + (" — blocked" if result.blocked else ""))
@@ -466,7 +551,8 @@ def summary(result: CountryResult) -> str:
 
 def run(countries: list[Country], configs: dict[str, MarketConfig], state: CrawlState, *,
         client_factory, session_factory, pages_per_cell: int | None = None,
-        years_back: int | None = None, log=print) -> list[CountryResult]:
+        years_back: int | None = None, adverts: bool = True,
+        log=print) -> list[CountryResult]:
     """One thread per country; a blocked or crashed country leaves the others running."""
     results: dict[str, CountryResult] = {}
     for cty in countries:
@@ -479,7 +565,8 @@ def run(countries: list[Country], configs: dict[str, MarketConfig], state: Crawl
             with client_factory(cty, cfg) as client:
                 results[cty.code] = crawl_country(cty, cfg, state, client, session,
                                                   pages_per_cell=pages_per_cell,
-                                                  years_back=years_back, log=log)
+                                                  years_back=years_back,
+                                                  adverts=adverts, log=log)
         except Exception as exc:
             results[cty.code] = CountryResult(code=cty.code, source=cty.source,
                                               error=f"{type(exc).__name__}: {exc}")
@@ -555,6 +642,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--budget", type=int, default=None,
                     help="hard cap on requests per country this run (default: yaml)")
     ap.add_argument("--pages", type=int, default=None, help="pages per cell (default: yaml)")
+    ap.add_argument("--no-adverts", action="store_true",
+                    help="Read search cards only, without opening each advert. "
+                         "Cheap and shallow: no body type, no CO2, no colour, "
+                         "no description. Germany reads this way regardless, "
+                         "because its robots.txt disallows the advert path.")
     ap.add_argument("--years", type=int, default=None,
                     help="how many years back to harvest (default: yaml)")
     ap.add_argument("--dry-run", action="store_true",
@@ -590,7 +682,7 @@ def main(argv: list[str] | None = None) -> int:
     results = run(countries, configs, state,
                   client_factory=_client_factory(args.budget, args.delay_min, args.delay_max),
                   session_factory=get_session, pages_per_cell=args.pages,
-                  years_back=args.years)
+                  years_back=args.years, adverts=not args.no_adverts)
     for result in results:
         print(summary(result), flush=True)
     if any(r.blocked for r in results):

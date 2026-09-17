@@ -69,6 +69,7 @@ import re
 import time
 import unicodedata
 from dataclasses import dataclass, field
+from html import unescape as _unescape
 from urllib.parse import urlencode
 
 import httpx
@@ -93,6 +94,37 @@ _DISALLOWED_PREFIXES = (
     "/modelle/page/", "/regional/page/", "/lst?", "/lst/?", "/lst-moto?",
     "/lst-moto/?", "/Partner/", "/partner/", "/favorites",
 )
+
+_DISALLOWED_BY_TLD: dict[str, tuple[str, ...]] = {
+    "de": ("/angebote/", "/auto-abo/angebote/"),
+    "fr": ("/offres/-",),
+    "it": (),
+}
+
+CORRECTS: tuple[str, ...] = ()
+
+_COLOURS: dict[str, str | None] = {
+    "white": "Branco", "black": "Preto", "grey": "Cinzento", "gray": "Cinzento",
+    "silver": "Prateado", "blue": "Azul", "red": "Vermelho", "green": "Verde",
+    "yellow": "Amarelo", "brown": "Castanho", "beige": "Bege",
+    "orange": "Laranja", "gold": "Dourado", "violet": "Roxo", "purple": "Roxo",
+    "bronze": "Bronze", "other": None,
+}
+
+_BODY_TYPES: dict[str, str | None] = {
+    "sedan": "Sedan",
+    "stationwagon": "Carrinha",
+    "suv": "SUV/TT",
+    "offroad": "SUV/TT",
+    "compact": "Citadino",
+    "smallcar": "Pequeno Citadino",
+    "coupe": "Coupé",
+    "convertible": "Cabrio",
+    "cabrio": "Cabrio",
+    "van": "Monovolume",
+    "transporter": "Comercial",
+    "other": None,
+}
 
 _NEXT_DATA_RE = re.compile(
     r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', re.S)
@@ -155,6 +187,7 @@ class Market:
     co2_label: str | None
     fuels: dict[str, str | None]
     gearboxes: dict[str, str | None]
+    drive_trains: dict[str, str | None] = field(default_factory=dict)
 
 
 _MARKETS: dict[str, Market] = {
@@ -187,6 +220,11 @@ _MARKETS: dict[str, Market] = {
             "automatik": "Automática",
             "halbautomatik": "Automática",
         },
+        drive_trains={
+            "vorderrad": "Dianteira",
+            "hinterrad": "Traseira",
+            "allrad": "Integral",
+        },
     ),
     "fr": Market(
         tld="fr",
@@ -216,6 +254,12 @@ _MARKETS: dict[str, Market] = {
             "boite automatique": "Automática",
             "semi automatique": "Automática",
         },
+        drive_trains={
+            "traction avant": "Dianteira",
+            "propulsion": "Traseira",
+            "transmission integrale": "Integral",
+            "4 roues motrices": "Integral",
+        },
     ),
     "it": Market(
         tld="it",
@@ -244,6 +288,12 @@ _MARKETS: dict[str, Market] = {
             "automatico": "Automática",
             "semiautomatico": "Automática",
         },
+        drive_trains={
+            "anteriore": "Dianteira",
+            "posteriore": "Traseira",
+            "integrale": "Integral",
+            "4x4": "Integral",
+        },
     ),
 }
 
@@ -257,20 +307,43 @@ def market(tld: str = "de") -> Market:
                          f"(known: {', '.join(sorted(_MARKETS))})") from None
 
 
+class AutoScoutUnreadable(RuntimeError):
+    """A page answered but did not carry what it was asked for.
+
+    Kept apart from ``AutoScoutBlocked`` because the right response differs: a
+    block is the site asking us to go away and stops the whole run, while an
+    advert that will not parse costs that one car its extra fields and nothing
+    else.
+    """
+
+
 class AutoScoutBlocked(RuntimeError):
     """The site asked us to stop (429/403). Callers must not retry in-run."""
 
 
-def robots_allows(path: str) -> bool:
+def robots_allows(path: str, tld: str = "de") -> bool:
     """Whether ``User-agent: *`` in AutoScout24's robots.txt leaves this path open.
 
     Kept as code so the crawler cannot drift away from what the file says: the
     runner asks before every fetch, and a path that lands on a disallowed
-    prefix is skipped rather than requested. The German, French and Italian
-    files disallow the same search prefixes, so the judgement is shared.
+    prefix is skipped rather than requested.
+
+    The three national files agree on the search prefixes, so that list is
+    shared. They do **not** agree on the advert page, and the difference is the
+    whole reason this takes a ``tld``: ``autoscout24.de`` disallows
+    ``/angebote/`` outright, ``.fr`` closes only the malformed ``/offres/-``,
+    and ``.it`` says nothing about ``/annunci/``. So the German adverts are not
+    ours to read and the French and Italian ones are, and that judgement lives
+    here rather than in whichever caller remembers it.
+
+    The default is ``de`` because it is the strictest: a caller that forgets to
+    say which market it is reading gets the answer that refuses more.
     """
     p = path if path.startswith("/") else "/" + path
-    return not any(p.startswith(pre) for pre in _DISALLOWED_PREFIXES)
+    if any(p.startswith(pre) for pre in _DISALLOWED_PREFIXES):
+        return False
+    return not any(p.startswith(pre)
+                   for pre in _DISALLOWED_BY_TLD.get(str(tld or "de"), ()))
 
 
 @dataclass
@@ -568,6 +641,134 @@ def _cover_image(images: list | None) -> str | None:
     return first.replace("/250x188.webp", "/720x540.webp")
 
 
+def _first(*values):
+    """The first value that is neither None nor an empty string."""
+    for value in values:
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _raw(node, key: str):
+    """``{"raw": "Sedan", "formatted": "Berlina"}`` → the raw code, else the value.
+
+    AutoScout24 ships some fields twice, once translated for the page and once
+    as a language-independent code. The code is what this reader wants: one
+    table for three markets instead of three tables that drift apart.
+    """
+    value = (node or {}).get(key)
+    if isinstance(value, dict):
+        return _first(value.get("raw"), value.get("formatted"))
+    return value
+
+
+def parse_detail(html: str, tld: str = "de") -> dict:
+    """What the advert adds to a card: the body, the colour, and the seller's text.
+
+    Returns a patch to lay over a card rather than a whole listing, so an
+    advert that cannot be read costs the extra fields and not the car.
+
+    This is where two long-standing holes in the foreign corpora close.
+    ``segment`` was null for every AutoScout24 row because no search card
+    carries a body type, and CO2 was missing outside Germany for the same
+    reason — both are on the advert, and CO2 is an input the ISV formula needs.
+    The rest is what a Portuguese row has and a card never did: the seller's
+    own description, the colour, the doors and seats, the drive train, the
+    dealer behind the advert and the exact place it sits in.
+
+    Nothing here overwrites a card. ``CORRECTS`` is empty on purpose: unlike a
+    generalist classified, an AutoScout24 card is structured data from the same
+    database as the advert, so where the two overlap they agree, and where they
+    disagree the card is not the one to doubt.
+    """
+    match = _NEXT_DATA_RE.search(html or "")
+    if not match:
+        raise AutoScoutUnreadable("no __NEXT_DATA__ on advert page")
+    try:
+        props = json.loads(match.group(1))["props"]["pageProps"]
+    except (KeyError, ValueError) as exc:
+        raise AutoScoutUnreadable(f"unreadable advert page: {exc}") from exc
+
+    details = props.get("listingDetails")
+    if not isinstance(details, dict):
+        raise AutoScoutUnreadable("advert page carries no listing")
+
+    mk = market(tld)
+    vehicle = details.get("vehicle") or {}
+    raw = vehicle.get("rawData") or {}
+    patch: dict = {}
+    extras: dict = {}
+
+    description = re.sub(r"<br\s*/?>", "\n", str(details.get("description") or ""))
+    description = re.sub(r"<[^>]+>", " ", description)
+    description = _unescape(description)
+    description = re.sub(r"[ \t]+", " ", description).strip()
+    if description:
+        patch["description"] = description
+        patch["description_length"] = len(description)
+
+    body = _translate(str(_raw(raw, "bodyType") or ""), _BODY_TYPES)
+    if body:
+        patch["body_type"] = body
+        patch["segment"] = body
+
+    colour = _translate(str(_raw(raw, "bodyColor") or ""), _COLOURS)
+    if colour:
+        patch["color"] = colour
+
+    drive = _translate(str(vehicle.get("driveTrain") or ""), mk.drive_trains)
+    if drive:
+        patch["drive_type"] = drive
+
+    doors = vehicle.get("numberOfDoors")
+    if doors:
+        patch["doors"] = "1-3" if _int(doors) and _int(doors) <= 3 else "4-5"
+    if vehicle.get("numberOfSeats"):
+        patch["seats"] = _int(vehicle["numberOfSeats"])
+
+    co2 = vehicle.get("co2emissionInGramPerKmWithFallback")
+    co2 = _int(co2.get("raw")) if isinstance(co2, dict) else _int(co2)
+    if co2:
+        patch["co2_g_km"] = co2
+
+    seller = details.get("seller") or {}
+    if seller.get("companyName") or seller.get("contactName"):
+        patch["seller_displayed_as"] = _first(seller.get("companyName"),
+                                              seller.get("contactName"))
+    if seller.get("isDealer") is not None:
+        patch["seller_type"] = "Profissional" if seller["isDealer"] else "Particular"
+
+    location = details.get("location") or {}
+    if location.get("zip"):
+        patch["zip_code"] = str(location["zip"])
+    if location.get("city"):
+        patch["city"] = str(location["city"])
+
+    version = _first(vehicle.get("variant"), vehicle.get("modelVersionInput"))
+    if version:
+        extras["version"] = str(version)
+    if vehicle.get("motorTypeName"):
+        patch["sub_model"] = str(vehicle["motorTypeName"])
+    for key, name in (("noOfPreviousOwners", "previous_owners"),
+                      ("hasFullServiceHistory", "full_service_history"),
+                      ("hadAccident", "had_accident"),
+                      ("nonSmoking", "non_smoking"),
+                      ("originalMarket", "original_market"),
+                      ("gears", "gears")):
+        if vehicle.get(key) is not None:
+            extras[name] = vehicle[key]
+    if details.get("createdTimestampWithOffset"):
+        extras["posted_at"] = details["createdTimestampWithOffset"]
+
+    damage = _first(vehicle.get("hadAccident"), vehicle.get("damageConditions"))
+    if isinstance(damage, bool):
+        patch["is_damaged"] = damage
+
+    if extras:
+        patch["extras"] = extras
+    return patch
+
+
 def _list_path(segments, *, year: int | None = None, page: int = 1, country: str = "D",
                sort: str | None = None, desc: bool = False, ustate: str = "N,U") -> str:
     params = {
@@ -648,7 +849,7 @@ class AutoScoutClient:
         the polite response to being asked to go away is to go away, not to
         rotate a header and try again.
         """
-        if not robots_allows(path):
+        if not robots_allows(path, self.config.tld):
             logger.warning("autoscout: robots.txt disallows %s — skipped", path)
             return None
         if self.spent >= self.config.budget:
@@ -681,6 +882,24 @@ class AutoScoutClient:
         if html is None:
             return [], {}
         return parse_search(html, self.config.tld)
+
+    def advert(self, path: str) -> dict | None:
+        """One advert as a patch, or None when it is not ours to read.
+
+        None covers every reason not to have it and they are all the same to
+        the caller: robots closed the path — which is the standing answer on
+        ``autoscout24.de``, whose ``/angebote/`` is disallowed — the budget ran
+        out, or the page did not parse. The card is stored either way; a listing
+        is never dropped for want of its advert.
+        """
+        html = self.fetch(path)
+        if html is None:
+            return None
+        try:
+            return parse_detail(html, self.config.tld)
+        except AutoScoutUnreadable as exc:
+            logger.warning("autoscout: advert %s unreadable: %s", path, exc)
+            return None
 
     def make_page(self, make: str, *, page: int = 1) -> tuple[list[DeListing], dict]:
         """A make's own page: twenty real cars and, in meta, its model vocabulary."""

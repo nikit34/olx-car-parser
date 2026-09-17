@@ -22,7 +22,6 @@ short by a budget, a block or a laptop lid keeps what it had already read.
 from __future__ import annotations
 
 import argparse
-import json
 import random
 import sys
 import time
@@ -35,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.parser import automobile_it as am  # noqa: E402
 from src.parser import kleinanzeigen_de as ka  # noqa: E402
+from src.parser.market_card import merge_patch  # noqa: E402
 from src.storage.database import get_session, init_db  # noqa: E402
 from src.storage.repository import upsert_import_listings  # noqa: E402
 
@@ -104,32 +104,6 @@ def _fetch(client: httpx.Client, reader: Reader, path: str, budget: Budget,
     return response.text
 
 
-def _merge(row: dict, patch: dict, corrects: tuple[str, ...]) -> None:
-    """Lay an advert's fields over a card without overwriting what it knew.
-
-    The advert is richer but not uniformly better: Kleinanzeigen prints the
-    exact mileage on the card and a rounded bracket on the advert. So a patch
-    fills gaps, and only the keys a reader names in ``CORRECTS`` — the ones the
-    card is known to get wrong — are allowed to replace a value.
-    """
-    for key, value in patch.items():
-        if value is None or value == "":
-            continue
-        if key == "extras":
-            current = row.get("extras")
-            if isinstance(current, str):
-                try:
-                    current = json.loads(current)
-                except ValueError:
-                    current = {}
-            merged = dict(current or {})
-            merged.update(value if isinstance(value, dict) else {})
-            row["extras"] = merged
-            continue
-        if key in corrects or row.get(key) in (None, "", 0):
-            row[key] = value
-
-
 def _flush(session, rows: list[dict], result: Result) -> None:
     if not rows:
         return
@@ -188,8 +162,8 @@ def crawl(reader: Reader, session, budget: Budget, *, brands: int,
                     else:
                         _sleep(reader)
                         try:
-                            _merge(row, reader.module.parse_detail(advert),
-                                   getattr(reader.module, "CORRECTS", ()))
+                            merge_patch(row, reader.module.parse_detail(advert),
+                                        getattr(reader.module, "CORRECTS", ()))
                             result.adverts += 1
                         except Exception as exc:
                             result.errors.append(f"{card.external_id}: {exc}")

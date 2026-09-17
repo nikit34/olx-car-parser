@@ -30,10 +30,12 @@ def _listing(ext: str, year: int = 2018) -> DeListing:
 class FakeClient:
     """Answers make pages and searches from dicts; raises where told to."""
 
-    def __init__(self, *, make_pages=None, searches=None, budget=1000, block_on_make=None):
+    def __init__(self, *, make_pages=None, searches=None, budget=1000, block_on_make=None,
+                 adverts=None):
         self.make_pages = make_pages or {}
         self.searches = searches or {}
         self.block_on_make = block_on_make
+        self.adverts = adverts or {}
         self.spent = 0
         self.config = SimpleNamespace(budget=budget)
         self.calls: list[tuple] = []
@@ -43,6 +45,13 @@ class FakeClient:
 
     def __exit__(self, *exc):
         return False
+
+    def advert(self, path):
+        """None is the standing answer: robots closes the German advert path,
+        so a reader that cannot cope with None is a reader that breaks on DE."""
+        self.spent += 1
+        self.calls.append(("advert", path))
+        return self.adverts.get(path)
 
     def make_page(self, make, *, page=1):
         self.spent += 1
@@ -246,8 +255,25 @@ class TestInventory:
         assert inv["volkswagen/polo"]["results"] == 12
         assert result.models_probed == 2 and result.inserted == 3
         stored = repo_spy["upsert"][0]
-        assert {(i.source, i.brand, i.model) for i in stored} == {("as24_de", "Volkswagen", "Golf")}
+        assert {(r["source"], r["brand"], r["model"]) for r in stored} == {
+            ("as24_de", "Volkswagen", "Golf")}
         assert client.calls[0][5:] == ("age", True, "U")
+
+    def test_the_probe_page_gets_its_adverts_too(self, tmp_path, repo_spy):
+        """A model too small to be walked year by year is never harvested, so
+        if the probe did not open its adverts its rows would stay card-shallow
+        for as long as the model stays small."""
+        client = FakeClient(
+            searches={("volkswagen", "golf", None, 1): ([_listing("g1")],
+                                                        {"results": 12, "pages": 1})},
+            adverts={"/angebote/g1": {"segment": "Carrinha", "co2_g_km": 118}})
+        state = _state(tmp_path, discovered=_golf_discovered())
+        result = crawl.CountryResult(code="DE", source="as24_de")
+        crawl.probe_inventory(client, _cfg(), state, country("DE"), object(), now=NOW,
+                              result=result)
+        row = repo_spy["upsert"][0][0]
+        assert row["segment"] == "Carrinha" and row["co2_g_km"] == 118
+        assert result.adverts_read == 1
 
     def test_a_fresh_probe_is_skipped(self, tmp_path, repo_spy):
         client = FakeClient()
@@ -275,11 +301,12 @@ class TestHarvest:
         result = crawl.CountryResult(code="DE", source="as24_de")
         crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path), country("DE"),
                       object(), pages_per_cell=2, result=result)
-        assert client.spent == 1
+        assert client.spent == 3, "one search plus one advert per car"
         assert repo_spy["deactivate"] == [("as24_de", [("Volkswagen", "Golf", 2018)], {"a", "b"})]
         assert result.deactivated == 1 and result.cells_read == 1
         stored = repo_spy["upsert"][0]
-        assert {(i.source, i.brand, i.model) for i in stored} == {("as24_de", "Volkswagen", "Golf")}
+        assert {(r["source"], r["brand"], r["model"]) for r in stored} == {
+            ("as24_de", "Volkswagen", "Golf")}
 
     def test_a_second_page_is_read_only_when_it_exists(self, tmp_path, repo_spy):
         client = FakeClient(searches={
@@ -290,7 +317,7 @@ class TestHarvest:
         result = crawl.CountryResult(code="DE", source="as24_de")
         crawl.harvest(client, _cfg(), [self._cell(2018), self._cell(2017)], _state(tmp_path),
                       country("DE"), object(), pages_per_cell=2, result=result)
-        pages = [(c[3], c[4]) for c in client.calls]
+        pages = [(c[3], c[4]) for c in client.calls if c[0] == "search"]
         assert pages == [(2018, 1), (2018, 2), (2017, 1)]
         assert [d[1][0][2] for d in repo_spy["deactivate"]] == [2018, 2017]
         assert repo_spy["deactivate"][0][2] == {"a", "b"}
@@ -303,9 +330,61 @@ class TestHarvest:
         result = crawl.CountryResult(code="DE", source="as24_de")
         crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path), country("DE"),
                       object(), pages_per_cell=2, result=result)
-        assert client.spent == 2
+        assert client.spent == 4, "two searches plus one advert per car"
         assert repo_spy["deactivate"] == []
         assert len(repo_spy["upsert"][0]) == 2
+
+    def test_the_advert_fills_what_the_card_had_no_room_for(self, tmp_path, repo_spy):
+        """The body type is the point: no AutoScout24 search card carries one,
+        which is why ``segment`` was null for every foreign row."""
+        client = FakeClient(
+            searches={("volkswagen", "golf", 2018, 1): ([_listing("a")],
+                                                        {"results": 1, "pages": 1})},
+            adverts={"/angebote/a": {"body_type": "Carrinha", "segment": "Carrinha",
+                                     "color": "Preto", "co2_g_km": 118,
+                                     "description": "Scheckheft"}})
+        result = crawl.CountryResult(code="DE", source="as24_de")
+        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path), country("DE"),
+                      object(), pages_per_cell=2, result=result)
+        row = repo_spy["upsert"][0][0]
+        assert row["segment"] == "Carrinha" and row["color"] == "Preto"
+        assert row["co2_g_km"] == 118 and row["description"] == "Scheckheft"
+        assert result.adverts_read == 1 and result.adverts_missed == 0
+
+    def test_an_advert_we_may_not_read_still_stores_the_car(self, tmp_path, repo_spy):
+        """Germany's robots.txt disallows ``/angebote/``, so the client answers
+        None there every time. A car is never dropped for want of its advert."""
+        client = FakeClient(searches={
+            ("volkswagen", "golf", 2018, 1): ([_listing("a")], {"results": 1, "pages": 1})})
+        result = crawl.CountryResult(code="DE", source="as24_de")
+        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path), country("DE"),
+                      object(), pages_per_cell=2, result=result)
+        assert len(repo_spy["upsert"][0]) == 1
+        assert result.adverts_read == 0 and result.adverts_missed == 1
+
+    def test_the_advert_never_overwrites_the_card(self, tmp_path, repo_spy):
+        """AutoScout24 names no ``CORRECTS``: card and advert come from one
+        database, so where they overlap the card is not the one to doubt."""
+        client = FakeClient(
+            searches={("volkswagen", "golf", 2018, 1): ([_listing("a")],
+                                                        {"results": 1, "pages": 1})},
+            adverts={"/angebote/a": {"year": 1999, "brand": "Wrong",
+                                     "mileage_km": 88000}})
+        result = crawl.CountryResult(code="DE", source="as24_de")
+        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path), country("DE"),
+                      object(), pages_per_cell=2, result=result)
+        row = repo_spy["upsert"][0][0]
+        assert row["brand"] == "Volkswagen" and row["year"] == 2018
+        assert row["mileage_km"] == 88000, "a gap the card left is still filled"
+
+    def test_cards_are_still_stored_when_adverts_are_off(self, tmp_path, repo_spy):
+        client = FakeClient(searches={
+            ("volkswagen", "golf", 2018, 1): ([_listing("a")], {"results": 1, "pages": 1})})
+        result = crawl.CountryResult(code="DE", source="as24_de")
+        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path), country("DE"),
+                      object(), pages_per_cell=2, result=result, adverts=False)
+        assert client.spent == 1 and len(repo_spy["upsert"][0]) == 1
+        assert result.adverts_read == 0 and result.adverts_missed == 0
 
     def test_a_page_that_did_not_parse_retires_nothing(self, tmp_path, repo_spy):
         client = FakeClient(searches={("volkswagen", "golf", 2018, 1): ([], {})})
