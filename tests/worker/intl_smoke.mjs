@@ -262,6 +262,45 @@ await check("/de/markt lists the German deals with safe outbound links", async (
   assert(!/anúncio|poupas/i.test(visibleText(html)), "the feed leaks Portuguese");
 });
 
+await check("a deal in the feed has its own page, in German, on every market", async () => {
+  const feed = await body("/de/markt");
+  assert(feed.includes('href="/de/auto?olx_id=as24_de%3Aaaa"'),
+    "the feed tile does not lead to the car page");
+
+  const r = await get("/de/auto?olx_id=as24_de:aaa");
+  assert(r.status === 200, `/de/auto → ${r.status}`);
+  const html = await r.text();
+  assert(html.includes('<html lang="de-DE">'), "the car page is not a German page");
+  assert(html.includes('content="noindex'), "the car page is indexable");
+  assert(html.includes("11.900") && html.includes("14.200"),
+    "the car page shows neither the asking price nor the fair median");
+  assert(html.includes("128.000 km") && html.includes("Händler"),
+    "the car page drops the signals the feed already had");
+  assert(html.includes('href="https://www.autoscout24.de/angebote/aaa"'),
+    "the car page does not link the source listing");
+  assert(html.includes('href="/de/markt"'), "the car page has no way back to the feed");
+  assert(html.includes('href="/de/preis/volkswagen-golf"'),
+    "the car page does not link the model it belongs to");
+  const seen = visibleText(html);
+  for (const w of PT_GIVEAWAYS) {
+    assert(!new RegExp(w, "i").test(seen), `the German car page leaks "${w}"`);
+  }
+
+  for (const [path, feedPath] of [["/fr/voiture", "/fr/marche"], ["/it/auto", "/it/mercato"]]) {
+    const miss = await get(`${path}?olx_id=nope`);
+    assert(miss.status === 302, `${path} with an unknown car → ${miss.status}`);
+    assert(miss.headers.get("location") === feedPath,
+      `${path} sends an unknown car to ${miss.headers.get("location")}`);
+  }
+});
+
+await check("a car that left the feed goes back to the feed, not to a dead page", async () => {
+  const r = await get("/de/auto?olx_id=as24_de:gone");
+  assert(r.status === 302, `a stale car link → ${r.status}`);
+  assert(r.headers.get("location") === "/de/markt",
+    `a stale car link sends the reader to ${r.headers.get("location")}`);
+});
+
 await check("the German trust pages are indexable", async () => {
   const pages = [
     ["/de/methodik", "AutoScout24"],

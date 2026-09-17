@@ -971,6 +971,55 @@ export function renderIntlFeed({ loc, host, deals, builtAt, models = null }) {
   });
 }
 
+export function carPath(loc, olxId) {
+  return `${href(loc, "car")}?olx_id=${encodeURIComponent(String(olxId || ""))}`;
+}
+
+export function renderIntlCar({ loc, host, deal, rec = null, builtAt = null }) {
+  const name = (rec && rec.t) || deal.title
+    || [deal.brand, deal.model, deal.year].filter(v => v != null && v !== "").join(" ");
+  const card = rec || {
+    t: name, y: deal.year, km: deal.mileage_km, fu: deal.fuel_type, ct: deal.city,
+    p: deal.price_eur, fl: deal.fair_low, fm: deal.fair_median, fh: deal.fair_high,
+    sd: deal.sell_days != null ? deal.sell_days : null, ms: slugOf(deal),
+  };
+  const photos = Array.isArray(deal.photo_urls) && deal.photo_urls.length
+    ? deal.photo_urls.slice(0, 5)
+    : (deal.image_url ? [deal.image_url] : []);
+  const shots = photos.length
+    ? `<div class="fc-shots">${photos.map((u, i) =>
+        `<img src="${escapeHtml(u)}" alt="${escapeHtml(name)}" ${i ? `loading="lazy"` : `fetchpriority="high"`}>`).join("")}</div>`
+    : "";
+  const sig = [];
+  const push = (k, v) => { if (v != null && v !== "") sig.push({ k, v, s: "" }); };
+  push(t(loc, "car.sig_km"), deal.mileage_km != null ? escapeHtml(fmtKmL(loc, deal.mileage_km)) : null);
+  push(t(loc, "car.sig_seller"), deal.seller_type ? escapeHtml(labelL(loc, deal.seller_type)) : null);
+  push(t(loc, "car.sig_days"), deal.days_on_market != null ? escapeHtml(fmtNumL(loc, deal.days_on_market)) : null);
+  push(t(loc, "car.sig_discount"), deal.discount_pct != null ? `${pctInt(deal.discount_pct)}%` : null);
+  push(t(loc, "car.sig_damage"), deal.damage_severity != null ? `${deal.damage_severity} / 3` : null);
+  push(t(loc, "car.sig_photo"), deal.photo_damage_p != null ? `${pctInt(deal.photo_damage_p)}%` : null);
+  push(t(loc, "car.sig_sample"), deal.sample_size != null ? escapeHtml(fmtNumL(loc, deal.sample_size)) : null);
+
+  const body = `
+    <section class="fc-sec">
+      <a class="chip" href="${href(loc, "mercado")}">${t(loc, "car.back")}</a>
+      ${shots}
+      ${verdictBlock(loc, card, deal.url || null, null)}
+      ${sig.length ? `<h2 class="fc-h2">${t(loc, "car.signals_h")}</h2>${statBlock(sig)}` : ""}
+      <p class="mono fc-prov">${t(loc, "feed.prov", {
+        date: day(builtAt) || t(loc, "common.na"), source: loc.source.name,
+      })}</p>
+    </section>`;
+  return layout({
+    title: t(loc, "av.v_title", { title: name }),
+    description: t(loc, "car.desc", { title: name, source: loc.source.name }),
+    body, zone: "all", nav: "feed", depositCount: null, index: false, host, locale: loc,
+    canonical: `https://${host}${carPath(loc, deal.olx_id)}`,
+    jsonLd: graph([breadcrumbLd(host, [homeCrumb(loc),
+      { name: t(loc, "feed.crumb"), href: href(loc, "mercado") }])]),
+  });
+}
+
 function dealTile(loc, d) {
   const name = [d.brand, d.model, d.year].filter(v => v != null && v !== "").join(" ");
   const photo = d.image_url || (Array.isArray(d.photo_urls) ? d.photo_urls[0] : null);
@@ -984,12 +1033,13 @@ function dealTile(loc, d) {
   const days = d.days_on_market != null
     ? (d.days_on_market === 1 ? t(loc, "feed.day_one") : t(loc, "feed.days", { d: fmtNumL(loc, d.days_on_market) }))
     : "";
+  const detail = carPath(loc, d.olx_id);
   return `<article class="tile">
-    <div class="thumb">${photo
+    <a href="${detail}" class="thumb">${photo
       ? `<img src="${escapeHtml(photo)}" alt="${escapeHtml(name)}" loading="lazy">`
-      : `<div class="striped" style="height:100%;"><span class="striped-label">Carsbuyer</span></div>`}</div>
+      : `<div class="striped" style="height:100%;"><span class="striped-label">Carsbuyer</span></div>`}</a>
     <div class="tbody">
-      <div class="tile-title">${escapeHtml(name)}</div>
+      <div class="tile-title"><a href="${detail}">${escapeHtml(name)}</a></div>
       <div class="tile-sub">${escapeHtml(sub)}</div>
       <div class="price-row">
         <div><div style="font-size:11px;color:#8A8F98;">${t(loc, "av.v_cap_price")}</div>

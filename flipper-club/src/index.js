@@ -70,7 +70,7 @@ import {
 import {
   renderIntlLanding, renderIntlHub, renderIntlModelPage, renderIntlYearPage,
   renderIntlAvaliar, renderIntlFeed, renderIntlMethodology, renderIntlAbout,
-  renderIntlPrivacy, renderIntlNotFound, renderIntlInfo,
+  renderIntlPrivacy, renderIntlNotFound, renderIntlInfo, renderIntlCar,
   intlModelJson, intlYearJson, intlSitemapPaths, intlYearCell, intlSiblings,
   setIntlWave, intlPublishedYears, intlInWave,
 } from "./pages-intl.js";
@@ -1355,6 +1355,7 @@ async function handleIntl(request, env, url, intl) {
   if (path === `/${R.hub}`) return intlHub(env, url, loc);
   if (path === `/${R.avaliar}`) return intlAvaliar(env, url, loc);
   if (path === `/${R.mercado}`) return intlFeed(env, url, loc);
+  if (path === `/${R.car}`) return intlCar(env, url, loc);
   if (path === `/${R.metodologia}`) return intlTrustPage(env, url, loc, "method");
   if (path === `/${R.sobre}`) return intlTrustPage(env, url, loc, "about");
   if (path === `/${R.privacidade}`) return intlPrivacy(env, url, loc);
@@ -1539,6 +1540,20 @@ async function intlFeed(env, url, loc) {
   return publicHtml(renderIntlFeed({
     loc, host: url.host, deals: sortDeals(deals || [], "score"),
     builtAt: builtAt || (c && c.builtAt), models: c && c.models,
+  }));
+}
+
+async function intlCar(env, url, loc) {
+  const id = (url.searchParams.get("olx_id") || "").toString();
+  const { deals, degraded, builtAt } = await getDeals(env, "all", loc.country);
+  if (degraded) return intlUnavailable(loc, url.host, "info.deals_unavailable");
+  const deal = (deals || []).find(d => String(d.olx_id) === id);
+  if (!deal) return redirect(ihref(loc, "mercado"), 302);
+  const cars = await getValuations(env, loc.country);
+  const rec = (cars && cars[String(deal.olx_id)]) || null;
+  const c = await intlCorpus(env, loc);
+  return publicHtml(renderIntlCar({
+    loc, host: url.host, deal, rec, builtAt: builtAt || (c && c.builtAt),
   }));
 }
 
