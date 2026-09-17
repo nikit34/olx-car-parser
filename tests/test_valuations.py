@@ -88,3 +88,33 @@ class TestFaultPhrases:
             _predictions())["cars"]["AAA"]
         assert car["mf"] == "fuga de óleo"
         assert car["hb"] == "para peças"
+
+
+class TestAHoleInTheTextColumns:
+    """A foreign corpus has descriptions on some rows and not others.
+
+    A text column holds None only while every row is None; let one row carry a
+    description and pandas turns the rest into NaN, which is truthy. Every
+    country blob build died on that the first time the readers started filling
+    descriptions in.
+    """
+
+    def test_a_nan_description_reads_as_no_text(self):
+        rows = _listings().to_dict("records")[0]
+        listings = pd.DataFrame([
+            dict(rows, olx_id="AAA", description="importado da Alemanha"),
+            dict(rows, olx_id="BBB", description=None),
+        ])
+        predictions = pd.concat([_predictions(),
+                                 _predictions().assign(olx_id="BBB")],
+                                ignore_index=True)
+        assert isinstance(listings["description"].iloc[1], float), "the hole is a NaN"
+
+        cars = build_valuations(listings, predictions)["cars"]
+
+        assert set(cars) == {"AAA", "BBB"}
+
+    def test_a_nan_title_does_not_stop_the_build(self):
+        cars = build_valuations(_listings(title=float("nan")),
+                                _predictions())["cars"]
+        assert "AAA" in cars

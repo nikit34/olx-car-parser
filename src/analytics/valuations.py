@@ -25,8 +25,18 @@ import pandas as pd
 _PRICE_TRACK_MAX = 6
 
 
-def _strip_accents(s: str) -> str:
-    s = (s or "").lower()
+def _strip_accents(s) -> str:
+    """Accent-free lowercase text, with anything that is not a string read as empty.
+
+    The value that forced the guard is NaN. These fields arrive from a frame,
+    and a text column holds None only while every row is None: let one row
+    carry a description and pandas turns the rest into ``float('nan')``, which
+    is truthy, so ``s or ""`` handed it straight to ``.lower()``. That is what
+    a foreign corpus looks like now — some listings have had their advert read
+    and the rest have not — and it took the country blobs down on the first
+    build after the readers started filling descriptions in.
+    """
+    s = (s if isinstance(s, str) else "").lower()
     return "".join(c for c in unicodedata.normalize("NFD", s)
                    if unicodedata.category(c) != "Mn")
 
