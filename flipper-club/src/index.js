@@ -71,6 +71,7 @@ import {
   renderIntlLanding, renderIntlHub, renderIntlModelPage, renderIntlYearPage,
   renderIntlAvaliar, renderIntlFeed, renderIntlMethodology, renderIntlAbout,
   renderIntlPrivacy, renderIntlNotFound, renderIntlInfo, renderIntlCar,
+  renderIntlArchive, renderIntlMarketIndex,
   intlModelJson, intlYearJson, intlSitemapPaths, intlYearCell, intlSiblings,
   setIntlWave, intlPublishedYears, intlInWave,
 } from "./pages-intl.js";
@@ -1113,6 +1114,19 @@ function snapshotFrom(models, builtAt, week, date, src) {
 const SNAP_MODELS_PREFIX = "snap:models:";
 const SNAP_LIST_KEY = "snap:models:weeks";
 
+function archiveKeys(country) {
+  const c = String(country || "PT").toUpperCase();
+  if (c === "PT") {
+    return { snapList: SNAP_LIST_KEY, snapWeek: SNAP_MODELS_PREFIX,
+             idxList: IDX_LIST_KEY, idxWeek: IDX_WEEK_PREFIX };
+  }
+  const k = c.toLowerCase();
+  return {
+    snapList: `${SNAP_MODELS_PREFIX}${k}:weeks`, snapWeek: `${SNAP_MODELS_PREFIX}${k}:`,
+    idxList: `${IDX_LIST_KEY}:${k}`, idxWeek: `${IDX_WEEK_PREFIX}${k}:`,
+  };
+}
+
 function modelsCut(models) {
   const out = {};
   for (const [slug, r] of Object.entries(models)) {
@@ -1124,22 +1138,23 @@ function modelsCut(models) {
   return out;
 }
 
-async function snapshotWeeks(env) {
+async function snapshotWeeks(env, country = null) {
   try {
-    const listed = await env.KV.get(SNAP_LIST_KEY, "json");
+    const listed = await env.KV.get(archiveKeys(country).snapList, "json");
     return Array.isArray(listed) ? listed : [];
   } catch (_) { return []; }
 }
 
-async function recordModelsSnapshot(env, models, builtAt, week, date, src) {
-  const weeks = await snapshotWeeks(env);
+async function recordModelsSnapshot(env, models, builtAt, week, date, src, country = null) {
+  const keys = archiveKeys(country);
+  const weeks = await snapshotWeeks(env, country);
   if (weeks.includes(week)) return false;
   const body = JSON.stringify({
     week, date, builtAt: builtAt || null, src, models: modelsCut(models),
   });
   try {
-    await env.KV.put(`${SNAP_MODELS_PREFIX}${week}`, body);
-    await env.KV.put(SNAP_LIST_KEY, JSON.stringify([...weeks, week].sort()));
+    await env.KV.put(`${keys.snapWeek}${week}`, body);
+    await env.KV.put(keys.snapList, JSON.stringify([...weeks, week].sort()));
   } catch (err) {
     console.warn("models snapshot write failed", err && err.message);
     return false;
@@ -1147,29 +1162,30 @@ async function recordModelsSnapshot(env, models, builtAt, week, date, src) {
   return true;
 }
 
-async function recordWeeklyIndex(env, now, src = "web") {
-  const mdoc = await getModels(env);
+async function recordWeeklyIndex(env, now, src = "web", country = null) {
+  const keys = archiveKeys(country);
+  const mdoc = await getModels(env, country);
   const models = mdoc && mdoc.models;
   const week = isoWeek(now);
   const today = now.toISOString().slice(0, 10);
 
   let history = [];
   try {
-    const listed = await env.KV.get(IDX_LIST_KEY, "json");
+    const listed = await env.KV.get(keys.idxList, "json");
     if (Array.isArray(listed)) history = listed;
   } catch (_) { /* the archive is a nice-to-have, never a 500 */ }
 
   // No data means no snapshot. A row of nulls is worse than a gap: the gap is
   // visible and honest, the nulls look like a market that stopped existing.
   if (!models) return { week, history, written: false, reason: "no-models" };
-  await recordModelsSnapshot(env, models, mdoc.built_at, week, today, src);
+  await recordModelsSnapshot(env, models, mdoc.built_at, week, today, src, country);
   if (history.some(h => h.week === week)) return { week, history, written: false, reason: "already" };
 
   const snap = snapshotFrom(models, mdoc.built_at, week, today, src);
   const next = [...history, snap].sort((a, b) => a.week < b.week ? -1 : 1).slice(-IDX_MAX_WEEKS);
   try {
-    await env.KV.put(`${IDX_WEEK_PREFIX}${week}`, JSON.stringify(snap));
-    await env.KV.put(IDX_LIST_KEY, JSON.stringify(next));
+    await env.KV.put(`${keys.idxWeek}${week}`, JSON.stringify(snap));
+    await env.KV.put(keys.idxList, JSON.stringify(next));
   } catch (err) {
     console.warn("index snapshot write failed", err && err.message);
     return { week, history, written: false, reason: "kv-error" };
@@ -1182,8 +1198,8 @@ function weekToken(raw) {
   return m ? `${m[1]}-W${m[2]}` : null;
 }
 
-async function readSnapshot(env, week) {
-  try { return await env.KV.get(`${SNAP_MODELS_PREFIX}${week}`, "json"); }
+async function readSnapshot(env, week, country = null) {
+  try { return await env.KV.get(`${archiveKeys(country).snapWeek}${week}`, "json"); }
   catch (_) { return null; }
 }
 
@@ -1356,6 +1372,14 @@ async function handleIntl(request, env, url, intl) {
   if (path === `/${R.avaliar}`) return intlAvaliar(env, url, loc);
   if (path === `/${R.mercado}`) return intlFeed(env, url, loc);
   if (path === `/${R.car}`) return intlCar(env, url, loc);
+  if (path === `/${R.arquivo}`) return intlArchive(env, url, loc, "");
+  if (path.startsWith(`/${R.arquivo}/`)) {
+    return intlArchive(env, url, loc, path.slice(`/${R.arquivo}/`.length));
+  }
+  if (path === `/${R.indice}`) return intlMarketIndex(env, url, loc, "");
+  if (path.startsWith(`/${R.indice}/`)) {
+    return intlMarketIndex(env, url, loc, path.slice(`/${R.indice}/`.length));
+  }
   if (path === `/${R.metodologia}`) return intlTrustPage(env, url, loc, "method");
   if (path === `/${R.sobre}`) return intlTrustPage(env, url, loc, "about");
   if (path === `/${R.privacidade}`) return intlPrivacy(env, url, loc);
@@ -1559,6 +1583,68 @@ async function intlCar(env, url, loc) {
   }));
 }
 
+async function intlArchive(env, url, loc, tail) {
+  if (!tail) {
+    const weeks = await snapshotWeeks(env, loc.country);
+    return publicHtml(renderIntlArchive({ loc, host: url.host, weeks }));
+  }
+  let rest;
+  try { rest = decodeURIComponent(tail).replace(/\/+$/, "").toLowerCase(); }
+  catch (_) { return intlNotFound(env, url, loc); }
+  if (!rest.endsWith(".json")) return intlNotFound(env, url, loc);
+  const parts = rest.slice(0, -".json".length).split("/");
+  if (parts.length > 2) return intlNotFound(env, url, loc);
+  const week = weekToken(parts[0]);
+  if (!week) return intlNotFound(env, url, loc);
+  const snap = await readSnapshot(env, week, loc.country);
+  if (!snap) return intlNotFound(env, url, loc);
+  const base = {
+    market: loc.country, language: loc.code,
+    week: snap.week, date: snap.date, built_at: snap.builtAt,
+    source: `https://${url.host}${ihref(loc, "arquivo")}/${parts[0]}.json`,
+    note: it(loc, "arch.note"),
+  };
+  const frozen = payload => {
+    const res = jsonResponse(payload);
+    res.headers.set("cache-control", "public, max-age=31536000, immutable");
+    return res;
+  };
+  if (parts.length === 1) return frozen({ ...base, models: snap.models || {} });
+  const rec = (snap.models || {})[parts[1]];
+  if (!rec) return intlNotFound(env, url, loc);
+  return frozen({
+    ...base,
+    source: `https://${url.host}${ihref(loc, "arquivo")}/${parts[0]}/${parts[1]}.json`,
+    slug: parts[1], ...rec,
+  });
+}
+
+async function intlMarketIndex(env, url, loc, tail) {
+  const { week, history } = await recordWeeklyIndex(env, new Date(), "web", loc.country);
+  const months = monthlyCuts(history, week);
+  const rest = String(tail || "").replace(/\/+$/, "").toLowerCase();
+  if (rest) {
+    const mm = /^(\d{4})-(\d{2})$/.exec(rest);
+    if (mm) {
+      const cut = months.find(c => c.month === rest);
+      if (!cut) return intlNotFound(env, url, loc);
+      return publicHtml(renderIntlMarketIndex({
+        loc, host: url.host, snapshot: null, history, months, month: cut,
+      }));
+    }
+    const pinned = weekToken(rest);
+    const row = pinned ? history.find(h => h.week === pinned) : null;
+    if (!row) return intlNotFound(env, url, loc);
+    return publicHtml(renderIntlMarketIndex({
+      loc, host: url.host, snapshot: row, history: [], months: [], pinned,
+    }));
+  }
+  return publicHtml(renderIntlMarketIndex({
+    loc, host: url.host, snapshot: history[history.length - 1] || null,
+    history, gaps: missingWeeks(history, week), months,
+  }));
+}
+
 async function intlSitemap(env, url, loc) {
   const base = `https://${url.host}`;
   const mdoc = await getModels(env, loc.country);
@@ -1571,6 +1657,11 @@ async function intlSitemap(env, url, loc) {
     hasDeals = !feed.degraded && Array.isArray(feed.deals) && feed.deals.length > 0;
   } catch (_) { hasDeals = false; }
   const paths = intlSitemapPaths(loc, models, hasDeals, (mdoc && mdoc.built_at) || null);
+  const weeks = await snapshotWeeks(env, loc.country);
+  if (weeks.length) {
+    paths.push({ path: ihref(loc, "arquivo"), freq: "weekly", prio: "0.5" });
+    paths.push({ path: ihref(loc, "indice"), freq: "weekly", prio: "0.6" });
+  }
   if (models) {
     for (const mod of intlPageModules()) {
       if (typeof mod.sitemap !== "function") continue;

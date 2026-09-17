@@ -419,6 +419,51 @@ await check("every feed can be narrowed to one region, like the Portuguese zones
   }
 });
 
+await check("every market keeps its own dated archive and market index", async () => {
+  const de = MARKETS.de;
+  const empty = await get(`/de/${LOCALES.de.routes.arquivo}`);
+  assert(empty.status === 200, `/de/archiv → ${empty.status}`);
+  assert((await empty.text()).includes("Noch keine archivierte Woche"),
+    "an archive with nothing in it pretends to have something");
+
+  const idx = await get(`/de/${LOCALES.de.routes.indice}`);
+  assert(idx.status === 200, `/de/marktindex → ${idx.status}`);
+  const idxHtml = await idx.text();
+  assert(/\d/.test(idxHtml), "the market index shows no numbers at all");
+  assertOwnLanguage("de", "/de/marktindex", idxHtml);
+
+  const filled = await (await get(`/de/${LOCALES.de.routes.arquivo}`)).text();
+  const week = (filled.match(/(\d{4}-W\d{2})/) || [])[1];
+  assert(week, "reading the index did not write this week into the archive");
+  assertOwnLanguage("de", "/de/archiv", filled);
+
+  const cut = await get(`/de/${LOCALES.de.routes.arquivo}/${week.toLowerCase()}.json`);
+  assert(cut.status === 200, `the frozen cut → ${cut.status}`);
+  assert(cut.headers.get("cache-control").includes("immutable"),
+    "a frozen week is not cached as immutable");
+  const doc = await cut.json();
+  assert(doc.market === "DE" && doc.language === "de", "the cut does not say which market it is");
+  assert(doc.week === week && doc.models && Object.keys(doc.models).length > 0,
+    "the cut carries no models");
+  const one = Object.keys(doc.models)[0];
+  const single = await (await get(`/de/${LOCALES.de.routes.arquivo}/${week.toLowerCase()}/${one}.json`)).json();
+  assert(single.slug === one && single.fm != null, "the per-model cut is empty");
+
+  assert((await get(`/de/${LOCALES.de.routes.arquivo}/2099-w01.json`)).status === 404,
+    "a week we never recorded is not a 404");
+
+  const fr = await (await get(`/fr/${LOCALES.fr.routes.arquivo}`)).text();
+  assert(fr.includes("Aucune semaine archivée"),
+    "the French archive shows the German market's weeks");
+
+  const xml = await body(`/de/sitemap.xml`);
+  assert(xml.includes(`/de/${LOCALES.de.routes.arquivo}</loc>`),
+    "the sitemap does not advertise an archive that has weeks");
+  assert(xml.includes(`/de/${LOCALES.de.routes.indice}</loc>`),
+    "the sitemap does not advertise the market index");
+  assert(de.feed === "/de/markt", "the market table drifted");
+});
+
 await check("the outbound click is measured on the intl markets too", async () => {
   const ga = { ...makeEnv("de,fr,it"), GA4_MEASUREMENT_ID: "G-TESTONLY" };
   for (const path of ["/de/markt", "/de/auto?olx_id=as24_de:aaa"]) {

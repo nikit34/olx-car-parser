@@ -1008,6 +1008,132 @@ export function renderIntlFeed({ loc, host, deals, builtAt, models = null,
   });
 }
 
+export function renderIntlArchive({ loc, host, weeks = [] }) {
+  const path = href(loc, "arquivo");
+  const permalink = `https://${host}${path}`;
+  const shown = weeks.slice().sort().reverse();
+  const latest = shown[0] || null;
+  const tok = w => escapeHtml(String(w).toLowerCase());
+  const rows = shown.map(w => `<tr>
+      <td class="mono">${escapeHtml(w)}</td>
+      <td><a href="${path}/${tok(w)}.json" style="color:#177A47;font-weight:600;">${t(loc, "arch.col_full")}</a></td>
+      <td class="mut mono">${path}/${tok(w)}/{slug}.json</td></tr>`).join("");
+  const crumbItems = [homeCrumb(loc), { name: t(loc, "arch.crumb") }];
+  const body = crumbs(crumbItems) + `
+    <section class="fc-sec">
+      ${eyebrow(t(loc, "arch.eyebrow", { n: fmtNumL(loc, shown.length) }))}
+      <h1 class="fc-h1">${t(loc, "arch.h1")}</h1>
+      <p class="fc-p">${t(loc, "arch.p1")}</p>
+      <p class="fc-p">${t(loc, "arch.p2")}</p>
+      <p class="fc-p">${latest
+        ? t(loc, "arch.latest", { url: `<span class="mono fc-url">${escapeHtml(permalink)}/${tok(latest)}.json</span>` })
+        : t(loc, "arch.empty")}</p>
+    </section>
+    ${shown.length ? `<section class="fc-sec">
+      <h2 class="fc-h2">${t(loc, "arch.weeks_h")}</h2>
+      <div class="fc-scroll"><table class="fc-tbl">
+        <thead><tr><th>${t(loc, "arch.col_week")}</th><th>${t(loc, "arch.col_full")}</th><th>${t(loc, "arch.col_model")}</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </section>` : ""}
+    <section class="fc-sec">
+      <h2 class="fc-h2">${t(loc, "arch.cut_h")}</h2>
+      <p class="fc-p">${t(loc, "arch.cut_p", { source: loc.source.name, method: href(loc, "metodologia") })}</p>
+      <p class="fc-p">${t(loc, "arch.cut_p2")}</p>
+      <p class="fc-p"><a href="${href(loc, "hub")}">${t(loc, "common.all_models")}</a> · <a href="${href(loc, "indice")}">${t(loc, "idx.crumb")}</a></p>
+    </section>`;
+  return layout({
+    title: t(loc, "arch.title", { country: loc.countryName }),
+    description: t(loc, "arch.desc", { country: loc.countryName }),
+    body, zone: "all", nav: "feed", depositCount: null, index: true, host, locale: loc,
+    canonical: permalink,
+    jsonLd: graph([
+      {
+        "@type": "Dataset", "url": permalink, "inLanguage": loc.lang,
+        "name": t(loc, "arch.ds_name", { country: loc.countryName }),
+        "description": t(loc, "arch.desc", { country: loc.countryName }),
+        "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
+        "isAccessibleForFree": true,
+        "distribution": shown.slice(0, 20).map(w => ({
+          "@type": "DataDownload", "encodingFormat": "application/json",
+          "contentUrl": `${permalink}/${String(w).toLowerCase()}.json`,
+        })),
+      },
+      breadcrumbLd(host, crumbItems),
+    ]),
+  });
+}
+
+function indexStats(loc, snap) {
+  const items = [];
+  if (snap.models != null) items.push({ k: t(loc, "idx.stat_models"), v: fmtNumL(loc, snap.models), s: "" });
+  if (snap.listings != null) items.push({ k: t(loc, "idx.stat_listings"), v: fmtNumL(loc, snap.listings), s: "" });
+  if (snap.priceMed != null) items.push({ k: t(loc, "idx.stat_price"), v: escapeHtml(fmtEurL(loc, snap.priceMed)), s: "" });
+  if (snap.kmMed != null) items.push({ k: t(loc, "idx.stat_km"), v: escapeHtml(fmtKmL(loc, snap.kmMed)), s: "" });
+  return items.length ? statBlock(items) : "";
+}
+
+function weekRows(loc, rows) {
+  return rows.map(r => `<tr>
+      <td class="mono">${escapeHtml(r.week)}</td>
+      <td class="mono">${r.priceMed != null ? escapeHtml(fmtEurL(loc, r.priceMed)) : t(loc, "common.na")}</td>
+      <td class="mono">${r.listings != null ? fmtNumL(loc, r.listings) : t(loc, "common.na")}</td></tr>`).join("");
+}
+
+export function renderIntlMarketIndex({ loc, host, snapshot, history = [], gaps = [],
+                                        months = [], month = null, pinned = null }) {
+  const path = href(loc, "indice");
+  const tail = month ? `/${month.month}` : (pinned ? `/${String(pinned).toLowerCase()}` : "");
+  const permalink = `https://${host}${path}${tail}`;
+  const snap = snapshot || history[history.length - 1] || {};
+  const rows = month
+    ? (month.rows || [])
+    : history.slice().reverse().slice(0, 26);
+  const crumbItems = [homeCrumb(loc), ...(month
+    ? [{ name: t(loc, "idx.crumb"), href: path }, { name: month.month }]
+    : [{ name: t(loc, "idx.crumb") }])];
+  const monthList = months.length && !month
+    ? `<section class="fc-sec">
+        <h2 class="fc-h2">${t(loc, "idx.months_h")}</h2>
+        <div class="mchips">${months.slice().reverse().map(c =>
+          `<a class="mchip" href="${path}/${escapeHtml(c.month)}">${escapeHtml(c.month)}`
+          + `${c.priceMed != null ? ` <span class="mut">${escapeHtml(fmtEurL(loc, c.priceMed))}</span>` : ""}</a>`).join("")}</div>
+      </section>`
+    : "";
+  const body = crumbs(crumbItems) + `
+    <section class="fc-sec">
+      ${eyebrow(t(loc, "idx.eyebrow", { week: escapeHtml(month ? month.month : (pinned || snap.week || "")) }))}
+      <h1 class="fc-h1">${month ? t(loc, "idx.month_h1", { month: escapeHtml(month.month) }) : t(loc, "idx.h1")}</h1>
+      <p class="fc-p">${t(loc, "idx.lede")}</p>
+      ${indexStats(loc, month || snap)}
+      ${gaps.length && !month ? `<p class="fc-p mono" style="font-size:12px;">${t(loc, "idx.gap", { weeks: escapeHtml(gaps.join(", ")) })}</p>` : ""}
+      ${month || pinned ? `<p class="fc-p"><a href="${path}">${t(loc, "idx.back")}</a></p>` : ""}
+    </section>
+    ${rows.length ? `<section class="fc-sec">
+      <h2 class="fc-h2">${t(loc, "idx.weeks_h")}</h2>
+      <div class="fc-scroll"><table class="fc-tbl">
+        <thead><tr><th>${t(loc, "idx.col_week")}</th><th>${t(loc, "idx.col_price")}</th><th>${t(loc, "idx.col_listings")}</th></tr></thead>
+        <tbody>${weekRows(loc, rows)}</tbody>
+      </table></div>
+    </section>` : ""}
+    ${monthList}
+    <section class="fc-sec">
+      <p class="fc-p mono" style="font-size:12px;">${t(loc, "idx.foot", { source: loc.source.name })}</p>
+      <p class="fc-p"><a href="${href(loc, "arquivo")}">${t(loc, "arch.crumb")}</a> · <a href="${href(loc, "hub")}">${t(loc, "common.all_models")}</a></p>
+    </section>`;
+  return layout({
+    title: month
+      ? `${t(loc, "idx.month_h1", { month: month.month })} · ${loc.countryName}`
+      : t(loc, "idx.title", { country: loc.countryName }),
+    description: month
+      ? t(loc, "idx.month_desc", { country: loc.countryName, month: month.month })
+      : t(loc, "idx.desc", { country: loc.countryName, source: loc.source.name }),
+    body, zone: "all", nav: "feed", depositCount: null,
+    index: rows.length > 0, host, locale: loc, canonical: permalink,
+    jsonLd: graph([breadcrumbLd(host, crumbItems)]),
+  });
+}
+
 export function carPath(loc, olxId) {
   return `${href(loc, "car")}?olx_id=${encodeURIComponent(String(olxId || ""))}`;
 }
