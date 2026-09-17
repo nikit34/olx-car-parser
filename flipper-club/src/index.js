@@ -64,7 +64,7 @@ import {
 import { GUIDES, GUIDES_UPDATED, guideBySlug, guideBlock, renderGuide, renderGuidesHub } from "./guides.js";
 import {
   setIntlLocales, intlLocales, liveLocales, localeForPath, href as ihref,
-  parseAs24Id, valuationKey, t as it,
+  parseAs24Id, valuationKey, t as it, setSlugMarkets,
   registerIntlPageModule, intlPageModules, setNavLive,
 } from "./i18n.js";
 import {
@@ -599,6 +599,7 @@ async function handleModelPage(request, env, url) {
 
   if (wantsJson) return jsonResponse(modelJson(rec, slug, { host: url.host, builtAt, models }));
 
+  await primeAltMarkets(env, "pt", models);
   const stats = corpusStats(models, builtAt);
 
   // Conversion bridge: live hot_deals matching this model (already below-fair).
@@ -1482,6 +1483,7 @@ async function intlModel(env, url, loc, tail) {
       host: url.host, builtAt: c.builtAt, models: c.models,
     }));
   }
+  await primeAltMarkets(env, loc.code, c.models);
   return publicHtml(renderIntlModelPage({
     loc, host: url.host, models: c.models, rec, slug, builtAt: c.builtAt, stats: c.stats,
     siblings: intlSiblings(c.models, slug, rec),
@@ -2007,6 +2009,7 @@ async function handleRobots(request, env, url) {
     "User-agent: CCBot", ...ROBOTS_RULES,
     "",
     `Sitemap: https://${url.host}/sitemap.xml`,
+    ...liveLocales().map(l => `Sitemap: https://${url.host}${l.prefix}/sitemap.xml`),
     // Not a search-ranking signal — no engine ranks on it. It is an
     // agent-readiness convenience: a single fetch that tells a tool-using
     // model what this site holds and how to reach it.
@@ -2316,6 +2319,37 @@ async function getValuations(env, country = null) {
 // Returns the full doc { models: {slug: rec}, built_at }, or null (handlers
 // then 404/degrade). Callers read `.models`; `.built_at` drives the public
 // "preços atualizados em …" freshness line.
+const ALT_MARKETS_KEY = "altmarkets:v1";
+const ALT_MARKETS_TTL_SEC = 3600;
+
+async function primeAltMarkets(env, ownCode, ownModels) {
+  setSlugMarkets(null);
+  if (!intlLocales().size) return;
+  try {
+    const hit = await env.KV.get(ALT_MARKETS_KEY, "json");
+    if (hit && hit[ownCode]) {
+      setSlugMarkets(Object.fromEntries(Object.entries(hit).map(([k, v]) => [k, new Set(v)])));
+      return;
+    }
+  } catch (err) {
+    console.warn("alt markets cache read failed", err && err.message);
+  }
+  const lists = { [ownCode]: Object.keys(ownModels || {}) };
+  const others = [{ code: "pt", country: null },
+                  ...liveLocales().map(l => ({ code: l.code, country: l.country }))]
+    .filter(m => m.code !== ownCode);
+  await Promise.all(others.map(async m => {
+    const doc = await getModels(env, m.country);
+    if (doc && doc.models) lists[m.code] = Object.keys(doc.models);
+  }));
+  setSlugMarkets(Object.fromEntries(Object.entries(lists).map(([k, v]) => [k, new Set(v)])));
+  try {
+    await env.KV.put(ALT_MARKETS_KEY, JSON.stringify(lists), { expirationTtl: ALT_MARKETS_TTL_SEC });
+  } catch (err) {
+    console.warn("alt markets cache write failed", err && err.message);
+  }
+}
+
 async function getModels(env, country = null) {
   const cc = country ? String(country).toLowerCase() : null;
   const url = `${HOT_DEALS_BASE}/${cc ? `models_${cc}` : "models"}.json`;

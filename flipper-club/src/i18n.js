@@ -1631,6 +1631,17 @@ function buildRoute(l, route, tail) {
   return `${l.prefix}/${seg}${tail.length ? `/${tail.join("/")}` : ""}`;
 }
 
+let SLUG_MARKETS = null;
+
+export function setSlugMarkets(sets) {
+  SLUG_MARKETS = sets && Object.keys(sets).length ? sets : null;
+}
+
+function marketHasModel(code, slug) {
+  const known = SLUG_MARKETS && SLUG_MARKETS[code];
+  return known ? known.has(slug) : false;
+}
+
 export function alternatePaths(loc, pathname) {
   if (!LIVE.size) return [];
   const l = resolve(loc);
@@ -1639,12 +1650,10 @@ export function alternatePaths(loc, pathname) {
   const shape = ALT_ROUTES[parsed.route];
   if (!shape) return [];
   if (shape === "bare" && parsed.tail.length) return [];
-  if (shape === "model") {
-    if (parsed.tail.length < 1 || parsed.tail.length > 2) return [];
-    if (parsed.tail.length === 2 && !/^\d{4}$/.test(parsed.tail[1])) return [];
-  }
+  if (shape === "model" && parsed.tail.length !== 1) return [];
   const out = [];
   for (const cand of [LOCALES.pt, ...liveLocales()]) {
+    if (shape === "model" && !marketHasModel(cand.code, parsed.tail[0])) continue;
     const path = buildRoute(cand, parsed.route, parsed.tail);
     if (path) out.push({ code: cand.code, lang: cand.lang, path });
   }

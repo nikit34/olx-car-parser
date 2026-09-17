@@ -72,9 +72,7 @@ const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status }
 globalThis.fetch = async (input, init) => {
   const u = typeof input === "string" ? input : input.url;
   if (u.includes("models_de.json")) return json(ddoc);
-  if (u.includes("models_fr.json") || u.includes("models_it.json")) {
-    return new Response("not found", { status: 404 });
-  }
+  if (u.includes("models_fr.json") || u.includes("models_it.json")) return json(ddoc);
   if (u.includes("models.json")) return json(mdoc);
   if (u.includes("hot_deals_de_all.json")) return json({ deals: DEALS, built_at: ddoc.built_at });
   if (u.includes("hot_deals_")) return json({ deals: [] });
@@ -310,6 +308,15 @@ await check("/de/sitemap.xml advertises exactly what the router serves", async (
 });
 
 await check("a live locale with no blob degrades instead of lying", async () => {
+  const withData = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const u = typeof input === "string" ? input : input.url;
+    if (u.includes("models_fr.json") || u.includes("models_it.json")) {
+      return new Response("not found", { status: 404 });
+    }
+    return withData(input, init);
+  };
+  try {
   const hub = await get("/fr/prix");
   assert(hub.status === 503, `/fr/prix → ${hub.status}, expected 503`);
   const frHtml = await hub.text();
@@ -322,6 +329,7 @@ await check("a live locale with no blob degrades instead of lying", async () => 
   const it404 = await get("/it/prezzo/x");
   assert(it404.status === 404, "an Italian model page with no blob is not a 404");
   assert((await it404.text()).includes('<html lang="it-IT">'), "the Italian 404 is not in Italian");
+  } finally { globalThis.fetch = withData; }
 });
 
 await check("only the configured prefixes exist", async () => {
@@ -345,8 +353,13 @@ await check("only the configured prefixes exist", async () => {
 await check("robots and llms.txt publish the live locales", async () => {
   const robots = await body("/robots.txt");
   const sitemaps = robots.split("\n").filter(l => l.startsWith("Sitemap:"));
-  assert(sitemaps.length === 1 && sitemaps[0] === `Sitemap: https://${HOST}/sitemap.xml`,
-    `robots should advertise the index alone, got: ${sitemaps.join(" | ")}`);
+  assert(sitemaps[0] === `Sitemap: https://${HOST}/sitemap.xml`,
+    `robots does not lead with the index: ${sitemaps[0]}`);
+  for (const cc of ["de", "fr", "it"]) {
+    assert(sitemaps.includes(`Sitemap: https://${HOST}/${cc}/sitemap.xml`),
+      `robots leaves the ${cc} sitemap to be discovered through the index: ${sitemaps.join(" | ")}`);
+  }
+  assert(sitemaps.length === 4, `robots advertises ${sitemaps.length} sitemaps, expected the index plus three`);
   const index = await body("/sitemap.xml");
   const children = [...index.matchAll(/<sitemap><loc>([^<]+)<\/loc>/g)].map(m => new URL(m[1]).pathname);
   assert(children[0] === "/pt/sitemap.xml", `the index does not lead with Portuguese: ${children[0]}`);
@@ -427,12 +440,43 @@ await check("a locale page lists every live language, itself included", async ()
   assert(by["it-IT"] === `https://${HOST}/it/prezzo/${deep}`, `it alternate is ${by["it-IT"]}`);
   assert(by["x-default"] === by["pt-PT"], "x-default is not the Portuguese page");
 
-  const year = alternates(await body(`/de/preis/${deep}/${deepYears[0]}`));
-  const yby = Object.fromEntries(year.map(a => [a.lang, a.href]));
-  assert(yby["pt-PT"] === `https://${HOST}/pt/preco/${deep}/${deepYears[0]}`,
-    "the year page alternate is not the same year in Portuguese");
-  assert(yby["it-IT"] === `https://${HOST}/it/prezzo/${deep}/${deepYears[0]}`,
-    "the year page alternate is not the same year in Italian");
+  assert(alternates(await body(`/de/preis/${deep}/${deepYears[0]}`)).length === 0,
+    "a year page claims a counterpart year we never checked is published elsewhere");
+});
+
+await check("hreflang names only the markets that carry the model", async () => {
+  kv.clear();
+  const full = globalThis.fetch;
+  const thinPt = { ...mdoc, models: Object.fromEntries(
+    Object.entries(mdoc.models).filter(([sl]) => sl !== deep)) };
+  globalThis.fetch = async (input, init) => {
+    const u = typeof input === "string" ? input : input.url;
+    if (u.includes("models.json") && !u.includes("models_")) return json(thinPt);
+    return full(input, init);
+  };
+  try {
+    const by = Object.fromEntries(alternates(await body(`/de/preis/${deep}`)).map(a => [a.lang, a.href]));
+    assert(!by["pt-PT"],
+      `the German page points hreflang at ${by["pt-PT"]}, a model Portugal does not carry`);
+    assert(!by["x-default"],
+      `x-default falls back to ${by["x-default"]}, which does not exist`);
+    assert(by["de-DE"] && by["fr-FR"] && by["it-IT"],
+      "the markets that do carry the model lost their alternates too");
+  } finally { globalThis.fetch = full; kv.clear(); }
+});
+
+await check("every hreflang a page emits resolves to a real page", async () => {
+  const seen = new Set();
+  for (const path of [`/de/preis/${deep}`, `/pt/preco/${ptDeep}`, "/pt/precos", "/de", "/fr/prix", "/it/prezzi"]) {
+    for (const a of alternates(await body(path))) {
+      const target = new URL(a.href).pathname;
+      if (seen.has(target)) continue;
+      seen.add(target);
+      const r = await get(target);
+      assert(r.status === 200, `${path} points hreflang ${a.lang} at ${target}, which answers ${r.status}`);
+    }
+  }
+  assert(seen.size >= 8, `only ${seen.size} alternate targets checked`);
 });
 
 await check("the Portuguese root carries the same reciprocal set", async () => {
