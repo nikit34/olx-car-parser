@@ -55,7 +55,7 @@ HARD_BLOCK_TEXT_PATTERN = re.compile(
     r"sem\s+documentos|sem\s+matr[ií]cula|"
     r"motor\s+(?:fundido|avariad[oa])|caixa\s+avariad[oa]|"
     r"transmiss[ãa]o\s+avariad[oa]|capotamento|"
-    r"avaria\s+(?:no|do)\s+motor|"
+    r"avaria\s+(?:no|do|de)\s+motor|"
     r"junta\s+(?:de\s+cabe[çc]a\s+)?queimada|"
     r"n[ãa]o\s+pega|n[ãa]o\s+anda|n[ãa]o\s+funciona|"
     r"(?:o\s+carro\s+)?n[ãa]o\s+liga|n[ãa]o\s+arranca|"

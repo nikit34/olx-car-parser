@@ -71,7 +71,7 @@ _SEVERE_DAMAGE_PATTERN = re.compile(
     r"motor\s+(?:fundido|avariad[oa])|caixa\s+avariad[oa]|"
     r"transmiss[ãa]o\s+avariad[oa]|capotamento|"
     r"junta\s+(?:de\s+cabe[çc]a\s+)?queimada|"
-    r"avaria\s+(?:no|do)\s+motor",
+    r"avaria\s+(?:no|do|de)\s+motor",
     re.IGNORECASE,
 )
 

@@ -86,6 +86,11 @@ class TestHardBlockPhrase:
     def test_matches_salvage_phrasings(self, text):
         assert hard_block_phrase("Golf", text) is not None
 
+    @pytest.mark.parametrize("preposition", ["no", "do", "de"])
+    def test_a_declared_engine_failure_is_caught_in_the_title(self, preposition):
+        title = f"Opel corsa 1300 cdti 2006 avaria {preposition} motor"
+        assert hard_block_phrase(title, "") == f"avaria {preposition} motor"
+
     def test_clean_text_and_missing_values(self):
         assert hard_block_phrase("Golf 1.6", "bom estado, sempre na marca") is None
         assert hard_block_phrase(None, None) is None
