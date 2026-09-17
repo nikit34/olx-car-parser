@@ -129,6 +129,21 @@ export function setWave(n) {
   WAVE_MODELS = Number.isFinite(v) && v > 0 ? v : 0;
 }
 
+let SNIPPET_TEST = false;
+export function setSnippetTest(v) {
+  SNIPPET_TEST = String(v || "").toLowerCase() === "on";
+}
+
+export function snippetArm(slug, year) {
+  if (!SNIPPET_TEST) return "a";
+  let h = 2166136261;
+  for (const ch of `${slug}/${year}`) {
+    h ^= ch.charCodeAt(0);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return (h & 1) ? "b" : "a";
+}
+
 let _waveKey = null, _waveVal = null;
 /** Slugs inside the current wave. Everything, when no cap is set. */
 export function waveSlugs(models, builtAt) {
@@ -1129,9 +1144,16 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
     ],
   };
 
+  const armB = yearCarsTotal > 0 && snippetArm(slug, year) === "b";
+  const built = (builtAt || "").slice(0, 10);
+  const titleA = `${rec.b} ${rec.m} ${year} usado: preço ${FM}${monthTag(builtAt) ? ` em ${monthTag(builtAt)}` : ""} (${cell.n} anúncios)`;
+  const descA = `${rec.b} ${rec.m} de ${year} usado: preço mediano ${FM} (${FL}–${FH}) em ${cell.n} ${sample} do OLX Portugal${cell.km != null ? `, ${fmtKm(cell.km)} medianos` : ""}. Avaliação independente, atualizada${built ? ` a ${built}` : ""}.`;
+  const titleB = `${rec.b} ${rec.m} ${year}: ${yearCarsTotal} usados à venda e o preço justo de cada um`;
+  const descB = `Os ${yearCarsTotal} ${rec.b} ${rec.m} de ${year} à venda hoje no OLX, um a um: quilómetros, há quantos dias esperam e se o que pedem está acima ou abaixo do valor justo. Avaliação independente, atualizada${built ? ` a ${built}` : ""}.`;
+
   return layout({
-    title: `${rec.b} ${rec.m} ${year} usado: preço ${FM}${monthTag(builtAt) ? ` em ${monthTag(builtAt)}` : ""} (${cell.n} anúncios)`,
-    description: `${rec.b} ${rec.m} de ${year} usado: preço mediano ${FM} (${FL}–${FH}) em ${cell.n} ${sample} do OLX Portugal${cell.km != null ? `, ${fmtKm(cell.km)} medianos` : ""}. Avaliação independente, atualizada${(builtAt || "").slice(0, 10) ? ` a ${(builtAt || "").slice(0, 10)}` : ""}.`,
+    title: armB ? titleB : titleA,
+    description: armB ? descB : descA,
     canonical, jsonLd, body, zone: "all", nav: "precos", depositCount, index: true, host,
     altJson: `${canonical}.json`,
   });

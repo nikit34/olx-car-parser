@@ -58,6 +58,7 @@ import {
   renderImportPage, renderImportHub, importJson, importOk, importSlugs,
   isoWeek, missingWeeks, monthlyCuts, renderMarketMonth, renderArchiveHub, breadcrumbLd,
   setWave, waveSlugs, publishedYearPages, publishedDepreciation, publishedPairs, publishedFacets,
+  setSnippetTest, snippetArm,
   DUELS, duel, duelByPath, duelJson, duelSlugs, duelsFor, publishedDuel,
   renderDuelPage, renderDuelHub,
 } from "./seo-pages.js";
@@ -320,6 +321,7 @@ const worker = {
       setSiteIdentity({ author: env.SITE_AUTHOR, contact: env.SITE_CONTACT_EMAIL });
       // Staged rollout of the second SEO layer. Empty ⇒ everything is live.
       setWave(env.SEO_WAVE_MODELS);
+      setSnippetTest(env.SNIPPET_TEST);
       setLiqWave(env.LIQ_WAVE_MODELS);
       setVenderWave(env.VENDER_WAVE_MODELS);
       setIntlLocales(env.INTL_LOCALES);

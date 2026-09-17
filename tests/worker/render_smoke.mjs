@@ -21,6 +21,7 @@ import {
   monthlyCuts, isoWeekMonth, weeksOfMonth, monthLabel, IDX_MIN_MONTH_WEEKS,
   setSiteIdentity, corpusStats, modelInsights, provenance,
   yearCells, yearCell, yearPageYears, depreciationOk, depreciationFit, depreciationSlugs,
+  setSnippetTest, snippetArm,
   comparePairs, parseComparePath, comparePairKey, comparePriceGap, modelClass, comparePool,
   modelJson, yearJson, MIN_YEAR_PAGE_N,
   yearGap,
@@ -1182,6 +1183,53 @@ check("no public page still sells a deposit", () => {
       assert(!word.test(html), `${label} still says ${word}`);
     }
   }
+});
+
+check("the snippet experiment splits the year pages without lying in either arm", () => {
+  const [s0, y0] = yearPages[0];
+  const mk = (slug, year, total) => {
+    const yrec = models[slug];
+    const all = yearCells(yrec, 1).slice().sort((a, b) => a.y - b.y);
+    const i = all.findIndex(c => c.y === year);
+    return renderYearPage({
+      rec: yrec, slug, year, cell: yearCell(yrec, year),
+      neighbours: { older: i > 0 ? all[i - 1] : null, newer: i < all.length - 1 ? all[i + 1] : null,
+                    window: all.slice(Math.max(0, i - 3), i + 4).sort((a, b) => b.y - a.y) },
+      yearCars: total ? [{ id: "JAaHl", url: "https://www.olx.pt/d/anuncio/x-IDJAaHl.html",
+                           t: "Carro", y: year, p: 1000, fl: 1500, fm: 2000, fh: 2500 }] : [],
+      yearCarsTotal: total,
+      liveDeals: [], pageYears: yearPageYears(yrec), stats, host: HOST, depositCount: 0, builtAt,
+    });
+  };
+  const titleOf = html => html.match(/<title>([^<]*)<\/title>/)[1];
+  const descOf = html => html.match(/name="description" content="([^"]*)"/)[1];
+
+  setSnippetTest("");
+  try {
+    assert(yearPages.every(([s, y]) => snippetArm(s, y) === "a"), "the split runs while the flag is off");
+    assert(titleOf(mk(s0, y0, 12)).includes("€"), "arm A lost the number while the flag is off");
+  } finally { setSnippetTest("on"); }
+
+  try {
+    const arms = new Set(yearPages.map(([s, y]) => snippetArm(s, y)));
+    assert(arms.has("a") && arms.has("b"), `the split landed everything in one arm: ${[...arms]}`);
+    for (const [s, y] of yearPages.slice(0, 20)) {
+      assert(snippetArm(s, y) === snippetArm(s, y), "the split is not stable for one page");
+    }
+    const b = yearPages.find(([s, y]) => snippetArm(s, y) === "b");
+    const a = yearPages.find(([s, y]) => snippetArm(s, y) === "a");
+
+    const bHtml = mk(b[0], b[1], 12);
+    assert(!titleOf(bHtml).includes("€"), `arm B still hands the median to the SERP: ${titleOf(bHtml)}`);
+    assert(!descOf(bHtml).includes("€"), `arm B description still hands over the median: ${descOf(bHtml)}`);
+    assert(titleOf(bHtml).includes("12 usados à venda"), "arm B does not promise the cars");
+    assert(titleOf(bHtml).includes(String(b[1])), "arm B lost the year from the title");
+    assert(descOf(bHtml).includes("valor justo"), "arm B dropped the price wording entirely");
+
+    assert(titleOf(mk(a[0], a[1], 12)).includes("€"), "arm A stopped being the control");
+    assert(titleOf(mk(b[0], b[1], 0)).includes("€"),
+      "arm B promised cars on a page that has none to show");
+  } finally { setSnippetTest(""); }
 });
 
 check("titles lead with the number", () => {
