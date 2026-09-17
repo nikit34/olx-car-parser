@@ -133,3 +133,27 @@ class TestAdAgeGate:
         kept = bhd._pick_zone_deals(df, "all", None, 0, 120, stages)
         assert stages["fresh"] == 2
         assert set(kept["olx_id"]) == {"a", "b"}
+
+
+class TestAHoleInTheDescriptionColumn:
+    """A foreign corpus fills descriptions on some rows and not others.
+
+    ``_format_deal`` already knows this hazard — its own ``_s`` helper says
+    string fields off a pandas row can be float NaN — but the description is
+    handled a few lines above that helper and went past it. The country blob
+    build reaches this function one step after the valuations, so an unguarded
+    NaN here is the same outage a day later.
+    """
+
+    def test_a_nan_description_becomes_empty_text(self):
+        deal = bhd._format_deal(
+            {"olx_id": "X", "title": "VW Golf", "brand": "VW", "model": "Golf",
+             "description": float("nan")}, [])
+        assert deal["description"] == ""
+        assert deal["title"] == "VW Golf"
+
+    def test_a_real_description_still_arrives(self):
+        deal = bhd._format_deal(
+            {"olx_id": "X", "title": "VW Golf", "brand": "VW", "model": "Golf",
+             "description": "Scheckheft\r\ngepflegt"}, [])
+        assert deal["description"] == "Scheckheft\ngepflegt"

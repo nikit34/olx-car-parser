@@ -174,7 +174,9 @@ def _format_deal(row: dict, photo_urls: list[str]) -> dict:
     # ("Anotações"/"Reportar"); strip it here so the ≈12k rows scraped before
     # the scraper fix render clean without a DB migration.
     from src.parser.scraper import _strip_desc_chrome
-    desc = (row.get("description") or "").replace("\r\n", "\n").replace("\r", "\n")
+    raw_desc = row.get("description")
+    desc = (raw_desc if isinstance(raw_desc, str) else "")
+    desc = desc.replace("\r\n", "\n").replace("\r", "\n")
     desc = _strip_desc_chrome(desc)
     desc = re.sub(r"[ \t]+\n", "\n", desc)
     desc = re.sub(r"\n{2,}", "\n", desc).strip()
