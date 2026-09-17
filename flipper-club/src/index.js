@@ -78,6 +78,7 @@ import {
 import { intlModelCutLinks } from "./intl-facets.js";
 import { intlModelCurveLinks } from "./intl-curves.js";
 import "./intl-compare.js";
+import "./intl-guides.js";
 
 const ZONES = ["norte", "centro", "sul", "all"];
 

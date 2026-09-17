@@ -464,6 +464,42 @@ await check("every market keeps its own dated archive and market index", async (
   assert(de.feed === "/de/markt", "the market table drifted");
 });
 
+await check("every market has its own seller guides, written in its own language", async () => {
+  const slugs = { de: ["preis-finden", "sicher-bezahlt-werden"],
+                  fr: ["fixer-le-prix", "paiement-securise"],
+                  it: ["fissare-il-prezzo", "pagamento-sicuro"] };
+  for (const [code, m] of Object.entries(MARKETS)) {
+    const hubPath = `/${code}/${LOCALES[code].routes.guides}`;
+    const hub = await get(hubPath);
+    assert(hub.status === 200, `${hubPath} → ${hub.status}`);
+    const hubHtml = await hub.text();
+    assert(hubHtml.includes("index,follow"), `${hubPath} is not indexable`);
+    assertOwnLanguage(code, hubPath, hubHtml);
+
+    for (const slug of slugs[code]) {
+      assert(hubHtml.includes(`href="${hubPath}/${slug}"`), `${hubPath} does not list ${slug}`);
+      const r = await get(`${hubPath}/${slug}`);
+      assert(r.status === 200, `${hubPath}/${slug} → ${r.status}`);
+      const html = await r.text();
+      assert(html.includes(`<link rel="canonical" href="https://${HOST}${hubPath}/${slug}">`),
+        `${slug}: canonical is wrong`);
+      assert(html.includes('"@type":"Article"') && html.includes('"@type":"FAQPage"'),
+        `${slug}: the guide ships no Article or FAQ markup`);
+      assert(html.includes(`href="${m.hub}"`) && html.includes(`href="${m.avaliar}"`),
+        `${slug}: the guide does not lead back into the product`);
+      assertOwnLanguage(code, `${hubPath}/${slug}`, html);
+    }
+    assert((await get(`${hubPath}/gibt-es-nicht`)).status === 404,
+      `${code}: an unknown guide is not a 404`);
+
+    const xml = await body(`/${code}/sitemap.xml`);
+    for (const slug of [null, ...slugs[code]]) {
+      const path = slug ? `${hubPath}/${slug}` : hubPath;
+      assert(xml.includes(`${path}</loc>`), `the ${code} sitemap does not list ${path}`);
+    }
+  }
+});
+
 await check("the outbound click is measured on the intl markets too", async () => {
   const ga = { ...makeEnv("de,fr,it"), GA4_MEASUREMENT_ID: "G-TESTONLY" };
   for (const path of ["/de/markt", "/de/auto?olx_id=as24_de:aaa"]) {
