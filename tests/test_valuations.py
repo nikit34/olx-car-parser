@@ -118,3 +118,23 @@ class TestAHoleInTheTextColumns:
         cars = build_valuations(_listings(title=float("nan")),
                                 _predictions())["cars"]
         assert "AAA" in cars
+
+
+class TestListingSource:
+    def test_a_standvirtual_row_says_so(self):
+        blob = build_valuations(_listings(source="standvirtual"), _predictions())
+        assert blob["cars"]["AAA"]["sv"] == 1
+
+    def test_an_olx_row_carries_no_flag(self):
+        blob = build_valuations(_listings(source="olx"), _predictions())
+        assert "sv" not in blob["cars"]["AAA"]
+
+    def test_a_missing_source_reads_as_olx(self):
+        rows = _listings().to_dict("records")[0]
+        rows.pop("source", None)
+        blob = build_valuations(pd.DataFrame([rows]), _predictions())
+        assert "sv" not in blob["cars"]["AAA"]
+
+    def test_the_blob_announces_the_version_that_carries_the_source(self):
+        assert build_valuations(_listings(), _predictions())["v"] == 2
+        assert build_valuations(pd.DataFrame(), pd.DataFrame())["v"] == 2

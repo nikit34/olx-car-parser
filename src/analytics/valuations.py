@@ -137,7 +137,7 @@ def _price_track(snapshots: pd.DataFrame | None, now: pd.Timestamp,
 def build_valuations(listings: pd.DataFrame, predictions: pd.DataFrame,
                      sell_speed: pd.DataFrame | None = None,
                      snapshots: pd.DataFrame | None = None) -> dict:
-    """Return ``{"v":1, "cars": {olx_id: {...}}}`` for active, priced listings.
+    """Return ``{"v":2, "cars": {olx_id: {...}}}`` for active, priced listings.
 
     - ``listings``: enriched listings DataFrame (needs olx_id, is_active, title,
       description, brand, model, year, mileage_km, fuel_type, price_eur, city).
@@ -146,10 +146,13 @@ def build_valuations(listings: pd.DataFrame, predictions: pd.DataFrame,
       median days-to-sell per (brand, model).
     - ``snapshots``: optional price-snapshot frame; supplies the per-ad price
       track and, with it, the "the seller has already come down" line.
+
+    Blob version 2 carries ``sv`` on StandVirtual rows, which is what lets a
+    reader rebuild the listing URL from the id alone.
     """
     cars: dict[str, dict] = {}
     if listings.empty or predictions.empty:
-        return {"v": 1, "cars": cars}
+        return {"v": 2, "cars": cars}
 
     now = pd.Timestamp.now(tz="UTC")
     pred = predictions.set_index("olx_id")
@@ -216,7 +219,9 @@ def build_valuations(listings: pd.DataFrame, predictions: pd.DataFrame,
         blocker = _s(getattr(r, "text_hard_block_phrase", None))
         if blocker:
             rec["hb"] = blocker[:40]
+        if (_s(getattr(r, "source", None)) or "olx").lower() == "standvirtual":
+            rec["sv"] = 1
         # Drop None values to keep the blob small.
         cars[str(oid)] = {k: v for k, v in rec.items() if v is not None}
 
-    return {"v": 1, "cars": cars}
+    return {"v": 2, "cars": cars}
