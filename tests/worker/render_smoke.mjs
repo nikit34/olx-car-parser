@@ -1089,6 +1089,25 @@ check("a listing sold for parts says so instead of quoting a fair price", () => 
   assert(out.includes("não se aplica"), "the fair band is not disclaimed");
 });
 
+check("every valued listing offers a way back to the original ad", () => {
+  const base = { t: "VW Golf 1.6 TDI", y: 2015, p: 9000, fl: 9500, fm: 11000, fh: 12500 };
+  const call = (rec, olxId, sourceUrl = null) => renderAvaliar({
+    rec, olxId, sourceUrl, query: "", models, spec: null, depositCount: 0, host: HOST, builtAt });
+
+  const olx = call(base, "JqGTZ");
+  assert(olx.includes("https://www.olx.pt/d/anuncio/vw-golf-1-6-tdi-IDJqGTZ.html"),
+    "the OLX listing url is not rebuilt from the id and the title");
+
+  const sv = call({ ...base, sv: 1 }, "8Q0Y1p");
+  assert(sv.includes("https://www.standvirtual.com/carros/anuncio/vw-golf-1-6-tdi-ID8Q0Y1p.html"),
+    "a StandVirtual listing still has no way back to the ad");
+  assert(!sv.includes("olx.pt/d/anuncio/vw-golf"), "a StandVirtual car was linked to OLX");
+  assert(sv.includes("Ver anúncio original"), "the button is missing for StandVirtual");
+
+  const pasted = call(base, "JqGTZ", "https://www.olx.pt/d/anuncio/o-anuncio-real-IDJqGTZ.html");
+  assert(pasted.includes("o-anuncio-real"), "a pasted url lost to the reconstructed one");
+});
+
 check("a listing with no history at all still renders", () => {
   const rec = { t: "VW Golf", y: 2015, p: 9000, fl: 9500, fm: 11000, fh: 12500 };
   const out = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models,

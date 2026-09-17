@@ -99,6 +99,15 @@ function stripAccents(s) {
 export function slugify(s) {
   return stripAccents(s).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
+
+export function listingUrl(id, rec) {
+  if (!id) return null;
+  const slug = slugify(rec && rec.t ? rec.t : "anuncio") || "anuncio";
+  const tail = `${slug}-ID${encodeURIComponent(id)}.html`;
+  return (rec && rec.sv)
+    ? `https://www.standvirtual.com/carros/anuncio/${tail}`
+    : `https://www.olx.pt/d/anuncio/${tail}`;
+}
 const IMPORT_POS = /\b(importad[ao]s?|importacao|nacionaliz\w*|legaliza(?:r|cao|do|da)|por\s+legalizar|matricul(?:ar|a(?:do|da)?\s+(?:na|nos|em)\s+(?:alemanha|franca|belgica|holanda|espanha|italia|suica))|matricula\s+(?:nl|de|be|fr|es|it|alem\w*|estrangeira|holandesa|alema|francesa|belga)|ainda\s+(?:com|por)\s+matricula\s+estrangeira|vindo\s+d[ao]\s+estrangeiro)\b/;
 // Clears cars that are NATIVELY Portuguese (never imported). Deliberately does
 // NOT include "já legalizado/nacionalizado" — those are imported-but-legalized
@@ -1650,10 +1659,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
              O texto do anúncio menciona ${quote(rec.mf)}. Desconta o custo da reparação antes de comparar com o intervalo justo.
            </div>`
         : "");
-    // Use the pasted URL when present. Only reconstruct an OLX URL for OLX-style
-    // ids (SV ids start "8P" and live on standvirtual.com — a reconstructed
-    // olx.pt URL would 404), otherwise omit the button.
-    const olxHref = sourceUrl || (olxId && !olxId.startsWith("8") ? `https://www.olx.pt/d/anuncio/-ID${encodeURIComponent(olxId)}.html` : null);
+    const olxHref = sourceUrl || listingUrl(olxId, rec);
     // Contextual link into the model SEO page, when this model has one.
     const modelHref = (rec.ms && models && models[rec.ms]) ? `/pt/preco/${encodeURIComponent(rec.ms)}` : null;
     const sub = `${rec.y ?? "—"} · ${rec.km != null ? fmtKm(rec.km) : "—"} · ${escapeHtml(rec.fu || "—")}`;
