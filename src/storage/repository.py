@@ -1485,7 +1485,7 @@ _MARKET_FIELDS = (
 
 _MARKET_RENAMES = {"region": "district", "motor_type": "sub_model"}
 
-_MARKET_EXTRAS = ("model_group", "variant", "version", "offer_type")
+_MARKET_EXTRAS = ("model_group", "variant", "version", "offer_type", "photo_urls")
 
 
 def _market_values(data: dict) -> dict:

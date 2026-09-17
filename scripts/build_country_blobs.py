@@ -49,7 +49,7 @@ DEFAULT_OUT_DIR = REPO_ROOT / "data" / "intl"
 _DEAL_EXTRA_COLS = (
     "olx_id", "title", "description", "llm_extras", "first_seen_at",
     "seller_type", "transmission", "is_active", "engine_cc", "origin",
-    "co2_g_km", "image_url", "last_scraped_at",
+    "co2_g_km", "image_url", "last_scraped_at", "extras",
 )
 
 MAX_UNSEEN_DAYS = 14
@@ -292,14 +292,37 @@ def _seen_recently(merged: pd.DataFrame, cc: str) -> pd.DataFrame:
     return fresh
 
 
+def _row_photos(row) -> list[str]:
+    """The gallery a stored row carries, newest reader first.
+
+    ``extras`` is where a foreign row keeps what has no column of its own, and
+    the crawl puts the whole gallery there. ``image_url`` stays the fallback:
+    rows written before the crawl started keeping the list have only that one.
+    """
+    extras = row.get("extras")
+    if isinstance(extras, str):
+        try:
+            extras = json.loads(extras)
+        except ValueError:
+            extras = None
+    photos = (extras or {}).get("photo_urls") if isinstance(extras, dict) else None
+    out = [str(u) for u in photos if str(u or "").strip()] if isinstance(photos, list) else []
+    if out:
+        return out
+    image = row.get("image_url")
+    return [str(image)] if isinstance(image, str) and image else []
+
+
 def _hot_deals(signals: pd.DataFrame, listings: pd.DataFrame, predictions: pd.DataFrame,
                sell_speed: pd.DataFrame, cc: str, bundle: dict | None = None) -> list[dict]:
     """BUY/WATCH deals in the Worker card shape, photo from the listing card.
 
     Same field list and gates as the Portuguese feed (``_format_deal``,
-    ``_pick_zone_deals``), with the decision engine's context built from
-    this country's frame alone and no HTTP fetch: the AutoScout24 card
-    already carries one image URL, which is the whole gallery here.
+    ``_pick_zone_deals``), with the decision engine's context built from this
+    country's frame alone and no HTTP fetch. The Portuguese feed opens each
+    listing to collect its photos; here the crawl already stored them, three
+    off the search card and the whole set off the advert where robots leaves it
+    open, so the gallery costs this build nothing.
     """
     from scripts.build_hot_deals import (
         MAX_LISTING_AGE_DAYS, _format_deal, _pick_zone_deals,
@@ -338,9 +361,7 @@ def _hot_deals(signals: pd.DataFrame, listings: pd.DataFrame, predictions: pd.Da
              f" → {stages.get('vetted', 0)} BUY/WATCH")
     deals: list[dict] = []
     for _, row in picked.iterrows():
-        image = row.get("image_url")
-        photos = [str(image)] if isinstance(image, str) and image else []
-        deals.append(_format_deal(row.to_dict(), photos))
+        deals.append(_format_deal(row.to_dict(), _row_photos(row)))
     return deals
 
 

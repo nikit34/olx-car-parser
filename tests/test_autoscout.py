@@ -642,9 +642,43 @@ class TestTheAdvertPage:
         with pytest.raises(AutoScoutUnreadable):
             parse_detail(_next_data({"props": {"pageProps": {}}}), "it")
 
-    def test_the_card_is_never_corrected_by_the_advert(self):
+    def test_the_advert_corrects_the_card_only_on_the_gallery(self):
         """Card and advert come from one database, so where they overlap the
-        card is not the one to doubt."""
+        card is not the one to doubt - except the photos, where the card links
+        three and the advert the whole set."""
+        from src.parser.market_card import merge_patch
         from src.parser.autoscout import CORRECTS
 
-        assert CORRECTS == ()
+        assert CORRECTS == ("photo_urls",)
+        row = {"photo_urls": ["https://x/a.jpg/720x540.webp"], "year": 2016}
+        merge_patch(row, {"photo_urls": ["https://x/a.jpg/720x540.webp",
+                                         "https://x/b.jpg/720x540.webp"],
+                          "year": 1999}, CORRECTS)
+        assert len(row["photo_urls"]) == 2, "the advert gallery did not replace the card's"
+        assert row["year"] == 2016, "the advert corrected something it may not correct"
+
+    def test_the_card_gallery_travels_at_a_size_a_page_can_show(self):
+        """Every market keeps the photos its card links, Germany included: they
+        ride on the search page, which robots leaves open everywhere."""
+        card = _card(images=[f"https://prod.pictures.autoscout24.net/x_{i}.jpg/250x188.webp"
+                             for i in range(12)])
+        (listing,), _ = parse_search(_page([card]))
+        assert listing.photo_urls and len(listing.photo_urls) == 8, "the gallery is not capped"
+        assert all(u.endswith("/720x540.webp") for u in listing.photo_urls), "thumbnails travelled"
+        assert listing.image_url == listing.photo_urls[0]
+
+    def test_a_card_without_photos_carries_no_gallery(self):
+        (listing,), _ = parse_search(_page([_card(images=[])]))
+        assert listing.photo_urls is None and listing.image_url is None
+
+    def test_the_advert_gallery_is_the_whole_set(self):
+        from src.parser.autoscout import parse_detail
+
+        page = _next_data({"props": {"pageProps": {"listingDetails": {
+            "images": [f"https://prod.pictures.autoscout24.net/y_{i}.jpg/250x188.webp"
+                       for i in range(18)],
+            "vehicle": {"rawData": {}},
+        }}}})
+        patch = parse_detail(page, "fr")
+        assert len(patch["photo_urls"]) == 8
+        assert patch["photo_urls"][0].endswith("/720x540.webp")

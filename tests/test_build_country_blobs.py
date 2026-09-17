@@ -215,7 +215,7 @@ class TestDealFeed:
             manifest = bcb.build_country("DE", None, tmp_path, min_models=3)
 
         valuations = _read(tmp_path / "valuations_de.json")
-        assert valuations["v"] == 1
+        assert valuations["v"] == 2
         assert len(valuations["cars"]) == len(MODELS) * len(YEARS) * PER_CELL == manifest["rows"]["valuations"]
         car = valuations["cars"]["as24_de:700001"]
         assert car["p"] > 0 and car["fl"] <= car["fm"] <= car["fh"]
@@ -224,6 +224,27 @@ class TestDealFeed:
         doc = _read(tmp_path / "models_de.json")
         assert all("gm" not in r for r in doc["models"].values())
         assert "mq" not in doc or isinstance(doc["mq"], dict)
+
+
+class TestTheGallery:
+    """What a foreign deal shows for photos, and what it falls back to.
+
+    The Portuguese feed opens each listing to collect its gallery; a foreign
+    one cannot - Germany's advert is closed by robots - so the crawl stores
+    what it saw and the build only reads it.
+    """
+
+    def test_the_stored_gallery_wins_over_the_single_cover(self):
+        row = {"extras": json.dumps({"photo_urls": ["a", "b", "c"]}), "image_url": "cover"}
+        assert bcb._row_photos(row) == ["a", "b", "c"]
+
+    def test_a_row_written_before_the_gallery_still_shows_its_cover(self):
+        for extras in (None, "{}", "not json", json.dumps({"variant": "Variant"})):
+            assert bcb._row_photos({"extras": extras, "image_url": "cover"}) == ["cover"]
+
+    def test_a_row_with_no_photo_at_all_shows_none(self):
+        assert bcb._row_photos({"extras": None, "image_url": None}) == []
+        assert bcb._row_photos({"extras": json.dumps({"photo_urls": []}), "image_url": None}) == []
 
 
 class TestGbmBand:
@@ -448,7 +469,9 @@ class TestWorkerFieldContract:
         """
         src = (REPO_ROOT / "src" / "analytics" / "valuations.py").read_text(encoding="utf-8")
         body = src[src.index("def build_valuations("):]
-        body = body[:body.rindex('return {"v": 1, "cars": cars}')]
+        tail = [m.start() for m in re.finditer(r'return \{"v": \d+, "cars": cars\}', body)]
+        assert tail, "build_valuations no longer ends by returning the blob"
+        body = body[:tail[-1]]
         literal = re.search(r"rec = \{(.*?)\n        \}", body, re.S)
         assert literal, "build_valuations no longer builds its record as a dict literal"
         return (set(re.findall(r'"([a-z_]+)":', literal.group(1)))

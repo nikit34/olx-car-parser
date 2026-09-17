@@ -106,7 +106,7 @@ _DISALLOWED_BY_TLD: dict[str, tuple[str, ...]] = {
     "it": (),
 }
 
-CORRECTS: tuple[str, ...] = ()
+CORRECTS: tuple[str, ...] = ("photo_urls",)
 
 _COLOURS: dict[str, str | None] = {
     "white": "Branco", "black": "Preto", "grey": "Cinzento", "gray": "Cinzento",
@@ -425,6 +425,7 @@ class DeListing:
     is_damaged: bool | None = None
     photo_count: int | None = None
     image_url: str | None = None
+    photo_urls: list[str] | None = None
     source: str = "autoscout24"
 
 
@@ -693,22 +694,38 @@ def _to_listing(item: dict, mk: Market) -> DeListing | None:
         is_damaged=vehicle.get("isCurrentlyDamaged"),
         photo_count=len(images) if images is not None else None,
         image_url=_cover_image(images),
+        photo_urls=_photo_list(images),
     )
 
 
-def _cover_image(images: list | None) -> str | None:
-    """The card's first photo at the size a page can actually show it.
+PHOTO_LIMIT = 8
+
+
+def _photo_list(images: list | None, limit: int = PHOTO_LIMIT) -> list[str] | None:
+    """A gallery at the size a page can actually show it.
 
     The search payload links thumbnails (``/250x188.webp``), which look like
     mud at card width; the same object is served at ``/720x540.webp`` and the
-    swap costs one string replacement instead of a detail fetch.
+    swap costs one string replacement instead of a detail fetch. The card
+    carries three photos and the advert the whole set, so the cap is what keeps
+    a row from growing without bound.
     """
     if not images:
         return None
-    first = str(images[0] or "").strip()
-    if not first:
-        return None
-    return first.replace("/250x188.webp", "/720x540.webp")
+    out: list[str] = []
+    for item in images:
+        url = str(item or "").strip().replace("/250x188.webp", "/720x540.webp")
+        if url and url not in out:
+            out.append(url)
+        if len(out) >= limit:
+            break
+    return out or None
+
+
+def _cover_image(images: list | None) -> str | None:
+    """The first photo of the gallery, for readers that want exactly one."""
+    photos = _photo_list(images, 1)
+    return photos[0] if photos else None
 
 
 def _first(*values):
@@ -746,10 +763,12 @@ def parse_detail(html: str, tld: str = "de") -> dict:
     own description, the colour, the doors and seats, the drive train, the
     dealer behind the advert and the exact place it sits in.
 
-    Nothing here overwrites a card. ``CORRECTS`` is empty on purpose: unlike a
-    generalist classified, an AutoScout24 card is structured data from the same
-    database as the advert, so where the two overlap they agree, and where they
-    disagree the card is not the one to doubt.
+    Nothing here overwrites a card but the gallery. ``CORRECTS`` names only
+    ``photo_urls``: unlike a generalist classified, an AutoScout24 card is
+    structured data from the same database as the advert, so where the two
+    overlap they agree — except for the photos, where the card links three of
+    them and the advert the whole set, and more of the same car is strictly
+    better than fewer.
     """
     match = _NEXT_DATA_RE.search(html or "")
     if not match:
@@ -781,6 +800,10 @@ def parse_detail(html: str, tld: str = "de") -> dict:
     if body:
         patch["body_type"] = body
         patch["segment"] = body
+
+    photos = _photo_list(details.get("images"))
+    if photos:
+        patch["photo_urls"] = photos
 
     colour = _translate(str(_raw(raw, "bodyColor") or ""), _COLOURS)
     if colour:
