@@ -17,12 +17,20 @@ import pytest
 
 from scripts import crawl_eu_market as crawl
 from src.countries import country
+from src.parser import autoscout
 from src.parser.autoscout import AutoScoutBlocked, DeListing
 
 NOW = datetime(2026, 9, 13, 12, 0, 0)
 
 
 def _listing(ext: str, year: int = 2018) -> DeListing:
+    """A French card, because France is a market whose adverts are ours to open."""
+    return DeListing(external_id=ext, url=f"https://www.autoscout24.fr/offres/{ext}",
+                     brand="Volkswagen", model="Golf", year=year, price_eur=15000.0)
+
+
+def _de_listing(ext: str, year: int = 2018) -> DeListing:
+    """A German card. Its advert is closed, so its body comes from the filter."""
     return DeListing(external_id=ext, url=f"https://www.autoscout24.de/angebote/{ext}",
                      brand="Volkswagen", model="Golf", year=year, price_eur=15000.0)
 
@@ -47,8 +55,8 @@ class FakeClient:
         return False
 
     def advert(self, path):
-        """None is the standing answer: robots closes the German advert path,
-        so a reader that cannot cope with None is a reader that breaks on DE."""
+        """None is an ordinary answer: a page that would not parse costs that
+        car its extra fields, and a reader that cannot cope with None breaks."""
         self.spent += 1
         self.calls.append(("advert", path))
         return self.adverts.get(path)
@@ -62,8 +70,13 @@ class FakeClient:
 
     def search(self, make, model, *, year=None, page=1, body=None, sort=None, desc=False,
                ustate="U"):
+        """A body-filtered search is keyed by its filter; one nobody wrote down
+        answers the way the site does, with a page that holds no cars."""
         self.spent += 1
-        self.calls.append(("search", make, model, year, page, sort, desc, ustate))
+        self.calls.append(("search", make, model, year, page, sort, desc, ustate, body))
+        if body is not None:
+            return self.searches.get((make, model, year, page, body),
+                                     ([], {"results": 0, "pages": 1}))
         return self.searches.get((make, model, year, page), ([], {}))
 
 
@@ -112,6 +125,7 @@ def repo_spy(monkeypatch):
     monkeypatch.setattr(crawl, "deactivate_import_missing", fake_deactivate)
     monkeypatch.setattr(crawl, "expire_import_listings", fake_expire)
     monkeypatch.setattr(crawl, "cell_last_seen", lambda session, source: {})
+    monkeypatch.setattr(crawl, "listings_with_body", lambda session, source, ids: set())
     return calls
 
 
@@ -126,7 +140,8 @@ class TestConfig:
         for cfg in configs.values():
             assert len(cfg.makes) >= 30 and len(set(cfg.makes)) == len(cfg.makes)
             assert (cfg.years_back, cfg.pages_per_cell, cfg.min_model_results) == (10, 2, 40)
-            assert (cfg.daily_budget, cfg.cell_max_age_days) == (450, 14)
+            assert (cfg.daily_budget, cfg.cell_max_age_days) == (900, 14)
+            assert cfg.enrich_share == 0.5
             assert (cfg.discovery_max_age_days, cfg.expire_after_days) == (30, 60)
             assert (cfg.delay_min, cfg.delay_max) == (3.0, 6.0)
 
@@ -246,18 +261,18 @@ class TestInventory:
                                               {"results": 120, "pages": 6}),
             ("volkswagen", "polo", None, 1): ([_listing("p1")], {"results": 12, "pages": 1}),
         })
-        state = _state(tmp_path, discovered=_golf_discovered())
-        result = crawl.CountryResult(code="DE", source="as24_de")
-        crawl.probe_inventory(client, _cfg(), state, country("DE"), object(), now=NOW,
+        state = _state(tmp_path, "FR", discovered=_golf_discovered())
+        result = crawl.CountryResult(code="FR", source="as24_fr")
+        crawl.probe_inventory(client, _cfg(), state, country("FR"), object(), now=NOW,
                               result=result)
-        inv = state.country("DE")["inventory"]
+        inv = state.country("FR")["inventory"]
         assert inv["volkswagen/golf"]["results"] == 120
         assert inv["volkswagen/polo"]["results"] == 12
         assert result.models_probed == 2 and result.inserted == 3
         stored = repo_spy["upsert"][0]
         assert {(r["source"], r["brand"], r["model"]) for r in stored} == {
-            ("as24_de", "Volkswagen", "Golf")}
-        assert client.calls[0][5:] == ("age", True, "U")
+            ("as24_fr", "Volkswagen", "Golf")}
+        assert client.calls[0][5:8] == ("age", True, "U")
 
     def test_the_probe_page_gets_its_adverts_too(self, tmp_path, repo_spy):
         """A model too small to be walked year by year is never harvested, so
@@ -266,10 +281,10 @@ class TestInventory:
         client = FakeClient(
             searches={("volkswagen", "golf", None, 1): ([_listing("g1")],
                                                         {"results": 12, "pages": 1})},
-            adverts={"/angebote/g1": {"segment": "Carrinha", "co2_g_km": 118}})
-        state = _state(tmp_path, discovered=_golf_discovered())
-        result = crawl.CountryResult(code="DE", source="as24_de")
-        crawl.probe_inventory(client, _cfg(), state, country("DE"), object(), now=NOW,
+            adverts={"/offres/g1": {"segment": "Carrinha", "co2_g_km": 118}})
+        state = _state(tmp_path, "FR", discovered=_golf_discovered())
+        result = crawl.CountryResult(code="FR", source="as24_fr")
+        crawl.probe_inventory(client, _cfg(), state, country("FR"), object(), now=NOW,
                               result=result)
         row = repo_spy["upsert"][0][0]
         assert row["segment"] == "Carrinha" and row["co2_g_km"] == 118
@@ -277,12 +292,12 @@ class TestInventory:
 
     def test_a_fresh_probe_is_skipped(self, tmp_path, repo_spy):
         client = FakeClient()
-        state = _state(tmp_path, discovered=_golf_discovered(), inventory={
+        state = _state(tmp_path, "FR", discovered=_golf_discovered(), inventory={
             "volkswagen/golf": {"results": 120, "at": crawl._iso(NOW - timedelta(days=3))},
             "volkswagen/polo": {"results": 12, "at": crawl._iso(NOW - timedelta(days=3))},
         })
-        result = crawl.CountryResult(code="DE", source="as24_de")
-        crawl.probe_inventory(client, _cfg(), state, country("DE"), object(), now=NOW,
+        result = crawl.CountryResult(code="FR", source="as24_fr")
+        crawl.probe_inventory(client, _cfg(), state, country("FR"), object(), now=NOW,
                               result=result)
         assert client.spent == 0 and result.models_probed == 0
 
@@ -298,15 +313,15 @@ class TestHarvest:
             ("volkswagen", "golf", 2018, 1): ([_listing("a"), _listing("b")],
                                               {"results": 2, "pages": 1}),
         })
-        result = crawl.CountryResult(code="DE", source="as24_de")
-        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path), country("DE"),
+        result = crawl.CountryResult(code="FR", source="as24_fr")
+        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path, "FR"), country("FR"),
                       object(), pages_per_cell=2, result=result)
         assert client.spent == 3, "one search plus one advert per car"
-        assert repo_spy["deactivate"] == [("as24_de", [("Volkswagen", "Golf", 2018)], {"a", "b"})]
+        assert repo_spy["deactivate"] == [("as24_fr", [("Volkswagen", "Golf", 2018)], {"a", "b"})]
         assert result.deactivated == 1 and result.cells_read == 1
         stored = repo_spy["upsert"][0]
         assert {(r["source"], r["brand"], r["model"]) for r in stored} == {
-            ("as24_de", "Volkswagen", "Golf")}
+            ("as24_fr", "Volkswagen", "Golf")}
 
     def test_a_second_page_is_read_only_when_it_exists(self, tmp_path, repo_spy):
         client = FakeClient(searches={
@@ -314,9 +329,9 @@ class TestHarvest:
             ("volkswagen", "golf", 2018, 2): ([_listing("b")], {"results": 25, "pages": 2}),
             ("volkswagen", "golf", 2017, 1): ([_listing("c")], {"results": 1, "pages": 1}),
         })
-        result = crawl.CountryResult(code="DE", source="as24_de")
-        crawl.harvest(client, _cfg(), [self._cell(2018), self._cell(2017)], _state(tmp_path),
-                      country("DE"), object(), pages_per_cell=2, result=result)
+        result = crawl.CountryResult(code="FR", source="as24_fr")
+        crawl.harvest(client, _cfg(), [self._cell(2018), self._cell(2017)], _state(tmp_path, "FR"),
+                      country("FR"), object(), pages_per_cell=2, result=result)
         pages = [(c[3], c[4]) for c in client.calls if c[0] == "search"]
         assert pages == [(2018, 1), (2018, 2), (2017, 1)]
         assert [d[1][0][2] for d in repo_spy["deactivate"]] == [2018, 2017]
@@ -327,8 +342,8 @@ class TestHarvest:
             ("volkswagen", "golf", 2018, 1): ([_listing("a")], {"results": 90, "pages": 5}),
             ("volkswagen", "golf", 2018, 2): ([_listing("b")], {"results": 90, "pages": 5}),
         })
-        result = crawl.CountryResult(code="DE", source="as24_de")
-        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path), country("DE"),
+        result = crawl.CountryResult(code="FR", source="as24_fr")
+        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path, "FR"), country("FR"),
                       object(), pages_per_cell=2, result=result)
         assert client.spent == 4, "two searches plus one advert per car"
         assert repo_spy["deactivate"] == []
@@ -340,11 +355,11 @@ class TestHarvest:
         client = FakeClient(
             searches={("volkswagen", "golf", 2018, 1): ([_listing("a")],
                                                         {"results": 1, "pages": 1})},
-            adverts={"/angebote/a": {"body_type": "Carrinha", "segment": "Carrinha",
+            adverts={"/offres/a": {"body_type": "Carrinha", "segment": "Carrinha",
                                      "color": "Preto", "co2_g_km": 118,
                                      "description": "Scheckheft"}})
-        result = crawl.CountryResult(code="DE", source="as24_de")
-        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path), country("DE"),
+        result = crawl.CountryResult(code="FR", source="as24_fr")
+        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path, "FR"), country("FR"),
                       object(), pages_per_cell=2, result=result)
         row = repo_spy["upsert"][0][0]
         assert row["segment"] == "Carrinha" and row["color"] == "Preto"
@@ -352,12 +367,12 @@ class TestHarvest:
         assert result.adverts_read == 1 and result.adverts_missed == 0
 
     def test_an_advert_we_may_not_read_still_stores_the_car(self, tmp_path, repo_spy):
-        """Germany's robots.txt disallows ``/angebote/``, so the client answers
+        """Germany's robots.txt disallows ``/offres/``, so the client answers
         None there every time. A car is never dropped for want of its advert."""
         client = FakeClient(searches={
             ("volkswagen", "golf", 2018, 1): ([_listing("a")], {"results": 1, "pages": 1})})
-        result = crawl.CountryResult(code="DE", source="as24_de")
-        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path), country("DE"),
+        result = crawl.CountryResult(code="FR", source="as24_fr")
+        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path, "FR"), country("FR"),
                       object(), pages_per_cell=2, result=result)
         assert len(repo_spy["upsert"][0]) == 1
         assert result.adverts_read == 0 and result.adverts_missed == 1
@@ -368,10 +383,10 @@ class TestHarvest:
         client = FakeClient(
             searches={("volkswagen", "golf", 2018, 1): ([_listing("a")],
                                                         {"results": 1, "pages": 1})},
-            adverts={"/angebote/a": {"year": 1999, "brand": "Wrong",
+            adverts={"/offres/a": {"year": 1999, "brand": "Wrong",
                                      "mileage_km": 88000}})
-        result = crawl.CountryResult(code="DE", source="as24_de")
-        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path), country("DE"),
+        result = crawl.CountryResult(code="FR", source="as24_fr")
+        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path, "FR"), country("FR"),
                       object(), pages_per_cell=2, result=result)
         row = repo_spy["upsert"][0][0]
         assert row["brand"] == "Volkswagen" and row["year"] == 2018
@@ -380,28 +395,141 @@ class TestHarvest:
     def test_cards_are_still_stored_when_adverts_are_off(self, tmp_path, repo_spy):
         client = FakeClient(searches={
             ("volkswagen", "golf", 2018, 1): ([_listing("a")], {"results": 1, "pages": 1})})
-        result = crawl.CountryResult(code="DE", source="as24_de")
-        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path), country("DE"),
+        result = crawl.CountryResult(code="FR", source="as24_fr")
+        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path, "FR"), country("FR"),
                       object(), pages_per_cell=2, result=result, adverts=False)
         assert client.spent == 1 and len(repo_spy["upsert"][0]) == 1
         assert result.adverts_read == 0 and result.adverts_missed == 0
 
     def test_a_page_that_did_not_parse_retires_nothing(self, tmp_path, repo_spy):
         client = FakeClient(searches={("volkswagen", "golf", 2018, 1): ([], {})})
-        result = crawl.CountryResult(code="DE", source="as24_de")
-        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path), country("DE"),
+        result = crawl.CountryResult(code="FR", source="as24_fr")
+        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path, "FR"), country("FR"),
                       object(), pages_per_cell=2, result=result)
         assert repo_spy["deactivate"] == [] and repo_spy["upsert"] == []
         assert result.cells_failed == 1 and result.cells_read == 0
+
+    def test_a_car_whose_advert_was_read_is_not_opened_again(self, tmp_path, repo_spy,
+                                                             monkeypatch):
+        """A body already in the database says the advert has been read, and an
+        advert does not change while the car is for sale. On a mature corpus
+        half a pass is cars it has already seen."""
+        monkeypatch.setattr(crawl, "listings_with_body",
+                            lambda session, source, ids: {"a"})
+        client = FakeClient(
+            searches={("volkswagen", "golf", 2018, 1): ([_listing("a"), _listing("b")],
+                                                        {"results": 2, "pages": 1})},
+            adverts={"/offres/b": {"body_type": "Carrinha"}})
+        result = crawl.CountryResult(code="FR", source="as24_fr")
+        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path, "FR"), country("FR"),
+                      object(), pages_per_cell=2, result=result)
+        assert [c for c in client.calls if c[0] == "advert"] == [("advert", "/offres/b")]
+        assert result.adverts_read == 1 and result.adverts_missed == 0
+
+    def test_a_card_the_page_repeats_is_deepened_once(self, tmp_path, repo_spy):
+        """AutoScout24 prints a promoted listing twice on the same page. Both
+        copies are the same car, so the advert is bought once and the second
+        copy is given what the first learned."""
+        client = FakeClient(
+            searches={("volkswagen", "golf", 2018, 1): ([_listing("a"), _listing("a")],
+                                                        {"results": 2, "pages": 1})},
+            adverts={"/offres/a": {"body_type": "Carrinha", "color": "Preto"}})
+        result = crawl.CountryResult(code="FR", source="as24_fr")
+        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path, "FR"), country("FR"),
+                      object(), pages_per_cell=2, result=result)
+        assert [c for c in client.calls if c[0] == "advert"] == [("advert", "/offres/a")]
+        assert [row["color"] for row in repo_spy["upsert"][0]] == ["Preto", "Preto"]
+
+    def test_the_deepening_may_not_eat_the_whole_budget(self, tmp_path, repo_spy):
+        """A cell of twenty cars costs twenty-one requests without a ceiling,
+        and then the cells stop coming round before their rows expire."""
+        rows = [_listing(f"c{i}") for i in range(5)]
+        client = FakeClient(
+            searches={("volkswagen", "golf", 2018, 1): (rows, {"results": 5, "pages": 1})},
+            adverts={f"/offres/c{i}": {"body_type": "Carrinha"} for i in range(5)})
+        result = crawl.CountryResult(code="FR", source="as24_fr")
+        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path, "FR"), country("FR"),
+                      object(), pages_per_cell=2, result=result, ceiling=2)
+        assert (result.adverts_read, result.adverts_missed) == (2, 3)
+        assert client.spent == 3, "the search, and the two adverts the ceiling left"
+        assert len(repo_spy["upsert"][0]) == 5, "every car is stored either way"
 
     def test_the_budget_stops_the_harvest(self, tmp_path, repo_spy):
         client = FakeClient(budget=1, searches={
             ("volkswagen", "golf", 2018, 1): ([_listing("a")], {"results": 1, "pages": 1}),
         })
-        result = crawl.CountryResult(code="DE", source="as24_de")
-        crawl.harvest(client, _cfg(), [self._cell(2018), self._cell(2017)], _state(tmp_path),
-                      country("DE"), object(), pages_per_cell=2, result=result)
+        result = crawl.CountryResult(code="FR", source="as24_fr")
+        crawl.harvest(client, _cfg(), [self._cell(2018), self._cell(2017)], _state(tmp_path, "FR"),
+                      country("FR"), object(), pages_per_cell=2, result=result)
         assert client.spent == 1 and result.cells_read == 1
+
+
+class TestTheMarketWithNoAdvert:
+    """Germany, where ``robots.txt`` disallows the advert and the body type has
+    to come off a page we are allowed to ask for.
+
+    A search filtered to one body returns only cars of that body, so the filter
+    labels every car it returns. Nothing here is inferred: a car no filter
+    named keeps no body at all.
+    """
+
+    @staticmethod
+    def _cell(year=2018):
+        return crawl.Cell("volkswagen", "golf", "Volkswagen", "Golf", year)
+
+    def test_the_body_comes_off_the_filter_and_the_advert_is_never_asked_for(
+            self, tmp_path, repo_spy):
+        client = FakeClient(searches={
+            ("volkswagen", "golf", 2018, 1): (
+                [_de_listing("a"), _de_listing("b")],
+                {"results": 2, "pages": 1, "body_types": ["bt_kombi", "bt_limousine"]}),
+            ("volkswagen", "golf", 2018, 1, "bt_kombi"): ([_de_listing("a")],
+                                                          {"results": 1, "pages": 1}),
+            ("volkswagen", "golf", 2018, 1, "bt_limousine"): ([_de_listing("b")],
+                                                              {"results": 1, "pages": 1}),
+        })
+        result = crawl.CountryResult(code="DE", source="as24_de")
+        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path), country("DE"),
+                      object(), pages_per_cell=2, result=result)
+        stored = {row["external_id"]: row.get("body_type") for row in repo_spy["upsert"][0]}
+        assert stored == {"a": "Carrinha", "b": "Sedan"}
+        assert not [c for c in client.calls if c[0] == "advert"]
+        assert (result.bodies_labelled, result.adverts_read) == (2, 0)
+
+    def test_the_walk_stops_once_every_car_is_accounted_for(self, tmp_path, repo_spy):
+        client = FakeClient(searches={
+            ("volkswagen", "golf", 2018, 1): (
+                [_de_listing("a")],
+                {"results": 1, "pages": 1,
+                 "body_types": ["bt_kombi", "bt_limousine", "bt_cabrio"]}),
+            ("volkswagen", "golf", 2018, 1, "bt_kombi"): ([_de_listing("a")],
+                                                          {"results": 1, "pages": 1}),
+        })
+        result = crawl.CountryResult(code="DE", source="as24_de")
+        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path), country("DE"),
+                      object(), pages_per_cell=2, result=result)
+        assert [c[8] for c in client.calls if c[0] == "search" and c[8]] == ["bt_kombi"]
+        assert client.spent == 2, "the cell, and the one filter that answered for it"
+
+    def test_a_car_no_filter_returned_keeps_no_body(self, tmp_path, repo_spy):
+        client = FakeClient(searches={
+            ("volkswagen", "golf", 2018, 1): ([_de_listing("a")],
+                                              {"results": 1, "pages": 1,
+                                               "body_types": ["bt_kombi"]}),
+        })
+        result = crawl.CountryResult(code="DE", source="as24_de")
+        crawl.harvest(client, _cfg(), [self._cell()], _state(tmp_path), country("DE"),
+                      object(), pages_per_cell=2, result=result)
+        row = repo_spy["upsert"][0][0]
+        assert row.get("body_type") is None and result.bodies_labelled == 0
+
+    def test_a_page_that_named_no_bodies_leaves_the_whole_vocabulary(self):
+        """A model with one body ships no facet list, and that is the model
+        whose body the corpus most wants; the walk asks the vocabulary."""
+        filters = autoscout.market("de").body_filters
+        assert crawl.body_order([], filters) == list(filters)
+        assert crawl.body_order(["bt_kombi", "bt_nonsense"], filters) == ["bt_kombi"]
+        assert crawl.body_order(None, autoscout.market("fr").body_filters) == []
 
 
 class TestHarvestAgainstTheDatabase:
