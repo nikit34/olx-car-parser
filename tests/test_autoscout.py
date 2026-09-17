@@ -30,8 +30,10 @@ from src.parser.autoscout import (
     AutoScoutBlocked,
     AutoScoutClient,
     AutoScoutConfig,
+    adverts_allowed,
     base_url,
     make_path,
+    market,
     parse_search,
     robots_allows,
     search_path,
@@ -541,6 +543,44 @@ def _next_data(payload: dict) -> str:
     import json as _json
     return ('<html><script id="__NEXT_DATA__" type="application/json">'
             + _json.dumps(payload) + "</script></html>")
+
+
+class TestTheRoadEachMarketLeaves:
+    """Which way a market is deepened is read off robots.txt, not remembered."""
+
+    def test_the_advert_is_open_in_two_markets_of_three(self):
+        assert not adverts_allowed("de")
+        assert adverts_allowed("fr") and adverts_allowed("it")
+
+    def test_the_page_names_the_bodies_its_model_has(self):
+        """The search page interlinks its own facets, so the body filters worth
+        asking through ride along on a request already made."""
+        html = _next_data({"props": {"pageProps": {
+            "listings": [], "numberOfResults": 3, "numberOfPages": 1,
+            "interlinking": [
+                {"id": "modelVariants", "links": [
+                    {"url": "https://www.autoscout24.de/lst/volkswagen/golf/va_variant"}]},
+                {"id": "bodyTypes", "links": [
+                    {"anchorText": "Volkswagen Golf Limousine",
+                     "url": "https://www.autoscout24.de/lst/volkswagen/golf/bt_limousine"},
+                    {"anchorText": "Volkswagen Golf Kombi",
+                     "url": "https://www.autoscout24.de/lst/volkswagen/golf/bt_kombi"}]}]}}})
+        assert parse_search(html, "de")[1]["body_types"] == ["bt_limousine", "bt_kombi"]
+
+    def test_a_page_with_no_body_group_says_nothing_rather_than_guessing(self):
+        html = _next_data({"props": {"pageProps": {"listings": [], "interlinking": []}}})
+        assert parse_search(html, "de")[1]["body_types"] == []
+
+    def test_every_german_filter_is_a_path_robots_leaves_open(self):
+        filters = market("de").body_filters
+        assert {"bt_limousine", "bt_kombi", "bt_kleinwagen",
+                "bt_suv-gelaendewagen-pickup"} <= set(filters)
+        assert all(filters.values()), "a filter that maps to nothing labels nothing"
+        for slug in filters:
+            assert robots_allows(search_path("volkswagen", "golf", body=slug, year=2018))
+
+    def test_the_markets_that_open_their_advert_need_no_filter_table(self):
+        assert not market("fr").body_filters and not market("it").body_filters
 
 
 class TestTheAdvertPage:

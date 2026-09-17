@@ -1633,6 +1633,34 @@ def upsert_import_listings(session: Session, listings) -> tuple[int, int]:
     return inserted, updated
 
 
+def listings_with_body(session: Session, source: str, external_ids) -> set[str]:
+    """Which of these cars of *source* already carry a body type.
+
+    An advert is read once. The body, the colour, the doors and the seller's
+    own text do not change while the car is for sale, so a car that has them is
+    a car no further request should be spent on — and on a market whose adverts
+    are closed, the body is also what says a car has already been through the
+    body filter. Without this the deepening cost is paid again every time a
+    cell comes round, which on a mature corpus is half the rows in a pass.
+
+    One SELECT for the whole batch, like the upsert above, because the crawler
+    asks this twenty rows at a time against a database it may reach over a
+    tunnel.
+    """
+    ids = [str(e) for e in external_ids if str(e or "")]
+    if not ids:
+        return set()
+    out: set[str] = set()
+    for chunk in _chunked(ids):
+        rows = (session.query(Listing.external_id)
+                .filter(Listing.source == source,
+                        Listing.external_id.in_(chunk),
+                        Listing.body_type.isnot(None))
+                .all())
+        out.update(str(row[0]) for row in rows)
+    return out
+
+
 def deactivate_import_missing(session: Session, source: str,
                               cells: list[tuple[str, str, int]], seen_ids: set[str],
                               now: datetime | None = None) -> int:

@@ -20,12 +20,16 @@ the way out — ``Diesel``/``Gasolina``/``Eléctrico``, ``Manual``/``Automática
 the pages are all written against that vocabulary and a per-country dialect in
 the database is a per-country bug in every one of them.
 
-Why the search page and not a detail page: the result page ships twenty
-fully-formed listings, exactly like Standvirtual (see
-``scraper._sv_advert_from_html``). Every input the ISV formula needs is already
-on the card — CO2 in g/km, Erstzulassung, fuel, cilindrada, plus the price and,
-crucially, its VAT label. So one request per twenty cars, and no detail fetches
-at all.
+A card is most of a car and not all of it. The result page ships twenty cards,
+exactly like Standvirtual (see ``scraper._sv_advert_from_html``), and that is
+where the price and its VAT label, the mileage, the power and the first
+registration come from. What no card carries on any of the three sites is the
+body type, the colour, the drive train and the seller's own text, and outside
+Germany it carries no CO2 either; those live on the advert, which is opened per
+car where robots.txt leaves it open and never where it does not. Germany is the
+market where it does not, so its body type is recovered from the site's own
+body filter instead — see ``Market.body_filters`` — and the rest of what the
+advert would have said is simply not had.
 
 **How this behaves on someone else's site**, because that is a decision and not
 an implementation detail:
@@ -39,7 +43,8 @@ an implementation detail:
   We are none of those, and the path form used here (``/lst/{make}/{model}``)
   is not among the disallowed prefixes. ``robots_allows`` keeps that judgement
   in code rather than in a comment nobody re-reads. The three national files
-  disallow the same prefixes, so one list covers all of them.
+  agree on the search prefixes and part ways on the advert, which is why that
+  judgement takes a market.
 * It is slow on purpose: ``DELAY_MIN``/``DELAY_MAX`` seconds between requests,
   serial, one request per model-year, and a hard ``budget`` per run so a bug
   cannot turn into a flood. A 429 or a 403 stops the run then and there instead
@@ -126,6 +131,17 @@ _BODY_TYPES: dict[str, str | None] = {
     "other": None,
 }
 
+_DE_BODY_FILTERS: dict[str, str | None] = {
+    "bt_limousine": "Sedan",
+    "bt_kombi": "Carrinha",
+    "bt_suv-gelaendewagen-pickup": "SUV/TT",
+    "bt_kleinwagen": "Pequeno Citadino",
+    "bt_van-kleinbus": "Monovolume",
+    "bt_cabrio": "Cabrio",
+    "bt_coupe": "Coupé",
+    "bt_transporter": "Comercial",
+}
+
 _NEXT_DATA_RE = re.compile(
     r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', re.S)
 
@@ -168,6 +184,16 @@ def _label_key(text) -> str:
 class Market:
     """One national site: its host, its language header, and what its cards say.
 
+    ``advert_prefix`` is where this site keeps its adverts, and it is asked of
+    ``robots.txt`` rather than assumed: ``adverts_allowed`` is what decides
+    whether a market's cars are deepened by opening them. ``body_filters`` is
+    the fallback for a market where they are not — AutoScout24's own body-type
+    filter segments, mapped onto the same Portuguese vocabulary, so a body type
+    can be learned from a search the crawler is allowed to make. The filter
+    vocabulary is the coarser of the two: ``bt_kleinwagen`` holds what an advert
+    would call a small car and a compact both, so a German row lands in one
+    segment where a French one, read off its advert, could land in either.
+
     ``fuels`` and ``gearboxes`` map the site's own label onto this project's
     Portuguese vocabulary. A value of None is a deliberate "this tells us
     nothing" — ``Sonstige``/``Autres``/``Altro`` is the seller declining to
@@ -188,6 +214,8 @@ class Market:
     fuels: dict[str, str | None]
     gearboxes: dict[str, str | None]
     drive_trains: dict[str, str | None] = field(default_factory=dict)
+    advert_prefix: str = "/angebote/"
+    body_filters: dict[str, str | None] = field(default_factory=dict)
 
 
 _MARKETS: dict[str, Market] = {
@@ -225,6 +253,8 @@ _MARKETS: dict[str, Market] = {
             "hinterrad": "Traseira",
             "allrad": "Integral",
         },
+        advert_prefix="/angebote/",
+        body_filters=_DE_BODY_FILTERS,
     ),
     "fr": Market(
         tld="fr",
@@ -260,6 +290,7 @@ _MARKETS: dict[str, Market] = {
             "transmission integrale": "Integral",
             "4 roues motrices": "Integral",
         },
+        advert_prefix="/offres/",
     ),
     "it": Market(
         tld="it",
@@ -294,6 +325,7 @@ _MARKETS: dict[str, Market] = {
             "integrale": "Integral",
             "4x4": "Integral",
         },
+        advert_prefix="/annunci/",
     ),
 }
 
@@ -344,6 +376,18 @@ def robots_allows(path: str, tld: str = "de") -> bool:
         return False
     return not any(p.startswith(pre)
                    for pre in _DISALLOWED_BY_TLD.get(str(tld or "de"), ()))
+
+
+def adverts_allowed(tld: str = "de") -> bool:
+    """Whether this market's advert pages are ours to open.
+
+    Asked of the same robots rules rather than remembered as a constant, so a
+    file that changes changes the crawler with it. Today the answer is no for
+    ``.de`` and yes for the other two, and it is what decides whether a car is
+    deepened by opening its advert or by asking the search again through a body
+    filter.
+    """
+    return robots_allows(market(tld).advert_prefix + "x", tld)
 
 
 @dataclass
@@ -533,14 +577,40 @@ def _make_models(props: dict) -> list[dict]:
     return entries
 
 
+def _body_types(props: dict) -> list[str]:
+    """The body-type filters AutoScout24 offers for the model on this page.
+
+    The page interlinks its own facets, and the body-type group is the list of
+    bodies that model actually has for sale. It costs nothing — it rides on a
+    page the crawler already asked for — and it is what makes a body type
+    reachable on a market whose adverts are closed: ask the same cell again
+    through one filter, and every car that comes back has that body.
+
+    A model with a single body ships no group at all, so an empty list means
+    "the page did not say", not "this model has no body".
+    """
+    for group in props.get("interlinking") or []:
+        if not isinstance(group, dict) or group.get("id") != "bodyTypes":
+            continue
+        slugs = []
+        for link in group.get("links") or []:
+            slug = str((link or {}).get("url") or "").rstrip("/").rsplit("/", 1)[-1]
+            if slug.startswith("bt_"):
+                slugs.append(slug)
+        return slugs
+    return []
+
+
 def parse_search(html: str, tld: str = "de") -> tuple[list[DeListing], dict]:
     """(listings, meta) from a search page's ``__NEXT_DATA__``.
 
     ``meta`` carries ``results`` and ``pages`` so the runner can stop paging
-    instead of guessing, and ``make_models`` so a make page doubles as the
-    discovery of that make's model vocabulary. A page whose JSON is missing or
-    reshaped returns an empty list and an empty meta — the caller treats that
-    as "stop", never as "no cars in this country".
+    instead of guessing, ``make_models`` so a make page doubles as the
+    discovery of that make's model vocabulary, and ``body_types`` so a market
+    that may not open adverts still knows which body filters this model is worth
+    asking through. A page whose JSON is missing or reshaped returns an empty
+    list and an empty meta — the caller treats that as "stop", never as "no cars
+    in this country".
     """
     mk = market(tld)
     m = _NEXT_DATA_RE.search(html or "")
@@ -556,7 +626,7 @@ def parse_search(html: str, tld: str = "de") -> tuple[list[DeListing], dict]:
     if not isinstance(raw, list):
         return [], {}
     meta = {"results": props.get("numberOfResults"), "pages": props.get("numberOfPages"),
-            "make_models": _make_models(props)}
+            "make_models": _make_models(props), "body_types": _body_types(props)}
     out = []
     for item in raw:
         parsed = _to_listing(item, mk)

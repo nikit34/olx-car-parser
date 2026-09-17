@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       budget:
-        description: "Hard cap on AutoScout24 requests per country this run"
+        description: "Hard cap on requests per country; empty leaves it to config/eu_markets.yaml"
         type: string
-        default: "450"
+        default: ""
       countries:
         description: "Comma-separated country codes to crawl, train and build"
         type: string
@@ -73,8 +73,9 @@ jobs:
             cc="$(echo "$cc" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')"
             [ -n "$cc" ] && args+=(--country "$cc")
           done
-          .venv/bin/python scripts/crawl_eu_market.py \
-            --budget "${{ inputs.budget || '450' }}" "${args[@]}"
+          budget="${{ inputs.budget }}"
+          [ -n "$budget" ] && args+=(--budget "$budget")
+          .venv/bin/python scripts/crawl_eu_market.py "${args[@]}"
           rc=$?
           echo "rc=$rc" >> "$GITHUB_OUTPUT"
           if [ $rc -eq 2 ]; then

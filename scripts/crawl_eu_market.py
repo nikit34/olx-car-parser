@@ -24,20 +24,27 @@ budget:
    A cell whose result count fits in the pages read was enumerated in full, and
    the rows it no longer lists are retired then and there; everything else is
    retired by age at the end of the pass.
-4. Adverts. Every card read in the harvest is then opened, because the search
-   card does not carry a body type, a colour, a drive train, the seller's text,
-   or — outside Germany — CO2, and those are the difference between a row that
-   can be priced beside a Portuguese one and a row that cannot.
+4. Deepening. A search card carries no body type, no colour, no drive train,
+   no seller text and — outside Germany — no CO2, and those are the difference
+   between a row that can be priced beside a Portuguese one and a row that
+   cannot. Each market is deepened by whichever road its ``robots.txt`` leaves
+   open, and the crawler asks the file rather than remembering the answer.
 
-   This is what a pass now costs: a cell of twenty cars is twenty-one requests
-   rather than one. The budget is unchanged and therefore buys roughly a
-   twentieth of the cars it used to, which is the trade and not an oversight —
-   ``--no-adverts`` returns to the old, shallow behaviour.
+   France and Italy leave the advert open, so every card that needs it is
+   opened. Germany does not — ``autoscout24.de`` disallows ``/angebote/`` — so
+   its cars get their body type from the site's own body filter instead: the
+   same cell asked again through ``bt_kombi`` and friends, where everything
+   that comes back has that body. It is the one advert field reachable without
+   the advert, and the rest is simply not had there.
 
-   Germany is the exception and not by our choice: ``autoscout24.de`` disallows
-   ``/angebote/`` in ``robots.txt``, so ``robots_allows`` refuses the path, no
-   budget is spent, and German rows stay exactly as deep as they were. France
-   (``/offres/``) and Italy (``/annunci/``) are open and are read in full.
+   Two things keep this from eating the pass. A car is deepened once: the body
+   already in the database says the advert has been read, and a cell that comes
+   round again costs nothing for the cars it already knows. And the deepening
+   may spend at most ``enrich_share`` of the country's budget, so the harvest
+   keeps the rest and a cell still comes round inside ``expire_after_days`` —
+   without that cap a cell of twenty cars costs twenty-one requests instead of
+   one, and the corpus starts retiring rows faster than the crawl re-reads
+   them. ``--no-adverts`` skips the deepening entirely.
 
 Discovery and inventory live in a JSON state file so a run that is killed or
 runs out of budget loses at most one make of work. Harvest progress lives in
@@ -76,13 +83,14 @@ sys.path.insert(0, str(REPO_ROOT))
 from src.analytics.model_pages import slugify  # noqa: E402
 from src.countries import EU_COUNTRIES, Country, country  # noqa: E402
 from src.parser import autoscout  # noqa: E402
-from src.parser.autoscout import AutoScoutBlocked  # noqa: E402
+from src.parser.autoscout import AutoScoutBlocked, adverts_allowed  # noqa: E402
 from src.parser.market_card import merge_patch  # noqa: E402
 from src.parser.brand_normalize import normalize_brand  # noqa: E402
 from src.storage.repository import (  # noqa: E402
     _utcnow,
     deactivate_import_missing,
     expire_import_listings,
+    listings_with_body,
     upsert_import_listings,
 )
 
@@ -104,6 +112,7 @@ class MarketConfig:
     pages_per_cell: int = 2
     min_model_results: int = 40
     daily_budget: int = 450
+    enrich_share: float = 0.5
     delay_min: float = 3.0
     delay_max: float = 6.0
     cell_max_age_days: int = 7
@@ -203,6 +212,11 @@ def _budget_left(client) -> bool:
     return client.spent < client.config.budget
 
 
+def _ceiling(client, ceiling: int | None) -> int:
+    """How many requests this pass may spend on deepening rather than coverage."""
+    return client.config.budget if ceiling is None else max(0, int(ceiling))
+
+
 def make_label(make_slug: str, listings) -> str:
     """The brand the rows are stored under: the site's own spelling, canonicalised."""
     for item in listings:
@@ -263,6 +277,8 @@ class CountryResult:
     updated: int = 0
     adverts_read: int = 0
     adverts_missed: int = 0
+    bodies_labelled: int = 0
+    enrich_requests: int = 0
     deactivated: int = 0
     expired: int = 0
     requests: int = 0
@@ -320,31 +336,64 @@ def advert_path(url: str) -> str:
     return rest[slash:] if slash >= 0 else "/"
 
 
-def enrich(client, rows: list[dict], result: CountryResult) -> None:
+def deepen(client, rows: list[dict], result: CountryResult, *, session, cty: Country,
+           make_slug: str, model_slug: str, year: int | None, bodies, ceiling: int) -> None:
+    """Fill what the card could not, by whichever road this market leaves open.
+
+    A car is deepened once. The body type already stored says its advert has
+    been read — or, where adverts are closed, that it has already been through
+    the body filter — and nothing here is spent on it again. On a mature corpus
+    that is half the rows of a pass, which is the difference between a crawl
+    that keeps up with its own expiry and one that falls behind it.
+
+    Once, too, within the page: AutoScout24 repeats a promoted listing further
+    down its own result page, and both copies are the same car. One of them is
+    deepened and the other is given what it learned, rather than the same
+    advert being bought twice.
+    """
+    if not rows:
+        return
+    known = listings_with_body(session, cty.source,
+                               [row.get("external_id") for row in rows])
+    copies: dict[str, list[dict]] = {}
+    for row in rows:
+        copies.setdefault(str(row.get("external_id")), []).append(row)
+    pending = [group[0] for ext, group in copies.items()
+               if ext not in known and not group[0].get("body_type")]
+    if pending:
+        if adverts_allowed(cty.as24_tld):
+            read_adverts(client, pending, result, ceiling=ceiling)
+        else:
+            label_bodies(client, pending, result, tld=cty.as24_tld, make_slug=make_slug,
+                         model_slug=model_slug, year=year, bodies=bodies, ceiling=ceiling)
+    for group in copies.values():
+        for other in group[1:]:
+            for key, value in group[0].items():
+                if value is not None and other.get(key) is None:
+                    other[key] = value
+
+
+def read_adverts(client, rows: list[dict], result: CountryResult, *, ceiling: int) -> None:
     """Open each card's advert and fold what it says into the row.
 
-    This is the expensive half of a pass and the reason a cell of twenty cars
-    now costs twenty-one requests rather than one. What it buys is the fields
-    no search card carries: the body type, which is why ``segment`` was null
-    for every foreign row; CO2, which the ISV formula needs and which the
-    French and Italian cards omit; and the colour, the doors, the drive train
-    and the seller's own text, which is what a Portuguese row has always had.
-
-    On ``autoscout24.de`` it buys nothing, because ``robots.txt`` disallows
-    ``/angebote/`` and ``fetch`` refuses the path without spending budget. The
-    German rows therefore stay exactly as rich as they were and a German run
-    costs exactly what it cost before. That asymmetry is the site's decision,
-    not a switch to flip.
+    What it buys is the fields no search card carries: the body type, which is
+    why ``segment`` was null for every foreign row; CO2, which the ISV formula
+    needs and which the French and Italian cards omit; and the colour, the
+    doors, the drive train and the seller's own text, which is what a
+    Portuguese row has always had.
 
     A missing advert is never a missing car: the row is stored either way, and
-    ``adverts_missed`` counts the difference so a pass that quietly stopped
-    enriching shows up in the summary rather than only in the data.
+    ``adverts_missed`` counts the difference — budget gone, ceiling reached, or
+    a page that would not parse — so a pass that quietly stopped enriching shows
+    up in the summary rather than only in the data.
     """
     for row in rows:
-        if not _budget_left(client):
+        if result.enrich_requests >= ceiling or not _budget_left(client):
             result.adverts_missed += 1
             continue
+        before = client.spent
         patch = client.advert(advert_path(row.get("url")))
+        result.enrich_requests += client.spent - before
         if patch:
             merge_patch(row, patch, autoscout.CORRECTS)
             result.adverts_read += 1
@@ -352,9 +401,55 @@ def enrich(client, rows: list[dict], result: CountryResult) -> None:
             result.adverts_missed += 1
 
 
+def body_order(bodies, filters: dict) -> list[str]:
+    """Which body filters to ask through, in which order.
+
+    The page's own facet list is the short answer: it is the bodies that model
+    actually has, so anything outside it is a request that can only come back
+    empty. A page that shipped no list — which is what a model with a single
+    body does — leaves the whole vocabulary, walked until every car is
+    accounted for.
+    """
+    listed = [slug for slug in (bodies or []) if slug in filters]
+    return listed or list(filters)
+
+
+def label_bodies(client, rows: list[dict], result: CountryResult, *, tld: str,
+                 make_slug: str, model_slug: str, year: int | None, bodies,
+                 ceiling: int) -> None:
+    """Give a market with no advert the one advert field it can still have.
+
+    ``autoscout24.de`` disallows ``/angebote/``, so the body type — the field
+    ``segment`` is built from, and the reason every German row had none — has
+    to come from a page we are allowed to ask for. A search filtered to one
+    body returns only cars of that body, so the filter labels every car it
+    returns, and the walk stops as soon as the cell's cars are all accounted
+    for. Nothing is inferred: a car no filter returned keeps no body at all.
+    """
+    filters = autoscout.market(tld).body_filters
+    if not filters:
+        return
+    waiting = {str(row.get("external_id")): row for row in rows}
+    for slug in body_order(bodies, filters):
+        if not waiting or result.enrich_requests >= ceiling or not _budget_left(client):
+            break
+        before = client.spent
+        listings, meta = client.search(make_slug, model_slug, year=year, body=slug,
+                                       ustate="U", sort="age", desc=True)
+        result.enrich_requests += client.spent - before
+        if not meta:
+            continue
+        body = filters.get(slug)
+        for item in used_only(listings):
+            row = waiting.pop(str(item.external_id), None)
+            if row is not None and body:
+                row["body_type"] = body
+                result.bodies_labelled += 1
+
+
 def probe_inventory(client, cfg: MarketConfig, state: CrawlState, cty: Country, session, *,
                     now: datetime, result: CountryResult, adverts: bool = True,
-                    log=print) -> None:
+                    ceiling: int | None = None, log=print) -> None:
     """One newest-first page per (make, model) not probed inside a month.
 
     The page is asked for its result count, but its twenty cars are real and
@@ -364,6 +459,7 @@ def probe_inventory(client, cfg: MarketConfig, state: CrawlState, cty: Country, 
     exactly the corner where nobody would think to look for the gap.
     """
     cstate = state.country(cty.code)
+    ceiling = _ceiling(client, ceiling)
     since_flush = 0
     for make in cfg.makes:
         with state.lock:
@@ -393,7 +489,9 @@ def probe_inventory(client, cfg: MarketConfig, state: CrawlState, cty: Country, 
                 stamp(listings, cty.source, brand, model["label"])
                 rows = [asdict(item) for item in listings]
                 if adverts:
-                    enrich(client, rows, result)
+                    deepen(client, rows, result, session=session, cty=cty,
+                           make_slug=make, model_slug=model["slug"], year=None,
+                           bodies=meta.get("body_types"), ceiling=ceiling)
                 ins, upd = upsert_import_listings(session, rows)
                 result.inserted += ins
                 result.updated += upd
@@ -457,8 +555,9 @@ def cell_last_seen(session, source: str) -> dict[tuple, datetime]:
 
 def harvest(client, cfg: MarketConfig, cells: list[Cell], state: CrawlState, cty: Country,
             session, *, pages_per_cell: int, result: CountryResult, adverts: bool = True,
-            log=print) -> None:
+            ceiling: int | None = None, log=print) -> None:
     """Read each cell's newest pages, store them, retire what a full read no longer lists."""
+    ceiling = _ceiling(client, ceiling)
     for index, cell in enumerate(cells, start=1):
         if not _budget_left(client):
             break
@@ -466,6 +565,7 @@ def harvest(client, cfg: MarketConfig, cells: list[Cell], state: CrawlState, cty
         pages_fetched = 0
         results = None
         total_pages = 1
+        bodies = None
         for page in range(1, max(1, pages_per_cell) + 1):
             if page > 1 and (page > total_pages or not _budget_left(client)):
                 break
@@ -477,6 +577,7 @@ def harvest(client, cfg: MarketConfig, cells: list[Cell], state: CrawlState, cty
             if page == 1:
                 results = meta.get("results")
                 total_pages = int(meta.get("pages") or 1)
+                bodies = meta.get("body_types")
             batch.extend(used_only(listings))
         if pages_fetched == 0:
             result.cells_failed += 1
@@ -489,7 +590,9 @@ def harvest(client, cfg: MarketConfig, cells: list[Cell], state: CrawlState, cty
         if batch:
             rows = [asdict(item) for item in batch]
             if adverts:
-                enrich(client, rows, result)
+                deepen(client, rows, result, session=session, cty=cty,
+                       make_slug=cell.make_slug, model_slug=cell.model_slug,
+                       year=cell.year, bodies=bodies, ceiling=ceiling)
             ins, upd = upsert_import_listings(session, rows)
             result.inserted += ins
             result.updated += upd
@@ -511,10 +614,11 @@ def crawl_country(cty: Country, cfg: MarketConfig, state: CrawlState, client, se
     result = CountryResult(code=cty.code, source=cty.source)
     t0 = time.perf_counter()
     try:
+        ceiling = int(client.config.budget * cfg.enrich_share)
         result.makes_read, result.makes_empty = discover(client, cfg, state, cty.code,
                                                          now=now, log=log)
         probe_inventory(client, cfg, state, cty, session, now=now, result=result,
-                        adverts=adverts, log=log)
+                        adverts=adverts, ceiling=ceiling, log=log)
         kept = kept_models(cfg, state, cty.code)
         result.models_kept = len(kept)
         cells = order_cells(build_cells(kept, now_year=now.year, years_back=years),
@@ -522,7 +626,7 @@ def crawl_country(cty: Country, cfg: MarketConfig, state: CrawlState, client, se
                             now=now, cell_max_age_days=cfg.cell_max_age_days)
         result.cells_pending = len(cells)
         harvest(client, cfg, cells, state, cty, session, pages_per_cell=pages,
-                result=result, adverts=adverts, log=log)
+                result=result, adverts=adverts, ceiling=ceiling, log=log)
     except AutoScoutBlocked as exc:
         result.blocked = True
         log(f"[{cty.source}] stopped: {exc} — the site asked us to back off", flush=True)
@@ -544,6 +648,7 @@ def summary(result: CountryResult) -> str:
             f"{result.inserted} new listings, {result.updated} refreshed, "
             f"{result.adverts_read} adverts read "
             f"({result.adverts_missed} not read), "
+            f"{result.bodies_labelled} bodies from the filter, "
             f"{result.deactivated} retired, {result.expired} expired, "
             f"{result.requests} requests in {result.seconds:.0f}s"
             + (" — blocked" if result.blocked else ""))
@@ -643,10 +748,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="hard cap on requests per country this run (default: yaml)")
     ap.add_argument("--pages", type=int, default=None, help="pages per cell (default: yaml)")
     ap.add_argument("--no-adverts", action="store_true",
-                    help="Read search cards only, without opening each advert. "
-                         "Cheap and shallow: no body type, no CO2, no colour, "
-                         "no description. Germany reads this way regardless, "
-                         "because its robots.txt disallows the advert path.")
+                    help="Read search cards only, with no deepening at all: no "
+                         "advert opened where robots allows it, and no body "
+                         "filter asked where it does not. Cheap and shallow - "
+                         "no body type, no CO2, no colour, no description.")
     ap.add_argument("--years", type=int, default=None,
                     help="how many years back to harvest (default: yaml)")
     ap.add_argument("--dry-run", action="store_true",

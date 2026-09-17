@@ -2,7 +2,8 @@ defaults:
   years_back: 10
   pages_per_cell: 2
   min_model_results: 40
-  daily_budget: 450
+  daily_budget: 900
+  enrich_share: 0.5
   delay_min: 3.0
   delay_max: 6.0
   cell_max_age_days: 14
