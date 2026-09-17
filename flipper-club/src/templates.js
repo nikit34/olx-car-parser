@@ -468,7 +468,12 @@ h1.hero-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:5
 .year-tbl th:first-child,.year-tbl td:first-child{text-align:left;font-weight:600;}
 .year-tbl td{font-family:var(--mono);color:#16181D;}
 .year-tbl td.mut{color:#8A8F98;}
-.mchips{display:flex;flex-wrap:wrap;gap:7px;}
+.mchips{display:flex;flex-wrap:wrap;gap:7px;align-items:flex-start;}
+.mitem{display:flex;flex-direction:column;gap:5px;align-items:flex-start;max-width:100%;}
+.mitem.has-years{background:#FAFAF8;border:1px solid #EFEDE8;border-radius:12px;padding:6px 7px 7px;}
+.myears{display:flex;flex-wrap:wrap;gap:4px;padding:0 2px;}
+.myears a{font-family:var(--mono);font-size:11px;line-height:1.7;color:#5B606B;padding:1px 5px;border:1px solid #E8E6E1;border-radius:6px;background:#fff;}
+.myears a:hover{border-color:#177A47;color:#177A47;}
 .mchip{display:inline-block;padding:8px 12px;border-radius:10px;border:1px solid #E2DFD8;background:#fff;font-size:13px;color:#16181D;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;}
 .mchip .mut{color:#8A8F98;font-family:var(--mono);font-size:11.5px;}
 
@@ -2272,8 +2277,14 @@ export function renderModelsHub({ models, depositCount, builtAt, host, districts
   }
   const brands = [...byBrand.keys()].sort((a, b) => a.localeCompare(b, "pt"));
   const groups = brands.map(b => {
-    const chips = byBrand.get(b).map(m =>
-      `<a class="mchip" href="/pt/preco/${encodeURIComponent(m.slug)}">${escapeHtml(m.m)} <span class="mut">· mediana ${fmtEur(m.fm)} · ${m.n}</span></a>`).join("");
+    const chips = byBrand.get(b).map(m => {
+      const chip = `<a class="mchip" href="/pt/preco/${encodeURIComponent(m.slug)}">${escapeHtml(m.m)} <span class="mut">· mediana ${fmtEur(m.fm)} · ${m.n}</span></a>`;
+      const years = (m.ys || []).length
+        ? `<div class="myears">${m.ys.map(y =>
+            `<a href="/pt/preco/${encodeURIComponent(m.slug)}/${y}">${y}</a>`).join("")}</div>`
+        : "";
+      return `<div class="mitem${years ? " has-years" : ""}">${chip}${years}</div>`;
+    }).join("");
     return `<div style="margin-bottom:22px;"><h2 class="sec-label" style="margin:0 0 10px;">${escapeHtml(b)}</h2><div class="mchips">${chips}</div></div>`;
   }).join("");
 
