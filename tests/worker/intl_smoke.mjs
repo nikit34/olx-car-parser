@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import worker from "../../flipper-club/src/index.js";
 import { yearPageYears } from "../../flipper-club/src/seo-pages.js";
-import { LOCALES, KEYS, missingKeys } from "../../flipper-club/src/i18n.js";
+import { LOCALES, KEYS, missingKeys, fmtEurL, fmtKmL } from "../../flipper-club/src/i18n.js";
 
 const HOST = "carsbuyer.org";
 const NNBSP = " ";
@@ -46,6 +46,44 @@ const VALUATION = {
 };
 const CARS = { [`as24_de:${UUID}`]: VALUATION, "as24_de:abc-uuid": VALUATION };
 
+const ADVERT_PATH = { de: "/angebote/", fr: "/offres/", it: "/annunci/" };
+
+function dealsFor(code) {
+  return DEALS.map(d => ({
+    ...d,
+    olx_id: d.olx_id.replace("as24_de:", `as24_${code}:`),
+    url: d.url.replace("autoscout24.de", `autoscout24.${code}`)
+      .replace("/angebote/", ADVERT_PATH[code]),
+  }));
+}
+
+function carsFor(code) {
+  const out = {};
+  for (const [k, v] of Object.entries(CARS)) out[k.replace("as24_de:", `as24_${code}:`)] = v;
+  return out;
+}
+
+const MARKETS = {
+  de: {
+    lang: "de", hub: "/de/preise", model: s => `/de/preis/${s}`, feed: "/de/markt",
+    car: "/de/auto", avaliar: "/de/bewerten", reg: "Erstzulassung",
+    seller: ["Händler", "Privat"], miss: "noch nicht",
+    method: [/Händler und Privatverkäufer/, /verlangte|Verlangter|verlangten/],
+  },
+  fr: {
+    lang: "fr", hub: "/fr/prix", model: s => `/fr/cote/${s}`, feed: "/fr/marche",
+    car: "/fr/voiture", avaliar: "/fr/estimer", reg: "immatriculation",
+    seller: ["Professionnel", "Particulier"], miss: "pas encore",
+    method: [/Professionnels et particuliers/, /prix demandé/],
+  },
+  it: {
+    lang: "it", hub: "/it/prezzi", model: s => `/it/prezzo/${s}`, feed: "/it/mercato",
+    car: "/it/auto", avaliar: "/it/valutare", reg: "immatricolazione",
+    seller: ["Concessionario", "Privato"], miss: "non è ancora",
+    method: [/Concessionari e privati/, /prezzo richiesto/],
+  },
+};
+
 const kv = new Map();
 function makeEnv(intlLocales) {
   return {
@@ -74,9 +112,13 @@ globalThis.fetch = async (input, init) => {
   if (u.includes("models_de.json")) return json(ddoc);
   if (u.includes("models_fr.json") || u.includes("models_it.json")) return json(ddoc);
   if (u.includes("models.json")) return json(mdoc);
-  if (u.includes("hot_deals_de_all.json")) return json({ deals: DEALS, built_at: ddoc.built_at });
+  for (const code of ["de", "fr", "it"]) {
+    if (u.includes(`hot_deals_${code}_all.json`)) {
+      return json({ deals: dealsFor(code), built_at: ddoc.built_at });
+    }
+    if (u.includes(`valuations_${code}.json`)) return json({ v: 1, cars: carsFor(code) });
+  }
   if (u.includes("hot_deals_")) return json({ deals: [] });
-  if (u.includes("valuations_de.json")) return json({ v: 1, cars: CARS });
   if (u.includes("valuations")) return json({ cars: {} });
   if (u.includes("import.json")) return json({ built_at: ddoc.built_at, models: {} });
   return realFetch(input, init);
@@ -128,187 +170,224 @@ function assertOwnLanguage(code, path, html) {
   }
 }
 
-await check("/de is a German page, not a translated Portuguese one", async () => {
-  const r = await get("/de");
-  assert(r.status === 200, `/de → ${r.status}`);
-  const html = await r.text();
-  assert(html.includes('<html lang="de-DE">'), "/de does not declare lang de-DE");
-  assert(html.includes('<meta property="og:locale" content="de_DE">'), "/de has the wrong og:locale");
-  assert(!/undefined|\[object Object\]|NaN(?![a-zA-Z])/.test(html.replace(/<script[\s\S]*?<\/script>/g, "")),
-    "/de rendered undefined/NaN into the page");
-  assertOwnLanguage("de", "/de", html);
-  assert(visibleText(html).includes("AutoScout24"), "/de does not name its own data source");
-  assert(html.includes('href="/de/preise"') && html.includes('href="/de/bewerten"'),
-    "/de does not link its own localised routes");
-});
-
-await check("the German hub lists models under the localised prefix", async () => {
-  const r = await get("/de/preise");
-  assert(r.status === 200, `/de/preise → ${r.status}`);
-  const html = await r.text();
-  assert(html.includes("index,follow"), "/de/preise is not indexable");
-  assert(html.includes(`<link rel="canonical" href="https://${HOST}/de/preise">`),
-    "/de/preise has the wrong canonical");
-  assert(html.includes(`href="/de/preis/${deep}"`), "the hub does not link the deepest model");
-  assert(!/preços|anúncios/i.test(visibleText(html)), "the German hub leaks Portuguese");
-});
-
-await check("a German model page carries canonical, FAQ JSON-LD and German money", async () => {
-  const r = await get(`/de/preis/${deep}`);
-  assert(r.status === 200, `/de/preis/${deep} → ${r.status}`);
-  const html = await r.text();
-  assert(html.includes("index,follow"), "model page is not indexable");
-  assert(html.includes(`<link rel="canonical" href="https://${HOST}/de/preis/${deep}">`),
-    "model page canonical is not the locale URL");
-  assert(html.includes(`href="https://${HOST}/de/preis/${deep}.json"`),
-    "model page does not advertise its JSON twin");
-  const blocks = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)];
-  assert(blocks.length === 1, `expected one JSON-LD block, got ${blocks.length}`);
-  const ld = JSON.parse(blocks[0][1].replace(/\\u003c/g, "<"));
-  const types = ld["@graph"].map(n => n["@type"]);
-  for (const want of ["BreadcrumbList", "FAQPage", "Dataset"]) {
-    assert(types.includes(want), `model page JSON-LD has no ${want}`);
-  }
-  const faq = ld["@graph"].find(n => n["@type"] === "FAQPage");
-  assert(faq.mainEntity.length >= 3, "FAQPage carries fewer than three questions");
-  for (const q of faq.mainEntity) {
-    assert(q.name && q.acceptedAnswer.text, "an FAQ entry is empty");
-    assert(!/<[a-z]/i.test(q.acceptedAnswer.text), "FAQ answers still carry markup");
-  }
-  assert(new RegExp(`\\d${NNBSP}€`).test(html), "no German money formatting on the page");
-  assert(!/€\d/.test(html), "the page still prints Portuguese-style €13.990");
-  assert(html.includes("Erstzulassung"), "the model page does not use the German term for first registration");
-  for (const y of deepYears.slice(0, 3)) {
-    assert(html.includes(`href="/de/preis/${deep}/${y}"`), `model page does not link its ${y} page`);
+await check("every landing is its own market's page, not a translated Portuguese one", async () => {
+  for (const [code, m] of Object.entries(MARKETS)) {
+    const loc = LOCALES[code];
+    const r = await get(`/${code}`);
+    assert(r.status === 200, `/${code} → ${r.status}`);
+    const html = await r.text();
+    assert(html.includes(`<html lang="${loc.lang}">`), `/${code} does not declare lang ${loc.lang}`);
+    assert(html.includes(`<meta property="og:locale" content="${loc.ogLocale}">`),
+      `/${code} has the wrong og:locale`);
+    assert(!/undefined|\[object Object\]|NaN(?![a-zA-Z])/.test(html.replace(/<script[\s\S]*?<\/script>/g, "")),
+      `/${code} rendered undefined/NaN into the page`);
+    assertOwnLanguage(code, `/${code}`, html);
+    assert(visibleText(html).includes(loc.source.name), `/${code} does not name its own data source`);
+    assert(html.includes(`href="${m.hub}"`) && html.includes(`href="${m.avaliar}"`),
+      `/${code} does not link its own localised routes`);
   }
 });
 
-await check("the JSON twins answer under the locale prefix", async () => {
-  const m = await get(`/de/preis/${deep}.json`);
-  assert(m.status === 200, `model .json → ${m.status}`);
-  assert(m.headers.get("content-type").startsWith("application/json"), "model .json is not JSON");
-  const doc = await m.json();
-  assert(doc.market === "DE" && doc.language === "de", "model .json does not declare the German market");
-  assert(doc.source_url === `https://${HOST}/de/preis/${deep}`, "model .json points elsewhere");
-  assert(doc.asking_price.median > 0, "model .json has no median");
-  assert(!JSON.stringify(doc).includes("OLX"), "model .json still names the Portuguese source");
-  const withPage = doc.by_year.filter(y => y.page);
-  assert(withPage.length === deepYears.length,
-    `model .json advertises ${withPage.length} year pages, router serves ${deepYears.length}`);
-  assert(withPage.every(y => y.page.startsWith(`https://${HOST}/de/preis/${deep}/`)),
-    "model .json year pages are not locale URLs");
-
-  const y = await get(`/de/preis/${deep}/${deepYears[0]}.json`);
-  assert(y.status === 200, `year .json → ${y.status}`);
-  const ydoc = await y.json();
-  assert(ydoc.model_year === deepYears[0] && ydoc.market === "DE", "year .json is not this year in DE");
-  assert(ydoc.related.model === `https://${HOST}/de/preis/${deep}`, "year .json does not link its model");
+await check("every hub lists models under its own prefix", async () => {
+  for (const [code, m] of Object.entries(MARKETS)) {
+    const r = await get(m.hub);
+    assert(r.status === 200, `${m.hub} → ${r.status}`);
+    const html = await r.text();
+    assert(html.includes("index,follow"), `${m.hub} is not indexable`);
+    assert(html.includes(`<link rel="canonical" href="https://${HOST}${m.hub}">`),
+      `${m.hub} has the wrong canonical`);
+    assert(html.includes(`href="${m.model(deep)}"`), `${m.hub} does not link the deepest model`);
+    assertOwnLanguage(code, m.hub, html);
+  }
 });
 
-await check("a German year page renders and a thin year 301s to its model", async () => {
-  const r = await get(`/de/preis/${deep}/${deepYears[0]}`);
-  assert(r.status === 200, `year page → ${r.status}`);
-  const html = await r.text();
-  assert(html.includes("index,follow"), "year page is not indexable");
-  assert(html.includes(`<link rel="canonical" href="https://${HOST}/de/preis/${deep}/${deepYears[0]}">`),
-    "year page canonical is wrong");
-  assert(!/anúncios|preços/i.test(visibleText(html)), "year page leaks Portuguese");
+await check("every model page carries canonical, FAQ JSON-LD and its own money", async () => {
+  for (const [code, m] of Object.entries(MARKETS)) {
+    const path = m.model(deep);
+    const r = await get(path);
+    assert(r.status === 200, `${path} → ${r.status}`);
+    const html = await r.text();
+    assert(html.includes("index,follow"), `${path} is not indexable`);
+    assert(html.includes(`<link rel="canonical" href="https://${HOST}${path}">`),
+      `${path} canonical is not the locale URL`);
+    assert(html.includes(`href="https://${HOST}${path}.json"`),
+      `${path} does not advertise its JSON twin`);
+    const blocks = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)];
+    assert(blocks.length === 1, `${path}: expected one JSON-LD block, got ${blocks.length}`);
+    const ld = JSON.parse(blocks[0][1].replace(/\\u003c/g, "<"));
+    const types = ld["@graph"].map(n => n["@type"]);
+    for (const want of ["BreadcrumbList", "FAQPage", "Dataset"]) {
+      assert(types.includes(want), `${path} JSON-LD has no ${want}`);
+    }
+    const faq = ld["@graph"].find(n => n["@type"] === "FAQPage");
+    assert(faq.mainEntity.length >= 3, `${path}: FAQPage carries fewer than three questions`);
+    for (const q of faq.mainEntity) {
+      assert(q.name && q.acceptedAnswer.text, `${path}: an FAQ entry is empty`);
+      assert(!/<[a-z]/i.test(q.acceptedAnswer.text), `${path}: FAQ answers still carry markup`);
+    }
+    assert(new RegExp(`\\d${NNBSP}€`).test(html), `${path} does not print money the local way`);
+    assert(!/€\d/.test(html), `${path} still prints Portuguese-style €13.990`);
+    assert(new RegExp(m.reg, "i").test(html),
+      `${path} does not use the local term for first registration`);
+    for (const y of deepYears.slice(0, 3)) {
+      assert(html.includes(`href="${m.model(deep)}/${y}"`), `${path} does not link its ${y} page`);
+    }
+    assertOwnLanguage(code, path, html);
+  }
+});
 
+await check("the JSON twins answer under every locale prefix", async () => {
+  for (const [code, m] of Object.entries(MARKETS)) {
+    const path = m.model(deep);
+    const doc = await (await get(`${path}.json`)).json();
+    assert(doc.market === code.toUpperCase() && doc.language === m.lang,
+      `${path}.json does not declare the ${code} market`);
+    assert(doc.source_url === `https://${HOST}${path}`, `${path}.json points elsewhere`);
+    assert(doc.asking_price.median > 0, `${path}.json has no median`);
+    assert(!JSON.stringify(doc).includes("OLX"), `${path}.json still names the Portuguese source`);
+    const withPage = doc.by_year.filter(y => y.page);
+    assert(withPage.length === deepYears.length,
+      `${path}.json advertises ${withPage.length} year pages, router serves ${deepYears.length}`);
+    assert(withPage.every(y => y.page.startsWith(`https://${HOST}${path}/`)),
+      `${path}.json year pages are not locale URLs`);
+
+    const y = await get(`${path}/${deepYears[0]}.json`);
+    assert(y.status === 200, `${path}/${deepYears[0]}.json → ${y.status}`);
+    const ydoc = await y.json();
+    assert(ydoc.model_year === deepYears[0] && ydoc.market === code.toUpperCase(),
+      `${path}/${deepYears[0]}.json is not this year in ${code}`);
+    assert(ydoc.related.model === `https://${HOST}${path}`,
+      `${path}/${deepYears[0]}.json does not link its model`);
+    const ct = (await get(`${path}.json`)).headers.get("content-type");
+    assert(ct.startsWith("application/json"), `${path}.json is not JSON`);
+  }
+});
+
+await check("a year page renders and a thin year 301s to its model, on every market", async () => {
   const published = new Set(deepYears);
   const thin = (deModels[deep].yr || []).find(c => typeof c.y === "number" && !published.has(c.y));
   assert(thin, "the fixture has no thin year to test the redirect with");
-  const red = await get(`/de/preis/${deep}/${thin.y}`);
-  assert(red.status === 301, `thin year → ${red.status}, expected 301`);
-  assert(new URL(red.headers.get("location")).pathname === `/de/preis/${deep}`,
-    `thin year redirects to ${red.headers.get("location")}`);
-  const redJson = await get(`/de/preis/${deep}/${thin.y}.json`);
-  assert(redJson.status === 301
-    && new URL(redJson.headers.get("location")).pathname === `/de/preis/${deep}.json`,
-    "the JSON twin of a thin year does not point at the model's JSON twin");
-  assert((await get(`/de/preis/${deep}/1900`)).status === 404, "a year we never had data for is not a 404");
-  assert((await get("/de/preis/gibt-es-nicht")).status === 404, "an unknown model is not a 404");
-});
+  for (const [code, m] of Object.entries(MARKETS)) {
+    const path = `${m.model(deep)}/${deepYears[0]}`;
+    const r = await get(path);
+    assert(r.status === 200, `${path} → ${r.status}`);
+    const html = await r.text();
+    assert(html.includes("index,follow"), `${path} is not indexable`);
+    assert(html.includes(`<link rel="canonical" href="https://${HOST}${path}">`),
+      `${path} canonical is wrong`);
+    assertOwnLanguage(code, path, html);
 
-await check("/de/bewerten works both as a form and as a link lookup", async () => {
-  const bare = await get("/de/bewerten");
-  assert(bare.status === 200, `/de/bewerten → ${bare.status}`);
-  const bareHtml = await bare.text();
-  assert(bareHtml.includes('name="q"') && bareHtml.includes('name="modelo"')
-    && bareHtml.includes('name="ano"'),
-    "the valuation page is missing one of its two entry paths");
-  assert(bareHtml.includes(`<option value="${deep}"`), "the model picker does not offer the deepest model");
-  assert(!/anúncio|preço/i.test(visibleText(bareHtml)), "the valuation page leaks Portuguese");
-
-  const url = `https://www.autoscout24.de/angebote/volkswagen-golf-1-6-tdi-${UUID}`;
-  const hit = await get(`/de/bewerten?q=${encodeURIComponent(url)}`);
-  assert(hit.status === 200, `?q=<autoscout url> → ${hit.status}`);
-  const hitHtml = await hit.text();
-  assert(hitHtml.includes("Volkswagen Golf 1.6 TDI Comfortline"), "the pasted listing was not resolved");
-  assert(hitHtml.includes(`href="${url}"`) && hitHtml.includes('rel="noopener nofollow"'),
-    "the verdict does not link back to the listing safely");
-  assert(hitHtml.includes('href="/de/preis/volkswagen-golf"'), "the verdict does not link the model page");
-  assert(hitHtml.includes("11.900"), "the asking price is not rendered in German format");
-
-  const bareId = await get("/de/bewerten?q=abc-uuid");
-  assert((await bareId.text()).includes("Volkswagen Golf 1.6 TDI Comfortline"),
-    "a bare listing id does not resolve against valuations_de.json");
-
-  const missUrl = `https://www.autoscout24.de/angebote/x-${MISS_UUID}`;
-  const miss = await get(`/de/bewerten?q=${encodeURIComponent(missUrl)}`);
-  assert(miss.status === 200, "a miss is not a 200");
-  assert((await miss.text()).includes("noch nicht"), "a miss does not say the listing is unknown");
-
-  const spec = await get(`/de/bewerten?modelo=${deep}&ano=${deepYears[0]}`);
-  assert(spec.status === 200, `spec lookup → ${spec.status}`);
-  assert((await spec.text()).includes(String(deepYears[0])), "the spec lookup does not echo the year");
-});
-
-await check("/de/markt lists the German deals with safe outbound links", async () => {
-  const r = await get("/de/markt");
-  assert(r.status === 200, `/de/markt → ${r.status}`);
-  const html = await r.text();
-  for (const d of DEALS) {
-    assert(html.includes(`href="${d.url}"`), `the feed does not link ${d.olx_id}`);
-    assert(html.includes(d.image_url), `the feed does not show the photo of ${d.olx_id}`);
+    const red = await get(`${m.model(deep)}/${thin.y}`);
+    assert(red.status === 301, `${m.model(deep)}/${thin.y} → ${red.status}, expected 301`);
+    assert(new URL(red.headers.get("location")).pathname === m.model(deep),
+      `a thin year redirects to ${red.headers.get("location")}`);
+    const redJson = await get(`${m.model(deep)}/${thin.y}.json`);
+    assert(redJson.status === 301
+      && new URL(redJson.headers.get("location")).pathname === `${m.model(deep)}.json`,
+      `${code}: the JSON twin of a thin year does not point at the model's JSON twin`);
+    assert((await get(`${m.model(deep)}/1900`)).status === 404,
+      `${code}: a year we never had data for is not a 404`);
+    assert((await get(m.model("gibt-es-nicht"))).status === 404, `${code}: an unknown model is not a 404`);
   }
-  const links = [...html.matchAll(/<a [^>]*href="https:\/\/www\.autoscout24\.de[^"]*"[^>]*>/g)].map(m => m[0]);
-  assert(links.length >= DEALS.length, `expected ${DEALS.length} source links, got ${links.length}`);
-  for (const a of links) {
-    assert(a.includes('target="_blank"') && a.includes("noopener"),
-      `a source link opens unsafely: ${a}`);
-  }
-  assert(html.includes("Händler") && html.includes("Privat"), "seller types are not shown in German");
-  assert(html.includes("Bayern") && html.includes("Hessen"), "regions are not shown");
-  assert(html.includes("14.200"), "the fair median is not shown next to the asking price");
-  assert(!/anúncio|poupas/i.test(visibleText(html)), "the feed leaks Portuguese");
 });
 
-await check("a deal in the feed has its own page, in German, on every market", async () => {
-  const feed = await body("/de/markt");
-  assert(feed.includes('href="/de/auto?olx_id=as24_de%3Aaaa"'),
-    "the feed tile does not lead to the car page");
+await check("the valuation page works as a form and as a link lookup on every market", async () => {
+  for (const [code, m] of Object.entries(MARKETS)) {
+    const bare = await get(m.avaliar);
+    assert(bare.status === 200, `${m.avaliar} → ${bare.status}`);
+    const bareHtml = await bare.text();
+    assert(bareHtml.includes('name="q"') && bareHtml.includes('name="modelo"')
+      && bareHtml.includes('name="ano"'),
+      `${m.avaliar} is missing one of its two entry paths`);
+    assert(bareHtml.includes(`<option value="${deep}"`),
+      `${m.avaliar}: the model picker does not offer the deepest model`);
+    assertOwnLanguage(code, m.avaliar, bareHtml);
 
-  const r = await get("/de/auto?olx_id=as24_de:aaa");
-  assert(r.status === 200, `/de/auto → ${r.status}`);
-  const html = await r.text();
-  assert(html.includes('<html lang="de-DE">'), "the car page is not a German page");
-  assert(html.includes('content="noindex'), "the car page is indexable");
-  assert(html.includes("11.900") && html.includes("14.200"),
-    "the car page shows neither the asking price nor the fair median");
-  assert(html.includes("128.000 km") && html.includes("Händler"),
-    "the car page drops the signals the feed already had");
-  assert(html.includes('href="https://www.autoscout24.de/angebote/aaa"'),
-    "the car page does not link the source listing");
-  assert(html.includes('href="/de/markt"'), "the car page has no way back to the feed");
-  assert(html.includes('href="/de/preis/volkswagen-golf"'),
-    "the car page does not link the model it belongs to");
-  assertOwnLanguage("de", "/de/auto", html);
+    const url = `https://www.autoscout24.${code}${ADVERT_PATH[code]}volkswagen-golf-1-6-tdi-${UUID}`;
+    const hit = await get(`${m.avaliar}?q=${encodeURIComponent(url)}`);
+    assert(hit.status === 200, `${m.avaliar}?q=<url> → ${hit.status}`);
+    const hitHtml = await hit.text();
+    assert(hitHtml.includes("Volkswagen Golf 1.6 TDI Comfortline"),
+      `${code}: the pasted listing was not resolved`);
+    assert(hitHtml.includes(`href="${url}"`) && hitHtml.includes('rel="noopener nofollow"'),
+      `${code}: the verdict does not link back to the listing safely`);
+    assert(hitHtml.includes(`href="${m.model("volkswagen-golf")}"`),
+      `${code}: the verdict does not link the model page`);
+    assert(hitHtml.includes(fmtEurL(LOCALES[code], 11900)),
+      `${code}: the asking price is not rendered the local way`);
 
-  for (const [path, feedPath] of [["/fr/voiture", "/fr/marche"], ["/it/auto", "/it/mercato"]]) {
-    const miss = await get(`${path}?olx_id=nope`);
-    assert(miss.status === 302, `${path} with an unknown car → ${miss.status}`);
-    assert(miss.headers.get("location") === feedPath,
-      `${path} sends an unknown car to ${miss.headers.get("location")}`);
+    const bareId = await get(`${m.avaliar}?q=abc-uuid`);
+    assert((await bareId.text()).includes("Volkswagen Golf 1.6 TDI Comfortline"),
+      `${code}: a bare listing id does not resolve against its own valuations blob`);
+
+    const missUrl = `https://www.autoscout24.${code}${ADVERT_PATH[code]}x-${MISS_UUID}`;
+    const miss = await get(`${m.avaliar}?q=${encodeURIComponent(missUrl)}`);
+    assert(miss.status === 200, `${code}: a miss is not a 200`);
+    assert((await miss.text()).includes(m.miss),
+      `${code}: a miss does not say the listing is unknown`);
+
+    const spec = await get(`${m.avaliar}?modelo=${deep}&ano=${deepYears[0]}`);
+    assert(spec.status === 200, `${code}: spec lookup → ${spec.status}`);
+    assert((await spec.text()).includes(String(deepYears[0])),
+      `${code}: the spec lookup does not echo the year`);
+  }
+});
+
+await check("every market's feed lists its own deals with safe outbound links", async () => {
+  for (const [code, m] of Object.entries(MARKETS)) {
+    const r = await get(m.feed);
+    assert(r.status === 200, `${m.feed} → ${r.status}`);
+    const html = await r.text();
+    for (const d of dealsFor(code)) {
+      assert(html.includes(`href="${d.url}"`), `${m.feed} does not link ${d.olx_id}`);
+      assert(html.includes(d.image_url), `${m.feed} does not show the photo of ${d.olx_id}`);
+    }
+    const links = [...html.matchAll(
+      new RegExp(`<a [^>]*href="https://www\\.autoscout24\\.${code}[^"]*"[^>]*>`, "g"))].map(x => x[0]);
+    assert(links.length >= DEALS.length,
+      `${m.feed}: expected ${DEALS.length} source links, got ${links.length}`);
+    for (const a of links) {
+      assert(a.includes('target="_blank"') && a.includes("noopener"),
+        `${m.feed}: a source link opens unsafely: ${a}`);
+    }
+    for (const w of m.seller) {
+      assert(html.includes(w), `${m.feed} does not name the seller type in its own language (${w})`);
+    }
+    assert(html.includes("Bayern") && html.includes("Hessen"), `${m.feed}: regions are not shown`);
+    assert(html.includes(fmtEurL(LOCALES[code], 14200)),
+      `${m.feed}: the fair median is not shown next to the asking price`);
+    assertOwnLanguage(code, m.feed, html);
+  }
+});
+
+await check("a deal in the feed has its own page, in the local language, on every market", async () => {
+  for (const [code, m] of Object.entries(MARKETS)) {
+    const id = `as24_${code}:aaa`;
+    const deal = dealsFor(code)[0];
+    const feed = await body(m.feed);
+    assert(feed.includes(`href="${m.car}?olx_id=${encodeURIComponent(id)}"`),
+      `${m.feed}: the tile does not lead to the car page`);
+
+    const r = await get(`${m.car}?olx_id=${id}`);
+    assert(r.status === 200, `${m.car} → ${r.status}`);
+    const html = await r.text();
+    assert(html.includes(`<html lang="${LOCALES[code].lang}">`),
+      `${m.car} is not a ${code} page`);
+    assert(html.includes('content="noindex'), `${m.car} is indexable`);
+    assert(html.includes(fmtEurL(LOCALES[code], 11900)) && html.includes(fmtEurL(LOCALES[code], 14200)),
+      `${m.car} shows neither the asking price nor the fair median the local way`);
+    assert(html.includes(fmtKmL(LOCALES[code], 128000)) && html.includes(m.seller[0]),
+      `${m.car} drops the signals the feed already had`);
+    assert(html.includes(`href="${deal.url}"`), `${m.car} does not link the source listing`);
+    assert(html.includes(`href="${m.feed}"`), `${m.car} has no way back to the feed`);
+    assert(html.includes(`href="${m.model("volkswagen-golf")}"`),
+      `${m.car} does not link the model it belongs to`);
+    assertOwnLanguage(code, m.car, html);
+
+    const miss = await get(`${m.car}?olx_id=nope`);
+    assert(miss.status === 302, `${m.car} with an unknown car → ${miss.status}`);
+    assert(miss.headers.get("location") === m.feed,
+      `${m.car} sends an unknown car to ${miss.headers.get("location")}`);
   }
 });
 
@@ -324,56 +403,62 @@ await check("the outbound click is measured on the intl markets too", async () =
   }
 });
 
-await check("a car that left the feed goes back to the feed, not to a dead page", async () => {
-  const r = await get("/de/auto?olx_id=as24_de:gone");
-  assert(r.status === 302, `a stale car link → ${r.status}`);
-  assert(r.headers.get("location") === "/de/markt",
-    `a stale car link sends the reader to ${r.headers.get("location")}`);
+
+await check("the trust pages are indexable on every market", async () => {
+  for (const [code, m] of Object.entries(MARKETS)) {
+    const R = LOCALES[code].routes;
+    const pages = [
+      [`/${code}/${R.metodologia}`, "AutoScout24"],
+      [`/${code}/${R.sobre}`, "Carsbuyer"],
+      [`/${code}/${R.privacidade}`, "Google Analytics"],
+    ];
+    for (const [path, needle] of pages) {
+      const r = await get(path);
+      assert(r.status === 200, `${path} → ${r.status}`);
+      const html = await r.text();
+      assert(html.includes("index,follow"), `${path} is not indexable`);
+      assert(html.includes(`<link rel="canonical" href="https://${HOST}${path}">`),
+        `${path} canonical is wrong`);
+      assert(html.includes(needle), `${path} lost its content`);
+      assertOwnLanguage(code, path, html);
+    }
+    const method = await body(`/${code}/${R.metodologia}`);
+    assert(m.method[0].test(method),
+      `${code}: the methodology does not say both dealers and private sellers are in the sample`);
+    assert(m.method[1].test(method),
+      `${code}: the methodology does not say the prices are asking prices`);
+  }
 });
 
-await check("the German trust pages are indexable", async () => {
-  const pages = [
-    ["/de/methodik", "AutoScout24"],
-    ["/de/ueber-uns", "Carsbuyer"],
-    ["/de/datenschutz", "Google Analytics"],
-  ];
-  for (const [path, needle] of pages) {
-    const r = await get(path);
-    assert(r.status === 200, `${path} → ${r.status}`);
-    const html = await r.text();
-    assert(html.includes("index,follow"), `${path} is not indexable`);
-    assert(html.includes(`<link rel="canonical" href="https://${HOST}${path}">`), `${path} canonical is wrong`);
-    assert(html.includes(needle), `${path} lost its content`);
-    assert(!/anúncios|preços|Quem somos/i.test(visibleText(html)), `${path} leaks Portuguese`);
+await check("every sitemap advertises exactly what its router serves", async () => {
+  for (const [code, m] of Object.entries(MARKETS)) {
+    const R = LOCALES[code].routes;
+    const xml = await body(`/${code}/sitemap.xml`);
+    const locs = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(x => new URL(x[1]).pathname);
+    assert(locs.length > 0, `the ${code} sitemap is empty`);
+    assert(new Set(locs).size === locs.length, `the ${code} sitemap has duplicates`);
+    assert(locs.every(x => x === `/${code}` || x.startsWith(`/${code}/`)),
+      `the ${code} sitemap lists foreign URLs`);
+    for (const x of [`/${code}`, m.hub, m.avaliar, m.feed, `/${code}/${R.metodologia}`,
+                     `/${code}/${R.sobre}`, `/${code}/${R.privacidade}`]) {
+      assert(locs.includes(x), `the ${code} sitemap does not list ${x}`);
+    }
+    assert(!locs.some(x => x.startsWith(`${m.car}`)),
+      `the ${code} sitemap advertises the car page, which is noindex`);
+    const expectedYears = Object.values(deModels).reduce((n, r) => n + yearPageYears(r).length, 0);
+    const yearRe = new RegExp(`^${m.model("[^/]+")}/\\d{4}$`);
+    const gotYears = locs.filter(x => yearRe.test(x)).length;
+    assert(gotYears === expectedYears,
+      `the ${code} sitemap has ${gotYears} year URLs, the generator publishes ${expectedYears}`);
+    const modelRe = new RegExp(`^${m.model("[^/]+")}$`);
+    assert(locs.filter(x => modelRe.test(x)).length === Object.keys(deModels).length,
+      `the ${code} sitemap model count disagrees with the blob`);
+    for (const x of locs) {
+      const r = await get(x);
+      assert(r.status === 200, `the ${code} sitemap advertises ${x} but the router answers ${r.status}`);
+    }
+    console.log(`       (resolved all ${locs.length} ${code} sitemap URLs)`);
   }
-  const method = await body("/de/methodik");
-  assert(/Händler und Privatverkäufer/.test(method),
-    "the methodology does not say both dealers and private sellers are in the sample");
-  assert(/verlangte|Verlangter|verlangten/.test(method),
-    "the methodology does not say the prices are asking prices");
-});
-
-await check("/de/sitemap.xml advertises exactly what the router serves", async () => {
-  const xml = await body("/de/sitemap.xml");
-  const locs = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => new URL(m[1]).pathname);
-  assert(locs.length > 0, "the German sitemap is empty");
-  assert(new Set(locs).size === locs.length, "the German sitemap has duplicates");
-  assert(locs.every(p => p === "/de" || p.startsWith("/de/")), "the German sitemap lists foreign URLs");
-  for (const p of ["/de", "/de/preise", "/de/bewerten", "/de/markt", "/de/methodik",
-                   "/de/ueber-uns", "/de/datenschutz"]) {
-    assert(locs.includes(p), `the German sitemap does not list ${p}`);
-  }
-  const expectedYears = Object.values(deModels).reduce((n, r) => n + yearPageYears(r).length, 0);
-  const gotYears = locs.filter(p => /^\/de\/preis\/[^/]+\/\d{4}$/.test(p)).length;
-  assert(gotYears === expectedYears,
-    `sitemap has ${gotYears} year URLs, the generator publishes ${expectedYears}`);
-  assert(locs.filter(p => /^\/de\/preis\/[^/]+$/.test(p)).length === Object.keys(deModels).length,
-    "the sitemap model count disagrees with the blob");
-  for (const p of locs) {
-    const r = await get(p);
-    assert(r.status === 200, `the sitemap advertises ${p} but the router answers ${r.status}`);
-  }
-  console.log(`       (resolved all ${locs.length} German sitemap URLs)`);
 });
 
 await check("a live locale with no blob degrades instead of lying", async () => {
