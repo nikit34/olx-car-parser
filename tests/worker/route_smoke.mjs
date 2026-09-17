@@ -544,6 +544,19 @@ await check("/geo is a route of its own and stays out of every cache", async () 
     "the Portuguese page offers a market switch with no other market live");
 });
 
+await check("the IndexNow key answers only at its own address", async () => {
+  const key = "0b2d1d9109041a8e753860fe1b6efb6f";
+  const keyed = { ...env, INDEXNOW_KEY: key };
+  const k = p => worker.fetch(new Request(`https://${HOST}${p}`), keyed);
+  const r = await k(`/${key}.txt`);
+  assert(r.status === 200, `/${key}.txt → ${r.status}`);
+  assert((await r.text()).trim() === key, "the key file does not carry the key itself");
+  assert((await k("/0000000000000000000000000000dead.txt")).status === 404,
+    "any .txt at the root passes as a key file");
+  assert((await get(`/${key}.txt`)).status === 404,
+    "the key file answers with no key configured");
+});
+
 await check("the deposit routes are gone and answer like any unknown path", async () => {
   for (const path of ["/claim", "/reservas", "/unlocked", "/reserve"]) {
     const r = await get(path);

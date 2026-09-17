@@ -369,6 +369,14 @@ const worker = {
 
       if (pathname === "/geo" && method === "GET") return geoJson(request);
 
+      const inKey = (env.INDEXNOW_KEY || "").trim();
+      if (inKey && method === "GET" && pathname === `/${inKey}.txt`) {
+        return new Response(inKey, {
+          status: 200,
+          headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=86400" },
+        });
+      }
+
       // Self-hosted webfonts. Public and un-gated for the same reason as the
       // share card: the Basic-Auth fallthrough would answer 401, and a 401 on a
       // preloaded font is a page that renders in the fallback face.
