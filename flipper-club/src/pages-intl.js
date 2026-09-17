@@ -940,19 +940,55 @@ function specBlock(loc, spec) {
   </div>`;
 }
 
-export function renderIntlFeed({ loc, host, deals, builtAt, models = null }) {
-  const list = (deals || []).slice();
+export function feedRegions(deals, districts) {
+  const counts = new Map();
+  for (const d of deals || []) {
+    const label = String(d.district || "").trim();
+    if (label) counts.set(label, (counts.get(label) || 0) + 1);
+  }
+  const out = [];
+  for (const [slug, rec] of Object.entries(districts || {})) {
+    const label = (rec && rec.lbl) || slug;
+    const n = counts.get(label) || 0;
+    if (n) out.push({ slug, label, n });
+  }
+  return out.sort((a, b) => b.n - a.n || a.label.localeCompare(b.label));
+}
+
+export function regionLabel(districts, slug) {
+  const rec = (districts || {})[String(slug || "").toLowerCase()];
+  return rec ? ((rec.lbl || slug)) : null;
+}
+
+function feedRegionChips(loc, regions, active) {
+  if (regions.length < 2) return "";
+  const all = `<a class="mchip${active ? "" : " on"}" href="${href(loc, "mercado")}">`
+    + `${escapeHtml(t(loc, "feed.region_all"))}</a>`;
+  const chips = regions.map(r =>
+    `<a class="mchip${active === r.slug ? " on" : ""}" href="${href(loc, "mercado")}?region=${encodeURIComponent(r.slug)}">`
+    + `${escapeHtml(r.label)} <span class="mut">${fmtNumL(loc, r.n)}</span></a>`).join("");
+  return `<div class="sec-label" style="margin-top:28px;">${t(loc, "feed.region_h")}</div>`
+    + `<div class="mchips">${all}${chips}</div>`;
+}
+
+export function renderIntlFeed({ loc, host, deals, builtAt, models = null,
+                                districts = null, region = null }) {
+  const all = (deals || []).slice();
+  const label = region ? regionLabel(districts, region) : null;
+  const list = label ? all.filter(d => String(d.district || "") === label) : all;
   const tiles = list.map(d => dealTile(loc, d)).join("");
   const chips = feedModelChips(loc, list, models);
+  const regionChips = feedRegionChips(loc, feedRegions(all, districts), label ? region : null);
   const sub = list.length === 1
     ? t(loc, "feed.sub_one", { country: loc.countryName })
     : t(loc, "feed.sub", { country: loc.countryName, n: fmtNumL(loc, list.length) });
   const body = crumbs([homeCrumb(loc), { name: t(loc, "feed.crumb") }]) + `
     <section class="feed">
       <div class="feed-head">
-        <h1>${t(loc, "feed.h1")}</h1>
+        <h1>${t(loc, "feed.h1")}${label ? ` · ${escapeHtml(label)}` : ""}</h1>
         <p>${sub}</p>
       </div>
+      ${regionChips}
       ${list.length ? `<div class="grid">${tiles}</div>` : `<div class="info">
         <div class="ic">🚗</div>
         <h1>${t(loc, "feed.empty_title")}</h1>
@@ -965,7 +1001,8 @@ export function renderIntlFeed({ loc, host, deals, builtAt, models = null }) {
   return layout({
     title: t(loc, "feed.title", { country: loc.countryName, source: loc.source.name }),
     description: t(loc, "feed.desc", { source: loc.source.name }),
-    body, zone: "all", nav: "feed", depositCount: null, index: list.length > 0, host, locale: loc,
+    body, zone: "all", nav: "feed", depositCount: null,
+    index: !label && list.length > 0, host, locale: loc,
     canonical: `https://${host}${href(loc, "mercado")}`,
     jsonLd: graph([breadcrumbLd(host, [homeCrumb(loc), { name: t(loc, "feed.crumb"), href: href(loc, "mercado") }])]),
   });

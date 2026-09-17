@@ -1537,9 +1537,11 @@ async function intlFeed(env, url, loc) {
   const { deals, degraded, builtAt } = await getDeals(env, "all", loc.country);
   if (degraded) return intlUnavailable(loc, url.host, "info.deals_unavailable");
   const c = await intlCorpus(env, loc);
+  const districts = (c && c.mdoc && c.mdoc.districts) || null;
   return publicHtml(renderIntlFeed({
     loc, host: url.host, deals: sortDeals(deals || [], "score"),
     builtAt: builtAt || (c && c.builtAt), models: c && c.models,
+    districts, region: (url.searchParams.get("region") || "").toLowerCase() || null,
   }));
 }
 

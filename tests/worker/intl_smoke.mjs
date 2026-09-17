@@ -391,6 +391,34 @@ await check("a deal in the feed has its own page, in the local language, on ever
   }
 });
 
+await check("every feed can be narrowed to one region, like the Portuguese zones", async () => {
+  for (const [code, m] of Object.entries(MARKETS)) {
+    const all = await body(m.feed);
+    assert(all.includes(`href="${m.feed}?region=bayern"`),
+      `${m.feed} offers no region to narrow to`);
+    assert(all.includes("Hessen"), `${m.feed} does not name every region it has cars in`);
+
+    const one = await get(`${m.feed}?region=bayern`);
+    assert(one.status === 200, `${m.feed}?region=bayern → ${one.status}`);
+    const html = await one.text();
+    const [bavarian, hessian] = dealsFor(code);
+    assert(html.includes("Bayern"), "the narrowed feed does not say which region it shows");
+    assert(html.includes(`href="${bavarian.url}"`), "the narrowed feed lost its own region's car");
+    assert(!html.includes(`href="${hessian.url}"`),
+      "the narrowed feed still lists the other region's car");
+    assert(html.includes('content="noindex'),
+      "a narrowed feed is indexable and competes with the market page");
+    assert(html.includes(`<link rel="canonical" href="https://${HOST}${m.feed}">`),
+      "a narrowed feed does not point its canonical at the whole market");
+    assertOwnLanguage(code, `${m.feed}?region=bayern`, html);
+
+    const empty = await get(`${m.feed}?region=nirgendwo`);
+    assert(empty.status === 200, "an unknown region is not an error page");
+    assert((await empty.text()).includes(`href="${m.feed}?region=bayern"`),
+      "an unknown region loses the region chips");
+  }
+});
+
 await check("the outbound click is measured on the intl markets too", async () => {
   const ga = { ...makeEnv("de,fr,it"), GA4_MEASUREMENT_ID: "G-TESTONLY" };
   for (const path of ["/de/markt", "/de/auto?olx_id=as24_de:aaa"]) {
