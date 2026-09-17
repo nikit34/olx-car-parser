@@ -15,16 +15,16 @@ def _utcnow() -> datetime:
     """
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
+import json
 import threading
 
 import httpx
 import pandas as pd
-from sqlalchemy import func, select, text as sa_text
+from sqlalchemy import func, or_ as _or_, select, text as sa_text
 from sqlalchemy.orm import Session
 
 from src.models.listing import Listing, PriceSnapshot, MarketStats, UnmatchedListing
 from src.models.portfolio import PortfolioDeal
-from src.models.import_listing import ImportListing
 from src.models.relist import RelistEvent
 from src.models.seller import Seller
 
@@ -934,22 +934,43 @@ def _chunked(values, size: int = _MAX_BIND_PARAMS):
         yield values[start:start + size]
 
 
-def get_listings_df(session: Session) -> pd.DataFrame:
-    """All listings as DataFrame.
+def get_listings_df(session: Session, country_code: str = "PT") -> pd.DataFrame:
+    """One market's listings as a DataFrame. Portugal unless asked otherwise.
+
+    The market is a parameter and not a filter the caller remembers to add,
+    because one table now holds every country this project reads and a German
+    price is a different quantity in a different market with a different tax on
+    it. A frame that quietly mixed the two would not raise anything; it would
+    ship a Portuguese median that is part German. Defaulting to ``PT`` keeps
+    every existing caller reading exactly the corpus it has always read, and
+    makes reaching for another market something you have to write down.
+
+    ``country_code=None`` returns every market at once, which is for migrations
+    and audits rather than for anything that prices a car.
 
     Batches the price-snapshot load into one query keyed by listing id,
     replacing the old N+1 lazy-relationship access that fired one SELECT
     per listing on the hot dashboard-load path.
     """
-    q = session.query(Listing).all()
-    if not q:
-        return pd.DataFrame()
+    query = session.query(Listing)
+    if country_code is not None:
+        code = str(country_code).upper()
+        if code == "PT":
+            query = query.filter(_or_(Listing.country_code == code,
+                                      Listing.country_code.is_(None)))
+        else:
+            query = query.filter(Listing.country_code == code)
+    q = query.all()
+    no_rows = not q
+    if no_rows:
+        q = [Listing(olx_id="", url="", brand="", model="")]
 
     # Every listing is in *q*, so the id set is expressible as a subquery —
     # zero bound parameters instead of one per listing.
-    snap_rows = (
+    snap_rows = [] if no_rows else (
         session.query(PriceSnapshot)
-        .filter(PriceSnapshot.listing_id.in_(session.query(Listing.id)))
+        .filter(PriceSnapshot.listing_id.in_(
+            query.with_entities(Listing.id).scalar_subquery()))
         .order_by(PriceSnapshot.listing_id, PriceSnapshot.scraped_at.desc())
         .all()
     )
@@ -1086,6 +1107,21 @@ def get_listings_df(session: Session) -> pd.DataFrame:
             "taxi_fleet_rental": l.taxi_fleet_rental,
             "first_owner_selling": l.first_owner_selling,
             "source": l.source or "olx",
+            "registration_month": l.registration_month,
+            "co2_g_km": l.co2_g_km,
+            "origin": l.origin,
+            "is_damaged": l.is_damaged,
+            "country": l.country_code or "PT",
+            "country_code": l.country_code or "PT",
+            "external_id": l.external_id,
+            "image_url": l.image_url,
+            "price_label": l.price_label,
+            "zip_code": l.zip_code,
+            "body_type": l.body_type,
+            "power_kw": l.power_kw,
+            "vat_label": l.vat_label,
+            "vat_reclaimable": l.vat_reclaimable,
+            "extras": l.extras,
             "duplicate_of": l.duplicate_of,
             "deactivated_at": l.deactivated_at,
             "deactivation_reason": l.deactivation_reason,
@@ -1106,7 +1142,8 @@ def get_listings_df(session: Session) -> pd.DataFrame:
             **_seller_columns_for(sellers_by_uuid.get(l.seller_uuid),
                                   l.seller_displayed_as),
         })
-    return pd.DataFrame(rows)
+    frame = pd.DataFrame(rows)
+    return frame.iloc[0:0] if no_rows else frame
 
 
 def _seller_columns_for(seller, displayed_as: str | None) -> dict:
@@ -1436,18 +1473,67 @@ def get_portfolio_df(session: Session) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-_IMPORT_FIELDS = (
-    "url", "brand", "model", "model_group", "variant", "motor_type",
-    "price_eur", "vat_label", "vat_reclaimable", "year", "registration_month",
-    "mileage_km", "engine_cc", "horsepower", "power_kw", "fuel_type",
-    "transmission", "co2_g_km", "seller_type", "country_code", "city",
-    "zip_code", "is_damaged", "region", "photo_count", "version", "price_label",
-    "image_url", "offer_type", "body_type",
+_MARKET_FIELDS = (
+    "url", "brand", "model", "vat_label", "vat_reclaimable",
+    "year", "registration_month", "mileage_km", "engine_cc", "horsepower",
+    "power_kw", "fuel_type", "transmission", "co2_g_km", "seller_type",
+    "country_code", "city", "zip_code", "photo_count", "price_label",
+    "image_url", "body_type", "title", "description", "color", "doors",
+    "seats", "drive_type", "origin", "condition", "segment", "is_damaged",
+    "description_length", "seller_displayed_as",
 )
+
+_MARKET_RENAMES = {"region": "district", "motor_type": "sub_model"}
+
+_MARKET_EXTRAS = ("model_group", "variant", "version", "offer_type")
+
+
+def _market_values(data: dict) -> dict:
+    """A reader's payload as Listing column values, extras packed into JSON.
+
+    Three shapes of field arrive here. Ones the Portuguese corpus already has a
+    column for pass straight through. Two mean the same thing under a different
+    word on a foreign card — a region is a district, a version is a sub-model —
+    and are renamed rather than given a second column that splits the same
+    quantity in two. The rest belong to one site and go to ``extras``, so a
+    classified with its own vocabulary costs no column that is NULL everywhere
+    else.
+    """
+    values = {k: data.get(k) for k in _MARKET_FIELDS if k in data}
+    for foreign, native in _MARKET_RENAMES.items():
+        if data.get(foreign) is not None and values.get(native) is None:
+            values[native] = data[foreign]
+    extras = data.get("extras")
+    if isinstance(extras, str):
+        try:
+            extras = json.loads(extras)
+        except ValueError:
+            extras = {}
+    extras = dict(extras or {})
+    for key in _MARKET_EXTRAS:
+        if data.get(key) is not None:
+            extras[key] = data[key]
+    values["extras"] = (json.dumps(extras, ensure_ascii=False, sort_keys=True)
+                        if extras else None)
+    if not values.get("title"):
+        parts = (values.get("brand"), values.get("model"), data.get("version"))
+        title = " ".join(str(p) for p in parts if p)
+        if title:
+            values["title"] = title
+    if values.get("body_type") and not values.get("segment"):
+        values["segment"] = values["body_type"]
+    return values
 
 
 def upsert_import_listings(session: Session, listings) -> tuple[int, int]:
-    """Insert or refresh foreign-market listings. Returns (inserted, updated).
+    """Insert or refresh listings from a card-and-advert reader. Returns (inserted, updated).
+
+    Price does not live on the row. It goes to ``price_snapshots`` the same way
+    a Portuguese price does, which is what gives a foreign listing the one
+    thing it never had while it sat in its own table: a history. A car that has
+    been asking the same money for three months and one that dropped twice last
+    week are different cars to a buyer, and until now that was knowable only
+    for Portugal.
 
     Brands are canonicalised on the way in, as they are for the Portuguese
     corpus: AutoScout24 writes "Citroen" where OLX writes "Citroën", and the two
@@ -1465,6 +1551,12 @@ def upsert_import_listings(session: Session, listings) -> tuple[int, int]:
     batch dies on the unique constraint. Rows created here therefore join the
     same map the lookup filled, and the second copy updates the first.
 
+    Every row is stamped with a market, taken from the payload or resolved from
+    the source, and a source that resolves to no market is dropped rather than
+    written. The dangerous direction here is the silent one: a row with no
+    country reads as Portuguese, and one German price inside the Portuguese
+    median is a wrong number that nothing raises.
+
     Keyed on (source, external_id). A listing seen again only moves
     ``last_seen_at`` and whatever the seller changed, so the table records how
     long a German ad has been up as a side effect — the same lifecycle signal
@@ -1475,6 +1567,8 @@ def upsert_import_listings(session: Session, listings) -> tuple[int, int]:
     """
     from src.parser.brand_normalize import normalize_brand
 
+    from src.countries import code_for_source
+
     inserted = updated = 0
     now = _utcnow()
     incoming: list[tuple[str, str, dict]] = []
@@ -1484,27 +1578,34 @@ def upsert_import_listings(session: Session, listings) -> tuple[int, int]:
             data["brand"] = normalize_brand(data["brand"])
         source = str(data.get("source") or "")
         external_id = str(data.get("external_id") or "")
-        if source and external_id:
-            incoming.append((source, external_id, data))
+        if not source or not external_id:
+            continue
+        code = str(data.get("country_code") or "").upper() or code_for_source(source)
+        if not code:
+            continue
+        data["country_code"] = code
+        incoming.append((source, external_id, data))
     if not incoming:
         return 0, 0
 
-    existing: dict[tuple[str, str], ImportListing] = {}
+    existing: dict[tuple[str, str], Listing] = {}
     for source in {src for src, _, _ in incoming}:
         ids = [ext for src, ext, _ in incoming if src == source]
         for chunk in _chunked(ids):
-            for row in (session.query(ImportListing)
-                        .filter(ImportListing.source == source,
-                                ImportListing.external_id.in_(chunk)).all()):
+            for row in (session.query(Listing)
+                        .filter(Listing.source == source,
+                                Listing.external_id.in_(chunk)).all()):
                 existing[(row.source, row.external_id)] = row
 
     for source, external_id, data in incoming:
-        values = {k: data.get(k) for k in _IMPORT_FIELDS if k in data}
+        values = _market_values(data)
         row = existing.get((source, external_id))
         if row is None:
-            row = ImportListing(source=source, external_id=external_id,
-                                first_seen_at=now, last_seen_at=now,
-                                is_active=True, deactivated_at=None, **values)
+            row = Listing(olx_id=f"{source}:{external_id}",
+                          source=source, external_id=external_id,
+                          first_seen_at=now, last_seen_at=now,
+                          last_scraped_at=now,
+                          is_active=True, deactivated_at=None, **values)
             session.add(row)
             existing[(source, external_id)] = row
             inserted += 1
@@ -1513,9 +1614,21 @@ def upsert_import_listings(session: Session, listings) -> tuple[int, int]:
                 if value is not None:
                     setattr(row, key, value)
             row.last_seen_at = now
+            row.last_scraped_at = now
             row.is_active = True
             row.deactivated_at = None
             updated += 1
+
+    session.flush()
+    for source, external_id, data in incoming:
+        price = data.get("price_eur")
+        row = existing.get((source, external_id))
+        if row is None or row.id is None or price in (None, ""):
+            continue
+        try:
+            add_price_snapshot(session, row.id, float(price))
+        except (TypeError, ValueError):
+            continue
     session.commit()
     return inserted, updated
 
@@ -1539,12 +1652,12 @@ def deactivate_import_missing(session: Session, source: str,
     seen = {str(s) for s in seen_ids}
     count = 0
     for chunk in _chunked(list(cells), size=max(1, _MAX_BIND_PARAMS // 3)):
-        clauses = [and_(ImportListing.brand == brand, ImportListing.model == model,
-                        ImportListing.year == year)
+        clauses = [and_(Listing.brand == brand, Listing.model == model,
+                        Listing.year == year)
                    for brand, model, year in chunk]
-        rows = (session.query(ImportListing)
-                .filter(ImportListing.source == source,
-                        ImportListing.is_active.isnot(False),
+        rows = (session.query(Listing)
+                .filter(Listing.source == source,
+                        Listing.is_active.isnot(False),
                         or_(*clauses))
                 .all())
         for row in rows:
@@ -1552,6 +1665,7 @@ def deactivate_import_missing(session: Session, source: str,
                 continue
             row.is_active = False
             row.deactivated_at = stamp
+            row.deactivation_reason = "expired"
             count += 1
     session.commit()
     return count
@@ -1568,12 +1682,13 @@ def expire_import_listings(session: Session, source: str, max_age_days: int = 21
     """
     stamp = now or _utcnow()
     cutoff = stamp - timedelta(days=max_age_days)
-    count = (session.query(ImportListing)
-             .filter(ImportListing.source == source,
-                     ImportListing.is_active.isnot(False),
-                     ImportListing.last_seen_at < cutoff)
-             .update({ImportListing.is_active: False,
-                      ImportListing.deactivated_at: stamp},
+    count = (session.query(Listing)
+             .filter(Listing.source == source,
+                     Listing.is_active.isnot(False),
+                     Listing.last_seen_at < cutoff)
+             .update({Listing.is_active: False,
+                      Listing.deactivated_at: stamp,
+                      Listing.deactivation_reason: "expired"},
                      synchronize_session="fetch"))
     session.commit()
     return int(count or 0)
@@ -1581,128 +1696,82 @@ def expire_import_listings(session: Session, source: str, max_age_days: int = 21
 
 def get_import_listings_df(session: Session,
                            source: str | None = "autoscout24") -> pd.DataFrame:
-    """Foreign-market listings of one source as a DataFrame, in this project's vocabulary.
+    """One source's listings as a DataFrame, in this project's vocabulary.
 
     The default is the weekly German benchmark crawl, which is what the import
-    pages have always read; ``source=None`` returns every source at once. The
-    country corpora (``as24_de`` and friends) are read through
-    ``get_country_listings_df`` instead, shaped like the Portuguese frame.
+    pages have always read; ``source=None`` returns every source at once. A
+    whole country is read through ``get_country_listings_df`` instead, which
+    gives the same shape every market comes in.
+
+    The columns are the ones the import pages were written against, so several
+    are unpacked back out of where a single table keeps them: the price from
+    the latest snapshot, the trim words from ``extras``, and ``region`` from
+    the district column it shares a meaning with. Keeping the frame's shape is
+    deliberate — the storage changed, the question the import pages ask did
+    not.
     """
-    q = session.query(ImportListing)
+    q = session.query(Listing)
     if source is not None:
-        q = q.filter(ImportListing.source == source)
+        q = q.filter(Listing.source == source)
     rows = q.all()
     if not rows:
         return pd.DataFrame()
-    return pd.DataFrame([{
-        "source": r.source, "external_id": r.external_id, "url": r.url,
-        "brand": r.brand, "model": r.model, "model_group": r.model_group,
-        "variant": r.variant, "motor_type": r.motor_type, "version": r.version,
-        "price_eur": r.price_eur, "price_label": r.price_label,
-        "vat_label": r.vat_label, "vat_reclaimable": r.vat_reclaimable,
-        "year": r.year, "registration_month": r.registration_month,
-        "mileage_km": r.mileage_km, "engine_cc": r.engine_cc,
-        "horsepower": r.horsepower, "power_kw": r.power_kw,
-        "fuel_type": r.fuel_type, "transmission": r.transmission,
-        "co2_g_km": r.co2_g_km, "seller_type": r.seller_type,
-        "offer_type": r.offer_type, "body_type": r.body_type,
-        "country_code": r.country_code, "region": r.region, "city": r.city,
-        "zip_code": r.zip_code, "is_damaged": r.is_damaged,
-        "photo_count": r.photo_count, "image_url": r.image_url,
-        "is_active": r.is_active, "deactivated_at": r.deactivated_at,
-        "first_seen_at": r.first_seen_at, "last_seen_at": r.last_seen_at,
-    } for r in rows])
 
+    latest_sub = (
+        session.query(PriceSnapshot.listing_id,
+                      func.max(PriceSnapshot.scraped_at).label("max_at"))
+        .filter(PriceSnapshot.listing_id.in_([r.id for r in rows]))
+        .group_by(PriceSnapshot.listing_id)
+        .subquery()
+    )
+    prices = {lid: price for lid, price in (
+        session.query(PriceSnapshot.listing_id, PriceSnapshot.price_eur)
+        .join(latest_sub,
+              (PriceSnapshot.listing_id == latest_sub.c.listing_id)
+              & (PriceSnapshot.scraped_at == latest_sub.c.max_at))
+        .all())}
 
-def _country_listing_row(r: ImportListing, country_code: str) -> dict:
-    """One foreign row in the shape ``get_listings_df`` gives a Portuguese one.
+    def unpack(row):
+        try:
+            return json.loads(row.extras) if row.extras else {}
+        except ValueError:
+            return {}
 
-    Every key the Portuguese frame carries is present so the price model, the
-    model pages and the deal builders run unchanged on a country corpus; what
-    AutoScout24 does not have (snapshots, descriptions, seller profiles) is None
-    rather than absent. ``olx_id`` is prefixed with the source so a German and
-    a French id can never collide with each other or with an OLX one.
-    """
-    title = " ".join(p for p in (r.brand, r.model, r.version) if p)
-    inactive = r.is_active is False
-    return {
-        "olx_id": f"{r.source}:{r.external_id}", "url": r.url, "title": title,
-        "brand": r.brand, "model": r.model, "year": r.year,
-        "price_eur": r.price_eur,
-        "first_price_eur": r.price_eur,
-        "num_price_drops": 0,
-        "max_drop_pct": 0.0,
-        "price_drop_velocity": None,
-        "days_since_last_drop": None,
-        "mileage_km": r.mileage_km, "engine_cc": r.engine_cc,
-        "fuel_type": r.fuel_type, "horsepower": r.horsepower,
-        "transmission": r.transmission, "segment": r.body_type,
-        "doors": None, "seats": None, "color": None,
-        "condition": None, "drive_type": None,
-        "photo_count": r.photo_count, "description_length": None,
-        "city": r.city, "district": r.region,
-        "seller_type": r.seller_type, "is_active": r.is_active,
-        "generation": None,
-        "description": None,
-        "llm_extras": None,
-        "first_seen_at": r.first_seen_at,
-        "last_seen_at": r.last_seen_at,
-        "last_scraped_at": r.last_seen_at,
-        "sub_model": r.motor_type,
-        "trim_level": None,
-        "desc_mentions_repair": None,
-        "desc_mentions_accident": None,
-        "real_mileage_km": None,
-        "desc_mentions_num_owners": None,
-        "desc_mentions_customs_cleared": None,
-        "right_hand_drive": None,
-        "mechanical_condition": None,
-        "damage_severity": None,
-        "urgency": None,
-        "warranty": None,
-        "tuning_or_mods": None,
-        "taxi_fleet_rental": None,
-        "first_owner_selling": None,
-        "source": r.source,
-        "duplicate_of": None,
-        "deactivated_at": r.deactivated_at,
-        "deactivation_reason": "expired" if inactive else None,
-        "seller_uuid": None,
-        "seller_displayed_as": None,
-        "seller_profile_url": None,
-        "seller_listings_count_90d": None,
-        **_seller_columns_for(None, None),
-        "country": country_code,
-        "external_id": r.external_id,
-        "image_url": r.image_url,
-        "price_label": r.price_label,
-        "co2_g_km": r.co2_g_km,
-        "registration_month": r.registration_month,
-        "vat_reclaimable": r.vat_reclaimable,
-        "is_damaged": r.is_damaged,
-        "origin": None,
-    }
+    out = []
+    for r in rows:
+        extra = unpack(r)
+        out.append({
+            "source": r.source, "external_id": r.external_id, "url": r.url,
+            "brand": r.brand, "model": r.model,
+            "model_group": extra.get("model_group"),
+            "variant": extra.get("variant"),
+            "motor_type": r.sub_model,
+            "version": extra.get("version"),
+            "price_eur": prices.get(r.id), "price_label": r.price_label,
+            "vat_label": r.vat_label, "vat_reclaimable": r.vat_reclaimable,
+            "year": r.year, "registration_month": r.registration_month,
+            "mileage_km": r.mileage_km, "engine_cc": r.engine_cc,
+            "horsepower": r.horsepower, "power_kw": r.power_kw,
+            "fuel_type": r.fuel_type, "transmission": r.transmission,
+            "co2_g_km": r.co2_g_km, "seller_type": r.seller_type,
+            "offer_type": extra.get("offer_type"), "body_type": r.body_type,
+            "country_code": r.country_code, "region": r.district, "city": r.city,
+            "zip_code": r.zip_code, "is_damaged": extra.get("is_damaged"),
+            "photo_count": r.photo_count, "image_url": r.image_url,
+            "is_active": r.is_active, "deactivated_at": r.deactivated_at,
+            "first_seen_at": r.first_seen_at, "last_seen_at": r.last_seen_at,
+        })
+    return pd.DataFrame(out)
 
 
 def get_country_listings_df(session: Session, country_code: str) -> pd.DataFrame:
-    """One country's AutoScout24 corpus, shaped exactly like ``get_listings_df``.
+    """One country's corpus, in the same shape every other country comes in.
 
-    Reads the rows whose source belongs to *country_code* (``src.countries``
-    decides which), so the Portuguese table is never consulted and no other
-    country's rows can slip in. The frame keeps every column of the Portuguese
-    one plus a few the foreign card has and OLX does not (``country``,
-    ``image_url``, ``price_label``, ``co2_g_km``, ...), and comes back with all
-    those columns even when there are no rows, so callers can filter on them
-    without checking for presence first.
+    A thin name over ``get_listings_df`` now that one table holds every market:
+    the shaping this used to do by hand is what the frame builder already does,
+    and two builders for one shape is how the two drift apart. Kept as its own
+    function because the call sites read as a question about a country, and
+    because it is the place to put anything a foreign corpus ever needs doing
+    to it that the home market does not.
     """
-    from src.countries import source_for
-
-    code = str(country_code).upper()
-    source = source_for(code)
-    rows = (session.query(ImportListing)
-            .filter(ImportListing.source == source)
-            .order_by(ImportListing.id)
-            .all())
-    if not rows:
-        return pd.DataFrame(columns=list(_country_listing_row(ImportListing(), code)))
-    return pd.DataFrame([_country_listing_row(r, code) for r in rows])
+    return get_listings_df(session, country_code=str(country_code).upper())

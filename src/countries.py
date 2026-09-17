@@ -13,6 +13,14 @@ So the mapping lives here once, keyed by ISO code, and everything else asks:
 ``repository.get_country_listings_df`` for the source of a code, the crawler
 for the tld and the ``cy`` filter, the blob builder for the list of markets.
 
+A country is no longer one source. Portugal was always two platforms, and
+Germany and Italy are now two each; ``PLATFORMS`` is the full list and
+``sources_for`` is what a per-country read filters on. It is also how a row
+gets its ``country_code``: the writer resolves the market from the source
+rather than trusting a reader to remember, because a row that arrives without
+a market reads as Portuguese and a German price inside a Portuguese median is
+a bug that raises nothing.
+
 Portugal is in the table for completeness — it is a country this project has
 a corpus for — but it is not in ``EU_COUNTRIES``: that tuple is the set of
 markets the AutoScout24 crawler and the per-country model pipeline run over,
@@ -61,9 +69,66 @@ COUNTRIES: dict[str, Country] = {
                   as24_tld="it", as24_cy="I", market_host="autoscout24.it"),
 }
 
+@dataclass(frozen=True)
+class Platform:
+    """One site we read, and the market its cars are for sale in.
+
+    ``host`` is what the reader requests and what the public pages credit, so
+    it stays a bare hostname rather than a URL. ``legacy`` marks a source
+    string that is still in the database but is not a reader any more — the
+    weekly German benchmark predates per-country sources and its rows must
+    still resolve to a country.
+    """
+
+    source: str
+    code: str
+    name: str
+    host: str
+    legacy: bool = False
+
+
+PLATFORMS: dict[str, Platform] = {
+    "olx": Platform("olx", "PT", "OLX", "olx.pt"),
+    "standvirtual": Platform("standvirtual", "PT", "StandVirtual", "standvirtual.com"),
+    "as24_de": Platform("as24_de", "DE", "AutoScout24", "autoscout24.de"),
+    "as24_fr": Platform("as24_fr", "FR", "AutoScout24", "autoscout24.fr"),
+    "as24_it": Platform("as24_it", "IT", "AutoScout24", "autoscout24.it"),
+    "ka_de": Platform("ka_de", "DE", "Kleinanzeigen", "kleinanzeigen.de"),
+    "am_it": Platform("am_it", "IT", "automobile.it", "automobile.it"),
+    "autoscout24": Platform("autoscout24", "DE", "AutoScout24", "autoscout24.de",
+                            legacy=True),
+}
+
 EU_COUNTRIES: tuple[str, ...] = ("DE", "FR", "IT")
 
 _BY_SOURCE: dict[str, Country] = {c.source: c for c in COUNTRIES.values()}
+
+
+def platform(source: str) -> Platform | None:
+    """The platform a source string names, or None for one we do not read."""
+    return PLATFORMS.get(str(source or "").strip())
+
+
+def platforms_for(code: str) -> tuple[Platform, ...]:
+    """Every platform serving a market, including retired source strings."""
+    key = country(code).code
+    return tuple(p for p in PLATFORMS.values() if p.code == key)
+
+
+def sources_for(code: str) -> tuple[str, ...]:
+    """Every ``listings.source`` value that belongs to a market."""
+    return tuple(p.source for p in platforms_for(code))
+
+
+def code_for_source(source: str) -> str | None:
+    """The ISO market code a source belongs to, or None if it is unknown.
+
+    This is what the writer stamps rows with. None is a refusal rather than a
+    default: a source nobody registered has no market, and guessing one would
+    put a foreign car in whichever corpus the guess named.
+    """
+    known = PLATFORMS.get(str(source or "").strip())
+    return known.code if known else None
 
 
 def country(code: str) -> Country:
@@ -89,8 +154,12 @@ def source_for(code: str) -> str:
 def country_for_source(source: str) -> Country | None:
     """The market a source string belongs to, or None for an unknown source.
 
-    None here rather than a raise: sources arrive from the database, where the
-    old German benchmark crawl (``autoscout24``) and anything a future reader
-    writes are legitimate values that simply are not a country corpus.
+    None here rather than a raise: sources arrive from the database, where
+    anything a future reader writes is a legitimate value that is simply not a
+    registered platform yet.
     """
-    return _BY_SOURCE.get(str(source or "").strip())
+    key = str(source or "").strip()
+    known = PLATFORMS.get(key)
+    if known is not None:
+        return COUNTRIES.get(known.code)
+    return _BY_SOURCE.get(key)

@@ -28,6 +28,7 @@ EXTRA_COLUMNS = {
 
 
 def _rows(source="as24_de", n=2, **over):
+    from src.countries import code_for_source
     prefix = source.split("_")[-1]
     rows = []
     for i in range(n):
@@ -42,7 +43,7 @@ def _rows(source="as24_de", n=2, **over):
             "image_url": "https://prod.pictures.autoscout24.net/g/720x540.webp",
             "price_label": "Guter Preis", "co2_g_km": 120,
             "registration_month": "05/2018", "vat_reclaimable": True,
-            "is_damaged": False, "country_code": "DE",
+            "is_damaged": False, "country_code": code_for_source(source),
         }
         row.update(over)
         rows.append(row)
@@ -100,7 +101,7 @@ class TestCountryListingsFrame:
                                + _rows("autoscout24", n=1))
         de = get_country_listings_df(db_session, "DE")
         fr = get_country_listings_df(db_session, "FR")
-        assert set(de["source"]) == {"as24_de"} and len(de) == 2
+        assert set(de["source"]) == {"as24_de", "autoscout24"} and len(de) == 3
         assert set(fr["source"]) == {"as24_fr"} and len(fr) == 3
         assert get_country_listings_df(db_session, "IT").empty
         assert set(get_listings_df(db_session)["olx_id"]) == {"test-001"}

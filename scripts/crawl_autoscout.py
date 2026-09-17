@@ -112,13 +112,13 @@ def _fresh_pairs(session, max_age_days: int) -> set[tuple]:
     """(brand, model, year) refreshed recently enough to skip this run."""
     from datetime import timedelta
     from sqlalchemy import func
-    from src.models.import_listing import ImportListing
+    from src.models.listing import Listing
     from src.storage.repository import _utcnow
 
     cutoff = _utcnow() - timedelta(days=max_age_days)
-    rows = (session.query(ImportListing.brand, ImportListing.model, ImportListing.year,
-                          func.max(ImportListing.last_seen_at))
-            .group_by(ImportListing.brand, ImportListing.model, ImportListing.year)
+    rows = (session.query(Listing.brand, Listing.model, Listing.year,
+                          func.max(Listing.last_seen_at))
+            .group_by(Listing.brand, Listing.model, Listing.year)
             .all())
     return {(b, m, y) for b, m, y, seen in rows if seen is not None and seen >= cutoff}
 

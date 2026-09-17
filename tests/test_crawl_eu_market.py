@@ -349,7 +349,7 @@ class TestHarvestAgainstTheDatabase:
         assert result.deactivated == 1 and result.inserted == 1 and result.updated == 1
 
     def test_the_queue_reads_last_seen_from_the_database(self, db_session):
-        from src.models.import_listing import ImportListing
+        from src.models.listing import Listing
         from src.storage.repository import upsert_import_listings
 
         old = _listing("old", year=2017)
@@ -357,8 +357,8 @@ class TestHarvestAgainstTheDatabase:
         crawl.stamp([old, fresh], "as24_de", "Volkswagen", "Golf")
         upsert_import_listings(db_session, [old, fresh])
         now = crawl._utcnow()
-        (db_session.query(ImportListing).filter(ImportListing.external_id == "old")
-         .update({ImportListing.last_seen_at: now - timedelta(days=30)},
+        (db_session.query(Listing).filter(Listing.external_id == "old")
+         .update({Listing.last_seen_at: now - timedelta(days=30)},
                  synchronize_session="fetch"))
         db_session.commit()
         seen = crawl.cell_last_seen(db_session, "as24_de")
@@ -430,7 +430,7 @@ class TestDryRun:
 
     def test_prints_the_queue_without_a_client(self, fresh_schema, tmp_path, monkeypatch, capsys):
         from sqlalchemy.orm import Session
-        from src.models.import_listing import ImportListing
+        from src.models.listing import Listing
         from src.storage.database import init_db
         from src.storage.repository import upsert_import_listings
 
@@ -440,8 +440,8 @@ class TestDryRun:
             rows = [_listing("fresh", year=year - 1), _listing("old", year=year - 3)]
             crawl.stamp(rows, "as24_de", "Volkswagen", "Golf")
             upsert_import_listings(session, rows)
-            (session.query(ImportListing).filter(ImportListing.external_id == "old")
-             .update({ImportListing.last_seen_at: crawl._utcnow() - timedelta(days=30)},
+            (session.query(Listing).filter(Listing.external_id == "old")
+             .update({Listing.last_seen_at: crawl._utcnow() - timedelta(days=30)},
                      synchronize_session="fetch"))
             session.commit()
         state = _state(tmp_path, discovered=_golf_discovered(), inventory={

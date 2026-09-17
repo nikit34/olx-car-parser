@@ -9,7 +9,6 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
 
 from src.models.listing import Base
-import src.models.import_listing  # noqa: F401
 import src.models.portfolio  # noqa: F401 — register PortfolioDeal with Base
 import src.models.relist  # noqa: F401 — register RelistEvent with Base
 import src.models.seller  # noqa: F401 — register Seller with Base
@@ -63,10 +62,129 @@ def get_session():
 
 
 def _get_table_columns(conn, table_name: str) -> set[str]:
-    return {col["name"] for col in inspect(conn).get_columns(table_name)}
+    try:
+        return {col["name"] for col in inspect(conn).get_columns(table_name)}
+    except Exception:
+        return set()
 
 
-_SCHEMA_VERSION = 7  # bump when _migrate_columns or _dead_json_keys changes
+_MERGE_DIRECT = (
+    "url", "brand", "model", "price_label", "vat_label",
+    "vat_reclaimable", "body_type", "year", "registration_month", "mileage_km",
+    "engine_cc", "horsepower", "power_kw", "fuel_type", "transmission",
+    "co2_g_km", "seller_type", "country_code", "city", "zip_code",
+    "photo_count", "image_url", "is_active", "deactivated_at", "is_damaged",
+    "first_seen_at", "last_seen_at", "source", "external_id",
+)
+
+_MERGE_RENAMES = {"region": "district"}
+
+_MERGE_TO_EXTRAS = ("model_group", "variant", "motor_type", "version",
+                    "offer_type")
+
+
+def _merge_import_listings(conn, batch: int = 2000) -> int:
+    """Fold the old foreign-market table into ``listings``. Returns rows moved.
+
+    The two tables existed because foreign rows were card-level and Portuguese
+    rows were not. Once every reader opens the advert that difference is gone,
+    and a second table is just a second place to forget to look.
+
+    Identity is namespaced on the way in. ``olx_id`` is the platform's own ad
+    id, which it has been since StandVirtual moved in beside OLX, but OLX and
+    Kleinanzeigen both number their ads and nothing stops the same integer
+    naming a car in Lisbon and one in Leipzig. Foreign rows therefore land as
+    ``source:external_id`` while the Portuguese pair keeps its bare ids, so no
+    existing row changes key and no future one can collide.
+
+    Fields with no column of their own — the seller's own damage flag, the
+    trim words each site spells differently — go to ``extras`` as JSON rather
+    than being dropped, because a migration that loses data is not reversible
+    by re-running it.
+
+    Idempotent: rows already carrying their namespaced id are skipped, so an
+    interrupted run resumes and a finished one is a no-op. The old table is
+    dropped only when nothing is left to move.
+    """
+    import json as _json
+
+    names = set(inspect(conn).get_table_names())
+    if "import_listings" not in names:
+        return 0
+
+    have = {row[0] for row in conn.execute(
+        text("SELECT olx_id FROM listings WHERE olx_id LIKE '%:%'"))}
+    columns = _get_table_columns(conn, "import_listings")
+    direct = [c for c in _MERGE_DIRECT if c in columns]
+    packed = [c for c in _MERGE_TO_EXTRAS if c in columns]
+    renamed = {k: v for k, v in _MERGE_RENAMES.items() if k in columns}
+    select_cols = sorted(set(direct) | set(packed) | set(renamed)
+                         | {"source", "external_id"}
+                         | ({"price_eur"} if "price_eur" in columns else set()))
+
+    rows = conn.execute(text(
+        f"SELECT {', '.join(select_cols)} FROM import_listings")).mappings().all()
+    moved = 0
+    pending: list[dict] = []
+    target = [c for c in direct if c != "source" and c != "external_id"]
+    insert_cols = (["olx_id", "source", "external_id", "extras"]
+                   + target + list(renamed.values()))
+    prices: dict[str, float] = {}
+    statement = text(
+        f"INSERT INTO listings ({', '.join(insert_cols)}) "
+        f"VALUES ({', '.join(':' + c for c in insert_cols)})")
+
+    for row in rows:
+        source = str(row.get("source") or "")
+        external_id = str(row.get("external_id") or "")
+        if not source or not external_id:
+            continue
+        olx_id = f"{source}:{external_id}"
+        if olx_id in have:
+            continue
+        extras = {c: row[c] for c in packed if row.get(c) is not None}
+        payload = {c: row.get(c) for c in target}
+        payload.update({native: row.get(foreign) for foreign, native in renamed.items()})
+        payload.update({
+            "olx_id": olx_id,
+            "source": source,
+            "external_id": external_id,
+            "extras": _json.dumps(extras, ensure_ascii=False, sort_keys=True) if extras else None,
+        })
+        if row.get("price_eur") is not None:
+            prices[olx_id] = float(row["price_eur"])
+        pending.append(payload)
+        have.add(olx_id)
+        if len(pending) >= batch:
+            conn.execute(statement, pending)
+            conn.commit()
+            moved += len(pending)
+            pending = []
+    if pending:
+        conn.execute(statement, pending)
+        conn.commit()
+        moved += len(pending)
+
+    if prices:
+        rows_by_id = conn.execute(text(
+            "SELECT id, olx_id FROM listings WHERE olx_id LIKE \'%:%\'")).all()
+        snapshots = [{"listing_id": lid, "price_eur": prices[oid]}
+                     for lid, oid in rows_by_id if oid in prices]
+        already = {r[0] for r in conn.execute(text(
+            "SELECT DISTINCT listing_id FROM price_snapshots"))}
+        snapshots = [s for s in snapshots if s["listing_id"] not in already]
+        if snapshots:
+            conn.execute(text(
+                "INSERT INTO price_snapshots (listing_id, price_eur, scraped_at) "
+                "VALUES (:listing_id, :price_eur, NOW())"), snapshots)
+            conn.commit()
+
+    conn.execute(text("DROP TABLE import_listings"))
+    conn.commit()
+    return moved
+
+
+_SCHEMA_VERSION = 8  # bump when _migrate_columns or _dead_json_keys changes
 
 
 def _read_schema_version(conn) -> int:
@@ -102,6 +220,17 @@ def init_db(db_url: str | None = None):
 
     # Migrate: add columns to existing listings table
     _migrate_columns = [
+        ("country_code", "TEXT DEFAULT 'PT'"),
+        ("external_id", "TEXT"),
+        ("image_url", "TEXT"),
+        ("price_label", "TEXT"),
+        ("zip_code", "TEXT"),
+        ("body_type", "TEXT"),
+        ("power_kw", "INTEGER"),
+        ("vat_label", "TEXT"),
+        ("vat_reclaimable", "BOOLEAN"),
+        ("is_damaged", "BOOLEAN"),
+        ("extras", "TEXT"),
         ("generation", "TEXT"),
         ("desc_mentions_repair", "BOOLEAN"),
         ("desc_mentions_accident", "BOOLEAN"),
@@ -175,7 +304,7 @@ def init_db(db_url: str | None = None):
         "registration_plate", "tires_condition",
         # removed LLM fields (zero price-model importance)
         "accident_details", "imported", "paint_condition", "service_history",
-        "repair_details", "suspicious_signs", "extras", "issues",
+        "repair_details", "suspicious_signs", "issues",
         "reason_for_sale", "recent_maintenance",
     ]
     # Keys to strip from llm_extras JSON
@@ -191,32 +320,10 @@ def init_db(db_url: str | None = None):
     _migrate_indexes = [
         ("ix_listings_seller_uuid", "listings", "seller_uuid"),
         ("ix_listings_last_scraped_at", "listings", "last_scraped_at"),
-        ("ix_import_listings_last_seen_at", "import_listings", "last_seen_at"),
-    ]
-    _migrate_import_columns = [
-        ("region", "TEXT"),
-        ("photo_count", "INTEGER"),
-        ("version", "TEXT"),
-        ("price_label", "TEXT"),
-        ("image_url", "TEXT"),
-        ("offer_type", "TEXT"),
-        ("body_type", "TEXT"),
-        ("is_active", "BOOLEAN DEFAULT TRUE"),
-        ("deactivated_at", "TIMESTAMP"),
+        ("ix_listings_country_code", "listings", "country_code"),
+        ("ix_listings_external_id", "listings", "external_id"),
     ]
     with engine.connect() as conn:
-        existing_import_columns = _get_table_columns(conn, "import_listings")
-        for col_name, col_type in _migrate_import_columns:
-            if col_name in existing_import_columns:
-                continue
-            try:
-                conn.execute(text(
-                    f"ALTER TABLE import_listings ADD COLUMN {col_name} "
-                    f"{col_type}"
-                ))
-                conn.commit()
-            except Exception:
-                conn.rollback()
         existing_listing_columns = _get_table_columns(conn, "listings")
         for col_name, col_type in _migrate_columns:
             if col_name in existing_listing_columns:
@@ -229,6 +336,16 @@ def init_db(db_url: str | None = None):
                 conn.commit()
             except Exception:
                 conn.rollback()
+        try:
+            conn.execute(text(
+                "UPDATE listings SET country_code = 'PT' WHERE country_code IS NULL"))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+        try:
+            _merge_import_listings(conn)
+        except Exception:
+            conn.rollback()
         for idx_name, table, column in _migrate_indexes:
             try:
                 conn.execute(text(

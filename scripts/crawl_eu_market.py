@@ -368,12 +368,12 @@ def order_cells(cells: list[Cell], last_seen: dict[tuple, datetime | None], *,
 def cell_last_seen(session, source: str) -> dict[tuple, datetime]:
     """{(brand, model, year): MAX(last_seen_at)} for one source."""
     from sqlalchemy import func
-    from src.models.import_listing import ImportListing
+    from src.models.listing import Listing
 
-    rows = (session.query(ImportListing.brand, ImportListing.model, ImportListing.year,
-                          func.max(ImportListing.last_seen_at))
-            .filter(ImportListing.source == source)
-            .group_by(ImportListing.brand, ImportListing.model, ImportListing.year)
+    rows = (session.query(Listing.brand, Listing.model, Listing.year,
+                          func.max(Listing.last_seen_at))
+            .filter(Listing.source == source)
+            .group_by(Listing.brand, Listing.model, Listing.year)
             .all())
     return {(b, m, y): seen for b, m, y, seen in rows if seen is not None}
 

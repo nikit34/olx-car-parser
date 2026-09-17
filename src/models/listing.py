@@ -45,6 +45,18 @@ class Listing(Base):
     photo_count = Column(Integer)          # Number of photos in listing
     description_length = Column(Integer)   # Length of description text
 
+    country_code = Column(String, index=True, default="PT")
+    external_id = Column(String, index=True)
+    image_url = Column(Text)
+    price_label = Column(String)
+    zip_code = Column(String)
+    body_type = Column(String)
+    power_kw = Column(Integer)
+    vat_label = Column(String)
+    vat_reclaimable = Column(Boolean)
+    is_damaged = Column(Boolean)
+    extras = Column(Text)
+
     registration_month = Column(String)    # Mes de Registo
     city = Column(String, index=True)      # Cidade/freguesia
     district = Column(String, index=True)  # Distrito (Porto, Lisboa, Faro...)

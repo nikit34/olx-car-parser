@@ -21,6 +21,7 @@ from src.countries import (
     country,
     country_for_source,
     source_for,
+    code_for_source,
 )
 
 
@@ -84,11 +85,21 @@ class TestLookups:
         assert country_for_source("as24_it") is COUNTRIES["IT"]
         assert country_for_source("olx").code == "PT"
 
-    def test_a_source_that_is_not_a_country_corpus_is_none_not_an_error(self):
-        """The old German benchmark crawl writes ``autoscout24`` into the same
-        table and is deliberately not a country: rows arrive from the database,
-        where an unrecognised source is data, not a programming mistake."""
-        assert country_for_source("autoscout24") is None
+    def test_the_retired_benchmark_source_still_resolves_to_its_market(self):
+        """``autoscout24`` is the weekly German benchmark, which predates
+        per-country sources. Its rows are German cars and share one table with
+        every other market now, so it has to resolve to Germany: a row the
+        writer cannot place a market on is dropped, and dropping the benchmark
+        would empty the import comparison."""
+        assert country_for_source("autoscout24").code == "DE"
+        assert code_for_source("autoscout24") == "DE"
+
+    def test_a_source_nobody_registered_is_none_not_an_error(self):
+        """Sources arrive from the database, where a value no reader writes any
+        more is data, not a programming mistake. None is also a refusal: the
+        writer drops such a row rather than guessing it into a corpus."""
+        assert country_for_source("hood_de") is None
+        assert code_for_source("hood_de") is None
         assert country_for_source("") is None
         assert country_for_source(None) is None
 

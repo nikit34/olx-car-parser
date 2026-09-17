@@ -10,6 +10,8 @@ covered for it.
 
 from __future__ import annotations
 
+import json
+
 from sqlalchemy import create_engine, text
 
 from tests.conftest import reset_module_engine_cache
@@ -192,11 +194,10 @@ def _index_exists(url: str, name: str) -> bool:
 
 
 def _build_legacy_import_db(url: str) -> None:
-    """A v6 database: ``import_listings`` as the weekly German crawl left it,
-    before the country columns and the ``last_seen_at`` index, with one row
-    already in it so the migration has existing data to default."""
+    """A database from before the merge: a separate ``import_listings`` table
+    with two German rows in it, one of them carrying the fields that have no
+    column of their own in ``listings`` and must survive as JSON."""
     from src.models.listing import Base
-    import src.models.import_listing  # noqa: F401
     import src.models.portfolio  # noqa: F401
     import src.models.relist  # noqa: F401
     import src.models.seller  # noqa: F401
@@ -204,50 +205,86 @@ def _build_legacy_import_db(url: str) -> None:
     engine = create_engine(url)
     Base.metadata.create_all(engine)
     with engine.begin() as conn:
-        conn.execute(text("DROP INDEX IF EXISTS ix_import_listings_last_seen_at"))
-        for col in _V7_IMPORT_COLUMNS:
-            conn.execute(text(
-                f"ALTER TABLE import_listings DROP COLUMN IF EXISTS {col}"))
+        conn.execute(text("""
+            CREATE TABLE import_listings (
+                id SERIAL PRIMARY KEY,
+                source TEXT NOT NULL,
+                external_id TEXT NOT NULL,
+                url TEXT NOT NULL,
+                brand TEXT NOT NULL,
+                model TEXT NOT NULL,
+                model_group TEXT, variant TEXT, motor_type TEXT, version TEXT,
+                offer_type TEXT, body_type TEXT, is_damaged BOOLEAN,
+                price_eur DOUBLE PRECISION, price_label TEXT,
+                vat_label TEXT, vat_reclaimable BOOLEAN,
+                year INTEGER, registration_month TEXT, mileage_km INTEGER,
+                engine_cc INTEGER, horsepower INTEGER, power_kw INTEGER,
+                fuel_type TEXT, transmission TEXT, co2_g_km INTEGER,
+                seller_type TEXT, country_code TEXT, region TEXT, city TEXT,
+                zip_code TEXT, photo_count INTEGER, image_url TEXT,
+                is_active BOOLEAN DEFAULT TRUE, deactivated_at TIMESTAMP,
+                first_seen_at TIMESTAMP, last_seen_at TIMESTAMP
+            )"""))
         conn.execute(text(
-            "INSERT INTO import_listings (source, external_id, url, brand, model, year) "
-            "VALUES ('autoscout24', 'legacy-1', 'https://x', 'BMW', '320', 2016)"))
+            "INSERT INTO import_listings (source, external_id, url, brand, model, "
+            "year, region, motor_type, variant, price_eur, country_code) VALUES "
+            "('autoscout24', 'legacy-1', 'https://x', 'BMW', '320', 2016, "
+            "'Bayern', '2.0d', 'Touring', 21000, 'DE')"))
+        conn.execute(text(
+            "INSERT INTO import_listings (source, external_id, url, brand, model, "
+            "year, country_code) VALUES "
+            "('as24_fr', 'legacy-2', 'https://y', 'Renault', 'Clio', 2019, 'FR')"))
     engine.dispose()
 
 
-def test_fresh_db_has_import_listing_country_columns(fresh_schema):
+def test_fresh_db_has_the_market_columns(fresh_schema):
+    """One table now holds every market, so the columns a foreign card fills
+    have to be on ``listings`` itself."""
     from src.storage.database import init_db
 
     init_db(fresh_schema)
 
-    cols = _table_columns(fresh_schema, "import_listings")
-    for col in _V7_IMPORT_COLUMNS:
-        assert col in cols, f"import_listings.{col} missing on a fresh DB"
-    assert _index_exists(fresh_schema, "ix_import_listings_last_seen_at")
+    cols = _table_columns(fresh_schema, "listings")
+    for col in ("country_code", "external_id", "extras", "image_url",
+                "price_label", "zip_code", "body_type", "power_kw",
+                "vat_label", "vat_reclaimable", "is_damaged"):
+        assert col in cols, f"listings.{col} missing on a fresh DB"
+    assert _index_exists(fresh_schema, "ix_listings_country_code")
 
 
-def test_existing_import_listings_get_country_columns(fresh_schema):
+def test_the_old_import_table_is_folded_into_listings(fresh_schema):
+    """The rows move, keyed by source so a German id cannot collide with an
+    OLX one, and the fields with no column land in ``extras`` rather than
+    being dropped."""
     _build_legacy_import_db(fresh_schema)
-    assert "region" not in _table_columns(fresh_schema, "import_listings")
     reset_module_engine_cache()
     from src.storage.database import init_db
 
     init_db(fresh_schema)
 
-    cols = _table_columns(fresh_schema, "import_listings")
-    for col in _V7_IMPORT_COLUMNS:
-        assert col in cols, f"migration didn't add import_listings.{col}"
-    assert _index_exists(fresh_schema, "ix_import_listings_last_seen_at")
     engine = create_engine(fresh_schema)
     with engine.connect() as conn:
+        assert not conn.execute(text(
+            "SELECT to_regclass('import_listings') IS NOT NULL")).scalar_one()
         row = conn.execute(text(
-            "SELECT is_active, deactivated_at FROM import_listings "
-            "WHERE external_id = 'legacy-1'"
-        )).fetchone()
+            "SELECT olx_id, source, external_id, country_code, district, extras "
+            "FROM listings WHERE external_id = 'legacy-1'")).fetchone()
+        codes = conn.execute(text(
+            "SELECT country_code FROM listings ORDER BY country_code")).scalars().all()
     engine.dispose()
-    assert tuple(row) == (True, None)
+
+    assert row is not None, "the legacy row did not survive the merge"
+    olx_id, source, external_id, country_code, district, extras = row
+    assert olx_id == "autoscout24:legacy-1"
+    assert (source, external_id, country_code) == ("autoscout24", "legacy-1", "DE")
+    assert district == "Bayern"
+    assert json.loads(extras) == {"motor_type": "2.0d", "variant": "Touring"}
+    assert codes == ["DE", "FR"]
 
 
-def test_import_listing_migration_is_idempotent(fresh_schema):
+def test_the_merge_is_idempotent(fresh_schema):
+    """Running it twice must not duplicate a car: the second pass finds the
+    old table gone and the rows already carrying their namespaced ids."""
     _build_legacy_import_db(fresh_schema)
     reset_module_engine_cache()
     from src.storage.database import init_db
@@ -256,4 +293,9 @@ def test_import_listing_migration_is_idempotent(fresh_schema):
     reset_module_engine_cache()
     init_db(fresh_schema)
 
-    assert "is_active" in _table_columns(fresh_schema, "import_listings")
+    engine = create_engine(fresh_schema)
+    with engine.connect() as conn:
+        count = conn.execute(text(
+            "SELECT COUNT(*) FROM listings WHERE olx_id LIKE '%:%'")).scalar_one()
+    engine.dispose()
+    assert count == 2

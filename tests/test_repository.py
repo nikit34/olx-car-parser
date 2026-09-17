@@ -24,7 +24,7 @@ from src.storage.repository import (
     upsert_import_listings,
     _utcnow,
 )
-from src.models.import_listing import ImportListing
+from src.models.listing import Listing
 
 
 class TestSellerColumnsInListingsDf:
@@ -1066,9 +1066,9 @@ class TestImportListings:
         upsert_import_listings(db_session, rows)
         now = _utcnow()
         stale = now - timedelta(days=30)
-        (db_session.query(ImportListing)
-         .filter(ImportListing.external_id.in_(["de-0", "fr-0"]))
-         .update({ImportListing.last_seen_at: stale}, synchronize_session="fetch"))
+        (db_session.query(Listing)
+         .filter(Listing.external_id.in_(["de-0", "fr-0"]))
+         .update({Listing.last_seen_at: stale}, synchronize_session="fetch"))
         db_session.commit()
         n = expire_import_listings(db_session, "autoscout24", max_age_days=21, now=now)
         assert n == 1
