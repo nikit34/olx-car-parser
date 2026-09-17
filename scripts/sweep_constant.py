@@ -32,7 +32,6 @@ Flags:
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
 from pathlib import Path
 
@@ -40,6 +39,7 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import KFold, TimeSeriesSplit
 
+from scripts import release_chunks
 from src.analytics import price_model as pm
 
 _CACHE = Path("/tmp/olx-release/listings.parquet")
@@ -68,16 +68,13 @@ def load_sold(data_path: str | None) -> pd.DataFrame:
     path = Path(data_path) if data_path else _CACHE
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
-        repo = subprocess.run(
-            ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
-            capture_output=True, text=True, check=True,
-        ).stdout.strip()
-        print(f"Downloading listings.parquet from {repo}:latest-data …", file=sys.stderr)
-        subprocess.run(
-            ["gh", "release", "download", "latest-data", "--repo", repo,
-             "--pattern", "listings.parquet", "--dir", str(path.parent), "--clobber"],
-            check=True,
-        )
+        print(f"Downloading listings.parquet from {release_chunks.REPO}:"
+              f"{release_chunks.TAG} …", file=sys.stderr)
+        blob = release_chunks.fetch("listings.parquet")
+        if blob is None:
+            raise SystemExit("listings.parquet is not readable from the "
+                             f"{release_chunks.TAG} release")
+        path.write_bytes(blob)
     df = pd.read_parquet(path)
     df = df[df["deactivation_reason"].astype(str).str.lower() == "sold"].copy()
     df = df.dropna(subset=["price_eur", "year", "mileage_km"])
