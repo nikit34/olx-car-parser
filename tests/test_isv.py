@@ -88,3 +88,34 @@ def test_a_missing_co2_is_missing_even_when_it_arrives_as_nan():
     assert _isv(co2_g_km=nan, engine_cc=1598, fuel_type="Diesel", first_reg_year=2016) is None
     assert _isv(co2_g_km=120, engine_cc=nan, fuel_type="Diesel", first_reg_year=2016) is None
     assert _isv(co2_g_km=None, engine_cc=1598, fuel_type="Diesel", first_reg_year=2016) is None
+
+
+def test_a_missing_fuel_is_missing_even_when_it_arrives_as_nan():
+    """The same rule as the numbers above, on the one input that had no guard.
+
+    NaN is truthy, so ``(fuel_type or "")`` let it through to ``.strip()`` and
+    the whole dashboard build died on the first foreign listing whose fuel
+    nobody had filled in — every scheduled scrape from 2026-09-16 onwards.
+    """
+    assert _isv(co2_g_km=120, engine_cc=1598, fuel_type=float("nan"),
+                first_reg_year=2016) is None
+    assert _isv(co2_g_km=120, engine_cc=1598, fuel_type=None,
+                first_reg_year=2016) is None
+    assert _isv(co2_g_km=120, engine_cc=1598, fuel_type="",
+                first_reg_year=2016) is None
+
+
+def test_a_frame_with_a_hole_in_its_fuel_column_still_prices_the_rest():
+    """The production shape: one row of many has no fuel, and the run must
+    price the others rather than stop at the hole."""
+    import pandas as pd
+
+    frame = pd.DataFrame([
+        {"co2_g_km": 120, "engine_cc": 1598, "fuel_type": "Diesel", "year": 2016},
+        {"co2_g_km": 130, "engine_cc": 1498, "fuel_type": None, "year": 2018},
+        {"co2_g_km": 110, "engine_cc": 1398, "fuel_type": "Gasolina", "year": 2019},
+    ])
+    assert isinstance(frame["fuel_type"].iloc[1], float), "the hole is a NaN float"
+    priced = [compute_isv(r.co2_g_km, r.engine_cc, r.fuel_type, r.year, as_of_year=2026)
+              for r in frame.itertuples()]
+    assert [p is not None for p in priced] == [True, False, True]

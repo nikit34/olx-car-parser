@@ -82,9 +82,17 @@ def _reducao(age_years: float) -> float:
     return _REDUCAO[-1][1]
 
 
-def _fuel_class(fuel_type: str | None) -> str | None:
-    """Map canonicalised fuel_type → 'bev' | 'phev' | 'diesel' | 'petrol' | None."""
-    f = (fuel_type or "").strip().lower()
+def _fuel_class(fuel_type) -> str | None:
+    """Map canonicalised fuel_type → 'bev' | 'phev' | 'diesel' | 'petrol' | None.
+
+    Anything that is not a string counts as missing, which is the same rule
+    ``compute_isv`` already applies to its numbers. The value that forced it is
+    NaN: callers pass a column rather than a value, a text column with a hole
+    in it hands over ``float('nan')``, and NaN is truthy — so ``or ""`` let it
+    straight through to ``.strip()`` and every dashboard build died on the
+    first foreign listing whose fuel nobody filled in.
+    """
+    f = (fuel_type if isinstance(fuel_type, str) else "").strip().lower()
     if not f:
         return None
     if "plug" in f:                       # Híbrido Plug-in (PHEV)
