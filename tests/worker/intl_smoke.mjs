@@ -99,10 +99,34 @@ function visibleText(html) {
     .replace(/&nbsp;/g, " ");
 }
 
-const PT_GIVEAWAYS = [
-  "anúncio", "anúncios", "preço", "preços", "usados", "grátis", "vendedor",
-  "Quem somos", "Avaliação", "carros", "OLX",
-];
+const LEXICON = {
+  pt: ["anúncios", "mercado", "preço", "carros", "vendedor", "grátis"],
+  de: ["Angebote", "Preis", "Markt", "Verkäufer", "kostenlos"],
+  fr: ["annonces", "prix", "marché", "vendeur", "gratuit"],
+  it: ["annunci", "prezzo", "mercato", "venditore", "gratuito"],
+};
+
+const LOCALE_PAGES = {
+  pt: ["/pt", "/pt/precos", "/pt/mercado", "/pt/avaliar", "/pt/metodologia", "/pt/sobre"],
+  de: ["/de", "/de/preise", "/de/markt", "/de/bewerten", "/de/methodik", "/de/ueber-uns",
+       "/de/auto?olx_id=as24_de:aaa"],
+  fr: ["/fr", "/fr/prix", "/fr/marche", "/fr/estimer", "/fr/methodologie", "/fr/a-propos"],
+  it: ["/it", "/it/prezzi", "/it/mercato", "/it/valutare", "/it/metodologia", "/it/chi-siamo"],
+};
+
+const wordRe = w => new RegExp(`(^|[^\\p{L}])${w}([^\\p{L}]|$)`, "iu");
+
+function assertOwnLanguage(code, path, html) {
+  const seen = visibleText(html);
+  assert(LEXICON[code].some(w => wordRe(w).test(seen)),
+    `${path} carries no ${code} wording of its own`);
+  for (const [other, words] of Object.entries(LEXICON)) {
+    if (other === code) continue;
+    for (const w of words) {
+      assert(!wordRe(w).test(seen), `${path} leaks the ${other} word "${w}"`);
+    }
+  }
+}
 
 await check("/de is a German page, not a translated Portuguese one", async () => {
   const r = await get("/de");
@@ -112,11 +136,8 @@ await check("/de is a German page, not a translated Portuguese one", async () =>
   assert(html.includes('<meta property="og:locale" content="de_DE">'), "/de has the wrong og:locale");
   assert(!/undefined|\[object Object\]|NaN(?![a-zA-Z])/.test(html.replace(/<script[\s\S]*?<\/script>/g, "")),
     "/de rendered undefined/NaN into the page");
-  const seen = visibleText(html);
-  for (const w of PT_GIVEAWAYS) {
-    assert(!new RegExp(w, "i").test(seen), `/de leaks the Portuguese word "${w}"`);
-  }
-  assert(seen.includes("AutoScout24"), "/de does not name its own data source");
+  assertOwnLanguage("de", "/de", html);
+  assert(visibleText(html).includes("AutoScout24"), "/de does not name its own data source");
   assert(html.includes('href="/de/preise"') && html.includes('href="/de/bewerten"'),
     "/de does not link its own localised routes");
 });
@@ -281,10 +302,7 @@ await check("a deal in the feed has its own page, in German, on every market", a
   assert(html.includes('href="/de/markt"'), "the car page has no way back to the feed");
   assert(html.includes('href="/de/preis/volkswagen-golf"'),
     "the car page does not link the model it belongs to");
-  const seen = visibleText(html);
-  for (const w of PT_GIVEAWAYS) {
-    assert(!new RegExp(w, "i").test(seen), `the German car page leaks "${w}"`);
-  }
+  assertOwnLanguage("de", "/de/auto", html);
 
   for (const [path, feedPath] of [["/fr/voiture", "/fr/marche"], ["/it/auto", "/it/mercato"]]) {
     const miss = await get(`${path}?olx_id=nope`);
@@ -648,6 +666,16 @@ function geoMap(html) {
   const m = /<script type="application\/json" id="fc-geo-map">([\s\S]*?)<\/script>/.exec(html);
   return m ? JSON.parse(m[1].replace(/\\u003c/g, "<")) : null;
 }
+
+await check("every market speaks its own language and none of the others", async () => {
+  for (const [code, paths] of Object.entries(LOCALE_PAGES)) {
+    for (const path of paths) {
+      const r = await get(path);
+      assert(r.status === 200, `${path} → ${r.status}`);
+      assertOwnLanguage(code, path, await r.text());
+    }
+  }
+});
 
 await check("the geo hint offers every other live market and never the current one", async () => {
   const pt = geoMap(await body("/pt"));
