@@ -72,6 +72,7 @@ import {
   renderIntlAvaliar, renderIntlFeed, renderIntlMethodology, renderIntlAbout,
   renderIntlPrivacy, renderIntlNotFound, renderIntlInfo,
   intlModelJson, intlYearJson, intlSitemapPaths, intlYearCell, intlSiblings,
+  setIntlWave, intlPublishedYears, intlInWave,
 } from "./pages-intl.js";
 import { intlModelCutLinks } from "./intl-facets.js";
 import { intlModelCurveLinks } from "./intl-curves.js";
@@ -320,6 +321,7 @@ const worker = {
       setLiqWave(env.LIQ_WAVE_MODELS);
       setVenderWave(env.VENDER_WAVE_MODELS);
       setIntlLocales(env.INTL_LOCALES);
+      setIntlWave(env.INTL_WAVE_MODELS);
 
       // Internal stlite dashboard + its assets — Basic-Auth gated, fail-closed.
       if (pathname === "/analytics/leads.json") {
@@ -1461,9 +1463,10 @@ async function intlModel(env, url, loc, tail) {
   if (!rec) return intlNotFound(env, url, loc);
   const modelUrl = `https://${url.host}${ihref(loc, "model", slug)}`;
   if (year != null) {
-    const cell = intlYearCell(rec, year);
+    const published = intlPublishedYears(loc, c.models, slug, rec, c.builtAt);
+    const cell = published.includes(year) ? intlYearCell(rec, year) : null;
     if (!cell) {
-      if ((rec.yr || []).some(x => x.y === year)) {
+      if (published.length && (rec.yr || []).some(x => x.y === year)) {
         return new Response(null, {
           status: 301,
           headers: { location: `${modelUrl}${wantsJson ? ".json" : ""}` },
@@ -1475,7 +1478,7 @@ async function intlModel(env, url, loc, tail) {
       return jsonResponse(intlYearJson(loc, rec, slug, year, cell, { host: url.host, builtAt: c.builtAt }));
     }
     return publicHtml(renderIntlYearPage({
-      loc, host: url.host, rec, slug, year, cell, stats: c.stats, builtAt: c.builtAt,
+      loc, host: url.host, models: c.models, rec, slug, year, cell, stats: c.stats, builtAt: c.builtAt,
     }));
   }
   if (wantsJson) {
@@ -1487,7 +1490,8 @@ async function intlModel(env, url, loc, tail) {
   return publicHtml(renderIntlModelPage({
     loc, host: url.host, models: c.models, rec, slug, builtAt: c.builtAt, stats: c.stats,
     siblings: intlSiblings(c.models, slug, rec),
-    extras: intlModelCutLinks(loc, rec, slug, c.mdoc && c.mdoc.districts)
+    extras: intlModelCutLinks(loc, rec, slug, c.mdoc && c.mdoc.districts,
+      intlInWave(loc, c.models, slug, c.builtAt))
       + intlModelCurveLinks(loc, c.models, rec, slug, c.builtAt),
   }));
 }
@@ -1541,7 +1545,7 @@ async function intlSitemap(env, url, loc) {
     const feed = await getDeals(env, "all", loc.country);
     hasDeals = !feed.degraded && Array.isArray(feed.deals) && feed.deals.length > 0;
   } catch (_) { hasDeals = false; }
-  const paths = intlSitemapPaths(loc, models, hasDeals);
+  const paths = intlSitemapPaths(loc, models, hasDeals, (mdoc && mdoc.built_at) || null);
   if (models) {
     for (const mod of intlPageModules()) {
       if (typeof mod.sitemap !== "function") continue;

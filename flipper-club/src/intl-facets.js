@@ -2,7 +2,7 @@ import { escapeHtml, layout } from "./templates.js";
 import {
   crumbs, breadcrumbLd, faqLd, facetCell, facetKind, publishedCells, districtRanking,
 } from "./seo-pages.js";
-import { intlProvenance } from "./pages-intl.js";
+import { intlProvenance, intlInWave } from "./pages-intl.js";
 import {
   t, href, labelL, fmtEurL, fmtKmL, fmtNumL, fmtPctL, monthTagL,
   registerStrings, registerRoutes, registerNav,
@@ -882,7 +882,8 @@ export function renderIntlFacetPage({ loc, host, rec, slug, kind, cell, siblings
   });
 }
 
-export function intlModelCutLinks(loc, rec, slug, districts = null) {
+export function intlModelCutLinks(loc, rec, slug, districts = null, inWave = true) {
+  if (!inWave) return "";
   const groups = [["fuel", "facet.model_links_fuel"], ["transmission", "facet.model_links_gear"],
                   ["district", "facet.model_links_region"]];
   const blocks = groups.map(([kind, labelKey]) => {
@@ -1194,6 +1195,7 @@ async function handleFacet(ctx) {
   rememberRegions(loc, mdoc);
   const rec = models[params.slug];
   if (!rec) return helpers.notFoundIntl();
+  if (!intlInWave(loc, models, params.slug, builtAt)) return helpers.notFoundIntl();
   const kind = facetKind(rec, params.key);
   if (!kind) return helpers.notFoundIntl();
   const cell = facetCell(rec, kind, params.key);
@@ -1251,6 +1253,7 @@ export const intlFacetsModule = registerIntlPages({
   sitemap(loc, models, builtAt, mdoc) {
     const out = [];
     for (const [slug, rec] of Object.entries(models || {})) {
+      if (!intlInWave(loc, models, slug, builtAt)) continue;
       for (const key of intlFacetKeys(rec)) {
         out.push({ path: facetPath(loc, slug, key), freq: "daily", prio: "0.5" });
       }

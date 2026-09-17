@@ -662,5 +662,48 @@ await check("with INTL_LOCALES unset there is no hint and nothing to switch to",
   }
 });
 
+await check("an intl wave gates the router, the sitemap and the on-page links together", async () => {
+  const wave = 5;
+  const gated = { ...env, INTL_WAVE_MODELS: String(wave) };
+  const g = p => worker.fetch(new Request(`https://${HOST}${p}`), gated);
+  const ranked = Object.keys(deModels).sort((a, b) => (deModels[b].n || 0) - (deModels[a].n || 0)
+    || (a < b ? -1 : 1));
+  const inWave = ranked.slice(0, wave);
+  const outside = ranked.find(sl => !inWave.includes(sl) && yearPageYears(deModels[sl]).length);
+  assert(outside, "the German fixture has no model outside a 5-model wave");
+  const outYear = yearPageYears(deModels[outside])[0];
+  const inYear = yearPageYears(deModels[inWave[0]])[0];
+
+  assert((await g(`/de/preis/${outside}`)).status === 200, "the wave hid a model page, not just its years");
+  assert((await g(`/de/preis/${outside}/${outYear}`)).status === 404,
+    "a year page outside the wave still answers");
+  assert((await g(`/de/preis/${inWave[0]}/${inYear}`)).status === 200,
+    "a year page inside the wave does not answer");
+
+  const page = await (await g(`/de/preis/${outside}`)).text();
+  assert(!page.includes(`/de/preis/${outside}/${outYear}`),
+    "the model page links a year page the wave hides");
+  const xml = await (await g("/de/sitemap.xml")).text();
+  const children = [...xml.matchAll(/<loc>[^<]*?\/de\/preis\/([^<]+)<\/loc>/g)]
+    .map(m => m[1]).filter(p => p.includes("/"));
+  assert(!children.some(p => p.startsWith(`${outside}/`)),
+    `the sitemap advertises children of a model the wave hides: ${children.filter(p => p.startsWith(`${outside}/`)).join(", ")}`);
+  assert(children.some(p => p.startsWith(`${inWave[0]}/`)),
+    "the sitemap dropped the children of a model inside the wave");
+  assert(xml.includes(`/de/preis/${inWave[0]}/${inYear}<`),
+    "the sitemap dropped a year page inside the wave");
+  assert(!page.includes(`/de/preis/${outside}/`),
+    "the model page still links a child the wave hides");
+
+  const feed = await (await g(`/de/preis/${outside}.json`)).json();
+  assert(feed.by_year.every(c => c.page === null),
+    "the JSON twin advertises a year page the wave hides");
+  const hidden = feed.by_year.find(c => c.year === outYear);
+  assert(hidden && hidden.page_absent_because === "outside_publication_wave",
+    `the JSON twin blames "${hidden && hidden.page_absent_because}" for a year the wave is holding back`);
+  assert(feed.by_year.some(c => c.year === outYear && c.sample_size),
+    "the JSON twin dropped the year numbers along with the page");
+});
+
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall intl checks passed");
 process.exit(failures ? 1 : 0);

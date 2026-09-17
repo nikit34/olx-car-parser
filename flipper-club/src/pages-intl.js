@@ -344,12 +344,45 @@ function yearRows(loc, rec, pageYears) {
     </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
+let INTL_WAVE = 0;
+
+export function setIntlWave(n) {
+  const v = parseInt(n, 10);
+  INTL_WAVE = Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+const INTL_WAVE_CACHE = new Map();
+
+function intlWaveSlugs(loc, models, builtAt) {
+  if (!INTL_WAVE || !models) return null;
+  const key = `${loc.code}:${builtAt || ""}:${Object.keys(models).length}:${INTL_WAVE}`;
+  const hit = INTL_WAVE_CACHE.get(key);
+  if (hit) return hit;
+  const set = new Set(Object.entries(models)
+    .sort((a, b) => (b[1].n || 0) - (a[1].n || 0) || (a[0] < b[0] ? -1 : 1))
+    .slice(0, INTL_WAVE)
+    .map(([slug]) => slug));
+  if (INTL_WAVE_CACHE.size > 8) INTL_WAVE_CACHE.clear();
+  INTL_WAVE_CACHE.set(key, set);
+  return set;
+}
+
+export function intlInWave(loc, models, slug, builtAt) {
+  const wave = intlWaveSlugs(loc, models, builtAt);
+  return !wave || wave.has(slug);
+}
+
+export function intlPublishedYears(loc, models, slug, rec, builtAt) {
+  if (!intlInWave(loc, models, slug, builtAt)) return [];
+  return yearPageYears(rec);
+}
+
 function hrefYear(loc, slug, year) {
   return `${href(loc, "model", slug)}/${year}`;
 }
 
 export function renderIntlModelPage({ loc, host, models, rec, slug, builtAt, stats, siblings = [], extras = "" }) {
-  const pageYears = yearPageYears(rec);
+  const pageYears = intlPublishedYears(loc, models, slug, rec, builtAt);
   const withSlug = Object.assign({}, rec, { __slug: slug });
   const canonical = `https://${host}${href(loc, "model", slug)}`;
   const altJson = `${canonical}.json`;
@@ -469,7 +502,7 @@ function stripTags(s) {
 
 export function intlModelJson(loc, rec, slug, { host, builtAt, models = null }) {
   const base = `https://${host}`;
-  const published = new Set(yearPageYears(rec));
+  const published = new Set(intlPublishedYears(loc, models, slug, rec, builtAt));
   return {
     source: "Carsbuyer",
     source_url: `${base}${href(loc, "model", slug)}`,
@@ -497,7 +530,9 @@ export function intlModelJson(loc, rec, slug, { host, builtAt, models = null }) 
       mileage_km_median: c.km != null ? c.km : null,
       page: published.has(c.y) ? `${base}${hrefYear(loc, slug, c.y)}` : null,
       page_absent_because: published.has(c.y) ? null
-        : typeof c.y !== "number" ? "merged_band" : "below_year_floor",
+        : typeof c.y !== "number" ? "merged_band"
+        : (c.n || 0) < 10 ? "below_year_floor"
+        : "outside_publication_wave",
     })),
     years_omitted_thin_sample: rec.yt || 0,
     page_coverage_note: t(loc, "json.coverage_note", { min: 10 }),
@@ -539,13 +574,13 @@ export function intlYearJson(loc, rec, slug, year, cell, { host, builtAt }) {
   };
 }
 
-export function renderIntlYearPage({ loc, host, rec, slug, year, cell, stats, builtAt }) {
+export function renderIntlYearPage({ loc, host, models, rec, slug, year, cell, stats, builtAt }) {
   const all = yearCells(rec, 1).slice().sort((a, b) => a.y - b.y);
   const idx = all.findIndex(c => c.y === year);
   const older = idx > 0 ? all[idx - 1] : null;
   const newer = (idx >= 0 && idx < all.length - 1) ? all[idx + 1] : null;
   const win = all.slice(Math.max(0, idx - 3), idx + 4).slice().sort((a, b) => b.y - a.y);
-  const pageYears = new Set(yearPageYears(rec));
+  const pageYears = new Set(intlPublishedYears(loc, models, slug, rec, builtAt));
   const canonical = `https://${host}${hrefYear(loc, slug, year)}`;
   const altJson = `${canonical}.json`;
   const windowed = cell.w === 1;
@@ -1124,7 +1159,7 @@ export function renderIntlPrivacy({ loc, host }) {
   });
 }
 
-export function intlSitemapPaths(loc, models, hasDeals = true) {
+export function intlSitemapPaths(loc, models, hasDeals = true, builtAt = null) {
   const out = [
     { path: href(loc, "landing"), freq: "daily", prio: "0.9" },
     { path: href(loc, "hub"), freq: "weekly", prio: "0.7" },
@@ -1136,7 +1171,7 @@ export function intlSitemapPaths(loc, models, hasDeals = true) {
   ];
   for (const [slug, rec] of Object.entries(models || {})) {
     out.push({ path: href(loc, "model", slug), freq: "daily", prio: "0.6" });
-    for (const y of yearPageYears(rec)) {
+    for (const y of intlPublishedYears(loc, models, slug, rec, builtAt)) {
       out.push({ path: hrefYear(loc, slug, y), freq: "daily", prio: "0.5" });
     }
   }
