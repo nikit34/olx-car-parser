@@ -865,7 +865,7 @@ function analyticsEvent(name, params = {}) {
   return `<script>if(typeof gtag==='function')gtag('event',${JSON.stringify(name)},${payload});</script>`;
 }
 
-function analyticsClick(name, params = {}) {
+export function analyticsClick(name, params = {}) {
   if (!GA4_MEASUREMENT_ID) return "";
   const attr = v => JSON.stringify(v).replace(/</g, "\\u003c").replace(/"/g, "&quot;");
   return ` onclick="if(window.gtag)gtag('event',${attr(name)},${attr(params)})"`;

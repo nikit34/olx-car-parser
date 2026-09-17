@@ -1,4 +1,4 @@
-import { escapeHtml, layout } from "./templates.js";
+import { escapeHtml, layout, analyticsClick } from "./templates.js";
 import {
   crumbs, breadcrumbLd, faqLd, yearCells, yearCell, yearPageYears,
   depreciationFit,
@@ -876,7 +876,7 @@ export function renderIntlAvaliar({ loc, host, models, builtAt, stats, rec = nul
   });
 }
 
-function verdictBlock(loc, rec, sourceUrl, carId) {
+function verdictBlock(loc, rec, sourceUrl, carId, from = "avaliar") {
   const price = rec.p, fair = rec.fm, lo = rec.fl, hi = rec.fh;
   const above = hi != null && price > hi;
   const below = lo != null && price < lo;
@@ -908,7 +908,7 @@ function verdictBlock(loc, rec, sourceUrl, carId) {
     ${gauge(loc, { lo, hi, at: price, label: t(loc, "av.v_gauge") })}
     ${rec.sd != null ? `<p class="fc-p" style="margin-top:12px;">${t(loc, "av.v_sell", { days: fmtNumL(loc, rec.sd) })}</p>` : ""}
     <div class="hero-actions" style="margin-top:12px;">
-      ${open ? `<a class="btn-dark" href="${escapeHtml(open)}" target="_blank" rel="noopener nofollow">${t(loc, "av.v_open")}</a>` : ""}
+      ${open ? `<a class="btn-dark" href="${escapeHtml(open)}" target="_blank" rel="noopener nofollow"${analyticsClick("olx_open", { source: from, market: loc.code, site: loc.source.host })}>${t(loc, "av.v_open")}</a>` : ""}
       ${rec.ms ? `<a class="chip" href="${href(loc, "model", rec.ms)}">${t(loc, "av.v_model")}</a>` : ""}
       <a class="chip" href="${href(loc, "avaliar")}">${t(loc, "av.v_another")}</a>
       <a class="chip" href="${href(loc, "mercado")}">${t(loc, "av.v_market")}</a>
@@ -1004,7 +1004,7 @@ export function renderIntlCar({ loc, host, deal, rec = null, builtAt = null }) {
     <section class="fc-sec">
       <a class="chip" href="${href(loc, "mercado")}">${t(loc, "car.back")}</a>
       ${shots}
-      ${verdictBlock(loc, card, deal.url || null, null)}
+      ${verdictBlock(loc, card, deal.url || null, null, "car")}
       ${sig.length ? `<h2 class="fc-h2">${t(loc, "car.signals_h")}</h2>${statBlock(sig)}` : ""}
       <p class="mono fc-prov">${t(loc, "feed.prov", {
         date: day(builtAt) || t(loc, "common.na"), source: loc.source.name,
@@ -1052,7 +1052,7 @@ function dealTile(loc, d) {
         ${days ? `<span>${escapeHtml(days)}</span>` : ""}
         <span class="seller">${escapeHtml(seller)}</span>
       </div>
-      ${d.url ? `<a class="btn-outline" href="${escapeHtml(d.url)}" target="_blank" rel="noopener nofollow"
+      ${d.url ? `<a class="btn-outline" href="${escapeHtml(d.url)}" target="_blank" rel="noopener nofollow"${analyticsClick("olx_open", { source: "feed", market: loc.code, site: loc.source.host })}
         style="width:100%;margin-top:14px;font-size:14px;padding:11px;background:#FAFAF8;text-align:center;">${t(loc, "feed.open")}</a>` : ""}
     </div>
   </article>`;

@@ -294,6 +294,18 @@ await check("a deal in the feed has its own page, in German, on every market", a
   }
 });
 
+await check("the outbound click is measured on the intl markets too", async () => {
+  const ga = { ...makeEnv("de,fr,it"), GA4_MEASUREMENT_ID: "G-TESTONLY" };
+  for (const path of ["/de/markt", "/de/auto?olx_id=as24_de:aaa"]) {
+    const html = await (await get(path, ga)).text();
+    assert(html.includes("googletagmanager"), `${path} loads no analytics at all`);
+    assert(/gtag\('event',&quot;olx_open&quot;/.test(html),
+      `${path} sends the reader to the source without measuring it`);
+    assert(html.includes("&quot;market&quot;:&quot;de&quot;"),
+      `${path} measures the click without saying which market it came from`);
+  }
+});
+
 await check("a car that left the feed goes back to the feed, not to a dead page", async () => {
   const r = await get("/de/auto?olx_id=as24_de:gone");
   assert(r.status === 302, `a stale car link → ${r.status}`);
