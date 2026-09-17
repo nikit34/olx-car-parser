@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Submit sitemap URLs to IndexNow (Bing, Yandex, Seznam, Naver).
+r"""Submit sitemap URLs to IndexNow (Bing, Yandex, Seznam, Naver).
 
     python3 scripts/indexnow_submit.py --locales de,fr,it --dry-run
     python3 scripts/indexnow_submit.py --locales de,fr,it
+    python3 scripts/indexnow_submit.py --locales pt --match '/preco/[^/]+/\d{4}$'
 
 The key must already answer at https://<host>/<key>.txt; the Worker serves it
 from the INDEXNOW_KEY var. The script refuses to submit until it has checked
@@ -64,6 +65,7 @@ def main() -> int:
     ap.add_argument("--key", default="0b2d1d9109041a8e753860fe1b6efb6f")
     ap.add_argument("--locales", default="de,fr,it")
     ap.add_argument("--limit", type=int, default=0, help="submit at most N urls per locale")
+    ap.add_argument("--match", default="", help="submit only urls matching this regex")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -72,12 +74,26 @@ def main() -> int:
               f"deploy INDEXNOW_KEY first", file=sys.stderr)
         return 1
 
+    try:
+        pattern = re.compile(args.match) if args.match else None
+    except re.error as err:
+        print(f"--match is not a valid regex: {err}", file=sys.stderr)
+        return 1
+
     urls: list[str] = []
     for loc in [x.strip() for x in args.locales.split(",") if x.strip()]:
         got = sitemap_urls(args.host, loc)
+        if pattern is not None:
+            before = len(got)
+            got = [u for u in got if pattern.search(u)]
+            print(f"{loc}: {len(got)} of {before} urls match {args.match!r}")
+            if not got:
+                print(f"{loc}: nothing matched; refusing to submit a guess", file=sys.stderr)
+                return 1
         if args.limit:
             got = got[:args.limit]
-        print(f"{loc}: {len(got)} urls")
+        if pattern is None:
+            print(f"{loc}: {len(got)} urls")
         urls.extend(got)
 
     seen, ordered = set(), []
