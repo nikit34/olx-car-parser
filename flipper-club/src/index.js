@@ -365,6 +365,8 @@ const worker = {
       const intl = localeForPath(pathname, intlLocales());
       if (intl) return handleIntl(request, env, url, intl);
 
+      if (pathname === "/geo" && method === "GET") return geoJson(request);
+
       // Self-hosted webfonts. Public and un-gated for the same reason as the
       // share card: the Basic-Auth fallthrough would answer 401, and a 401 on a
       // preloaded font is a page that renders in the fallback face.
@@ -1972,8 +1974,17 @@ function llmsLocaleSection(base) {
 // /robots.txt — allow public, block transactional/internal, point at the sitemap.
 const ROBOTS_RULES = [
   "Allow: /",
-  "Disallow: /analytics", "Disallow: /_olx", "Disallow: /pt/lead", "Disallow: /pt/ir/",
+  "Disallow: /analytics", "Disallow: /_olx", "Disallow: /geo", "Disallow: /pt/lead", "Disallow: /pt/ir/",
 ];
+
+function geoJson(request) {
+  const raw = (request.cf && request.cf.country) || request.headers.get("cf-ipcountry") || "";
+  const cc = /^[A-Z]{2}$/.test(raw) ? raw : null;
+  return new Response(JSON.stringify({ c: cc }), {
+    status: 200,
+    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
+  });
+}
 
 async function handleRobots(request, env, url) {
   const body = [

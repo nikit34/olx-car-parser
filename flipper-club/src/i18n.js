@@ -63,6 +63,9 @@ const STRINGS_DE = {
   "consent.link": "Datenschutz",
   "consent.no": "Ablehnen",
   "consent.yes": "Akzeptieren",
+  "geo.hint": "Du bist in Deutschland. Diese Seite gibt es auch mit Preisen aus dem deutschen Markt.",
+  "geo.cta": "Zum deutschen Markt",
+  "geo.close": "Schließen",
   "common.eyebrow": "UNABHÄNGIGE BEWERTUNG · {source}",
   "common.listings": "Angebote",
   "common.listing_one": "Angebot",
@@ -413,6 +416,9 @@ const STRINGS_FR = {
   "consent.link": "Confidentialité",
   "consent.no": "Refuser",
   "consent.yes": "Accepter",
+  "geo.hint": "Tu es en France. Ce site existe aussi avec les prix du marché français.",
+  "geo.cta": "Voir le marché français",
+  "geo.close": "Fermer",
   "common.eyebrow": "COTE INDÉPENDANTE · {source}",
   "common.listings": "annonces",
   "common.listing_one": "annonce",
@@ -763,6 +769,9 @@ const STRINGS_IT = {
   "consent.link": "Privacy",
   "consent.no": "Rifiuta",
   "consent.yes": "Accetta",
+  "geo.hint": "Sei in Italia. Questo sito esiste anche con i prezzi del mercato italiano.",
+  "geo.cta": "Vai al mercato italiano",
+  "geo.close": "Chiudi",
   "common.eyebrow": "VALUTAZIONE INDIPENDENTE · {source}",
   "common.listings": "annunci",
   "common.listing_one": "annuncio",
@@ -1113,6 +1122,9 @@ const STRINGS_PT = {
   "consent.link": "Privacidade",
   "consent.no": "Recusar",
   "consent.yes": "Aceitar",
+  "geo.hint": "Estás em Portugal. Este site também existe com preços do mercado português.",
+  "geo.cta": "Ver o mercado português",
+  "geo.close": "Fechar",
   "common.eyebrow": "AVALIAÇÃO INDEPENDENTE · {source}",
   "common.listings": "anúncios",
   "common.listing_one": "anúncio",
@@ -1771,6 +1783,48 @@ box.addEventListener('click',function(ev){var b=ev.target.closest('[data-consent
 var v=b.getAttribute('data-consent');try{localStorage.setItem('fc_consent',v);}catch(e){}
 if(typeof gtag==='function')gtag('consent','update',{analytics_storage:v});
 box.hidden=true;});})();</script>`;
+}
+
+const GEO_MARKET = { PT: "pt", DE: "de", FR: "fr", IT: "it" };
+
+function geoTarget(cand, from, pathname) {
+  const parsed = pathname ? splitRoute(from, pathname) : null;
+  if (parsed && ALT_ROUTES[parsed.route] === "bare" && !parsed.tail.length) {
+    const p = buildRoute(cand, parsed.route, []);
+    if (p) return p;
+  }
+  return cand.prefix || "/";
+}
+
+export function geoBannerL(loc, pathname) {
+  const from = loc ? resolve(loc) : LOCALES.pt;
+  const map = {};
+  for (const [cc, code] of Object.entries(GEO_MARKET)) {
+    if (code === from.code) continue;
+    if (code !== "pt" && !LIVE.has(code)) continue;
+    const cand = LOCALES[code];
+    map[cc] = {
+      h: geoTarget(cand, from, pathname), k: cand.code, l: cand.lang,
+      t: t(cand, "geo.hint"), c: t(cand, "geo.cta"), x: t(cand, "geo.close"),
+    };
+  }
+  if (!Object.keys(map).length) return "";
+  return `<div id="fc-geo" hidden class="fc-geo"></div>
+<script type="application/json" id="fc-geo-map">${JSON.stringify(map).replace(/</g, "\\u003c")}</script>
+<script>(function(){var box=document.getElementById('fc-geo'),src=document.getElementById('fc-geo-map');
+if(!box||!src)return;
+var map;try{map=JSON.parse(src.textContent);}catch(e){return;}
+try{if(localStorage.getItem('fc_geo')==='off')return;}catch(e){}
+fetch('/geo',{cache:'no-store'}).then(function(r){return r.ok?r.json():null;}).then(function(g){
+var e=g&&g.c&&map[g.c];if(!e)return;
+box.lang=e.l;
+var s=document.createElement('span');s.className='fc-geo-text';s.textContent=e.t;
+var a=document.createElement('a');a.className='fc-geo-go';a.href=e.h;a.hreflang=e.l;a.textContent=e.c;
+a.addEventListener('click',function(){if(typeof gtag==='function')gtag('event','geo_switch',{to:e.k});});
+var b=document.createElement('button');b.type='button';b.className='fc-geo-x';b.textContent='×';
+b.setAttribute('aria-label',e.x);
+b.addEventListener('click',function(){try{localStorage.setItem('fc_geo','off');}catch(err){}box.hidden=true;});
+box.appendChild(s);box.appendChild(a);box.appendChild(b);box.hidden=false;}).catch(function(){});})();</script>`;
 }
 
 export function languageSwitcher(current) {

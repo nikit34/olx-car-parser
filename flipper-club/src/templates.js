@@ -8,7 +8,7 @@
 //
 // Screens: Landing (/pt) → Mercado feed (/pt/mercado) → Car detail (/pt/car).
 
-import { t, href as ihref, languageSwitcher, consentBannerL, alternatePaths, navExtras } from "./i18n.js";
+import { t, href as ihref, languageSwitcher, consentBannerL, geoBannerL, alternatePaths, navExtras } from "./i18n.js";
 
 const ZONE_LABEL = {
   norte: "Norte",
@@ -604,6 +604,13 @@ body:has(.fc-consent:not([hidden])){padding-bottom:88px;}
 .fc-consent button{font:inherit;font-size:13px;padding:8px 14px;border-radius:8px;cursor:pointer;}
 .fc-consent-no{background:transparent;color:#C9CFD6;border:1px solid #3A424C;}
 .fc-consent-yes{background:#177A47;color:#fff;border:1px solid #177A47;}
+.fc-geo{display:flex;flex-wrap:wrap;gap:10px;align-items:center;max-width:760px;margin:0 auto;
+padding:10px 22px;font-size:13px;color:#5B606B;background:#FAFAF8;border-bottom:1px solid #E8E6E1;}
+.fc-geo[hidden]{display:none;}
+.fc-geo-text{flex:1 1 240px;line-height:1.45;}
+.fc-geo-go{color:#177A47;font-weight:600;text-decoration:none;white-space:nowrap;}
+.fc-geo-x{font:inherit;font-size:16px;line-height:1;padding:2px 6px;background:transparent;border:0;
+color:#8A8F98;cursor:pointer;}
 /* ── Second-layer SEO pages (seo-pages.js) ────────────────────────────────── */
 .fc-crumbs{max-width:760px;padding:22px 22px 0;font-size:12.5px;color:#8A8F98;}
 /* Provenance line: same shape on every data page — sample, freshness, measure. */
@@ -873,10 +880,15 @@ export function monthTag(builtAt) {
   return `${MONTH_ABBR_PT[+m[2] - 1]}/${m[1]}`;
 }
 
+function pagePath(canonical, origin) {
+  if (!canonical || !origin) return null;
+  if (canonical !== origin && !canonical.startsWith(`${origin}/`)) return null;
+  return canonical.slice(origin.length) || "/";
+}
+
 function alternateLinks(L, canonical, origin) {
-  if (!canonical || !origin) return [];
-  if (canonical !== origin && !canonical.startsWith(`${origin}/`)) return [];
-  const path = canonical.slice(origin.length) || "/";
+  const path = pagePath(canonical, origin);
+  if (path === null) return [];
   const alts = alternatePaths(L || "pt", path);
   if (!alts.length) return [];
   const out = alts.map(a =>
@@ -951,6 +963,7 @@ export function layout({ title, body, zone, nav, depositCount, index = false, de
   const switcher = languageSwitcher(L);
   const switcherLine = switcher ? `\n    ${switcher}` : "";
   const banner = L ? consentBannerL(L, Boolean(GA4_MEASUREMENT_ID)) : consentBanner();
+  const geo = geoBannerL(L, pagePath(canonical, origin));
   const src = L ? L.source.name : null;
   const header = L ? `<header class="fc-header">
   <div class="fc-header-in">
@@ -1022,6 +1035,7 @@ ${FONT_LINKS}
 <body>
 ${banner}
 ${header}
+${geo}
 <main>${body}</main>
 ${footer}
 <script>${PAGE_SCRIPT}</script>

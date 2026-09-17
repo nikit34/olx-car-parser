@@ -501,7 +501,7 @@ await check("robots and llms.txt describe the new surface", async () => {
   assert(groups.length >= 8, `robots has ${groups.length} groups, expected the wildcard plus the answer engines`);
   for (const g of groups) {
     const who = g.split("\n")[0];
-    for (const path of ["/analytics", "/_olx", "/pt/lead"]) {
+    for (const path of ["/analytics", "/_olx", "/geo", "/pt/lead"]) {
       assert(g.includes(`Disallow: ${path}`), `${who} is not told to skip ${path}`);
     }
     assert(g.includes("Allow: /"), `${who} lost its Allow`);
@@ -531,6 +531,17 @@ await check("with no INTL_LOCALES the Portuguese robots and llms carry nothing e
   }
   const home = await (await get("/")).text();
   assert(!/Deutsch|Italiano|Français/.test(home), "the language switcher shows with no locale live");
+});
+
+await check("/geo is a route of its own and stays out of every cache", async () => {
+  const r = await get("/geo");
+  assert(r.status === 200, `/geo → ${r.status} (the asset gate or the 404 branch swallowed it)`);
+  assert(r.headers.get("cache-control") === "no-store", `/geo says ${r.headers.get("cache-control")}`);
+  assert(JSON.parse(await r.text()).c === null, "/geo answered with a country nothing supplied");
+  assert((await get("/geo", "POST")).status === 404, "/geo answers methods it does not serve");
+  const home = await (await get("/pt")).text();
+  assert(!home.includes('id="fc-geo"'),
+    "the Portuguese page offers a market switch with no other market live");
 });
 
 await check("the deposit routes are gone and answer like any unknown path", async () => {

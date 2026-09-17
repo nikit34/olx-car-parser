@@ -549,5 +549,74 @@ await check("a feed that has offers is indexed and advertised again", async () =
     "the sitemap dropped a market page that does have offers");
 });
 
+function geoMap(html) {
+  const m = /<script type="application\/json" id="fc-geo-map">([\s\S]*?)<\/script>/.exec(html);
+  return m ? JSON.parse(m[1].replace(/\\u003c/g, "<")) : null;
+}
+
+await check("the geo hint offers every other live market and never the current one", async () => {
+  const pt = geoMap(await body("/pt"));
+  assert(pt, "the Portuguese landing carries no geo map");
+  assert(Object.keys(pt).sort().join(",") === "DE,FR,IT",
+    `the Portuguese landing offers ${Object.keys(pt).sort().join(",")}`);
+  assert(pt.DE.h === "/de" && pt.FR.h === "/fr" && pt.IT.h === "/it",
+    "the landing hint does not point at the other landings");
+  assert(pt.DE.t.includes("Deutschland") && pt.FR.t.includes("France") && pt.IT.t.includes("Italia"),
+    "a hint is not written in the language of the market it offers");
+  const de = geoMap(await body("/de"));
+  assert(Object.keys(de).sort().join(",") === "FR,IT,PT",
+    `the German landing offers ${Object.keys(de).sort().join(",")}`);
+  assert(de.PT.h === "/pt", "the German landing does not point back at Portugal");
+});
+
+await check("the hint keeps the same screen when the route exists in both markets", async () => {
+  const hub = geoMap(await body("/pt/precos"));
+  assert(hub.DE.h === "/de/preise", `the Portuguese hub sends a German visitor to ${hub.DE.h}`);
+  assert(hub.FR.h === "/fr/prix", `the Portuguese hub sends a French visitor to ${hub.FR.h}`);
+  const av = geoMap(await body("/de/bewerten"));
+  assert(av.PT.h === "/pt/avaliar", `the German valuation page sends a Portuguese visitor to ${av.PT.h}`);
+});
+
+await check("a model page falls back to the landing instead of a page that may not exist", async () => {
+  const m = geoMap(await body(`/de/preis/${deep}`));
+  assert(m.PT.h === "/pt" && m.FR.h === "/fr",
+    `a German model page points at ${m.PT.h} / ${m.FR.h} instead of the landings`);
+});
+
+await check("the hint is data, not text: no foreign wording in the page body", async () => {
+  for (const path of ["/pt", "/pt/precos", "/de", "/fr/prix"]) {
+    const html = await body(path);
+    assert(html.includes('id="fc-geo"'), `${path} carries no geo container`);
+    const seen = visibleText(html);
+    for (const w of ["Du bist in Deutschland", "Tu es en France", "Sei in Italia", "Estás em Portugal"]) {
+      assert(!seen.includes(w), `${path} renders the geo hint "${w}" as page text`);
+    }
+  }
+});
+
+await check("/geo answers the country and is never cached", async () => {
+  const r = await get("/geo");
+  assert(r.status === 200, `/geo → ${r.status}`);
+  assert(r.headers.get("cache-control") === "no-store",
+    `/geo is cacheable (${r.headers.get("cache-control")}): a shared cache would hand one visitor another visitor's country`);
+  assert(JSON.parse(await r.text()).c === null, "/geo invented a country the request never carried");
+  const seen = await worker.fetch(
+    new Request(`https://${HOST}/geo`, { headers: { "cf-ipcountry": "DE" } }), env);
+  assert(JSON.parse(await seen.text()).c === "DE", "/geo drops the country the edge resolved");
+  for (const bogus of ["T1", "xx", "XXX", ""]) {
+    const r2 = await worker.fetch(
+      new Request(`https://${HOST}/geo`, { headers: { "cf-ipcountry": bogus } }), env);
+    assert(JSON.parse(await r2.text()).c === null, `/geo passes through "${bogus}" as a country`);
+  }
+});
+
+await check("with INTL_LOCALES unset there is no hint and nothing to switch to", async () => {
+  for (const path of ["/pt", "/pt/precos"]) {
+    const html = await body(path, envOff);
+    assert(!html.includes('id="fc-geo"'), `${path} offers a market switch with no market live`);
+    assert(!/Deutschland|France|Italia/.test(html), `${path} names a market that is not live`);
+  }
+});
+
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall intl checks passed");
 process.exit(failures ? 1 : 0);
