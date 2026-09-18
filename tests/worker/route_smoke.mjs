@@ -1483,5 +1483,21 @@ await check("an old valuations blob leaves the year page exactly as it was", asy
   } finally { valuationsDoc = {}; }
 });
 
+await check("the landing leads with the valuation and survives an empty deal feed", async () => {
+  const r = await get("/pt");
+  assert(r.status === 200, `/pt → ${r.status} with no deals in the feed`);
+  const home = await r.text();
+  assert(!home.includes("Serviço indisponível"), "an empty deal feed still takes the landing down");
+  assert(home.includes('action="/pt/avaliar" method="get"') && home.includes('name="q"'),
+    "the landing does not lead with the paste-a-link field");
+  assert(home.includes("anúncios acompanhados") && home.includes("modelos com preço próprio"),
+    "the hero still counts the feed instead of the corpus");
+  assert(!home.includes("0 carros abaixo do preço"), "the landing advertises an empty feed");
+  const hero = home.slice(home.indexOf('<section class="hero"'), home.indexOf("COMO FUNCIONA"));
+  assert(hero.includes('name="q"'), "the paste field is not in the hero at all");
+  const idx = hero.indexOf('name="q"'), feed = hero.indexOf('href="/pt/mercado"');
+  assert(feed === -1 || idx < feed, "inside the hero the feed still comes before the valuation field");
+});
+
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall route checks passed");
 process.exit(failures ? 1 : 0);

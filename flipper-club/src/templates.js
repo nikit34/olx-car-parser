@@ -1052,7 +1052,7 @@ ${footer}
 }
 
 // ── Landing (/pt) ─────────────────────────────────────────────────────────────
-export function renderLanding({ stats, featured, depositCount, host }) {
+export function renderLanding({ stats, featured, depositCount, host, corpus = null }) {
   const f = featured ? present(featured) : null;
   const featureCard = f ? `
     <div class="feature-wrap">
@@ -1084,30 +1084,34 @@ export function renderLanding({ stats, featured, depositCount, host }) {
     { n: "04", t: "Compras com confiança", d: "Vais ao anúncio com o preço justo, o histórico de descidas e os riscos já na mão." },
   ];
 
+  const corpusLine = (corpus && corpus.listings)
+    ? ` · ${fmtNum(corpus.listings)} ANÚNCIOS AVALIADOS`
+    : "";
   const body = `
     <section class="hero">
       <div class="hero-grid">
         <div class="hero-copy">
-          <div class="eyebrow"><span class="e-dot"></span><span class="mono">OLX PORTUGAL · AVALIAÇÃO INDEPENDENTE · ${stats.deals} CARROS ANALISADOS HOJE</span></div>
+          <div class="eyebrow"><span class="e-dot"></span><span class="mono">OLX E STANDVIRTUAL · AVALIAÇÃO INDEPENDENTE${corpusLine}</span></div>
           <h1 class="hero-title">Antes de comprares, sabe quanto vale mesmo.</h1>
-          <p class="lede">Comparamos cada anúncio do OLX com dezenas de carros semelhantes e dizemos-te o preço justo de mercado — e o que o vendedor não te conta: importação por legalizar, indícios de dano, tempo a encalhar. Não pagues a mais.</p>
-          <div class="hero-actions">
-            <a class="btn-dark" href="/pt/mercado">Ver os ${stats.deals} carros abaixo do preço&nbsp;&nbsp;→</a>
-            <a class="btn-outline" href="/pt/avaliar" style="font-size:15px;padding:14px 22px;">Quanto vale o meu carro?&nbsp;&nbsp;→</a>
-          </div>
-          <div class="note" style="margin-top:10px;">Comprar ou vender · sem registo · grátis</div>
+          <p class="lede">Cola o link de qualquer anúncio e dizemos-te o preço justo de mercado — e o que o vendedor não te conta: importação por legalizar, indícios de dano, quantas vezes já baixou o preço e há quanto tempo está à espera. Não pagues a mais.</p>
+          <form action="/pt/avaliar" method="get" class="hero-actions" style="gap:10px;flex-wrap:wrap;">
+            <input name="q" placeholder="Cola o link OLX ou StandVirtual" autocomplete="off" aria-label="Link do anúncio"
+              style="flex:1 1 300px;min-width:210px;padding:14px 16px;border:1px solid #E2DFD8;border-radius:12px;font-family:'Hanken Grotesk',sans-serif;font-size:15px;background:#fff;color:#16181D;">
+            <button type="submit" class="btn-dark" style="font-size:15px;padding:14px 24px;">Avaliar&nbsp;&nbsp;→</button>
+          </form>
+          <div class="note" style="margin-top:10px;">Grátis, sem registo · também funciona sem anúncio: <a href="/pt/avaliar#escolher" style="color:#177A47;font-weight:600;">escolhe o modelo e o ano</a></div>
           <div style="margin-top:24px;">
-            <div class="mono" style="font-size:12px;color:#8A8F98;margin-bottom:9px;">O que queres fazer?</div>
+            <div class="mono" style="font-size:12px;color:#8A8F98;margin-bottom:9px;">Ou vê o que já avaliámos</div>
             <div class="chips">
-              <a class="chip active" href="/pt/mercado?view=comprar">🛒 Comprar bem</a>
-              <a class="chip" href="/pt/mercado?view=revender">📈 Revender com margem</a>
-              <a class="chip" href="/pt/vender">Vender o meu carro</a>
+              ${stats.deals ? `<a class="chip active" href="/pt/mercado">${stats.deals} abaixo do preço justo</a>` : ""}
+              <a class="chip" href="/pt/precos">Preços por modelo</a>
+              <a class="chip" href="/pt/vender">Vou vender o meu carro</a>
             </div>
           </div>
           <div class="hero-stats">
-            <div><div class="stat-num">${stats.avgDisc}</div><div class="stat-cap">abaixo do preço justo, em média</div></div>
+            <div><div class="stat-num">${corpus && corpus.listings ? fmtNum(corpus.listings) : "—"}</div><div class="stat-cap">anúncios acompanhados</div></div>
             <div class="stat-div"></div>
-            <div><div class="stat-num green">${stats.totalProfit}</div><div class="stat-cap">poupança total detetada</div></div>
+            <div><div class="stat-num green">${corpus && corpus.models ? fmtNum(corpus.models) : "—"}</div><div class="stat-cap">modelos com preço próprio</div></div>
             <div class="stat-div"></div>
             <div><div class="stat-num">0 €</div><div class="stat-cap">sem registo, sem comissão</div></div>
           </div>

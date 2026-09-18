@@ -470,31 +470,36 @@ export default worker;
 
 // Landing (/pt) — marketing hero with live market stats + a featured top deal.
 async function handleLanding(request, env, url) {
-  const { deals, degraded } = await getDeals(env, "all");
+  const { deals } = await getDeals(env, "all");
+  const live = Array.isArray(deals) ? deals : [];
 
-  if (degraded || !Array.isArray(deals) || deals.length === 0) {
+  const mdoc = await getModels(env);
+  const corpus = (mdoc && mdoc.models) ? corpusStats(mdoc.models, mdoc.built_at) : null;
+
+  if (!live.length && !corpus) {
     return html(renderInfo({
       zone: "all", depositCount: null,
       title: "Serviço indisponível",
-      message: "Não foi possível carregar os negócios neste momento. Tenta novamente dentro de instantes.",
-    }), degraded ? 503 : 200);
+      message: "Não foi possível carregar os dados neste momento. Tenta novamente dentro de instantes.",
+    }), 503);
   }
 
-  const sorted = sortDeals(deals, "score");
-  const withProfit = deals.filter(d => d.est_profit_eur != null);
+  const sorted = sortDeals(live, "score");
+  const withProfit = live.filter(d => d.est_profit_eur != null);
   const totalProfit = withProfit.reduce((s, d) => s + d.est_profit_eur, 0);
-  const withDisc = deals.filter(d => d.discount_pct != null);
+  const withDisc = live.filter(d => d.discount_pct != null);
   const avgDisc = withDisc.length
     ? Math.round(withDisc.reduce((s, d) => s + d.discount_pct, 0) / withDisc.length * 100)
     : 0;
 
   return html(renderLanding({
     stats: {
-      deals: deals.length,
+      deals: live.length,
       avgDisc: avgDisc + "%",
       totalProfit: "€" + Math.round(totalProfit).toLocaleString("pt-PT"),
     },
-    featured: sorted[0],
+    featured: sorted[0] || null,
+    corpus,
     depositCount: null, host: url.host,
   }), 200);
 }
