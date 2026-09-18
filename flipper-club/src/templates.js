@@ -713,11 +713,12 @@ const PAGE_SCRIPT = `
     var track=g.querySelector('.gallery-track');
     var counter=g.querySelector('.gallery-counter');
     var total=parseInt(g.getAttribute('data-count'),10)||1;
+    var badge=counter?(counter.getAttribute('data-label')||''):'';
     if(!track){return;}
     function update(){
       if(!counter||!track.clientWidth){return;}
       var idx=Math.min(total-1,Math.max(0,Math.round(track.scrollLeft/track.clientWidth)));
-      counter.textContent=(idx+1)+' / '+total+' · FOTO DO ANÚNCIO';
+      counter.textContent=(idx+1)+' / '+total+(badge?' · '+badge:'');
     }
     track.addEventListener('scroll',update,{passive:true});
     g.querySelectorAll('.gallery-nav').forEach(function(btn){
@@ -1317,32 +1318,55 @@ export function renderGrid({ deals, zone, sort, view, depositCount,
   });
 }
 
+export function photoLabels(loc, name) {
+  return {
+    title: name,
+    alt: n => t(loc, "car.ph_alt", { title: name, n }),
+    badge: t(loc, "car.ph_badge"),
+    prev: t(loc, "car.ph_prev"),
+    next: t(loc, "car.ph_next"),
+    dialog: t(loc, "car.ph_dialog"),
+    close: t(loc, "car.ph_close"),
+    zoom: t(loc, "car.ph_zoom"),
+  };
+}
+
+export function photoGallery(photos, labels) {
+  const esc = v => escapeHtml(String(v == null ? "" : v));
+  const shots = photos.map((u, i) =>
+    `<img ${i === 0 ? `fetchpriority="high"` : `loading="lazy"`} src="${esc(u)}" alt="${esc(labels.alt(i + 1))}">`).join("");
+  return `<div class="gallery ${photos.length === 1 ? "single" : ""}" data-count="${photos.length}">
+        <div class="gallery-track">${shots}</div>
+        <button type="button" class="gallery-nav prev" aria-label="${esc(labels.prev)}">‹</button>
+        <button type="button" class="gallery-nav next" aria-label="${esc(labels.next)}">›</button>
+        <div class="gallery-counter" data-label="${esc(labels.badge)}">1 / ${photos.length} · ${esc(labels.badge)}</div>
+        <div class="zoom-hint">${esc(labels.zoom)}</div>
+      </div>
+      <div class="lightbox" role="dialog" aria-modal="true" aria-label="${esc(labels.dialog)}" aria-hidden="true">
+        <button type="button" class="lb-close" aria-label="${esc(labels.close)}">×</button>
+        <button type="button" class="lb-nav lb-prev" aria-label="${esc(labels.prev)}">‹</button>
+        <img class="lb-img" alt="${esc(labels.title)}">
+        <button type="button" class="lb-nav lb-next" aria-label="${esc(labels.next)}">›</button>
+        <div class="lb-counter"></div>
+      </div>`;
+}
+
+// Thumbnail strip — up to 5 real photos (only when there's a real gallery).
+export function photoThumbs(photos) {
+  return photos.length > 1
+    ? `<div class="thumbs">${photos.slice(0, 5).map(u => `<div class="thumb-cell"><img loading="lazy" src="${escapeHtml(u)}" alt=""></div>`).join("")}</div>`
+    : "";
+}
+
 // ── Car detail (/pt/car) ────────────────────────────────────────────────────────
 export function renderCarPage({ deal, zone, view, depositCount, modelHref, host, historyUrl = null }) {
   const p = present(deal);
   const lens = view === "revender" ? "revender" : "comprar";
   const photos = p.photos;
   const gallery = photos.length > 0
-    ? `<div class="gallery ${photos.length === 1 ? "single" : ""}" data-count="${photos.length}">
-        <div class="gallery-track">${photos.map((u, i) => `<img ${i === 0 ? `fetchpriority="high"` : `loading="lazy"`} src="${escapeHtml(u)}" alt="${escapeHtml(p.name)} — foto ${i + 1}">`).join("")}</div>
-        <button type="button" class="gallery-nav prev" aria-label="Anterior">‹</button>
-        <button type="button" class="gallery-nav next" aria-label="Próxima">›</button>
-        <div class="gallery-counter">1 / ${photos.length} · FOTO DO ANÚNCIO</div>
-        <div class="zoom-hint">⤢ Clica para ampliar</div>
-      </div>
-      <div class="lightbox" role="dialog" aria-modal="true" aria-label="Fotos do anúncio" aria-hidden="true">
-        <button type="button" class="lb-close" aria-label="Fechar">×</button>
-        <button type="button" class="lb-nav lb-prev" aria-label="Anterior">‹</button>
-        <img class="lb-img" alt="${escapeHtml(p.name)}">
-        <button type="button" class="lb-nav lb-next" aria-label="Próxima">›</button>
-        <div class="lb-counter"></div>
-      </div>`
+    ? photoGallery(photos, photoLabels("pt", p.name))
     : `<div class="hero-photo striped"><span class="striped-label" style="font-size:54px;">${escapeHtml(p.make)}</span></div>`;
-
-  // Thumbnail strip — up to 5 real photos (only when there's a real gallery).
-  const thumbStrip = photos.length > 1
-    ? `<div class="thumbs">${photos.slice(0, 5).map(u => `<div class="thumb-cell"><img loading="lazy" src="${escapeHtml(u)}" alt=""></div>`).join("")}</div>`
-    : "";
+  const thumbStrip = photoThumbs(photos);
 
   const sigClass = (warn, bad) => bad ? "v bad" : warn ? "v warn" : "v";
   const signals = [

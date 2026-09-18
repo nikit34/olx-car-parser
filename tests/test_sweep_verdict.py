@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from scripts.sweep_constant import _MIN_EFFECT, _verdict
+from scripts.sweep_constant import _MIN_EFFECT, _summary_label, _verdict
 
 
 class TestEffectFloor:
@@ -38,3 +38,26 @@ class TestEffectFloor:
 
     def test_the_floor_is_the_documented_one(self):
         assert _MIN_EFFECT == pytest.approx(0.10)
+
+
+class TestSummaryLabel:
+    """The one-line --all label must describe the row printed beside it."""
+
+    def test_a_real_finding_says_so(self):
+        assert _summary_label(True, -0.30, -0.12) == "REAL"
+
+    def test_a_sub_threshold_effect_is_not_called_noise(self):
+        assert _summary_label(False, -0.10, -0.03) == "under the 0.10 gate"
+
+    def test_an_interval_covering_zero_is_noise(self):
+        assert _summary_label(False, -0.05, 0.01) == "noise"
+
+    def test_a_neighbouring_value_does_not_relabel_this_row(self):
+        """max_depth printed CI[-0.05,+0.01] beside 'under the gate' because
+        another swept value cleared zero. The label reads the printed row only."""
+        assert _summary_label(False, -0.05, 0.01) == "noise"
+
+    def test_an_interval_that_only_touches_zero_has_not_cleared_it(self):
+        assert _summary_label(False, 0.0, 0.07) == "noise"
+        assert _summary_label(False, -0.07, 0.0) == "noise"
+        assert _summary_label(False, 0.01, 0.07) == "under the 0.10 gate"

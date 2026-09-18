@@ -214,6 +214,14 @@ _WATCHLIST = [
 _MIN_EFFECT = 0.10
 
 
+def _summary_label(any_real: bool, lo: float, hi: float) -> str:
+    if any_real:
+        return "REAL"
+    if hi < 0 or lo > 0:
+        return f"under the {_MIN_EFFECT:.2f} gate"
+    return "noise"
+
+
 def _verdict(lo: float, hi: float) -> str:
     if hi < -_MIN_EFFECT:
         return "REAL ✓"
@@ -345,10 +353,7 @@ def sweep_one(df, folds, segs, mask_for, const, values, full, compact, spec_drop
     if compact:
         best = min(rows, key=lambda r: r[2])   # most-negative time ΔMAPE
         tag = "  <-- WORTH A LOOK" if any_real else ""
-        under_gate = any(r[3] > 0 or r[4] < 0 for r in rows)
-        label = ("REAL" if any_real
-                 else f"under the {_MIN_EFFECT:.2f} gate" if under_gate
-                 else "noise")
+        label = _summary_label(any_real, best[3], best[4])
         print(f"{const:<34} cur={str(baseline_val):>6}  best={str(best[0]):>6} "
               f"Δt={best[2]:+.2f} CI[{best[3]:+.2f},{best[4]:+.2f}]  "
               f"{label}{tag}")

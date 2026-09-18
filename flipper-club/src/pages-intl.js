@@ -1,4 +1,6 @@
-import { escapeHtml, layout, analyticsClick } from "./templates.js";
+import {
+  escapeHtml, layout, analyticsClick, photoGallery, photoThumbs, photoLabels,
+} from "./templates.js";
 import {
   crumbs, breadcrumbLd, faqLd, yearCells, yearCell, yearPageYears,
   depreciationFit,
@@ -1020,7 +1022,7 @@ export function renderIntlArchive({ loc, host, weeks = [] }) {
       <td class="mut mono">${path}/${tok(w)}/{slug}.json</td></tr>`).join("");
   const crumbItems = [homeCrumb(loc), { name: t(loc, "arch.crumb") }];
   const body = crumbs(crumbItems) + `
-    <section class="fc-sec">
+    <section class="section fc-wrap" style="padding-top:16px;">
       ${eyebrow(t(loc, "arch.eyebrow", { n: fmtNumL(loc, shown.length) }))}
       <h1 class="fc-h1">${t(loc, "arch.h1")}</h1>
       <p class="fc-p">${t(loc, "arch.p1")}</p>
@@ -1029,14 +1031,14 @@ export function renderIntlArchive({ loc, host, weeks = [] }) {
         ? t(loc, "arch.latest", { url: `<span class="mono fc-url">${escapeHtml(permalink)}/${tok(latest)}.json</span>` })
         : t(loc, "arch.empty")}</p>
     </section>
-    ${shown.length ? `<section class="fc-sec">
+    ${shown.length ? `<section class="section fc-wrap">
       <h2 class="fc-h2">${t(loc, "arch.weeks_h")}</h2>
       <div class="fc-scroll"><table class="fc-tbl">
         <thead><tr><th>${t(loc, "arch.col_week")}</th><th>${t(loc, "arch.col_full")}</th><th>${t(loc, "arch.col_model")}</th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
     </section>` : ""}
-    <section class="fc-sec">
+    <section class="section fc-wrap" style="padding-bottom:70px;">
       <h2 class="fc-h2">${t(loc, "arch.cut_h")}</h2>
       <p class="fc-p">${t(loc, "arch.cut_p", { source: loc.source.name, method: href(loc, "metodologia") })}</p>
       <p class="fc-p">${t(loc, "arch.cut_p2")}</p>
@@ -1093,7 +1095,7 @@ export function renderIntlMarketIndex({ loc, host, snapshot, history = [], gaps 
     ? [{ name: t(loc, "idx.crumb"), href: path }, { name: month.month }]
     : [{ name: t(loc, "idx.crumb") }])];
   const monthList = months.length && !month
-    ? `<section class="fc-sec">
+    ? `<section class="section fc-wrap">
         <h2 class="fc-h2">${t(loc, "idx.months_h")}</h2>
         <div class="mchips">${months.slice().reverse().map(c =>
           `<a class="mchip" href="${path}/${escapeHtml(c.month)}">${escapeHtml(c.month)}`
@@ -1101,7 +1103,7 @@ export function renderIntlMarketIndex({ loc, host, snapshot, history = [], gaps 
       </section>`
     : "";
   const body = crumbs(crumbItems) + `
-    <section class="fc-sec">
+    <section class="section fc-wrap" style="padding-top:16px;">
       ${eyebrow(t(loc, "idx.eyebrow", { week: escapeHtml(month ? month.month : (pinned || snap.week || "")) }))}
       <h1 class="fc-h1">${month ? t(loc, "idx.month_h1", { month: escapeHtml(month.month) }) : t(loc, "idx.h1")}</h1>
       <p class="fc-p">${t(loc, "idx.lede")}</p>
@@ -1109,7 +1111,7 @@ export function renderIntlMarketIndex({ loc, host, snapshot, history = [], gaps 
       ${gaps.length && !month ? `<p class="fc-p mono" style="font-size:12px;">${t(loc, "idx.gap", { weeks: escapeHtml(gaps.join(", ")) })}</p>` : ""}
       ${month || pinned ? `<p class="fc-p"><a href="${path}">${t(loc, "idx.back")}</a></p>` : ""}
     </section>
-    ${rows.length ? `<section class="fc-sec">
+    ${rows.length ? `<section class="section fc-wrap">
       <h2 class="fc-h2">${t(loc, "idx.weeks_h")}</h2>
       <div class="fc-scroll"><table class="fc-tbl">
         <thead><tr><th>${t(loc, "idx.col_week")}</th><th>${t(loc, "idx.col_price")}</th><th>${t(loc, "idx.col_listings")}</th></tr></thead>
@@ -1117,7 +1119,7 @@ export function renderIntlMarketIndex({ loc, host, snapshot, history = [], gaps 
       </table></div>
     </section>` : ""}
     ${monthList}
-    <section class="fc-sec">
+    <section class="section fc-wrap" style="padding-bottom:70px;">
       <p class="fc-p mono" style="font-size:12px;">${t(loc, "idx.foot", { source: loc.source.name })}</p>
       <p class="fc-p"><a href="${href(loc, "arquivo")}">${t(loc, "arch.crumb")}</a> · <a href="${href(loc, "hub")}">${t(loc, "common.all_models")}</a></p>
     </section>`;
@@ -1150,8 +1152,7 @@ export function renderIntlCar({ loc, host, deal, rec = null, builtAt = null }) {
     ? deal.photo_urls.slice(0, 5)
     : (deal.image_url ? [deal.image_url] : []);
   const shots = photos.length
-    ? `<div class="fc-shots">${photos.map((u, i) =>
-        `<img src="${escapeHtml(u)}" alt="${escapeHtml(name)}" ${i ? `loading="lazy"` : `fetchpriority="high"`}>`).join("")}</div>`
+    ? photoGallery(photos, photoLabels(loc, name)) + photoThumbs(photos)
     : "";
   const sig = [];
   const push = (k, v) => { if (v != null && v !== "") sig.push({ k, v, s: "" }); };
@@ -1164,7 +1165,7 @@ export function renderIntlCar({ loc, host, deal, rec = null, builtAt = null }) {
   push(t(loc, "car.sig_sample"), deal.sample_size != null ? escapeHtml(fmtNumL(loc, deal.sample_size)) : null);
 
   const body = `
-    <section class="fc-sec">
+    <section class="section fc-wrap" style="padding-bottom:70px;">
       <a class="chip" href="${href(loc, "mercado")}">${t(loc, "car.back")}</a>
       ${shots}
       ${verdictBlock(loc, card, deal.url || null, null, "car")}

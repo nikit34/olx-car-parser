@@ -249,7 +249,7 @@ export function renderIntlGuidesHub({ loc, host }) {
     { name: t(loc, "g.crumb") },
   ];
   const body = crumbs(crumbItems) + `
-    <section class="fc-sec">
+    <section class="section fc-wrap" style="padding-top:16px;padding-bottom:70px;">
       <h1 class="fc-h1">${t(loc, "g.hub_h1")}</h1>
       ${updatedLine(loc)}
       <p class="fc-p">${t(loc, "g.hub_lede")}</p>
@@ -283,7 +283,7 @@ export function renderIntlGuide({ loc, host, guide }) {
     { name: guide.title },
   ];
   const body = crumbs(crumbItems) + `
-    <section class="fc-sec">
+    <section class="section fc-wrap" style="padding-top:16px;padding-bottom:70px;">
       <h1 class="fc-h1">${escapeHtml(guide.title)}</h1>
       ${updatedLine(loc)}
       ${guide.body(loc)}
