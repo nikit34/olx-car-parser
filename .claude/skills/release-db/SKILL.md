@@ -105,4 +105,14 @@ The database was SQLite until 2026-08-28, when it moved to PostgreSQL 17 on
 the host (`olx_cars`, role `olx`). The one-way migration tool lived at
 `scripts/migrate_sqlite_to_postgres.py` and was deleted afterwards — keeping a
 script whose `--truncate` targets production is a footgun. `git log` has it if
-a rollback ever needs it, along with the retired `data/olx_cars.db`.
+a rollback ever needs it; a rollback's data comes from the nightly dump above,
+not from the retired SQLite file.
+
+That file outlived the cutover by three weeks on the host, and this page said
+it had been deleted when it had not. It opened fine and answered every query
+with pre-migration data, so anyone who pointed `OLX_DB_URL` at it read an
+August database as if it were production — a German-benchmark check came back
+with zero rows and looked like a broken pipeline. Deleted 2026-09-18, after
+confirming PostgreSQL held all 103,078 of its listings, along with the
+`olx_cars.db.chrome-backfill.bak` beside it. Nothing recreates either one:
+`resolve_db_url` has no file fallback.
