@@ -38,6 +38,7 @@ _CACHE = Path("/tmp/olx-release/listings.parquet")
 _OUT = Path(__file__).resolve().parent.parent / "data" / "price_lgb_tuned.json"
 _TUNABLE = ["num_leaves", "max_depth", "min_child_samples",
             "learning_rate", "reg_lambda", "n_estimators"]
+_BASELINE_N_EST = 1100
 
 
 def _norm_fuel(s: str) -> str:
@@ -133,7 +134,7 @@ def _sample(rng):
         "min_child_samples": int(rng.integers(3, 61)),
         "learning_rate": float(np.exp(rng.uniform(np.log(0.02), np.log(0.12)))),
         "reg_lambda": float(np.exp(rng.uniform(np.log(0.1), np.log(12.0)))),
-        "n_estimators": int(rng.integers(250, 901)),
+        "n_estimators": int(rng.integers(400, 1501)),
     }
 
 
@@ -162,7 +163,7 @@ def main() -> None:
     ALL = pm._QUANTILES
 
     current = {k: pm._LGB_PARAMS[k] for k in _TUNABLE if k in pm._LGB_PARAMS}
-    current["n_estimators"] = 400   # match the sweep harness baseline (prod early-stops near here)
+    current["n_estimators"] = _BASELINE_N_EST
 
     def cv_mape(params):
         oof, tested = _oof(tune, y_tune, tune_folds, params, MED)

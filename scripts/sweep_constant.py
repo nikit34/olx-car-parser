@@ -23,11 +23,13 @@ Usage:
   python -m scripts.sweep_constant --const _LGB_PARAMS.num_leaves --values 15,31,63
   python -m scripts.sweep_constant --const _LGB_PARAMS.min_child_samples --values 5,8,20
   python -m scripts.sweep_constant --const _LGB_PARAMS.learning_rate --values 0.03,0.05,0.1 --full
+  python -m scripts.sweep_constant --drift
 Flags:
   --full          also fit low/high quantiles -> report pinball + [P10,P90] coverage
   --data P        use a local listings.parquet instead of downloading the release
   --segments d,p,h,e,phev  restrict reported fuel segments (default: all)
   --spec-dropout F  mirror the shipped spec-dropout regime (default = prod fraction)
+  --drift         run the price-level drift probe alone (it also runs under --all)
 """
 from __future__ import annotations
 
@@ -46,6 +48,8 @@ _CACHE = Path("/tmp/olx-release/listings.parquet")
 _N_EST = 1100         # fixed (no early stopping) so every swept value is comparable
 _N_BOOT = 2000
 _RNG = np.random.RandomState(42)
+_DRIFT_FLAG_PCT = 3.0
+_DRIFT_RNG_SEED = 4242
 
 
 def _norm_fuel(s: str) -> str:
@@ -207,8 +211,107 @@ _WATCHLIST = [
 ]
 
 
+_MIN_EFFECT = 0.10
+
+
 def _verdict(lo: float, hi: float) -> str:
-    return "REAL ✓" if hi < 0 else "REAL ✗(worse)" if lo > 0 else "noise (CI∋0)"
+    if hi < -_MIN_EFFECT:
+        return "REAL ✓"
+    if lo > _MIN_EFFECT:
+        return "REAL ✗(worse)"
+    if hi < 0 or lo > 0:
+        return f"tiny (|Δ|<{_MIN_EFFECT:.2f})"
+    return "noise (CI∋0)"
+
+
+def _month_index(dt: pd.Series) -> tuple[np.ndarray, list[str]]:
+    """Sale month per row as 0-based consecutive ints, plus the month labels."""
+    per = dt.dt.to_period("M")
+    labels = sorted(per.unique())
+    lookup = {p: i for i, p in enumerate(labels)}
+    return per.map(lookup).to_numpy(dtype=int), [str(p) for p in labels]
+
+
+def _boot_month_means(
+    resid: np.ndarray, midx: np.ndarray, n_months: int, n_boot: int, rng, block: int = 200,
+) -> np.ndarray:
+    """(n_boot, n_months) matrix of resampled per-month mean residuals.
+
+    Resampling happens WITHIN each month: month sizes are a property of the
+    scrape, not of the quantity being estimated, so the thing with sampling
+    error is each month's level, not how many cars sold that month. Drawn in
+    blocks because one (n_boot, n_rows) index matrix for the fattest month is
+    hundreds of MB.
+    """
+    out = np.empty((n_boot, n_months))
+    for m in range(n_months):
+        r = resid[midx == m]
+        done = 0
+        while done < n_boot:
+            k = min(block, n_boot - done)
+            out[done:done + k, m] = r[rng.randint(0, len(r), size=(k, len(r)))].mean(axis=1)
+            done += k
+    return out
+
+
+def drift_probe(df, folds, spec_dropout: float = 0.0, n_boot: int = _N_BOOT) -> bool:
+    """Mix-adjusted price-level index by sale month, and whether it trends.
+
+    The price model carries no date feature and trains on the full history
+    with no recency weight, so it cannot represent a moving market: a drift
+    in the PT level has to surface as a trend in the random-KFold OOF
+    residual grouped by sale month. Measured 2026-09-18 on 82.5k sold rows
+    that index was flat (~1pp of wobble, no direction) and exponential
+    recency weighting came out noise at every half-life from 180d to 30d,
+    which is why the full history still trains unweighted. This probe is
+    what keeps that answer honest without anyone re-running the
+    investigation: the weekly job goes red when the level starts moving.
+
+    Flags only when the bootstrap CI of the window-long drift clears zero
+    AND the drift exceeds _DRIFT_FLAG_PCT. The CI alone is not enough - on
+    ~80k rows a clean but economically pointless slope would page a human
+    every Sunday. That magnitude gate is a judgement call (twice the wobble
+    seen at calibration time), not a measured constant.
+    """
+    midx, labels = _month_index(df["dt"])
+    n_m = len(labels)
+    if n_m < 3:
+        print(f"PRICE-LEVEL DRIFT probe: needs >=3 sale months, got {n_m}. Skipped.")
+        return False
+
+    res = evaluate(df, folds["random"], False, spec_dropout)
+    resid = res["y"] - res["oof"]["median"]
+
+    means = np.array([resid[midx == m].mean() for m in range(n_m)])
+    counts = np.array([int((midx == m).sum()) for m in range(n_m)])
+    boot = _boot_month_means(
+        resid, midx, n_m, n_boot, np.random.RandomState(_DRIFT_RNG_SEED),
+    )
+
+    x = np.arange(n_m, dtype=float)
+    xc = x - x.mean()
+    span = float(n_m - 1)
+    drift = float(np.expm1(means @ xc / (xc @ xc) * span) * 100)
+    boot_drift = np.expm1(boot @ xc / (xc @ xc) * span) * 100
+    lo, hi = (float(v) for v in np.percentile(boot_drift, [2.5, 97.5]))
+    real = (lo > 0 or hi < 0) and abs(drift) >= _DRIFT_FLAG_PCT
+
+    print("\nPRICE-LEVEL DRIFT probe (mix-adjusted OOF residual by sale month;")
+    print(" positive = market above what the pooled model expects):\n")
+    print(f"{'month':>9} {'n':>8} {'level %':>9}")
+    for m in range(n_m):
+        print(f"{labels[m]:>9} {counts[m]:>8} {np.expm1(means[m]) * 100:>+9.2f}")
+    print(
+        f"\ndrift over {labels[0]}..{labels[-1]}: {drift:+.2f}% "
+        f"CI [{lo:+.2f},{hi:+.2f}]  "
+        + (
+            f"REAL (|drift| >= {_DRIFT_FLAG_PCT}% and CI clears 0)  <-- WORTH A LOOK"
+            if real
+            else "flat (CI∋0)" if not (lo > 0 or hi < 0)
+            else f"trending but under the {_DRIFT_FLAG_PCT}% gate"
+        )
+    )
+    return real
 
 
 def sweep_one(df, folds, segs, mask_for, const, values, full, compact, spec_dropout=0.0) -> bool:
@@ -280,9 +383,11 @@ def main() -> None:
     ap.add_argument("--spec-dropout", type=float, default=pm._SPEC_DROPOUT_FRAC,
                     help="mirror the shipped spec-dropout regime (default = prod "
                          f"{pm._SPEC_DROPOUT_FRAC}); 0 = legacy non-dropout model")
+    ap.add_argument("--drift", action="store_true",
+                    help="price-level drift probe only; exit 1 if the level moved")
     args = ap.parse_args()
-    if not args.all and not (args.const and args.values):
-        ap.error("give either --all, or both --const and --values")
+    if not args.all and not args.drift and not (args.const and args.values):
+        ap.error("give either --all, or --drift, or both --const and --values")
     if args.const and args.const.split(".", 1)[0] in _TARGET_SCALE_CONSTS:
         ap.error(
             f"{args.const} moves the training target itself, so every metric "
@@ -303,8 +408,12 @@ def main() -> None:
     print(f"spec-dropout regime: {dz:.2f}" + (" (mirrors shipped model)" if dz > 0 else " (legacy non-dropout)"))
     print(f"trees per fit: {_N_EST} (fixed, no early stopping)\n")
 
+    if args.drift and not args.all:
+        sys.exit(1 if drift_probe(df, folds, spec_dropout=dz) else 0)
+
     if args.all:
-        print("WATCHLIST sensitivity scan (time-aware; 'REAL' = data drifted, worth a human look):\n")
+        print("WATCHLIST sensitivity scan (time-aware; 'REAL' = data drifted, worth a human look;\n"
+          f"          an effect smaller than {_MIN_EFFECT:.2f} MAPE does not survive a holdout, so it is not one):\n")
         any_real = False
         for const, values in _WATCHLIST:
             try:
@@ -317,7 +426,15 @@ def main() -> None:
         print("\nAll noise → constants are still well-set; nothing to tune."
               if not any_real else
               "\nSomething flipped REAL → re-sweep it with --const for detail before changing.")
-        sys.exit(1 if any_real else 0)
+        try:
+            drifted = drift_probe(df, folds, spec_dropout=dz)
+        except Exception as e:  # noqa: BLE001 — a broken probe shouldn't hide the sweep verdict
+            print(f"\nPRICE-LEVEL DRIFT probe ERROR: {e}")
+            drifted = False
+        if drifted:
+            print("\nThe market level moved → recency weighting is worth re-testing "
+                  "(half-lives 180/120/90/60d) before trusting the current model's level.")
+        sys.exit(1 if (any_real or drifted) else 0)
 
     sweep_one(df, folds, segs, mask_for, args.const,
               [v.strip() for v in args.values.split(",")], args.full, compact=False,
