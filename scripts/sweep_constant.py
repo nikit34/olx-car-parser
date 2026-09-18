@@ -43,7 +43,7 @@ from scripts import release_chunks
 from src.analytics import price_model as pm
 
 _CACHE = Path("/tmp/olx-release/listings.parquet")
-_N_EST = 400          # fixed (no early stopping) so every swept value is comparable
+_N_EST = 1100         # fixed (no early stopping) so every swept value is comparable
 _N_BOOT = 2000
 _RNG = np.random.RandomState(42)
 
@@ -266,12 +266,16 @@ def sweep_one(df, folds, segs, mask_for, const, values, full, compact, spec_drop
 
 
 def main() -> None:
+    global _N_EST
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--const", help="e.g. _LGB_PARAMS.num_leaves or _LGB_PARAMS.reg_lambda")
     ap.add_argument("--values", help="comma-separated values to sweep")
     ap.add_argument("--all", action="store_true", help="scan the whole watchlist; exit 1 if any flips noise→REAL")
     ap.add_argument("--full", action="store_true", help="fit low/high too -> pinball + coverage")
     ap.add_argument("--data", default=None, help="local listings.parquet (else download release)")
+    ap.add_argument("--n-est", type=int, default=_N_EST,
+                    help=f"trees per fit, fixed for every swept value (default {_N_EST}). "
+                         "Raise it to tell a real effect apart from one the tree budget creates.")
     ap.add_argument("--segments", default="all,Diesel,Petrol,Hybrid,PHEV,EV")
     ap.add_argument("--spec-dropout", type=float, default=pm._SPEC_DROPOUT_FRAC,
                     help="mirror the shipped spec-dropout regime (default = prod "
@@ -286,6 +290,8 @@ def main() -> None:
             "from observed relist price deltas instead (relist.find_relists)."
         )
 
+    _N_EST = args.n_est
+
     df = load_sold(args.data)
     fuel = df["fuel_norm"].values
     segs = [s.strip() for s in args.segments.split(",")]
@@ -294,7 +300,8 @@ def main() -> None:
     folds = {m: _folds(df, m) for m in ("random", "time")}
     dz = args.spec_dropout
     print(f"Loaded {len(df)} sold rows from the release snapshot.")
-    print(f"spec-dropout regime: {dz:.2f}" + (" (mirrors shipped model)" if dz > 0 else " (legacy non-dropout)") + "\n")
+    print(f"spec-dropout regime: {dz:.2f}" + (" (mirrors shipped model)" if dz > 0 else " (legacy non-dropout)"))
+    print(f"trees per fit: {_N_EST} (fixed, no early stopping)\n")
 
     if args.all:
         print("WATCHLIST sensitivity scan (time-aware; 'REAL' = data drifted, worth a human look):\n")
