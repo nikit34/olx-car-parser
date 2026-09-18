@@ -29,7 +29,7 @@
 
 import {
   layout, escapeHtml, fmtEur, fmtKm, fmtNum, fmtBuilt, slugify,
-  present, thumbBlock, gradeChip, historyCheckBlock, leadFormBlock, monthTag,
+  present, thumbBlock, gradeChip, historyCheckBlock, sellerHelpBlock, monthTag,
   analyticsClick,
 } from "./templates.js";
 
@@ -1061,12 +1061,12 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
     <section class="section" style="padding:18px 22px 0;max-width:680px;margin:0 auto;">
       <div class="exclusive" style="background:#F4F6FB;border:1px solid #D9E0F0;align-items:flex-start;">
         <span style="font-size:15px;">🏷️</span>
-        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">Vais vender o teu ${B} ${M} de ${year}?</b> Metade dos anúncios deste ano pede entre ${FL} e ${FH}${rec.sd != null ? `, e um ${B} ${M} sai do OLX em ~${rec.sd} dias` : ""}. Pede propostas de compra a compradores profissionais, sem compromisso. <a href="${sellHref}" style="color:#177A47;font-weight:600;">Receber propostas&nbsp;→</a></span>
+        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">Vais vender o teu ${B} ${M} de ${year}?</b> Metade dos anúncios deste ano pede entre ${FL} e ${FH}${rec.sd != null ? `, e um ${B} ${M} sai do OLX em ~${rec.sd} dias` : ""}. É a referência para decidires por quanto anunciar. <a href="${sellHref}" style="color:#177A47;font-weight:600;">Ver quanto pedir&nbsp;→</a></span>
       </div>
     </section>`;
   const sellForm = `
     <section class="section" style="padding:0 22px;max-width:680px;margin:0 auto;">
-      ${leadFormBlock({ slug, name: `${rec.b} ${rec.m}`, year, median: cell.fm })}
+      ${sellerHelpBlock({ slug, name: `${rec.b} ${rec.m}`, year, median: cell.fm, vender: hasVender })}
     </section>`;
 
   const body = crumbs([
@@ -2539,7 +2539,7 @@ export function renderAbout({ stats, mq, host, depositCount, builtAt }) {
       <p class="fc-p">Não somos stand, não somos intermediário e não representamos nenhum vendedor. Não temos carros para colocar, por isso não temos motivo para inflacionar nem para desvalorizar nenhum modelo. Os números que publicamos são os mesmos que usamos para as nossas próprias decisões — se estivessem enviesados, seríamos os primeiros prejudicados.</p>
 
       <h2 class="fc-h2">Como nos pagamos</h2>
-      <p class="fc-p">As avaliações e os preços por modelo são gratuitos e ficam gratuitos: ver um anúncio avaliado, o <a href="/pt/mercado">mercado</a> ou os preços por modelo não custa nada e não exige registo. O site paga-se de duas formas: quando um vendedor pede propostas de compra e um comprador profissional paga por esse contacto, e com ligações de parceiros para relatórios de histórico do veículo. Não vendemos os teus dados, não temos publicidade paga por marcas e não aceitamos pagamento para mexer numa avaliação — nenhuma destas receitas muda os números que mostramos.</p>
+      <p class="fc-p">As avaliações e os preços por modelo são gratuitos e ficam gratuitos: ver um anúncio avaliado, o <a href="/pt/mercado">mercado</a> ou os preços por modelo não custa nada e não exige registo. Neste momento o site não tem qualquer receita: sem publicidade, sem comissões, sem venda de contactos e sem pagamento para mexer numa avaliação. Se um dia passar a ter, fica escrito aqui — e os números continuam a sair dos anúncios e do modelo, não de quem paga.</p>
 
       <h2 class="fc-h2">O que temos hoje</h2>
       <ul class="fc-ul">
@@ -4073,7 +4073,7 @@ export function renderVenderPage({ guides = "", rec, slug, market, pageYears = [
       <ul class="fc-ul">${check}</ul>
     </section>
     <section class="section" style="padding:0 22px;max-width:680px;margin:0 auto;">
-      ${leadFormBlock({ slug, name: `${rec.b} ${rec.m}`, year: null, median: rec.fm })}
+      ${sellerHelpBlock({ slug, name: `${rec.b} ${rec.m}`, year: null, median: rec.fm })}
     </section>
     <section class="section fc-wrap" style="padding-bottom:70px;">
       <p class="fc-p"><a href="/pt/preco/${slug}">Preços de ${B} ${M} por ano</a>${hasDepreciation ? ` · <a href="/pt/depreciacao/${slug}">Desvalorização</a>` : ""}${hasLiquidity ? ` · <a href="/pt/liquidez/${slug}">Tempo de venda</a>` : ""} · <a href="/pt/vender">Outros modelos</a> · <a href="/pt/guias">Guias para vender</a> · <a href="/pt/metodologia">Como medimos</a> · <a href="${canonical}.json">Dados em JSON</a></p>
@@ -4090,7 +4090,7 @@ export function renderVenderPage({ guides = "", rec, slug, market, pageYears = [
 
   return layout({
     title: `Vender ${rec.b} ${rec.m}: quanto pedir (${FM}) e em quantos dias vende`,
-    description: `${rec.b} ${rec.m} usado: mediana pedida ${FM} (${FL}–${FH}) em ${rec.n} anúncios${f.days != null ? `, vende em ~${f.days} dias` : ""}${f.cu != null ? `, ${liqPct(f.cu)}% baixam o preço` : ""}. Quanto pedir por ano e propostas de compra sem compromisso.`,
+    description: `${rec.b} ${rec.m} usado: mediana pedida ${FM} (${FL}–${FH}) em ${rec.n} anúncios${f.days != null ? `, vende em ~${f.days} dias` : ""}${f.cu != null ? `, ${liqPct(f.cu)}% baixam o preço` : ""}. Quanto pedir por ano e em quantos dias costuma vender.`,
     canonical, body, zone: "all", nav: "avaliar", depositCount, index: true, host,
     altJson: `${canonical}.json`,
     jsonLd: {
@@ -4130,7 +4130,7 @@ export function renderVenderHub({ rows, market, host, depositCount, builtAt }) {
       <div class="fc-scroll"><table class="fc-tbl">
         <thead><tr><th>Modelo</th><th>Mediana pedida</th><th>Metade pede entre</th><th>Sai em 30 dias</th><th>Baixam o preço</th><th>Anúncios</th></tr></thead>
         <tbody>${tr}</tbody></table></div>
-      <p class="fc-p" style="margin-top:18px;">O teu modelo não está na lista? <a href="/pt/avaliar#escolher">Escolhe-o na avaliação por modelo e ano</a>: mostra a mediana e deixa-te pedir propostas de compra.</p>
+      <p class="fc-p" style="margin-top:18px;">O teu modelo não está na lista? <a href="/pt/avaliar#escolher">Escolhe-o na avaliação por modelo e ano</a>: mostra a mediana pedida e a faixa do mercado.</p>
       ${provenance({ n: rows.reduce((s, r) => s + (r.n || 0), 0), builtAt, measure: "Preço pedido em anúncios ativos (mediana e P25-P75); dias até sair do OLX" })}
       <p class="fc-p" style="margin-top:18px;"><a href="/pt/precos">Preços por modelo</a> · <a href="/pt/liquidez">Tempo de venda</a> · <a href="/pt/depreciacao">Desvalorização</a> · <a href="/pt/metodologia">Como medimos</a></p>
     </section>

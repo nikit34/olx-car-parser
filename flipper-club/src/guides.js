@@ -1,4 +1,4 @@
-import { layout, escapeHtml, fmtEur, fmtNum, leadFormBlock } from "./templates.js";
+import { layout, escapeHtml, fmtEur, fmtNum, sellerHelpBlock } from "./templates.js";
 import { crumbs, breadcrumbLd, faqLd, provenance } from "./seo-pages.js";
 
 const UPDATED = "2026-09-04";
@@ -289,7 +289,7 @@ export function renderGuide({ guide, models, market, stats, host, depositCount, 
       ${sourcesBlock(guide.sources)}
     </section>
     <section class="section" style="padding:0 22px;max-width:680px;margin:0 auto;">
-      ${leadFormBlock({ slug: "", name: "", year: null, median: null, heading: "Queres vender o teu carro? Recebe propostas de compra" })}
+      ${sellerHelpBlock({ slug: "", name: "", year: null, median: null, heading: "Vais vender o teu carro?" })}
     </section>
     <section class="section fc-wrap" style="padding-bottom:70px;">
       <h2 class="fc-h2">Outros guias</h2>

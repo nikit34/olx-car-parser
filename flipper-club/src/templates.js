@@ -1021,7 +1021,7 @@ export function layout({ title, body, zone, nav, depositCount, index = false, de
   <div class="footer-in">
     <span class="mono">AVALIAÇÃO INDEPENDENTE&nbsp;· dados de anúncios públicos OLX&nbsp;· estimativas indicativas, não vinculativas&nbsp;· não somos stand nem intermediário</span>
     <span class="mono"><a href="/pt/precos" style="color:#5B606B;">Preços por modelo</a>&nbsp;· <a href="/pt/depreciacao" style="color:#5B606B;">Desvalorização</a>&nbsp;· <a href="/pt/comparar" style="color:#5B606B;">Comparar</a>&nbsp;· <a href="/pt/liquidez" style="color:#5B606B;">Tempo de venda</a>&nbsp;· <a href="/pt/mercado/indice" style="color:#5B606B;">Índice de mercado</a>&nbsp;· <a href="/pt/avaliar" style="color:#5B606B;">Quanto vale o meu carro</a>&nbsp;· <a href="/pt/vender" style="color:#5B606B;">Vender o meu carro</a>&nbsp;· <a href="/pt/guias" style="color:#5B606B;">Guias para vender</a></span>
-    <span class="mono"><a href="/pt/metodologia" style="color:#5B606B;">Metodologia</a>&nbsp;· <a href="/pt/sobre" style="color:#5B606B;">Quem somos</a>&nbsp;· <a href="/pt/isv" style="color:#5B606B;">Simulador ISV</a>&nbsp;· <a href="/pt/importar" style="color:#5B606B;">Importar da Alemanha</a>&nbsp;· Portugal&nbsp;🇵🇹</span>${switcherLine}
+    <span class="mono"><a href="/pt/metodologia" style="color:#5B606B;">Metodologia</a>&nbsp;· <a href="/pt/sobre" style="color:#5B606B;">Quem somos</a>&nbsp;· <a href="/pt/isv" style="color:#5B606B;">Simulador ISV</a>&nbsp;· <a href="/pt/importar" style="color:#5B606B;">Importar da Alemanha</a>&nbsp;· <a href="/pt/privacidade" style="color:#5B606B;">Privacidade</a>&nbsp;· Portugal&nbsp;🇵🇹</span>${switcherLine}
   </div>
 </footer>`;
   return `<!doctype html>
@@ -1139,8 +1139,8 @@ export function renderLanding({ stats, featured, depositCount, host }) {
           <h2>A independência é o produto.</h2>
           <p>O OLX nunca te vai dizer que o anúncio está caro, nem que aquele preço baixo é de um carro ainda por legalizar. Nós dizemos — e mostramos o que o vendedor não escreve: quantas vezes já baixou o preço e há quanto tempo o carro está à venda.</p>
           <details class="indep-note">
-            <summary>Como ganhamos dinheiro — e porque é que a avaliação não muda por isso</summary>
-            <p>Não cobramos comissão ao vendedor e ninguém paga para aparecer melhor avaliado. Ganhamos de duas formas: quando um vendedor pede propostas de compra e um comprador profissional paga por esse contacto, e quando um comprador encomenda um relatório de histórico através da nossa ligação de parceiro. Se um dia houver publicidade nas páginas de preços, estará assinalada como tal. Nenhuma destas receitas depende do valor que mostramos — a avaliação sai dos anúncios e do modelo, não de quem paga.</p>
+            <summary>Quem nos paga — e porque é que isso não mexe na avaliação</summary>
+            <p>Hoje não ganhamos nada com isto. Não há publicidade, não há comissões, ninguém paga para aparecer melhor avaliado e não vendemos o teu contacto a ninguém. É um projeto pessoal que corre sobre anúncios públicos. Se um dia houver uma forma de o financiar, fica escrita aqui e assinalada na própria página — e a avaliação continua a sair dos anúncios e do modelo, não de quem paga.</p>
           </details>
         </div>
         <a class="btn-bright" href="/pt/mercado">Ver os carros avaliados&nbsp;&nbsp;→</a>
@@ -1525,27 +1525,24 @@ export function renderPrivacy({ depositCount, host, contact = null }) {
       <p>Os anúncios mostrados são públicos e recolhidos de portais como o OLX e o
       StandVirtual. Não pertencem ao Carsbuyer e não contêm dados teus.</p>
 
-      <h2>Pedidos de propostas de compra</h2>
-      <p>Se pedires propostas para o teu carro, guardamos o que escreves no formulário:
-      modelo, ano, quilómetros, distrito, o teu contacto e, se o deres, o nome. Servem
-      para um fim só: enviá-los a compradores profissionais — stands e serviços de compra
-      de carros — que te apresentam uma proposta. O pedido fica guardado 90 dias e é
-      apagado depois. Não o usamos para publicidade nem o cedemos a mais ninguém. Podes
-      pedir a eliminação antes do prazo pelo contacto em baixo.</p>
+      <h2>Não te pedimos nada</h2>
+      <p>Não há registo, não há formulário e não recolhemos o teu contacto. Tudo o que o
+      site faz — avaliar um anúncio, ver preços por modelo, ler os guias — funciona sem
+      nos dares um único dado teu.</p>
 
-      <h2>Ligações de parceiros</h2>
-      <p>Nas páginas de preços há ligações para um serviço de relatórios de histórico de
-      veículos. Se comprares um relatório por essa ligação, o Carsbuyer recebe uma
-      comissão; o preço para ti é o mesmo, e não enviamos ao parceiro nenhum dado teu —
-      só a ligação que carregas.</p>
+      <h2>Ligações para fora</h2>
+      <p>Há ligações para os anúncios originais e para um serviço de relatórios de
+      histórico de veículos. Não ganhamos nada com elas e não enviamos a esses sites
+      nenhum dado teu — só a ligação que carregas.</p>
 
       <h2>Os teus direitos</h2>
-      <p>Para pedir a eliminação de um pedido de propostas antes do prazo, ou saber o que
-      está guardado sobre ele, escreve para ${contactHtml}.</p>
+      <p>Não guardamos nada que te identifique, por isso não há nada para eliminares. Se
+      aceitaste as estatísticas anónimas, podes retirar o consentimento a qualquer momento
+      no aviso em baixo. Para qualquer questão, escreve para ${contactHtml}.</p>
     </section>`;
   return layout({
     title: "Privacidade",
-    description: "O que o Carsbuyer guarda: nenhum cookie próprio, estatísticas anónimas só com consentimento e pedidos de propostas guardados 90 dias.",
+    description: "O que o Carsbuyer guarda: nenhum cookie próprio, nenhum formulário e estatísticas anónimas só com consentimento.",
     body, zone: "all", nav: null, depositCount, index: true,
     host, canonical: origin ? `${origin}/pt/privacidade` : null,
   });
@@ -1573,7 +1570,7 @@ const AVALIAR_FAQ = [
           ["Quanto vale o meu carro usado em Portugal?",
            "Cola o link do anúncio do teu carro no OLX e devolvemos o valor justo estimado para essa viatura concreta, com os seus quilómetros, ano e versão, além do preço mediano pedido pelo mesmo modelo no mercado. Se ainda não tens anúncio, escolhe o modelo e o ano para veres a mediana do mercado."],
           ["A avaliação é grátis?",
-           "Sim. A avaliação de um anúncio, os preços por modelo e os guias são gratuitos e sem registo. O site financia-se quando um vendedor pede propostas de compra e um comprador profissional paga por esse contacto, e com ligações de parceiros para relatórios de histórico; nada disso muda o valor que mostramos."],
+           "Sim, e sem registo: a avaliação de um anúncio, os preços por modelo e os guias. Neste momento o site não tem qualquer receita — sem publicidade, sem comissões e sem venda de contactos. Se isso mudar, fica escrito na página sobre quem somos."],
           ["Esta avaliação serve para vender ao meu stand ou ao seguro?",
            "É uma estimativa independente a partir de anúncios reais e serve para saber por quanto anunciar ou quanto oferecer. Não é uma avaliação oficial para efeitos de seguro, sinistro ou fiscais, e não somos stand nem intermediário."],
           ["De onde vêm os valores?",
@@ -1695,7 +1692,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
         ${olxHref ? `<a class="olx-btn" style="display:block;margin-top:18px;" href="${escapeHtml(olxHref)}" target="_blank" rel="noopener nofollow"${analyticsClick("olx_open", { source: "avaliar", olx_id: String(olxId || "") })}>Ver anúncio original&nbsp;&nbsp;↗</a>` : ""}
         ${whatsappShare(`${rec.t || "Viatura"}: pedido ${fmtEur(price)}, justo ${fmtEur(fm)} (${fmtEur(fl)}–${fmtEur(fh)}). Avaliação independente:`, host ? `https://${host}/pt/avaliar?q=${encodeURIComponent(olxId || "")}` : "")}
         ${modelHref ? `<a href="${modelHref}" style="display:block;text-align:center;margin-top:12px;font-size:13.5px;color:#177A47;font-weight:600;">Ver preços deste modelo por ano&nbsp;→</a>` : ""}
-        <a href="${sellHref}" style="display:block;text-align:center;margin-top:10px;font-size:13.5px;color:#5B606B;">É o teu carro? Recebe propostas de compra&nbsp;→</a>
+        <a href="${sellHref}" style="display:block;text-align:center;margin-top:10px;font-size:13.5px;color:#5B606B;">É o teu carro? Vê por quanto anunciar&nbsp;→</a>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;">
           <a class="btn-outline" style="flex:1 1 auto;padding:11px 14px;font-size:13.5px;text-align:center;" href="/pt/avaliar">Avaliar outro carro</a>
           <a class="btn-dark" style="flex:1 1 auto;padding:11px 14px;font-size:13.5px;text-align:center;" href="/pt/mercado">Ver carros abaixo do preço&nbsp;→</a>
@@ -1741,10 +1738,10 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
         ${spec.vender ? `<a href="/pt/vender/${encodeURIComponent(spec.slug)}" style="display:block;text-align:center;margin-top:12px;font-size:13.5px;color:#177A47;font-weight:600;">Quanto pedir e em quantos dias vende&nbsp;→</a>` : ""}
       </div>
       <div class="side-foot">Preços PEDIDOS em anúncios ativos do OLX — estimativa indicativa, não o valor da tua viatura concreta.</div>
-      ${leadFormBlock({
+      ${sellerHelpBlock({
         slug: spec.slug, name: `${mr.b} ${mr.m}`,
         year: spec.year || (cell && typeof cell.y === "number" ? cell.y : null),
-        median: sfm,
+        median: sfm, vender: !!spec.vender,
       })}
     </div>`;
   }
@@ -1808,7 +1805,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
       <div class="cta-banner">
         <div style="flex:1 1 360px;">
           <h2>Vais vender o teu carro?</h2>
-          <p>Escolhe o modelo e o ano acima: vês o que o mercado está a pedir e podes pedir propostas de compra a compradores profissionais, sem compromisso${mailto ? " — ou pede uma avaliação por email" : ""}.</p>
+          <p>Escolhe o modelo e o ano acima: vês o que o mercado está a pedir por um carro como o teu, a faixa onde fica metade dos anúncios e quantos dias costuma demorar a sair${mailto ? " — e se preferires, pede uma avaliação por email" : ""}.</p>
         </div>
         ${mailto ? `<a class="btn-bright" href="${mailto}">Pedir avaliação por email&nbsp;&nbsp;→</a>` : `<a class="btn-bright" href="#escolher">Escolher o meu carro&nbsp;&nbsp;→</a>`}
       </div>
@@ -2125,7 +2122,7 @@ export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, h
     <section class="section" style="padding:26px 22px 0;max-width:680px;">
       <div class="exclusive" style="background:#F4F6FB;border:1px solid #D9E0F0;align-items:flex-start;">
         <span style="font-size:15px;">🏷️</span>
-        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">Vais vender o teu ${B} ${M}?</b> Quanto pedir por ano, em quantos dias sai e quantos vendedores acabam por baixar o preço — e propostas de compra sem compromisso. <a href="/pt/vender/${slug}" style="color:#177A47;font-weight:600;">Ver quanto pedir&nbsp;→</a></span>
+        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">Vais vender o teu ${B} ${M}?</b> Quanto pedir por ano, em quantos dias sai e quantos vendedores acabam por baixar o preço. <a href="/pt/vender/${slug}" style="color:#177A47;font-weight:600;">Ver quanto pedir&nbsp;→</a></span>
       </div>
     </section>` : "";
 
@@ -2419,30 +2416,16 @@ export const PT_DISTRICTS = [
   "Viana do Castelo", "Vila Real", "Viseu", "Açores", "Madeira",
 ];
 
-export function leadFormBlock({ slug = "", name = "", year = null, median = null, district = "", heading = null }) {
-  const opts = PT_DISTRICTS.map(d =>
-    `<option value="${escapeHtml(d)}"${d === district ? " selected" : ""}>${escapeHtml(d)}</option>`).join("");
-  const inp = "padding:12px;border:1px solid #E2DFD8;border-radius:11px;font-size:15px;background:#fff;color:#16181D;min-width:0;";
+export function sellerHelpBlock({ slug = "", name = "", year = null, median = null, vender = false, heading = null }) {
+  const q = slug ? `?modelo=${encodeURIComponent(slug)}${year ? `&ano=${encodeURIComponent(String(year))}` : ""}` : "";
+  const href = (vender && slug) ? `/pt/vender/${encodeURIComponent(slug)}` : `/pt/avaliar${q}`;
+  const cta = (vender && slug) ? "Quanto pedir e em quantos dias vende" : "Ver o que o mercado pede";
+  const what = name ? ` o teu ${escapeHtml(name)}` : " o teu carro";
   return `
       <section id="vender" class="side-card" style="margin-top:16px;">
-        <div class="panel-title" style="font-size:16px;margin-bottom:6px;">${heading ? escapeHtml(heading) : `Queres vender${name ? ` o teu ${escapeHtml(name)}` : " este carro"}?`}</div>
-        <p style="font-size:14px;color:#5B606B;margin:0 0 14px;line-height:1.5;">Deixa o contacto e recebes propostas de compra de compradores profissionais — stands e serviços de compra imediata — normalmente em 24 a 48 horas. Sem compromisso: comparas com ${median != null ? `a mediana de ${fmtEur(median)}` : "o valor acima"} e decides.</p>
-        <form action="/pt/lead" method="post" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;">
-          <input type="hidden" name="modelo" value="${escapeHtml(slug)}">
-          ${slug ? `<input type="hidden" name="nome_modelo" value="${escapeHtml(name)}">` : `<input type="text" name="nome_modelo" required maxlength="80" placeholder="Marca e modelo" style="${inp}grid-column:1 / -1;">`}
-          <input type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;">
-          <input type="number" name="ano" min="1980" max="2027" required value="${year ? escapeHtml(String(year)) : ""}" placeholder="Ano" style="${inp}">
-          <input type="number" name="km" min="0" max="1500000" step="1000" placeholder="Quilómetros" style="${inp}">
-          <select name="distrito" style="${inp}"><option value="">Distrito…</option>${opts}</select>
-          <input type="text" name="contacto" required minlength="5" maxlength="120" placeholder="Telemóvel ou email" autocomplete="tel" style="${inp}">
-          <input type="text" name="nome" maxlength="80" placeholder="Nome (opcional)" autocomplete="name" style="${inp}grid-column:1 / -1;">
-          <label style="grid-column:1 / -1;display:flex;gap:9px;align-items:flex-start;font-size:13px;color:#5B606B;line-height:1.45;">
-            <input type="checkbox" name="consent" value="1" required style="margin-top:3px;">
-            <span>Autorizo o Carsbuyer a guardar estes dados durante 90 dias e a enviá-los a compradores profissionais para me apresentarem propostas. <a href="/pt/privacidade">Privacidade</a>.</span>
-          </label>
-          <button type="submit" class="btn-dark" style="grid-column:1 / -1;padding:13px 20px;font-size:15px;">Receber propostas de compra&nbsp;&nbsp;→</button>
-        </form>
-        <div class="mono" style="font-size:11px;color:#9A9FA8;margin-top:10px;line-height:1.5;">Não vendemos o teu contacto para publicidade. Um comprador profissional paga ao Carsbuyer por este contacto — é assim que o site se financia, e a avaliação não muda por isso.</div>
+        <div class="panel-title" style="font-size:16px;margin-bottom:6px;">${heading ? escapeHtml(heading) : `Vais vender${what}?`}</div>
+        <p style="font-size:14px;color:#5B606B;margin:0 0 14px;line-height:1.5;">Não compramos carros e não te pomos em contacto com quem compra. O que temos é o que o mercado pede por um carro como o teu${median != null ? `, a começar pela mediana de ${fmtEur(median)}` : ""}: a faixa onde fica metade dos anúncios e quantos dias costuma demorar a sair. Chega para decidires por quanto anunciar.</p>
+        <a class="btn-dark" href="${href}" style="display:inline-block;padding:12px 20px;font-size:15px;">${cta}&nbsp;&nbsp;→</a>
       </section>`;
 }
 
@@ -2456,8 +2439,8 @@ export function historyCheckBlock({ url, reasons = [], price = null, title = nul
           <div style="font-weight:600;color:#16181D;font-size:14.5px;">${escapeHtml(head)}</div>
           <p style="font-size:13.5px;color:#5B606B;margin:6px 0 0;line-height:1.5;">Quilómetros reais, sinistros, número de donos e se veio do estrangeiro: o anúncio não diz, o relatório pela matrícula ou pelo VIN diz.${items ? " Neste caso há motivos concretos:" : ""}</p>
           ${items ? `<ul style="margin:8px 0 0;padding-left:18px;font-size:13.5px;color:#16181D;line-height:1.5;">${items}</ul>` : ""}
-          <a href="${href}" target="_blank" rel="nofollow sponsored noopener"${analyticsClick("history_check", { from })} class="btn-outline" style="display:inline-block;margin-top:12px;padding:10px 16px;font-size:13.5px;">Verificar o histórico do carro&nbsp;&nbsp;↗</a>
-          <div class="mono" style="font-size:11px;color:#9A9FA8;margin-top:8px;line-height:1.5;">Relatório vendido pela carVertical, ligação de parceiro: se comprares um relatório, o Carsbuyer recebe uma comissão. O preço para ti é o mesmo e a avaliação não muda.</div>
+          <a href="${href}" target="_blank" rel="nofollow noopener"${analyticsClick("history_check", { from })} class="btn-outline" style="display:inline-block;margin-top:12px;padding:10px 16px;font-size:13.5px;">Verificar o histórico do carro&nbsp;&nbsp;↗</a>
+          <div class="mono" style="font-size:11px;color:#9A9FA8;margin-top:8px;line-height:1.5;">Relatório vendido pela carVertical. Não recebemos comissão nem qualquer pagamento por esta ligação; está aqui porque o anúncio não diz estas coisas e o relatório diz.</div>
         </div>`;
 }
 
@@ -2484,19 +2467,6 @@ export function historyReasons(rec, models) {
   return out;
 }
 
-export function renderLeadThanks({ name = "", year = null, depositCount = null, host = null }) {
-  const car = [name, year].filter(Boolean).join(" ");
-  const body = `
-    <div class="info">
-      <div class="ic">✅</div>
-      <h1>Pedido recebido</h1>
-      <p>${car ? `Vamos apresentar o teu ${escapeHtml(car)} a compradores profissionais. ` : ""}Se houver interesse, recebes propostas em 24 a 48 horas pelo contacto que deixaste. Não há compromisso: aceitas só se a proposta te servir.</p>
-      <p style="font-size:13.5px;color:#5B606B;">Entretanto, vê <a href="/pt/avaliar">o que o mercado pede por carros como o teu</a> — é a referência para comparar as propostas.</p>
-      <a class="btn-dark" href="/pt/avaliar">Voltar à avaliação</a>
-    </div>
-    ${analyticsEvent("generate_lead", { model: car })}`;
-  return layout({ title: "Pedido recebido", body, zone: "all", nav: "avaliar", depositCount, index: false, host });
-}
 
 const AGE_BUCKETS = [[0, 2, "até 2 anos"], [3, 5, "3 a 5 anos"], [6, 9, "6 a 9 anos"], [10, 14, "10 a 14 anos"], [15, 99, "15 anos ou mais"]];
 

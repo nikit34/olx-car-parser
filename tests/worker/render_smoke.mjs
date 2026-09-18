@@ -1136,7 +1136,7 @@ check("brand and revenue copy: Carsbuyer everywhere, no single-revenue claim", (
   assert(priv.includes('og:site_name" content="Carsbuyer"'), "og:site_name is not Carsbuyer");
   assert(!priv.includes("Flipper Club"), "Flipper Club still leaks into a public page");
   assert(priv.includes("mailto:x@y.pt"), "privacy page does not use the configured contact");
-  assert(priv.includes("90 dias"), "privacy page does not state the lead retention");
+  assert(!priv.includes("90 dias"), "privacy page still promises a retention for data it no longer collects");
   const deal = {
     olx_id: "ID1", brand: models[deep].b, model: models[deep].m, title: "Carro de teste",
     price_eur: 7000, fair_median: 8500, fair_low: 7600, fair_high: 9400, discount_pct: 0.17,
@@ -1151,7 +1151,7 @@ check("brand and revenue copy: Carsbuyer everywhere, no single-revenue claim", (
   assert(!landing.includes("em breve"), "seller path is still a placeholder");
 });
 
-check("no public page still sells a deposit", () => {
+check("no public page sells a deposit, buyer offers, or a commission", () => {
   const deal = {
     olx_id: "ID1", brand: models[deep].b, model: models[deep].m, title: "Carro de teste",
     price_eur: 7000, fair_median: 8500, fair_low: 7600, fair_high: 9400, discount_pct: 0.17,
@@ -1181,6 +1181,13 @@ check("no public page still sells a deposit", () => {
   for (const [label, html] of pages) {
     for (const word of [/dep[óo]sito/i, /\bStripe\b/, /\/reservas/, /\/claim/, /desbloquear/i]) {
       assert(!word.test(html), `${label} still says ${word}`);
+    }
+  }
+
+  for (const [label, html] of pages) {
+    for (const promise of [/propostas de compra/i, /compradores profissionais/i,
+                           /recebe uma comiss[ãa]o/i, /action="\/pt\/lead"/, /name="consent"/]) {
+      assert(!promise.test(html), `${label} promises something we do not do: ${promise}`);
     }
   }
 });
@@ -1255,28 +1262,32 @@ check("titles lead with the number", () => {
     assert(title.includes("preço"), `${label} title misses the word every ranking query uses: ${title}`);
     assert(!mon || title.includes(mon), `${label} title carries no freshness stamp: ${title}`);
   }
-  assert(yp.includes('rel="nofollow sponsored noopener"'), "year page history link is not marked sponsored");
+  assert(yp.includes('rel="nofollow noopener"') && !yp.includes("sponsored"),
+    "year page history link is still marked sponsored, but nothing is paid for it");
   assert(yp.includes('href="/pt/ir/historico?from=ano"') && !yp.includes("https://example.test/h"), "year page history link must go through the counted redirect");
 });
 
-check("the seller lead form and the history block render on /avaliar", () => {
+check("no page asks the seller for a contact we have nothing to do with", () => {
   const slug = deep;
   const withSpec = renderAvaliar({ rec: null, olxId: null, sourceUrl: null, query: "", models,
     spec: { rec: models[slug], slug, year: 2016, cell: null }, depositCount: 0, host: HOST, builtAt,
     historyUrl: "https://example.test/h" });
-  assert(withSpec.includes('action="/pt/lead"'), "no lead form on the spec estimate");
-  assert(withSpec.includes('name="consent"'), "lead form has no consent box");
-  assert(withSpec.includes('id="vender"'), "lead form lost its anchor");
+  assert(!withSpec.includes('action="/pt/lead"'), "the retired lead form is back on the spec estimate");
+  assert(!withSpec.includes('name="contacto"') && !withSpec.includes('name="consent"'),
+    "the spec estimate still collects a contact");
+  assert(withSpec.includes('id="vender"'), "the seller block lost its anchor");
+  assert(withSpec.includes("Não compramos carros"), "the seller block does not say what we are not");
   assert(withSpec.includes('id="escolher"'), "model picker lost its anchor");
   const rec = { t: "VW Golf", y: 2015, km: 40000, fu: "Diesel", p: 9000, fl: 9500, fm: 11000, fh: 12500,
                 imp: 1, ms: slug, sd: 20, dom: 70, ph: [[60, 11000], [30, 10000], [3, 9000]] };
   const pasted = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models, spec: null,
                                  depositCount: 0, host: HOST, builtAt, historyUrl: "https://example.test/h" });
-  assert(pasted.includes('rel="nofollow sponsored noopener"'), "partner link is not marked sponsored");
+  assert(pasted.includes('rel="nofollow noopener"') && !pasted.includes("sponsored"),
+    "the history link is still marked sponsored, but nothing is paid for it");
   assert(pasted.includes('href="/pt/ir/historico?from=avaliar"') && !pasted.includes("https://example.test/h"), "history link must go through the counted redirect");
   assert(pasted.includes("importação"), "import reason not listed");
   assert(pasted.includes("baixou 2 vezes"), "price-cut reason not listed");
-  assert(pasted.includes("#vender"), "no path from a pasted listing to the seller form");
+  assert(pasted.includes("#vender"), "no path from a pasted listing to the seller block");
   const noUrl = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models, spec: null,
                                 depositCount: 0, host: HOST, builtAt });
   assert(!noUrl.includes("sponsored"), "history block rendered with no partner url configured");
@@ -1293,7 +1304,8 @@ check("seller pages render with the numbers, the form and the JSON twin", () => 
   assertPage(page, { indexable: true, canonical: `https://${HOST}/pt/vender/${s}`, label: "vender" });
   const t = page.match(/<title>([^<]*)<\/title>/)[1];
   assert(t.includes("€") && /^Vender /.test(t), `seller title is off: ${t}`);
-  assert(page.includes('action="/pt/lead"') && page.includes('id="vender"'), "seller page has no lead form");
+  assert(!page.includes('action="/pt/lead"') && page.includes('id="vender"'),
+    "the seller page still carries the retired lead form");
   assert(page.includes(`/pt/preco/${s}`), "seller page does not link the price page");
   assert(page.includes("Quanto pedir"), "seller page lost its main section");
   const types = ldTypes(page);
@@ -1353,8 +1365,7 @@ check("year pages carry the seller path and a prefilled lead form", () => {
                  liveDeals: [], pageYears: [y], stats, host: HOST, depositCount: 0, builtAt };
   const withVender = renderYearPage({ ...base, hasVender: true });
   assert(withVender.includes(`/pt/vender/${s}#vender`), "year page does not link the seller page");
-  assert(withVender.includes('action="/pt/lead"') && withVender.includes(`name="ano" min="1980" max="2027" required value="${y}"`),
-    "year page lead form is missing or not prefilled with the year");
+  assert(!withVender.includes('action="/pt/lead"'), "the retired lead form is back on the year page");
   const without = renderYearPage({ ...base, hasVender: false });
   assert(without.includes(`/pt/avaliar?modelo=${encodeURIComponent(s)}&ano=${y}#vender`), "fallback seller path missing");
 });
@@ -1373,7 +1384,7 @@ check("valuation results offer a WhatsApp share link back to the page", () => {
   assert(!noHost.includes("wa.me"), "share link rendered without a host to point at");
 });
 
-check("every seller guide renders as an indexable article with FAQ, sources and the lead form", () => {
+check("every seller guide renders as an indexable article with FAQ and sources", () => {
   assert(GUIDES.length >= 6, "guide registry is too small");
   const st = corpusStats(models, builtAt);
   for (const guide of GUIDES) {
@@ -1382,7 +1393,7 @@ check("every seller guide renders as an indexable article with FAQ, sources and 
     assertPage(page, { indexable: true, canonical: `https://${HOST}/pt/guias/${guide.slug}`, label: `guia ${guide.slug}` });
     const t = ldTypes(page);
     for (const want of ["Article", "FAQPage", "BreadcrumbList"]) assert(t.has(want), `${guide.slug} is missing ${want}`);
-    assert(page.includes('action="/pt/lead"') && page.includes('name="nome_modelo" required'), `${guide.slug} has no free-text lead form`);
+    assert(!page.includes('action="/pt/lead"'), `${guide.slug} still carries the retired lead form`);
     assert(!page.includes("undefined") && !page.includes("NaN"), `${guide.slug} leaks undefined/NaN`);
     const words = page.replace(/<script[\s\S]*?<\/script>/g, "").replace(/<[^>]+>/g, " ").split(/\s+/).filter(Boolean).length;
     assert(words >= 450, `${guide.slug} is thin: ${words} words`);

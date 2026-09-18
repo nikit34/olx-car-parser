@@ -135,7 +135,6 @@ INTL_WAVE_MODELS = "25"
 INDEXNOW_KEY = "0b2d1d9109041a8e753860fe1b6efb6f"
 
 HISTORY_REPORT_URL = "https://www.carvertical.com/pt"
-LEADS_TELEGRAM_CHAT_ID = "604665081"
 VENDER_WAVE_MODELS = "80"
 
 # Cron. Records the weekly market cut for /pt/mercado/indice.

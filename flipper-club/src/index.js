@@ -4,7 +4,6 @@
 //   GET  /pt                   → one car at a time (top-ranked by decision_score).
 //                                Photos, specs, signals and the seller's own OLX
 //                                link are all public.
-//   POST /pt/lead              → a seller asks professional buyers for offers.
 //   GET  /healthz              → unauthenticated liveness.
 //
 // Public valuation surface (indexable; seo-pages.js renders it):
@@ -41,7 +40,7 @@ import {
   renderLanding,
   renderAvaliar, renderModelPage, renderModelsHub, renderModelWidget, slugify, listingUrl,
   setAnalyticsId,
-  renderPrivacy, renderLeadThanks,
+  renderPrivacy,
 } from "./templates.js";
 import {
   renderYearPage, renderNotFound, renderDepreciationPage, renderDepreciationHub,
@@ -233,8 +232,7 @@ async function handlePt(request, env, url, pathname, method) {
   if (pathname === "/avaliar" && method === "GET") return handleAvaliar(request, env, u);
   if (pathname === "/mercado" && method === "GET") return handleFeed(request, env, u);
   if (pathname === "/car" && method === "GET") return handleCar(request, env, u);
-  if (pathname === "/lead" && method === "POST") return handleLead(request, env, u);
-  if (pathname === "/lead" && method === "GET") return redirect("/pt/avaliar#escolher", 302);
+  if (pathname === "/lead") return redirect("/pt/avaliar#vender", 303);
   if (pathname === "/ir/historico" && method === "GET") return handleHistoryRedirect(request, env, u);
   // Страница приватности публичная и индексируемая: на неё ссылается баннер
   // согласия, и за Basic-Auth она отдавала бы 401 и Googlebot, и человеку.
@@ -2584,109 +2582,12 @@ function isLocalHost(h) {
 function notFound() { return new Response("Not found", { status: 404 }); }
 function forbidden() { return new Response("Forbidden", { status: 403 }); }
 
-// CSRF guard for the /pt/lead POST: verify the request came from our own host.
-function sameOrigin(request, url) {
-  const origin = request.headers.get("Origin");
-  if (origin) {
-    try { return new URL(origin).host === url.host; } catch { return false; }
-  }
-  const referer = request.headers.get("Referer");
-  if (referer) {
-    try { return new URL(referer).host === url.host; } catch { return false; }
-  }
-  return false;
-}
 
 function constantTimeEq(a, b) {
   if (a.length !== b.length) return false;
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
-}
-
-const LEAD_TTL_SEC = 90 * 24 * 3600;
-const LEAD_RATE_MAX = 5;
-
-async function handleLead(request, env, url) {
-  if (!sameOrigin(request, url)) return forbidden();
-  let form;
-  try { form = await request.formData(); }
-  catch { return leadError("O formulário chegou incompleto. Volta atrás e tenta outra vez.", 400); }
-  const f = k => (form.get(k) || "").toString().trim();
-  const thanks = (name, year) => html(renderLeadThanks({ name, year, depositCount: null, host: url.host }), 200);
-  if (f("website")) return thanks("", null);
-
-  const modelo = f("modelo").toLowerCase().slice(0, 60);
-  const name = f("nome_modelo").slice(0, 80);
-  const ano = parseInt(f("ano"), 10);
-  const kmRaw = parseInt(f("km"), 10);
-  const km = (Number.isFinite(kmRaw) && kmRaw >= 0 && kmRaw <= 1500000) ? kmRaw : null;
-  const distrito = f("distrito").slice(0, 40);
-  const contacto = f("contacto").slice(0, 120);
-  const nome = f("nome").slice(0, 80);
-  const consent = f("consent") === "1" || f("consent") === "on";
-  if (!Number.isFinite(ano) || ano < 1980 || ano > 2027) {
-    return leadError("Indica o ano do carro, entre 1980 e 2027.", 400);
-  }
-  const digits = contacto.replace(/\D/g, "");
-  const looksPhone = digits.length >= 9 && digits.length <= 15;
-  const looksEmail = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(contacto);
-  if (!looksPhone && !looksEmail) {
-    return leadError("Deixa um telemóvel com 9 dígitos ou um email válido, para te podermos enviar as propostas.", 400);
-  }
-  if (!consent) {
-    return leadError("Para enviarmos o teu contacto a compradores precisamos da tua autorização: marca a caixa e volta a enviar.", 400);
-  }
-  if (modelo && !/^[a-z0-9-]{2,60}$/.test(modelo)) {
-    return leadError("O modelo não foi reconhecido. Escolhe-o outra vez na lista.", 400);
-  }
-
-  const ip = request.headers.get("cf-connecting-ip") || "0.0.0.0";
-  const rlKey = `leadrl:${ip}`;
-  let count = 0;
-  try { count = parseInt((await env.KV.get(rlKey)) || "0", 10) || 0; } catch {}
-  if (count >= LEAD_RATE_MAX) {
-    return leadError("Já recebemos vários pedidos deste endereço na última hora. Tenta mais tarde.", 429);
-  }
-  try { await env.KV.put(rlKey, String(count + 1), { expirationTtl: 3600 }); } catch {}
-
-  const ts = new Date().toISOString();
-  const lead = {
-    ts, modelo, name, ano, km, distrito, contacto, nome,
-    ua: (request.headers.get("user-agent") || "").slice(0, 160),
-    country: (request.cf && request.cf.country) || null,
-  };
-  try {
-    await env.KV.put(`lead:${ts}:${randomToken(4)}`, JSON.stringify(lead), { expirationTtl: LEAD_TTL_SEC });
-  } catch (err) {
-    console.error("lead store failed", err && err.message);
-    return leadError("Não conseguimos guardar o pedido. Tenta outra vez dentro de instantes.", 502);
-  }
-  await notifyLead(env, lead, url.host);
-  return thanks(name, ano);
-}
-
-function leadError(message, status) {
-  return html(renderInfo({ zone: "all", depositCount: null, title: "Falta um dado no pedido", message }), status);
-}
-
-async function notifyLead(env, lead, host) {
-  const token = env.TELEGRAM_BOT_TOKEN, chat = env.LEADS_TELEGRAM_CHAT_ID;
-  if (!token || !chat) return;
-  const line = [lead.name || lead.modelo || "modelo?", lead.ano, lead.km != null ? `${lead.km} km` : null, lead.distrito || null]
-    .filter(Boolean).join(" · ");
-  const text = [
-    "🚗 Novo pedido de propostas", line,
-    `Contacto: ${lead.contacto}${lead.nome ? ` (${lead.nome})` : ""}`,
-    `https://${host}/analytics/leads.json`,
-  ].join("\n");
-  try {
-    const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chat, text, disable_web_page_preview: true }),
-    });
-    if (!r.ok) console.warn("lead telegram notify", r.status);
-  } catch (err) { console.warn("lead telegram notify failed", err && err.message); }
 }
 
 async function leadsJson(env) {

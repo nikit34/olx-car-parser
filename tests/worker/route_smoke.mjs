@@ -1209,38 +1209,23 @@ await check("every icon the pages link to is served without the auth gate", asyn
   }
 });
 
-await check("seller lead POST stores the lead and answers with the thanks page", async () => {
-  const stored = () => [...kv.keys()].filter(k => k.startsWith("lead:")).length;
-  const before = stored();
-  const post = (params, origin = `https://${HOST}`) => worker.fetch(new Request(`https://${HOST}/pt/lead`, {
-    method: "POST", body: params,
-    headers: { Origin: origin, "Content-Type": "application/x-www-form-urlencoded" },
-  }), env);
-  const full = () => new URLSearchParams({ modelo: deep, nome_modelo: "Carro Teste", ano: "2016", km: "120000",
-                                           distrito: "Porto", contacto: "912345678", nome: "Ana", consent: "1" });
-  const r = await post(full());
-  assert(r.status === 200, `POST /lead → ${r.status}`);
-  const t = await r.text();
-  assert(t.includes("Pedido recebido"), "thanks page missing");
-  assert(t.includes("noindex"), "thanks page is indexable");
-  assert(stored() === before + 1, "lead was not stored");
-  const noConsent = await post(new URLSearchParams({ ano: "2016", contacto: "912345678" }));
-  assert(noConsent.status === 400, `missing consent → ${noConsent.status}`);
-  const badContact = await post(new URLSearchParams({ ano: "2016", contacto: "ola", consent: "1" }));
-  assert(badContact.status === 400, `bad contact → ${badContact.status}`);
-  const trap = await post(new URLSearchParams({ ano: "2016", contacto: "912345678", consent: "1", website: "http://spam" }));
-  assert(trap.status === 200, `honeypot → ${trap.status}`);
-  assert(stored() === before + 1, "honeypot submission was stored");
-  const foreign = await post(full(), "https://evil.example");
-  assert(foreign.status === 403, `cross-origin POST → ${foreign.status}`);
-  const g = await get("/pt/lead");
-  assert(g.status === 302, `GET /lead → ${g.status}`);
-  const admin = await get("/analytics/leads.json");
-  assert(admin.status === 401, `leads.json without auth → ${admin.status}`);
-  const robots = await (await get("/robots.txt")).text();
-  assert(robots.includes("Disallow: /pt/lead"), "robots does not block /pt/lead");
+await check("the retired lead endpoint collects nothing and sends people to the valuation", async () => {
+  const before = [...kv.keys()].filter(k => k.startsWith("lead:")).length;
+  for (const method of ["POST", "GET"]) {
+    const r = await worker.fetch(new Request(`https://${HOST}/pt/lead`, {
+      method,
+      ...(method === "POST" ? {
+        headers: { "content-type": "application/x-www-form-urlencoded", origin: `https://${HOST}` },
+        body: "nome_modelo=Golf&ano=2015&contacto=912345678&consent=1",
+      } : {}),
+    }), env);
+    assert(r.status === 303, `${method} /lead → ${r.status}, expected 303 so a POST turns into a GET`);
+    assert(new URL(r.headers.get("location"), `https://${HOST}`).pathname === "/pt/avaliar",
+      `${method} /lead → ${r.headers.get("location")}`);
+  }
+  const after = [...kv.keys()].filter(k => k.startsWith("lead:")).length;
+  assert(after === before, "a contact was still stored by the retired endpoint");
 });
-
 await check("seller pages resolve, the hub links them and the sitemap lists them", async () => {
   const hub = await get("/pt/vender");
   assert(hub.status === 200, `/pt/vender → ${hub.status}`);
