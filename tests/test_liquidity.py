@@ -178,6 +178,24 @@ class TestRelistsAndDiscounts:
                               now=NOW)["models"][("Volkswagen", "Golf")]
         assert rec["rb"] == pytest.approx(10 / len(rows), abs=0.01)
 
+    def test_an_ending_that_came_back_is_not_counted_as_a_sale(self):
+        rows = _rows(80, days=10)
+        back = {r["olx_id"] for r in rows[:40]}
+        key = ("Volkswagen", "Golf")
+        naive = build_liquidity(_df(rows, _watchers()), now=NOW)["models"][key]
+        fixed = build_liquidity(_df(rows, _watchers()), relisted=back,
+                                now=NOW)["models"][key]
+        assert fixed["s30"] < naive["s30"]
+        assert fixed["n"] == naive["n"] - 40
+        assert fixed["cn"] == naive["cn"] + 40
+        assert fixed["rb"] == pytest.approx(0.5, abs=0.01)
+
+    def test_a_group_whose_endings_all_came_back_reports_no_sale_curve(self):
+        rows = _rows(60, days=10)
+        back = {r["olx_id"] for r in rows}
+        liq = build_liquidity(_df(rows, _watchers()), relisted=back, now=NOW)
+        assert ("Volkswagen", "Golf") not in liq["models"]
+
     def test_the_discount_is_measured_against_the_first_price_we_saw(self):
         cut = _rows(60, days=40, price=9000, first_price=10000)
         held = _rows(60, days=10, price=9000, first_price=9000, start=500)

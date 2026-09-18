@@ -35,6 +35,16 @@ car (``relist_events``). Those definitely did not sell. It is a floor, not a
 rate — a relist is only counted when the matcher finds it, and a listing that
 ended last week has not had time to come back.
 
+Because they definitely did not sell, they are not counted as one: an ending
+that came back is censored at the day it ended, exactly like a listing still up.
+Measured on the Portuguese corpus on 2026-09-19, counting them as sales put the
+market's share-gone-by-30-days at 0.59 instead of 0.49, and on the models that
+relist most — Peugeot 206, Renault Mégane, Opel Corsa, BMW 320 — it overstated
+that share by 19 to 24 points and halved the median. Those are the cheap,
+OLX-heavy models the deal feed surfaces most, so the error was not spread
+evenly. ``rb`` keeps being reported against every ending, censored or not,
+because it is the measure of how much of this correction the matcher can see.
+
 Everything is gated on sample size and simply absent below it, like every other
 public figure here (see feedback_quality_over_coverage).
 """
@@ -275,26 +285,29 @@ def build_liquidity(
         now_year = int(pd.Timestamp.now("UTC").year)
     relisted = relisted or set()
     back = df["olx_id"].astype(str).isin(relisted) if "olx_id" in df.columns else None
+    df["_gone"] = df["_event"]
+    if back is not None:
+        df["_event"] = df["_gone"] & ~back
 
     market = _curve_stats(df)
     if market:
-        market.update(_discount_stats(df[df["_event"]]))
+        market.update(_discount_stats(df[df["_gone"]]))
         if back is not None:
-            ended = df["_event"]
-            if int(ended.sum()) >= MIN_EVENTS:
-                market["rb"] = round(float(back[ended].mean()), 3)
+            gone = df["_gone"]
+            if int(gone.sum()) >= MIN_EVENTS:
+                market["rb"] = round(float(back[gone].mean()), 3)
         out["market"] = market
 
     for (brand, model), grp in df.groupby(["brand", "model"]):
-        ended = grp[grp["_event"]]
-        if len(ended) < MIN_SELL_EVENTS:
+        gone = grp[grp["_gone"]]
+        if int(grp["_event"].sum()) < MIN_SELL_EVENTS:
             continue
         rec = _curve_stats(grp)
         if not rec or "s30" not in rec:
             continue
-        rec.update(_discount_stats(ended))
-        if back is not None and len(ended) >= MIN_EVENTS:
-            rec["rb"] = round(float(back.loc[ended.index].mean()), 3)
+        rec.update(_discount_stats(gone))
+        if back is not None and len(gone) >= MIN_EVENTS:
+            rec["rb"] = round(float(back.loc[gone.index].mean()), 3)
         pb = _price_cells(grp)
         if pb:
             rec["pb"] = pb
