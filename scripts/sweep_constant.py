@@ -345,9 +345,13 @@ def sweep_one(df, folds, segs, mask_for, const, values, full, compact, spec_drop
     if compact:
         best = min(rows, key=lambda r: r[2])   # most-negative time ΔMAPE
         tag = "  <-- WORTH A LOOK" if any_real else ""
+        under_gate = any(r[3] > 0 or r[4] < 0 for r in rows)
+        label = ("REAL" if any_real
+                 else f"under the {_MIN_EFFECT:.2f} gate" if under_gate
+                 else "noise")
         print(f"{const:<34} cur={str(baseline_val):>6}  best={str(best[0]):>6} "
               f"Δt={best[2]:+.2f} CI[{best[3]:+.2f},{best[4]:+.2f}]  "
-              f"{'REAL' if any_real else 'noise'}{tag}")
+              f"{label}{tag}")
         return any_real
 
     print(f"Constant: {const}  (current prod value = {baseline_val!r})\n")
