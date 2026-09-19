@@ -64,10 +64,12 @@ class DecisionContext:
     """
 
     dom_median: Mapping[tuple, float] = field(default_factory=dict)
-    """Median days-on-market for sold listings in the segment."""
+    """Median days-on-market in the segment, off the Kaplan-Meier curve — see
+    ``_dom_curves``. Listings still on sale and endings that came back as a new
+    listing are censored, not counted as sales."""
 
     dom_fast_share: Mapping[tuple, float] = field(default_factory=dict)
-    """Share of sold listings closed in ≤21 days — proxy for liquidity."""
+    """Share gone by day 21 on the same curve — proxy for liquidity."""
 
     trend_90d_pct: Mapping[tuple, float] = field(default_factory=dict)
     """Δ% of segment median ask between first and last tercile of a 90d window."""
@@ -110,12 +112,69 @@ def _lookup_with_fallback(table: Mapping[tuple, float], brand, model, gen):
     return v if v is not None else float("nan")
 
 
+def _dom_curves(df: pd.DataFrame, relisted: set[str] | None):
+    """Yield ``(segment key, median DoM, share gone by day 21)`` per segment.
+
+    The numbers come from the same Kaplan-Meier estimator the public liquidity
+    pages use, so the gates at steps 8 and 9 see what the pages print: listings
+    still on sale are censored rather than dropped, the exit time is the last
+    cycle that confirmed the listing alive, and an ending that later came back
+    as a new listing of the same car is censored too, because it did not sell.
+
+    Measured on the Portuguese corpus on 2026-09-19, the older count-what-
+    disappeared version handed 127 of 544 segments a median under 30 days — the
+    "fast segment" bonus — that the curve does not support: VW Golf 25 against
+    45 days, BMW 320 30 against 80, Renault Mégane 20 against 64. Those
+    segments carry 61% of the active listings the feed scores.
+    """
+    from src.analytics.liquidity import (
+        MIN_SELL_EVENTS, _gone_by, _quantile, prepare, survival,
+    )
+
+    prep = prepare(df)
+    if prep.empty or not {"brand", "model"}.issubset(prep.columns):
+        return
+    if relisted:
+        prep = prep.assign(
+            _event=prep["_event"] & ~prep["olx_id"].astype(str).isin(relisted)
+        )
+
+    def _stats(grp: pd.DataFrame):
+        if int(grp["_event"].sum()) < MIN_SELL_EVENTS:
+            return None
+        times, surv = survival(grp["_dur"].to_numpy(dtype=float),
+                               grp["_event"].to_numpy(dtype=bool))
+        median = _quantile(times, surv, 0.5)
+        if median is None:
+            return None
+        fast = _gone_by(times, surv, 21, float(grp["_dur"].max()))
+        return float(median), float(fast if fast is not None else 0.0)
+
+    seen: set[tuple] = set()
+    if "generation" in prep.columns:
+        for (brand, model, gen), grp in prep.groupby(["brand", "model", "generation"],
+                                                     dropna=False):
+            stats = _stats(grp)
+            if stats:
+                key = _segkey(brand, model, gen)
+                seen.add(key)
+                yield key, stats[0], stats[1]
+    for (brand, model), grp in prep.groupby(["brand", "model"], dropna=False):
+        key = (brand, model, None)
+        if key in seen:
+            continue
+        stats = _stats(grp)
+        if stats:
+            yield key, stats[0], stats[1]
+
+
 def build_context(
     listings_df: pd.DataFrame,
     snapshots_df: pd.DataFrame | None = None,
     *,
     coverage_80: float | None = None,
     predicted_lookup: Mapping[str, float] | None = None,
+    relisted: set[str] | None = None,
 ) -> DecisionContext:
     """Compute segment-level context shared across all listings on a page.
 
@@ -156,24 +215,13 @@ def build_context(
     reason = df.get("deactivation_reason", pd.Series("", index=df.index)).astype(str)
     sold = df[~is_active & (reason == "sold")].copy()
     if not sold.empty and "first_seen_at" in sold.columns and "deactivated_at" in sold.columns:
-        first = pd.to_datetime(sold["first_seen_at"], errors="coerce", utc=True)
-        last = pd.to_datetime(sold["deactivated_at"], errors="coerce", utc=True)
-        dom = ((last - first).dt.total_seconds() / 86400)
-        sold["__dom"] = dom
-        sold = sold[(sold["__dom"].notna()) & (sold["__dom"] >= 0) & (sold["__dom"] <= 365)]
-        if not sold.empty:
-            grouped = sold.groupby(["brand", "model", "generation"], dropna=False)
-            for (b, m, g), grp in grouped:
-                key = _segkey(b, m, g)
-                dom_median[key] = float(grp["__dom"].median())
-                dom_fast_share[key] = float((grp["__dom"] <= 21).mean())
-            # Brand+model fallback: collapse generations.
-            grouped_bm = sold.groupby(["brand", "model"], dropna=False)
-            for (b, m), grp in grouped_bm:
-                key = (b, m, None)
-                if key not in dom_median:
-                    dom_median[key] = float(grp["__dom"].median())
-                    dom_fast_share[key] = float((grp["__dom"] <= 21).mean())
+        lived = ((pd.to_datetime(sold["deactivated_at"], errors="coerce", utc=True)
+                  - pd.to_datetime(sold["first_seen_at"], errors="coerce", utc=True))
+                 .dt.total_seconds() / 86400)
+        sold = sold[lived.between(0, 365)]
+    for key, med, fast in _dom_curves(df, relisted):
+        dom_median[key] = med
+        dom_fast_share[key] = fast
 
     # --- Calibration residuals (algorithm step 4). -------------------------
     if predicted_lookup and not sold.empty:

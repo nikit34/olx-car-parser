@@ -365,32 +365,54 @@ def test_hazard_mid_listing_no_change():
     assert not any("(hazard)" in r for r in d.reasons)
 
 
-def test_build_context_extracts_dom_from_sold():
-    listings = pd.DataFrame([
-        {
-            "olx_id": "s1", "brand": "Volkswagen", "model": "Golf",
-            "generation": "Mk7", "is_active": False,
-            "deactivation_reason": "sold",
-            "first_seen_at": "2026-04-01T00:00:00Z",
-            "deactivated_at": "2026-04-15T00:00:00Z",  # 14d
+def _dom_rows(n, days, start=0, active=False, olx_prefix="s"):
+    base = pd.Timestamp("2026-04-01T00:00:00Z")
+    rows = []
+    for i in range(n):
+        lived = days + (i % 3) - 1
+        gone = base + pd.Timedelta(days=lived)
+        rows.append({
+            "olx_id": f"{olx_prefix}{start + i}", "brand": "Volkswagen",
+            "model": "Golf", "generation": "Mk7", "is_active": active,
+            "deactivation_reason": None if active else "sold",
+            "first_seen_at": base.isoformat(),
+            "last_scraped_at": gone.isoformat(),
+            "deactivated_at": None if active else gone.isoformat(),
             "price_eur": 12000.0,
-        },
-        {
-            "olx_id": "s2", "brand": "Volkswagen", "model": "Golf",
-            "generation": "Mk7", "is_active": False,
-            "deactivation_reason": "sold",
-            "first_seen_at": "2026-04-01T00:00:00Z",
-            "deactivated_at": "2026-05-10T00:00:00Z",  # 39d
-            "price_eur": 13000.0,
-        },
-    ])
+        })
+    return rows
+
+
+def test_build_context_extracts_dom_from_sold():
+    listings = pd.DataFrame(
+        _dom_rows(10, days=14) + _dom_rows(10, days=39, start=100)
+        + _dom_rows(6, days=120, start=200, active=True)
+    )
     ctx = build_context(listings, pd.DataFrame())
     key = ("Volkswagen", "Golf", "Mk7")
     assert key in ctx.dom_median
-    # Median of {14, 39} = 26.5
-    assert 25 <= ctx.dom_median[key] <= 28
-    # 1 of 2 sold within 21d → 0.5
-    assert ctx.dom_fast_share[key] == pytest.approx(0.5)
+    assert 38 <= ctx.dom_median[key] <= 41
+    assert ctx.dom_fast_share[key] == pytest.approx(10 / 26, abs=0.02)
+
+
+def test_build_context_censors_endings_that_came_back():
+    listings = pd.DataFrame(
+        _dom_rows(10, days=14) + _dom_rows(10, days=39, start=100)
+        + _dom_rows(6, days=120, start=200, active=True)
+    )
+    back = {f"s{i}" for i in range(10)}
+    key = ("Volkswagen", "Golf", "Mk7")
+    plain = build_context(listings, pd.DataFrame())
+    fixed = build_context(listings, pd.DataFrame(), relisted=back)
+    assert fixed.dom_fast_share[key] < plain.dom_fast_share[key]
+    assert fixed.dom_median[key] >= plain.dom_median[key]
+
+
+def test_build_context_leaves_a_thin_segment_without_dom():
+    listings = pd.DataFrame(_dom_rows(3, days=14) + _dom_rows(4, days=120, start=200, active=True))
+    ctx = build_context(listings, pd.DataFrame())
+    assert ctx.dom_median == {}
+    assert ctx.dom_fast_share == {}
 
 
 # ---- Cheap-tail value-trust guard + condition NLP (2026-06-25 audit) -------

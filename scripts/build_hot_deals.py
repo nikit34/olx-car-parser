@@ -275,7 +275,9 @@ def _build_signals(db_url: str | None) -> pd.DataFrame:
     """Run the production pipeline end-to-end and return a (signals ⋈ listings)
     DataFrame with every column the worker cards need."""
     from src.storage.database import init_db, get_session
-    from src.storage.repository import get_listings_df, get_price_history_df
+    from src.storage.repository import (
+        get_listings_df, get_price_history_df, get_relist_events_df,
+    )
     from src.analytics.computed_columns import enrich_listings
     from src.analytics.turnover import compute_turnover_stats, compute_sell_speed_by_model
     from src.dashboard.data_loader import compute_signals
@@ -374,8 +376,16 @@ def _annotate_decisions(signals: pd.DataFrame, listings: pd.DataFrame) -> pd.Dat
     except Exception as e:  # noqa: BLE001
         print(f"[hot_deals]   coverage history unavailable ({e}) — band-confidence neutral", flush=True)
 
+    relisted: set[str] = set()
+    try:
+        rel = get_relist_events_df(session)
+        if not rel.empty:
+            relisted = set(rel["original_olx_id"].astype(str))
+    except Exception as e:  # noqa: BLE001
+        print(f"[hot_deals]   relist events unavailable ({e}) — DoM counts every "
+              f"disappearance as a sale", flush=True)
     ctx = build_context(listings, snapshots, coverage_80=coverage_80,
-                        predicted_lookup=predicted_lookup)
+                        predicted_lookup=predicted_lookup, relisted=relisted)
     decisions = [decide(row, ctx) for _, row in signals.iterrows()]
     signals = signals.copy()
     signals["verdict"] = [d.verdict for d in decisions]

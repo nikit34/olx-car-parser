@@ -631,7 +631,9 @@ def verify_deals(
     init_db()
     session = get_session()
 
-    from src.storage.repository import get_listings_df, get_price_history_df
+    from src.storage.repository import (
+        get_listings_df, get_price_history_df, get_relist_events_df,
+    )
     from src.analytics.computed_columns import enrich_listings
     from src.analytics.turnover import compute_turnover_stats
     from src.parser.llm_enrichment import merge_real_mileage
@@ -653,7 +655,13 @@ def verify_deals(
         log.info("No surfaced deals.")
         return
 
-    decisions = decide_many(signals, build_context(listings))
+    try:
+        rel = get_relist_events_df(session)
+        relisted = set(rel["original_olx_id"].astype(str)) if not rel.empty else set()
+    except Exception as e:  # noqa: BLE001
+        log.warning("relist events unavailable (%s) — DoM counts every disappearance", e)
+        relisted = set()
+    decisions = decide_many(signals, build_context(listings, relisted=relisted))
     shown = decisions[decisions["verdict"].isin([VERDICT_BUY, VERDICT_WATCH])]
     shown = shown.sort_values("score", ascending=False)
     log.info("Surfaced deals: %d of %d signals", len(shown), len(signals))
