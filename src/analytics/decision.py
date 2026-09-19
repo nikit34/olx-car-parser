@@ -313,8 +313,8 @@ _DOM_LIMIT_DAYS = 120                # > this: REJECT regardless of margin
 _FEES_FLAT_EUR = 150.0
 _HOLDING_COST_EUR_PER_DAY = 1.30
 _DEFAULT_HOLD_DAYS = 45
-_BUY_SCORE = 18.0
-_WATCH_SCORE = 15.0
+_BUY_SCORE = 20.0
+_WATCH_SCORE = 16.5
 # Cheap-tail value-trust guard (2026-06-25 audit: 50 blind live-OLX appraisals
 # + 12.8k-car population pass). Below _CHEAP_TIER_EUR (asking) the spec-only
 # model predicts ≈ comp-median and is blind to condition; the asking price
