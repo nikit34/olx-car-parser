@@ -23,7 +23,7 @@ import {
   yearCells, yearCell, yearPageYears, depreciationOk, depreciationFit, depreciationSlugs,
   setSnippetTest, snippetArm,
   comparePairs, parseComparePath, comparePairKey, comparePriceGap, modelClass, comparePool,
-  modelJson, yearJson, MIN_YEAR_PAGE_N,
+  modelJson, yearJson, MIN_YEAR_PAGE_N, RETIRE_YEAR_PAGE_N,
   yearGap,
   depreciationAge, depreciationJson,
   estimateIsv, ISV_TABLES_FOR_TEST, renderDistrictPage,
@@ -1014,8 +1014,12 @@ check("JSON twins carry the sample size and the date", () => {
     "model JSON links a different year set than the router serves");
 
   const [s, y] = yearPages[0];
-  const yj = yearJson(models[s], s, y, yearCell(models[s], y), { host: HOST, builtAt });
-  assert(yj.year === y && yj.sample_size >= MIN_YEAR_PAGE_N, "year JSON is wrong");
+  const cell = yearCell(models[s], y);
+  const yj = yearJson(models[s], s, y, cell, { host: HOST, builtAt });
+  assert(yj.year === y, "year JSON lost the year");
+  assert(yj.sample_size === cell.n, "year JSON disagrees with the cell it was built from");
+  assert(yj.sample_size >= (cell.pg ? RETIRE_YEAR_PAGE_N : MIN_YEAR_PAGE_N),
+    `year JSON is served below its floor (n=${yj.sample_size}, pg=${cell.pg})`);
 });
 
 check("the valuation event still fires on both /avaliar paths", () => {

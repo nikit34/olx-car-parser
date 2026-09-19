@@ -40,6 +40,7 @@ import {
 // asserting a difference it cannot see. 10 is where the per-year medians stop
 // crossing each other out of order in the corpus.
 export const MIN_YEAR_PAGE_N = 10;
+export const RETIRE_YEAR_PAGE_N = 7;
 
 // Условия повторного использования опубликованных цифр. Полный текст лежит на
 // /pt/metodologia#licenca и продублирован в поле licence каждого .json-эндпоинта,
@@ -2432,7 +2433,7 @@ export function renderMethodology({ stats, mq, host, depositCount, builtAt, duel
       <ul class="fc-ul">
         <li class="fc-li"><b>20 anúncios ativos</b> — mínimo para um modelo <b>ganhar</b> página. Uma vez publicada, a página mantém-se enquanto houver <b>14</b>: o stock de um modelo oscila de dia para dia, e deixar o endereço morrer e ressuscitar ao sabor de um anúncio a mais ou a menos é pior do que publicar 14 e dizer que são 14. O número de anúncios por trás de cada mediana está sempre à vista.</li>
         <li class="fc-li"><b>5 anúncios</b> — mínimo para uma linha por ano na tabela, <b>3</b> para uma linha já publicada se manter. Anos mais finos são juntados em intervalos de dois ou mais anos, ou omitidos e contados no rodapé da tabela.</li>
-        <li class="fc-li"><b>${MIN_YEAR_PAGE_N} anúncios</b> — mínimo para um ano <b>ganhar página própria</b>, <b>7</b> para a manter depois de a ter. Abaixo de ${MIN_YEAR_PAGE_N}, um único anúncio fora do normal move a mediana mais do que a diferença entre anos que estaríamos a afirmar; e um ano que já tem endereço não o deve perder por causa de um carro vendido esta semana.</li>
+        <li class="fc-li"><b>${MIN_YEAR_PAGE_N} anúncios</b> — mínimo para um ano <b>ganhar página própria</b>, <b>${RETIRE_YEAR_PAGE_N}</b> para a manter depois de a ter. Abaixo de ${MIN_YEAR_PAGE_N}, um único anúncio fora do normal move a mediana mais do que a diferença entre anos que estaríamos a afirmar; e um ano que já tem endereço não o deve perder por causa de um carro vendido esta semana.</li>
         <li class="fc-li"><b>${DEP_MIN_CELLS} anos com amostra e ${DEP_MIN_SPAN} anos de intervalo</b> — mínimo para uma <a href="/pt/depreciacao">curva de desvalorização</a>, mais um ajuste que explique de facto os pontos (R² ≥ ${DEP_MIN_R2}).</li>
         <li class="fc-li"><b>15 anúncios</b> — mínimo para um <b>corte</b> do modelo (combustível, caixa, distrito) ganhar página própria, <b>11</b> para a manter. Um corte que é praticamente o modelo inteiro — a única motorização, ou a única caixa, com mais de 85% dos anúncios — não ganha página nenhuma: seria a página do modelo outra vez noutro endereço.</li>
         <li class="fc-li"><b>3 anos com amostra dos dois lados</b> — mínimo para comparar dois cortes em percentagem. Sem isso a página mostra as duas medianas e diz que a distância entre elas ainda inclui a diferença de idades.</li>
