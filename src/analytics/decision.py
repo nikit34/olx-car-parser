@@ -69,7 +69,13 @@ class DecisionContext:
     listing are censored, not counted as sales."""
 
     dom_fast_share: Mapping[tuple, float] = field(default_factory=dict)
-    """Share gone by day 21 on the same curve — proxy for liquidity."""
+    """Share gone by day 21 on the same curve. Reported on every verdict, gated
+    on by nothing: measured against what listings first seen after a cutoff
+    actually did, at five cutoffs between 60 and 120 days back, it has no
+    predictive value (Spearman +0.19, -0.00, +0.08, -0.05, -0.05 against the
+    realised 30-day sale rate — the sign flips with the cutoff). The median in
+    ``dom_median`` does hold up at the same cutoffs, so that is what the gates
+    read."""
 
     trend_90d_pct: Mapping[tuple, float] = field(default_factory=dict)
     """Δ% of segment median ask between first and last tercile of a 90d window."""
@@ -112,14 +118,16 @@ def _lookup_with_fallback(table: Mapping[tuple, float], brand, model, gen):
     return v if v is not None else float("nan")
 
 
-def _dom_curves(df: pd.DataFrame, relisted: set[str] | None):
-    """Yield ``(segment key, median DoM, share gone by day 21)`` per segment.
+def _dom_curves(df: pd.DataFrame, relisted: set[str] | None,
+                pairs: pd.DataFrame | None = None):
+    """``(segment key, median DoM, share gone by day 21)`` from the curve.
 
     The numbers come from the same Kaplan-Meier estimator the public liquidity
     pages use, so the gates at steps 8 and 9 see what the pages print: listings
     still on sale are censored rather than dropped, the exit time is the last
     cycle that confirmed the listing alive, and an ending that later came back
-    as a new listing of the same car is censored too, because it did not sell.
+    as a new listing of the same car does not count as a sale. With ``pairs``
+    the unit is the car and the chain of adverts is glued back together.
 
     Measured on the Portuguese corpus on 2026-09-19, the older count-what-
     disappeared version handed 127 of 544 segments a median under 30 days — the
@@ -127,45 +135,10 @@ def _dom_curves(df: pd.DataFrame, relisted: set[str] | None):
     45 days, BMW 320 30 against 80, Renault Mégane 20 against 64. Those
     segments carry 61% of the active listings the feed scores.
     """
-    from src.analytics.liquidity import (
-        MIN_SELL_EVENTS, _gone_by, _quantile, prepare, survival,
-    )
+    from src.analytics.liquidity import dom_by_segment
 
-    prep = prepare(df)
-    if prep.empty or not {"brand", "model"}.issubset(prep.columns):
-        return
-    if relisted:
-        prep = prep.assign(
-            _event=prep["_event"] & ~prep["olx_id"].astype(str).isin(relisted)
-        )
-
-    def _stats(grp: pd.DataFrame):
-        if int(grp["_event"].sum()) < MIN_SELL_EVENTS:
-            return None
-        times, surv = survival(grp["_dur"].to_numpy(dtype=float),
-                               grp["_event"].to_numpy(dtype=bool))
-        median = _quantile(times, surv, 0.5)
-        if median is None:
-            return None
-        fast = _gone_by(times, surv, 21, float(grp["_dur"].max()))
-        return float(median), float(fast if fast is not None else 0.0)
-
-    seen: set[tuple] = set()
-    if "generation" in prep.columns:
-        for (brand, model, gen), grp in prep.groupby(["brand", "model", "generation"],
-                                                     dropna=False):
-            stats = _stats(grp)
-            if stats:
-                key = _segkey(brand, model, gen)
-                seen.add(key)
-                yield key, stats[0], stats[1]
-    for (brand, model), grp in prep.groupby(["brand", "model"], dropna=False):
-        key = (brand, model, None)
-        if key in seen:
-            continue
-        stats = _stats(grp)
-        if stats:
-            yield key, stats[0], stats[1]
+    for key, rec in dom_by_segment(df, relisted=relisted, pairs=pairs).items():
+        yield _segkey(*key), rec["md"], rec["f21"]
 
 
 def build_context(
@@ -175,6 +148,7 @@ def build_context(
     coverage_80: float | None = None,
     predicted_lookup: Mapping[str, float] | None = None,
     relisted: set[str] | None = None,
+    pairs: pd.DataFrame | None = None,
 ) -> DecisionContext:
     """Compute segment-level context shared across all listings on a page.
 
@@ -219,7 +193,7 @@ def build_context(
                   - pd.to_datetime(sold["first_seen_at"], errors="coerce", utc=True))
                  .dt.total_seconds() / 86400)
         sold = sold[lived.between(0, 365)]
-    for key, med, fast in _dom_curves(df, relisted):
+    for key, med, fast in _dom_curves(df, relisted, pairs):
         dom_median[key] = med
         dom_fast_share[key] = fast
 
@@ -325,7 +299,6 @@ _MIN_NET_MARGIN_PCT = 12.0
 _MIN_NET_MARGIN_PCT_SLOW = 18.0     # if median DoM > 60d
 _MAX_SOFTENING_PCT = -3.0
 _DOM_LIMIT_DAYS = 120                # > this: REJECT regardless of margin
-_FAST_SHARE_OK = 0.30
 # Resale-cost model (private resident, intra-PT flip — no IVA, no broker).
 # Replaces the previous 3% + €200 stub which over-penalised expensive cars
 # and missed the holding cost that dominates slow segments. Components:
@@ -770,9 +743,6 @@ def decide(
             velocity_conf = 1.1
             reasons.append(f"fast segment (DoM {dom_med:.0f}d)")
 
-    if not pd.isna(fast_share) and fast_share < _FAST_SHARE_OK:
-        velocity_conf *= 0.9
-        reasons.append(f"only {fast_share:.0%} of sold cleared in ≤21d")
 
     # ---- Step 9b: per-listing hazard signal (from src.analytics.hazard).
     # Refines the segment-level dom_median / fast_share above with a

@@ -297,7 +297,13 @@ def _build_signals(db_url: str | None) -> pd.DataFrame:
 
     listings = enrich_listings(listings)
     listings = merge_real_mileage(listings)
-    turnover = compute_turnover_stats(listings)
+    try:
+        relist_pairs = get_relist_events_df(session)
+    except Exception as e:  # noqa: BLE001
+        print(f"[hot_deals]   relist events unavailable ({e}) — days-to-sell "
+              f"counts every disappearance as a sale", flush=True)
+        relist_pairs = pd.DataFrame()
+    turnover = compute_turnover_stats(listings, pairs=relist_pairs)
 
     t0 = time.perf_counter()
     signals_tuple = compute_signals(listings, history, turnover=turnover)
@@ -376,16 +382,8 @@ def _annotate_decisions(signals: pd.DataFrame, listings: pd.DataFrame) -> pd.Dat
     except Exception as e:  # noqa: BLE001
         print(f"[hot_deals]   coverage history unavailable ({e}) — band-confidence neutral", flush=True)
 
-    relisted: set[str] = set()
-    try:
-        rel = get_relist_events_df(session)
-        if not rel.empty:
-            relisted = set(rel["original_olx_id"].astype(str))
-    except Exception as e:  # noqa: BLE001
-        print(f"[hot_deals]   relist events unavailable ({e}) — DoM counts every "
-              f"disappearance as a sale", flush=True)
     ctx = build_context(listings, snapshots, coverage_80=coverage_80,
-                        predicted_lookup=predicted_lookup, relisted=relisted)
+                        predicted_lookup=predicted_lookup, pairs=relist_pairs)
     decisions = [decide(row, ctx) for _, row in signals.iterrows()]
     signals = signals.copy()
     signals["verdict"] = [d.verdict for d in decisions]

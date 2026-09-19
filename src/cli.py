@@ -647,7 +647,7 @@ def verify_deals(
     try:
         signals, *_ = compute_signals(
             listings, get_price_history_df(session),
-            turnover=compute_turnover_stats(listings))
+            turnover=compute_turnover_stats(listings, pairs=get_relist_events_df(session)))
     except Exception as e:  # noqa: BLE001 — a stale model must not fail the step
         log.warning("compute_signals failed (%s) — nothing to verify", e)
         return
@@ -656,12 +656,11 @@ def verify_deals(
         return
 
     try:
-        rel = get_relist_events_df(session)
-        relisted = set(rel["original_olx_id"].astype(str)) if not rel.empty else set()
+        relist_pairs = get_relist_events_df(session)
     except Exception as e:  # noqa: BLE001
         log.warning("relist events unavailable (%s) — DoM counts every disappearance", e)
-        relisted = set()
-    decisions = decide_many(signals, build_context(listings, relisted=relisted))
+        relist_pairs = pd.DataFrame()
+    decisions = decide_many(signals, build_context(listings, pairs=relist_pairs))
     shown = decisions[decisions["verdict"].isin([VERDICT_BUY, VERDICT_WATCH])]
     shown = shown.sort_values("score", ascending=False)
     log.info("Surfaced deals: %d of %d signals", len(shown), len(signals))
