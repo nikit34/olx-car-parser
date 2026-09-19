@@ -340,6 +340,7 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
     # ~0.9 MB gzipped for ~18k cars. Uploaded to the Release by the existing
     # ``data/dashboard/*.json`` glob in scrape-ci (no workflow change needed).
     _relisted = set()
+    _rel = pd.DataFrame()
     try:
         _rel = get_relist_events_df(session)
         if not _rel.empty:
@@ -347,7 +348,7 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
     except Exception as e:
         print(f"[build]   relist events unavailable ({e}) — liquidity ships without them",
               flush=True)
-    liquidity = build_liquidity(listings, relisted=_relisted)
+    liquidity = build_liquidity(listings, relisted=_relisted, pairs=_rel)
     liq_pages = page_records(liquidity)
     sell_speed = sell_speed_frame(liquidity)
     print(f"[build]   liquidity: {len(liquidity.get('models', {})):>6} models  "

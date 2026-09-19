@@ -22,6 +22,7 @@ from src.analytics.liquidity import (
     MIN_EVENTS,
     WINDOW_DAYS,
     build_liquidity,
+    chain_relists,
     page_records,
     prepare,
     sell_speed_frame,
@@ -195,6 +196,56 @@ class TestRelistsAndDiscounts:
         back = {r["olx_id"] for r in rows}
         liq = build_liquidity(_df(rows, _watchers()), relisted=back, now=NOW)
         assert ("Volkswagen", "Golf") not in liq["models"]
+
+    def test_a_chain_is_one_car_that_sold_after_both_adverts(self):
+        first = _rows(50, days=10, spread=0)
+        second = _rows(50, days=10, start=300, spread=0)
+        for i, row in enumerate(second):
+            row["first_seen_at"] = first[i]["last_scraped_at"] + pd.Timedelta(days=7)
+            row["last_scraped_at"] = row["first_seen_at"] + pd.Timedelta(days=10)
+            row["deactivated_at"] = row["last_scraped_at"]
+        pairs = pd.DataFrame([
+            {"original_olx_id": first[i]["olx_id"], "relist_olx_id": second[i]["olx_id"],
+             "match_score": 0.9, "gap_days": 7.0} for i in range(50)
+        ])
+        key = ("Volkswagen", "Golf")
+        flat = build_liquidity(_df(first, second, _watchers()), now=NOW)["models"][key]
+        chained = build_liquidity(_df(first, second, _watchers()), pairs=pairs,
+                                  now=NOW)["models"][key]
+        assert flat["n"] == 100
+        assert chained["n"] == 50
+        assert chained["md"] == 27
+        assert chained["md"] > flat["md"]
+        assert chained["rb"] == pytest.approx(1.0, abs=0.01)
+
+    def test_a_car_still_on_sale_under_its_second_advert_is_censored(self):
+        first = _rows(40, days=10, spread=0)
+        for row in first:
+            row["first_seen_at"] = NOW - pd.Timedelta(days=40)
+            row["last_scraped_at"] = row["first_seen_at"] + pd.Timedelta(days=10)
+            row["deactivated_at"] = row["last_scraped_at"]
+        live = _rows(40, days=25, active=True, start=300, spread=0)
+        pairs = pd.DataFrame([
+            {"original_olx_id": first[i]["olx_id"], "relist_olx_id": live[i]["olx_id"],
+             "match_score": 0.9, "gap_days": 5.0} for i in range(40)
+        ])
+        liq = build_liquidity(_df(first, live, _watchers()), pairs=pairs, now=NOW)
+        assert ("Volkswagen", "Golf") not in liq["models"]
+
+    def test_a_relisting_with_two_candidate_parents_keeps_the_better_one(self):
+        first = _rows(2, days=10, spread=0)
+        second = _rows(1, days=10, start=300, spread=0)
+        pairs = pd.DataFrame([
+            {"original_olx_id": first[0]["olx_id"], "relist_olx_id": second[0]["olx_id"],
+             "match_score": 0.70, "gap_days": 4.0},
+            {"original_olx_id": first[1]["olx_id"], "relist_olx_id": second[0]["olx_id"],
+             "match_score": 0.95, "gap_days": 9.0},
+        ])
+        chained = chain_relists(_df(first, second), pairs)
+        assert len(chained) == 2
+        hops = dict(zip(chained["olx_id"], chained["_hops"]))
+        assert hops[second[0]["olx_id"]] == 2
+        assert set(hops.values()) == {1, 2}
 
     def test_the_discount_is_measured_against_the_first_price_we_saw(self):
         cut = _rows(60, days=40, price=9000, first_price=10000)

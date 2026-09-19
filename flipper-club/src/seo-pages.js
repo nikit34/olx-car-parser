@@ -1703,7 +1703,7 @@ export function liquidityJson(rec, slug, { host, builtAt } = {}) {
     gone_in_30d: lq.s30 != null ? lq.s30 : null,
     gone_in_60d: lq.s60 != null ? lq.s60 : null,
     gone_in_90d: lq.s90 != null ? lq.s90 : null,
-    relisted_share: lq.rb != null ? lq.rb : null,
+    relisted_car_share: lq.rb != null ? lq.rb : null,
     price_cut_share: lq.cu != null ? lq.cu : null,
     price_cut_median: lq.cp != null ? lq.cp : null,
     by_price: cut(lq.pb), by_age: cut(lq.ab), by_district: cut(lq.dt),
@@ -1766,7 +1766,7 @@ export function renderLiquidityPage({ rec, slug, market, hasDepreciation = false
       ${(lq.cd != null && lq.hd != null) ? `<p class="fc-p">Os anúncios que baixaram estiveram no ar ${lq.cd} dias, contra ${lq.hd} dos que nunca mexeram no preço. Lê-se na direção certa: baixa-se o preço porque o anúncio está parado, não fica parado por se ter baixado o preço.</p>` : ""}
     </section>` : "";
 
-  const relistBlock = (lq.rb != null) ? `<p class="fc-p">De uns quantos sabemos que não venderam: pelo menos <b>${liqPct(lq.rb)}%</b> reapareceram semanas depois como anúncio novo do mesmo carro, que conseguimos emparelhar com o anterior. É um mínimo e não uma taxa — só contamos os reaparecimentos que identificámos, e quem saiu na semana passada ainda não teve tempo de voltar.</p>` : "";
+  const relistBlock = (lq.rb != null) ? `<p class="fc-p">Pelo menos <b>${liqPct(lq.rb)}%</b> destes carros não se venderam ao primeiro anúncio: voltaram semanas depois como anúncio novo do mesmo carro, que conseguimos emparelhar com o anterior, e os dias que aqui contamos incluem essa segunda tentativa. É um mínimo e não uma taxa — só contamos os reaparecimentos que identificámos.</p>` : "";
 
   const body = crumbs([
     { name: "Início", href: "/pt" }, { name: "Tempo de venda", href: "/pt/liquidez" },
@@ -1781,11 +1781,11 @@ export function renderLiquidityPage({ rec, slug, market, hasDepreciation = false
           <div class="fc-stat"><div class="k">EM 30 DIAS</div><div class="v">${s30}%</div><div class="s">${mkt.s30 != null ? `mercado: ${liqPct(mkt.s30)}%` : "dos anúncios saem"}</div></div>
           ${lq.md != null ? `<div class="fc-stat"><div class="k">MEDIANA</div><div class="v">${lq.md} d</div><div class="s">${(lq.q1 != null && lq.q3 != null) ? `metade sai entre ${lq.q1} e ${lq.q3} dias` : "até sair do OLX"}</div></div>` : ""}
           ${still90 != null ? `<div class="fc-stat"><div class="k">AOS 90 DIAS</div><div class="v">${still90}%</div><div class="s">ainda à venda</div></div>` : ""}
-          ${lq.rb != null ? `<div class="fc-stat"><div class="k">VOLTAM A ANUNCIAR</div><div class="v">${liqPct(lq.rb)}%</div><div class="s">estes não venderam</div></div>` : ""}
+          ${lq.rb != null ? `<div class="fc-stat"><div class="k">PRECISAM DE 2º ANÚNCIO</div><div class="v">${liqPct(lq.rb)}%</div><div class="s">não venderam à primeira</div></div>` : ""}
         </div>
-        ${provenance({ n: lq.n, builtAt, unit: "anúncios acompanhados até saírem",
+        ${provenance({ n: lq.n, builtAt, unit: "carros acompanhados até saírem",
                        measureId: "days-on-market-km",
-                       measure: "Dias entre o anúncio aparecer no OLX e o último ciclo que o viu no ar",
+                       measure: "Dias entre o carro aparecer no OLX e o último ciclo que o viu no ar, somando os anúncios repetidos do mesmo carro",
                        extra: `Kaplan-Meier, com ${lq.cn ? fmtNum(lq.cn) + " anúncios" : "os anúncios"} ainda à venda contados como censurados` })}
       </div>
     </div>
@@ -1843,7 +1843,7 @@ export function renderLiquidityPage({ rec, slug, market, hasDepreciation = false
     `${liqPct(lq.cu)}% dos anúncios de ${rec.b} ${rec.m} que acompanhámos baixaram o preço antes de sair${lq.cp != null ? `, com um corte mediano de ${liqPct(lq.cp)}%` : ""}. É a margem que este modelo costuma ceder, e o ponto de partida para negociar.`]);
   if (lq.rb != null) faqs.push([
     `Os anúncios de ${rec.b} ${rec.m} que desaparecem do OLX foram todos vendidos?`,
-    `Não. Pelo menos ${liqPct(lq.rb)}% dos que saíram voltaram a aparecer depois como anúncio novo do mesmo carro, ou seja não tinham vendido. É um mínimo: só contamos os reaparecimentos que conseguimos emparelhar.`]);
+    `Não. Pelo menos ${liqPct(lq.rb)}% destes carros voltaram ao OLX como anúncio novo do mesmo carro, ou seja o primeiro anúncio não vendeu. Contamos o carro e não o anúncio: os dias até à venda incluem as duas tentativas. É um mínimo, só entram os reaparecimentos que conseguimos emparelhar.`]);
 
   return layout({
     title: `${rec.b} ${rec.m}: quanto tempo demora a vender`,
@@ -1901,8 +1901,8 @@ export function renderLiquidityHub({ rows, market, host, depositCount, builtAt }
         <thead><tr><th>Modelo</th><th>Sai em 30 dias</th><th>Mediana</th><th>vs. mercado</th><th>Anúncios observados</th><th>Preço mediano</th></tr></thead>
         <tbody>${tr}</tbody></table></div>
       ${provenance({ n: rows.reduce((s, r) => s + ((r.lq && r.lq.n) || r.sn || 0), 0), builtAt,
-                     unit: "anúncios acompanhados até saírem", measureId: "days-on-market-km",
-                     measure: "Dias entre o anúncio aparecer no OLX e o último ciclo que o viu no ar" })}
+                     unit: "carros acompanhados até saírem", measureId: "days-on-market-km",
+                     measure: "Dias entre o carro aparecer no OLX e o último ciclo que o viu no ar, somando os anúncios repetidos do mesmo carro" })}
       <p class="fc-p" style="margin-top:18px;"><a href="/pt/precos">Preços por modelo</a> · <a href="/pt/depreciacao">Desvalorização</a> · <a href="/pt/sobrevalorizados">Pedido vs. valor justo</a> · <a href="/pt/metodologia">Como medimos</a></p>
     </section>
     <div style="height:60px;"></div>`;

@@ -263,11 +263,83 @@ def prepare(listings: pd.DataFrame, now: pd.Timestamp | None = None) -> pd.DataF
     return df
 
 
+def chain_relists(listings: pd.DataFrame, pairs: pd.DataFrame) -> pd.DataFrame:
+    """One row per car instead of one per advert, when the pairs are known.
+
+    A seller who relists is not starting over — the car has been for sale since
+    the first advert went up, and the second advert is the same attempt
+    continued. Censoring the first advert (what ``relisted`` does) keeps the
+    curve honest but throws that stretch of time away. Given the pairs from
+    ``relist_events``, this glues the chain back together instead: the row that
+    survives is the first advert, and it ends when the last advert of the same
+    car ended. The days in between adverts count, because the seller lived
+    through them — the median gap is three weeks.
+
+    The matcher is not one-to-one (5,459 re-listings had more than one
+    candidate parent on 2026-09-19), so each link keeps the best-scoring
+    candidate, ties broken by the shorter gap, and each advert keeps one
+    parent and one child. The asking price on the surviving row is the last
+    one seen on the chain and ``first_price_eur`` stays the first, so the
+    discount stats describe the whole campaign rather than its final advert.
+    """
+    need = {"original_olx_id", "relist_olx_id"}
+    if (listings is None or listings.empty or pairs is None or pairs.empty
+            or not need.issubset(pairs.columns) or "olx_id" not in listings.columns):
+        return listings
+    df = listings.copy()
+    df["olx_id"] = df["olx_id"].astype(str)
+    known = set(df["olx_id"])
+
+    links = pairs.copy()
+    for col in ("original_olx_id", "relist_olx_id"):
+        links[col] = links[col].astype(str)
+    links = links[links["original_olx_id"].isin(known) & links["relist_olx_id"].isin(known)]
+    links = links[links["original_olx_id"] != links["relist_olx_id"]]
+    if links.empty:
+        return listings
+    order = [c for c in ("match_score", "gap_days") if c in links.columns]
+    if order:
+        links = links.sort_values(order, ascending=[c == "gap_days" for c in order])
+    links = links.drop_duplicates("relist_olx_id").drop_duplicates("original_olx_id")
+    parent = dict(zip(links["relist_olx_id"], links["original_olx_id"]))
+
+    root_of: dict[str, str] = {}
+    for node in df["olx_id"]:
+        seen, cur = [], node
+        while cur in parent and cur not in root_of and len(seen) < 20:
+            seen.append(cur)
+            cur = parent[cur]
+        root = root_of.get(cur, cur)
+        for n in seen:
+            root_of[n] = root
+        root_of[node] = root
+
+    df["_root"] = df["olx_id"].map(root_of)
+    end = (pd.to_datetime(df.get("last_scraped_at"), utc=True, errors="coerce")
+           if "last_scraped_at" in df.columns else pd.Series(pd.NaT, index=df.index))
+    if "deactivated_at" in df.columns:
+        end = end.fillna(pd.to_datetime(df["deactivated_at"], utc=True, errors="coerce"))
+    df["_end"] = end
+    sort_cols = ["_end"] + (["is_active"] if "is_active" in df.columns else [])
+    df = df.sort_values(sort_cols, na_position="first")
+    last = df.groupby("_root", sort=False).tail(1).set_index("_root")
+
+    roots = df[df["olx_id"] == df["_root"]].copy()
+    size = df.groupby("_root", sort=False).size()
+    roots["_hops"] = roots["_root"].map(size).fillna(1).astype(int)
+    for col in ("last_scraped_at", "deactivated_at", "is_active", "price_eur"):
+        if col in roots.columns and col in last.columns:
+            roots[col] = roots["_root"].map(last[col])
+    roots["olx_id"] = roots["_root"].map(last["olx_id"])
+    return roots.drop(columns=["_root", "_end"]).reset_index(drop=True)
+
+
 def build_liquidity(
     listings: pd.DataFrame,
     relisted: set[str] | None = None,
     now: pd.Timestamp | None = None,
     now_year: int | None = None,
+    pairs: pd.DataFrame | None = None,
 ) -> dict:
     """``{"models": {(brand, model): rec}, "market": rec}`` for the public pages.
 
@@ -276,7 +348,15 @@ def build_liquidity(
     and the model pages print. A page of its own needs ``MIN_EVENTS`` — see
     ``page_records`` — and every cut inside a record carries its own gate, so a
     thin district or price band is missing rather than estimated.
+
+    ``pairs`` is ``relist_events``: given it, the unit becomes the car rather
+    than the advert (see ``chain_relists``) and ``rb`` is the share of cars
+    that needed more than one advert. Given only ``relisted`` — the set of ids
+    that came back — the unit stays the advert and those endings are censored.
+    Both are honest; the chain measures the longer, truer stretch of time.
     """
+    if pairs is not None and not pairs.empty:
+        listings = chain_relists(listings, pairs)
     df = prepare(listings, now=now)
     out: dict = {"models": {}, "market": {}}
     if df.empty or not {"brand", "model"}.issubset(df.columns):
@@ -284,10 +364,12 @@ def build_liquidity(
     if now_year is None:
         now_year = int(pd.Timestamp.now("UTC").year)
     relisted = relisted or set()
-    back = df["olx_id"].astype(str).isin(relisted) if "olx_id" in df.columns else None
+    came_back = (df["olx_id"].astype(str).isin(relisted)
+                 if relisted and "olx_id" in df.columns else None)
+    back = (df["_hops"] > 1) if "_hops" in df.columns else came_back
     df["_gone"] = df["_event"]
-    if back is not None:
-        df["_event"] = df["_gone"] & ~back
+    if came_back is not None:
+        df["_event"] = df["_gone"] & ~came_back
 
     market = _curve_stats(df)
     if market:
@@ -318,6 +400,61 @@ def build_liquidity(
         if dt:
             rec["dt"] = dt
         out["models"][(str(brand), str(model))] = rec
+    return out
+
+
+def dom_by_segment(
+    listings: pd.DataFrame,
+    relisted: set[str] | None = None,
+    pairs: pd.DataFrame | None = None,
+    now: pd.Timestamp | None = None,
+) -> dict[tuple, dict]:
+    """``(brand, model, generation or None) → {"md", "f21", "n"}`` off the curve.
+
+    The one source of days-on-market for everything that is not a public page:
+    the deal scorer's holding cost, the decision engine's liquidity gates, the
+    turnover table. They all used to count what disappeared, each with its own
+    arithmetic, and each read faster than the pages did.
+
+    A generation reaches the map on its own sample; the ``(brand, model, None)``
+    entry is the fallback for rows whose generation is missing or too thin.
+    """
+    if pairs is not None and not pairs.empty:
+        listings = chain_relists(listings, pairs)
+    df = prepare(listings, now=now)
+    if df.empty or not {"brand", "model"}.issubset(df.columns):
+        return {}
+    if relisted and "olx_id" in df.columns:
+        df = df.assign(_event=df["_event"] & ~df["olx_id"].astype(str).isin(relisted))
+
+    def _stats(grp: pd.DataFrame) -> dict | None:
+        events = int(grp["_event"].sum())
+        if events < MIN_SELL_EVENTS:
+            return None
+        times, surv = survival(grp["_dur"].to_numpy(dtype=float),
+                               grp["_event"].to_numpy(dtype=bool))
+        median = _quantile(times, surv, 0.5)
+        if median is None:
+            return None
+        fast = _gone_by(times, surv, 21, float(grp["_dur"].max()))
+        return {"md": float(median), "f21": float(fast if fast is not None else 0.0),
+                "n": events}
+
+    out: dict[tuple, dict] = {}
+    if "generation" in df.columns:
+        for (brand, model, gen), grp in df.groupby(["brand", "model", "generation"],
+                                                   dropna=False):
+            stats = _stats(grp)
+            if stats:
+                blank = gen is None or pd.isna(gen) or str(gen) == ""
+                out[(brand, model, None if blank else gen)] = stats
+    for (brand, model), grp in df.groupby(["brand", "model"], dropna=False):
+        key = (brand, model, None)
+        if key in out:
+            continue
+        stats = _stats(grp)
+        if stats:
+            out[key] = stats
     return out
 
 
