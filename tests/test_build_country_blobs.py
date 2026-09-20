@@ -215,7 +215,7 @@ class TestDealFeed:
             manifest = bcb.build_country("DE", None, tmp_path, min_models=3)
 
         valuations = _read(tmp_path / "valuations_de.json")
-        assert valuations["v"] == 2
+        assert valuations["v"] == 3
         assert len(valuations["cars"]) == len(MODELS) * len(YEARS) * PER_CELL == manifest["rows"]["valuations"]
         car = valuations["cars"]["as24_de:700001"]
         assert car["p"] > 0 and car["fl"] <= car["fm"] <= car["fh"]
@@ -469,7 +469,7 @@ class TestWorkerFieldContract:
         """
         src = (REPO_ROOT / "src" / "analytics" / "valuations.py").read_text(encoding="utf-8")
         body = src[src.index("def build_valuations("):]
-        tail = [m.start() for m in re.finditer(r'return \{"v": \d+, "cars": cars\}', body)]
+        tail = [m.start() for m in re.finditer(r'return (?:blob|\{"v": \d+, "cars": cars\})', body)]
         assert tail, "build_valuations no longer ends by returning the blob"
         body = body[:tail[-1]]
         literal = re.search(r"rec = \{(.*?)\n        \}", body, re.S)

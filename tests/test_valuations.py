@@ -136,5 +136,46 @@ class TestListingSource:
         assert "sv" not in blob["cars"]["AAA"]
 
     def test_the_blob_announces_the_version_that_carries_the_source(self):
-        assert build_valuations(_listings(), _predictions())["v"] == 2
-        assert build_valuations(pd.DataFrame(), pd.DataFrame())["v"] == 2
+        assert build_valuations(_listings(), _predictions())["v"] == 3
+        assert build_valuations(pd.DataFrame(), pd.DataFrame())["v"] == 3
+
+
+class TestCarHistoryAndNorms:
+    """A car on its third advert has been for sale far longer than the advert
+    admits, and a listing that has not moved still sits in a band where most
+    sellers do. Both are facts the buyer can check; neither was in the blob."""
+
+    def _two_ads(self):
+        first = _listings().to_dict("records")[0]
+        first.update({"olx_id": "OLD", "is_active": False,
+                      "first_seen_at": NOW - pd.Timedelta(days=200)})
+        second = _listings().to_dict("records")[0]
+        second["first_seen_at"] = NOW - pd.Timedelta(days=68)
+        return pd.DataFrame([first, second])
+
+    def _pairs(self):
+        return pd.DataFrame([{"original_olx_id": "OLD", "relist_olx_id": "AAA",
+                              "match_score": 0.9, "gap_days": 12.0}])
+
+    def test_the_car_clock_runs_from_the_first_advert_not_the_current_one(self):
+        car = build_valuations(self._two_ads(), _predictions(),
+                               pairs=self._pairs())["cars"]["AAA"]
+        assert car["dom"] == 68
+        assert car["dc"] == 200
+        assert car["na"] == 2
+
+    def test_a_car_with_one_advert_carries_no_chain_fields(self):
+        car = build_valuations(_listings(), _predictions(),
+                               pairs=self._pairs())["cars"]["AAA"]
+        assert "dc" not in car and "na" not in car
+
+    def test_without_the_pairs_the_relist_stays_invisible(self):
+        car = build_valuations(self._two_ads(), _predictions())["cars"]["AAA"]
+        assert "dc" not in car
+
+    def test_the_bands_ride_along_so_a_quiet_listing_still_has_a_norm(self):
+        norms = [{"lo": 8000, "hi": 15000, "lbl": "€8.000 a €15.000",
+                  "n": 10305, "cu": 0.604, "cp": 4.8, "md": 69}]
+        blob = build_valuations(_listings(), _predictions(), norms=norms)
+        assert blob["neg"] == norms
+        assert "neg" not in build_valuations(_listings(), _predictions())

@@ -1085,6 +1085,31 @@ check("the negotiation facts show up on a pasted listing", () => {
   assert(out.includes("fuga de óleo"), "the seller's own words are not quoted");
 });
 
+check("a quiet listing still gets the band's negotiation norm", () => {
+  const rec = { t: "VW Golf 1.6 TDI", y: 2015, km: 150000, fu: "Diesel", p: 9000,
+                fl: 9500, fm: 11000, fh: 12500, ct: "Porto", sd: 29, dom: 12 };
+  const norms = [{ lo: 8000, hi: 15000, lbl: "€8.000 a €15.000", n: 10305,
+                   cu: 0.604, cp: 4.8, md: 69 }];
+  const out = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models,
+                              spec: null, depositCount: 0, host: HOST, builtAt, norms });
+  assert(out.includes("60 em cada 100"), "the share who come down is not rendered");
+  assert(out.includes("4.8%"), "the median cut is not rendered");
+  assert(out.includes(`10\u202f305`), "the norm does not say what it rests on");
+  const bare = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models,
+                               spec: null, depositCount: 0, host: HOST, builtAt });
+  assert(!bare.includes("em cada 100"), "a norm appeared without any norms to show");
+});
+
+check("a car on its second advert says so, and the clock runs from the first", () => {
+  const rec = { t: "VW Golf 1.6 TDI", y: 2015, p: 9000, fl: 9500, fm: 11000,
+                fh: 12500, dom: 68, dc: 200, na: 2 };
+  const out = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models,
+                              spec: null, depositCount: 0, host: HOST, builtAt });
+  assert(out.includes("200 dias"), "the car-level clock is not rendered");
+  assert(out.includes("2 anúncios"), "the number of adverts is not rendered");
+  assert(out.includes("68 dias"), "the current advert's own age is gone");
+});
+
 check("a listing sold for parts says so instead of quoting a fair price", () => {
   const rec = { t: "VW Golf", y: 2015, p: 900, fl: 9500, fm: 11000, fh: 12500,
                 hb: "para peças" };

@@ -52,6 +52,10 @@ export function fmtKm(n) {
 }
 export function fmtPct(p) { return p == null ? "—" : Math.round(p * 100) + "%"; }
 function fmtPct1(p) { return p == null ? "—" : (p * 100).toFixed(1) + "%"; }
+function normForPrice(norms, price) {
+  if (!Array.isArray(norms) || price == null || !Number.isFinite(price)) return null;
+  return norms.find(n => price >= n.lo && (n.hi == null || price < n.hi)) || null;
+}
 
 function fmtRelativeDays(iso) {
   if (!iso) return null;
@@ -1605,7 +1609,7 @@ const AVALIAR_FAQ = [
            "De anúncios ativos de carros no OLX Portugal, recolhidos diariamente. Trabalhamos com preços pedidos, com a mediana e o intervalo interquartil, e com um modelo estatístico para o valor justo. O método completo está publicado na página de metodologia."],
         ];
 
-export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depositCount, host, builtAt, contact, historyUrl = null, market = null, stats = null }) {
+export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depositCount, host, builtAt, contact, historyUrl = null, market = null, stats = null, norms = null }) {
   const to = (contact || "").trim();
   const mailto = to
     ? `mailto:${encodeURIComponent(to)}?subject=Avaliar%20o%20meu%20carro`
@@ -1663,6 +1667,17 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
         </div>`;
       }
     }
+    const band = normForPrice(norms, rec.p);
+    const normBlock = (band && band.cu != null)
+      ? `<div style="font-size:12px;color:#8A8F98;margin-top:12px;line-height:1.5;">
+           Nesta faixa de preço, <b style="color:#16181D;">${Math.round(band.cu * 100)} em cada 100</b> vendedores baixam o preço antes de o carro sair${band.cp != null ? `, com um corte mediano de <b style="color:#16181D;">${band.cp.toFixed(1)}%</b>` : ""}. Medido em ${fmtNum(band.n)} carros do OLX seguidos do primeiro anúncio ao último.
+         </div>`
+      : "";
+    const chainBlock = (rec.dc != null && rec.na != null)
+      ? `<div style="font-size:12.5px;color:#6B4E12;background:${amber.bg};border:1px solid ${amber.br};border-radius:10px;padding:10px 12px;margin-top:12px;line-height:1.5;">
+           Este carro anda à venda há <b>${rec.dc} dias</b>, em <b>${rec.na} anúncios</b> — o atual é o mais recente. Quem já reanunciou uma vez costuma estar mais disponível para negociar.
+         </div>`
+      : "";
     let stallBlock = "";
     if (rec.dom != null) {
       const stalled = rec.sd != null && rec.dom > rec.sd * 1.5;
@@ -1716,6 +1731,8 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
         ${faultBlock}
         ${sellLine}
         ${stallBlock}
+        ${chainBlock}
+        ${normBlock}
         ${hist}
         ${olxHref ? `<a class="olx-btn" style="display:block;margin-top:18px;" href="${escapeHtml(olxHref)}" target="_blank" rel="noopener nofollow"${analyticsClick("olx_open", { source: "avaliar", olx_id: String(olxId || "") })}>Ver anúncio original&nbsp;&nbsp;↗</a>` : ""}
         ${whatsappShare(`${rec.t || "Viatura"}: pedido ${fmtEur(price)}, justo ${fmtEur(fm)} (${fmtEur(fl)}–${fmtEur(fh)}). Avaliação independente:`, host ? `https://${host}/pt/avaliar?q=${encodeURIComponent(olxId || "")}` : "")}

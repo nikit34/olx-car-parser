@@ -515,13 +515,14 @@ async function handleAvaliar(request, env, url) {
   const ano = Number.isFinite(anoRaw) ? anoRaw : null;
 
   // Paste-a-link path (an existing OLX listing).
-  let rec = null, olxId = null, sourceUrl = null;
+  let rec = null, olxId = null, sourceUrl = null, norms = null;
   if (query) {
     olxId = parseOlxId(query);
     if (/^https?:\/\//i.test(query)) sourceUrl = query;
     if (olxId) {
       const doc = await getValuations(env);
       rec = (doc && doc.cars) ? (doc.cars[olxId] || null) : null;
+      norms = (doc && Array.isArray(doc.neg)) ? doc.neg : null;
     }
   }
 
@@ -536,7 +537,7 @@ async function handleAvaliar(request, env, url) {
              vender: publishedVender(models, modelo, mrec, mdoc.built_at) };
   }
   return html(renderAvaliar({
-    rec, olxId, sourceUrl, query, models, spec, depositCount: null,
+    rec, olxId, sourceUrl, query, models, spec, depositCount: null, norms,
     host: url.host, builtAt: mdoc && mdoc.built_at,
     contact: env.SITE_CONTACT_EMAIL,
     historyUrl: env.HISTORY_REPORT_URL || null,

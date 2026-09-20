@@ -353,8 +353,14 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
     sell_speed = sell_speed_frame(liquidity)
     print(f"[build]   liquidity: {len(liquidity.get('models', {})):>6} models  "
           f"({len(liq_pages)} deep enough for a page)", flush=True)
+    from src.analytics.negotiation import price_band_norms
+    from src.analytics.outcomes import build_outcomes
+    _outcomes = build_outcomes(listings, snapshots, _rel)
+    _norms = price_band_norms(_outcomes)
+    print(f"[build]   negotiation norms: {len(_norms)} price bands over "
+          f"{len(_outcomes):,} cars", flush=True)
     valuations = build_valuations(listings, predictions, sell_speed,
-                                  snapshots=snapshots)
+                                  snapshots=snapshots, pairs=_rel, norms=_norms)
     val_path = out_dir / "valuations.json"
     # allow_nan=False: a non-finite value (pandas NaN leaking through) emits the
     # literal `NaN`, which is valid for Python's json.load but breaks the Worker's

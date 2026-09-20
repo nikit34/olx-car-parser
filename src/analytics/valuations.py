@@ -134,10 +134,37 @@ def _price_track(snapshots: pd.DataFrame | None, now: pd.Timestamp,
     return {k: v for k, v in out.items() if len(v) >= 2}
 
 
+def _chain_history(listings: pd.DataFrame, pairs: pd.DataFrame | None):
+    """``(olx_id → first advert's date, olx_id → adverts so far)`` per car."""
+    empty: tuple[dict, dict] = ({}, {})
+    if (pairs is None or getattr(pairs, "empty", True)
+            or listings is None or listings.empty or "olx_id" not in listings.columns):
+        return empty
+    from src.analytics.liquidity import relist_roots
+
+    roots = relist_roots(listings, pairs)
+    if roots.empty:
+        return empty
+    df = listings[["olx_id", "first_seen_at"]].copy()
+    df["olx_id"] = df["olx_id"].astype(str)
+    df["root"] = df["olx_id"].map(roots)
+    df = df.dropna(subset=["root"])
+    df["first_seen_at"] = pd.to_datetime(df["first_seen_at"], errors="coerce", utc=True)
+    grouped = df.groupby("root", sort=False)["first_seen_at"]
+    started = grouped.min()
+    counts = df.groupby("root", sort=False).size()
+    start_by_id = df["root"].map(started)
+    ads_by_id = df["root"].map(counts)
+    return (dict(zip(df["olx_id"], start_by_id)), dict(zip(df["olx_id"], ads_by_id)))
+
+
 def build_valuations(listings: pd.DataFrame, predictions: pd.DataFrame,
                      sell_speed: pd.DataFrame | None = None,
-                     snapshots: pd.DataFrame | None = None) -> dict:
-    """Return ``{"v":2, "cars": {olx_id: {...}}}`` for active, priced listings.
+                     snapshots: pd.DataFrame | None = None,
+                     pairs: pd.DataFrame | None = None,
+                     norms: list[dict] | None = None) -> dict:
+    """Return ``{"v":3, "cars": {olx_id: {...}}, "neg": [...]}`` for active,
+    priced listings.
 
     - ``listings``: enriched listings DataFrame (needs olx_id, is_active, title,
       description, brand, model, year, mileage_km, fuel_type, price_eur, city).
@@ -149,14 +176,27 @@ def build_valuations(listings: pd.DataFrame, predictions: pd.DataFrame,
 
     Blob version 2 carries ``sv`` on StandVirtual rows, which is what lets a
     reader rebuild the listing URL from the id alone.
+
+    Version 3 adds two things a buyer can hold against a seller. ``neg`` is
+    ``negotiation.price_band_norms`` — how often sellers in this price band
+    come down and by how much — so a listing that has not moved can still be
+    read against what usually happens. And with ``pairs`` (``relist_events``)
+    the record carries ``dc`` and ``na``: the days since the car's FIRST
+    advert and how many adverts it has had. A car on its third advert has been
+    for sale far longer than ``dom`` admits, and that is the strongest fact in
+    the room when the seller says the price is firm.
     """
     cars: dict[str, dict] = {}
+    blob: dict = {"v": 3, "cars": cars}
+    if norms:
+        blob["neg"] = norms
     if listings.empty or predictions.empty:
-        return {"v": 2, "cars": cars}
+        return blob
 
     now = pd.Timestamp.now(tz="UTC")
     pred = predictions.set_index("olx_id")
     track = _price_track(snapshots, now, set(pred.index.astype(str)))
+    chain_start, chain_ads = _chain_history(listings, pairs)
 
     sell_lookup: dict[tuple, int] = {}
     if sell_speed is not None and not sell_speed.empty:
@@ -210,6 +250,13 @@ def build_valuations(listings: pd.DataFrame, predictions: pd.DataFrame,
             dom = int((now - posted_ts).days)
             if 0 <= dom <= 3650:
                 rec["dom"] = dom
+        ads = chain_ads.get(str(oid))
+        started = chain_start.get(str(oid))
+        if ads and ads > 1 and started is not None:
+            car_days = int((now - started).days)
+            if 0 <= car_days <= 3650 and car_days > (rec.get("dom") or 0):
+                rec["dc"] = car_days
+                rec["na"] = int(ads)
         pts = track.get(str(oid))
         if pts:
             rec["ph"] = pts
@@ -224,4 +271,4 @@ def build_valuations(listings: pd.DataFrame, predictions: pd.DataFrame,
         # Drop None values to keep the blob small.
         cars[str(oid)] = {k: v for k, v in rec.items() if v is not None}
 
-    return {"v": 2, "cars": cars}
+    return blob
