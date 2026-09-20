@@ -19,6 +19,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
 from src.models.listing import Base
+import src.models.photo  # noqa: F401 — register with Base
 import src.models.portfolio  # noqa: F401 — register with Base
 import src.models.relist  # noqa: F401 — register with Base
 import src.models.seller  # noqa: F401 — register with Base

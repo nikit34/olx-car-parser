@@ -281,6 +281,16 @@ jobs:
             .venv/bin/python -m src.cli scrape
           fi
 
+      - name: Hash listing photos
+        if: ${{ !cancelled() }}
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        timeout-minutes: 20
+        continue-on-error: true
+        run: |
+          ulimit -n 4096
+          .venv/bin/python -m src.cli hash-photos --limit 8000 --workers 8
+
       - name: Backfill seller profiles
         # Resolves seller_uuid for newly-scraped listings (which only have
         # seller_profile_url at this point) and refreshes any seller row

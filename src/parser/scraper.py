@@ -14,7 +14,7 @@ import threading
 import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 from bs4 import BeautifulSoup
@@ -23,6 +23,9 @@ from src.parser.seller_profile import (
     SellerProfile,
     parse_seller_link,
     parse_seller_profile_html,
+)
+from src.parser.photo_fetch import (
+    photo_refs_olx_api, photo_refs_standvirtual,
 )
 from src.parser.tls_fingerprint import build_ssl_context
 
@@ -197,6 +200,14 @@ class RawListing:
     seller_shop_slug: str | None = None
     seller_display_name: str | None = None
     seller_displayed_as: str | None = None
+
+    """Gallery fingerprints — ``(CDN file id, signed URL or None)`` per photo.
+
+    Both platforms hand these over in payloads the scrape already fetches, so
+    carrying them costs no extra request. The URL is kept only for
+    StandVirtual, whose photo URL is a signed JWT that cannot be rebuilt.
+    """
+    photo_refs: list[tuple[str, str | None]] = field(default_factory=list)
 
 
 def _parse_retry_after(value) -> float | None:
@@ -1290,6 +1301,7 @@ def _offer_to_raw(offer: dict) -> RawListing:
         city=((loc.get("city") or {}).get("name")) or "",
         district=((loc.get("region") or {}).get("name")) or "",
         photo_count=len(offer.get("photos") or []),
+        photo_refs=photo_refs_olx_api(offer),
         source="olx",
     )
 
@@ -1450,6 +1462,9 @@ def _sv_advert_to_details(advert: dict) -> dict:
     photos = (advert.get("images") or {}).get("photos") or []
     if photos:
         details["photo_count"] = len(photos)
+        refs = photo_refs_standvirtual(advert)
+        if refs:
+            details["photo_refs"] = refs
 
     desc = advert.get("description")
     if isinstance(desc, str) and desc:

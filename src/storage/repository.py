@@ -24,6 +24,7 @@ from sqlalchemy import func, or_ as _or_, select, text as sa_text
 from sqlalchemy.orm import Session
 
 from src.models.listing import Listing, PriceSnapshot, MarketStats, UnmatchedListing
+from src.models.photo import ListingPhoto
 from src.models.portfolio import PortfolioDeal
 from src.models.relist import RelistEvent
 from src.models.seller import Seller
@@ -103,6 +104,34 @@ def upsert_listing(session: Session, data: dict) -> Listing:
 
     session.flush()
     return listing
+
+
+def save_listing_photos(session: Session, olx_id: str, refs) -> int:
+    """Record this listing's gallery fingerprints. Returns rows inserted.
+
+    Additive on purpose: a photo the seller has since deleted stays, because
+    the question these rows answer is "has this car been advertised before",
+    and the evidence for that is what the ad showed at any point.
+
+    ``phash`` is left NULL — filling it costs one thumbnail download per photo
+    and is the ``hash-photos`` job's work, not the scrape's.
+    """
+    if not refs:
+        return 0
+    known = {
+        row[0] for row in session.query(ListingPhoto.photo_id)
+        .filter(ListingPhoto.olx_id == olx_id)
+    }
+    added = 0
+    for pos, ref in enumerate(refs):
+        photo_id, url = ref if isinstance(ref, (tuple, list)) else (ref, None)
+        if not photo_id or photo_id in known:
+            continue
+        session.add(ListingPhoto(olx_id=olx_id, pos=pos,
+                                 photo_id=photo_id, url=url))
+        known.add(photo_id)
+        added += 1
+    return added
 
 
 def add_price_snapshot(session: Session, listing_id: int, price_eur: float,
@@ -713,6 +742,49 @@ def deduplicate_cross_platform(session: Session) -> int:
     return marked
 
 
+SAME_PLATFORM_KM_TOLERANCE = 0.05
+
+
+def _mileage_agrees(a, b, tolerance: float = SAME_PLATFORM_KM_TOLERANCE) -> bool:
+    """Whether two odometer readings are close enough to be one car."""
+    if not a or not b:
+        return False
+    return abs(a - b) / max(a, b) <= tolerance
+
+
+def _photo_hashes_for(session: Session, olx_ids) -> dict:
+    """``{olx_id: [phash, ...]}`` for the listings about to be compared."""
+    ids = list({i for i in olx_ids if i})
+    if not ids:
+        return {}
+    from src.analytics.photo_match import load_photo_hashes
+    out: dict[str, list[str]] = {}
+    for chunk in _chunked(ids, _MAX_BIND_PARAMS):
+        out.update(load_photo_hashes(session, chunk))
+    return out
+
+
+def _same_car_evidence(a_hashes, b_hashes, a_km, b_km,
+                       a_price, b_price) -> str | None:
+    """Why these two listings are one car, or None if they are not.
+
+    Photographs decide whenever both sides have them. Without them the old
+    attribute rule still applies, so listings recorded before the fingerprint
+    table keep being deduplicated exactly as they were.
+    """
+    from src.analytics.photo_match import photo_overlap
+    if a_hashes and b_hashes:
+        matched, _score = photo_overlap(a_hashes, b_hashes)
+        return f"{matched} shared photos" if matched else None
+    if a_km != b_km:
+        return None
+    if a_price and b_price:
+        return "price+mileage" if 0.99 <= b_price / a_price <= 1.01 else None
+    if a_price or b_price:
+        return None
+    return "mileage"
+
+
 def deduplicate_same_platform(session: Session) -> int:
     """Detect duplicate listings posted twice on the *same* platform.
 
@@ -724,13 +796,24 @@ def deduplicate_same_platform(session: Session) -> int:
     Peugeot 206 ``8Q0ll0`` / ``8Q0ll4`` (both StandVirtual, same
     €700 / 43200 km / 2008 / district).
 
-    Match criteria are tighter than the cross-platform pass:
-      • brand, model, year, district — same as before
-      • mileage_km — exact match (not ±10 %), since same-platform
-        re-posts copy the attribute verbatim
-      • latest price_eur — exact match (or ±1 % to absorb cents)
-      • source identical
-      • neither side already flagged as a duplicate
+    Candidates share source, brand, model, year and district, and their
+    mileage agrees within 5 %. What settles it is the photographs: the pair is
+    one car when the two galleries share a frame at Hamming distance 2 or less.
+
+    The attribute rule this replaces asked for an identical odometer reading
+    and a price within 1 %, which is why it found almost nothing. Of 163
+    candidate pairs sampled from live OLX listings on 2026-09-20, photographs
+    confirmed 34 as one car — and every one of those carried two different
+    prices, from 6500/6399 to 7500/5000. Requiring the prices to agree rejects
+    duplicates by definition, because the point of the second ad is usually the
+    new price. Mileage drifts too, by re-typing or by driving (265000/275000,
+    210000/200000), and the exact-match rule gave up a fifth of what was
+    findable for it. Beyond 5 % apart nothing was ever confirmed, and neither
+    was anything in the control group, so the window closes there.
+
+    Pairs where either side has no stored photo hashes — everything from
+    before the fingerprint table — fall back to the old attribute rule, so
+    this never marks fewer duplicates than it did.
 
     The earlier-seen listing is canonical.
     """
@@ -766,9 +849,6 @@ def deduplicate_same_platform(session: Session) -> int:
     )
     latest_prices: dict[int, float | None] = {lid: price for lid, price in price_rows}
 
-    # Group by (source, brand, model, year, district, mileage). Same-source
-    # near-duplicates share all six on the production data; different mileage
-    # usually means a real second unit.
     by_key: dict[tuple, list[Listing]] = {}
     for l in active:
         key = (
@@ -777,39 +857,40 @@ def deduplicate_same_platform(session: Session) -> int:
             (l.model or "").lower(),
             l.year,
             (l.district or "").lower(),
-            l.mileage_km,
         )
         by_key.setdefault(key, []).append(l)
 
+    groups = [g for g in by_key.values() if len(g) > 1]
+    hashes = _photo_hashes_for(session, [l.olx_id for g in groups for l in g])
+
     marked = 0
-    for key, group in by_key.items():
-        if len(group) < 2:
-            continue
-        # Sort by first_seen_at so the earliest is the canonical row.
+    for group in groups:
         group.sort(key=lambda l: l.first_seen_at or datetime.max)
-        canonical = group[0]
-        canonical_price = latest_prices.get(canonical.id)
-        for duplicate in group[1:]:
-            if duplicate.duplicate_of:
+        for i, canonical in enumerate(group):
+            if canonical.duplicate_of:
                 continue
-            dup_price = latest_prices.get(duplicate.id)
-            # Require an exact (±1 %) price match — same-platform re-posts
-            # copy the price; a different price probably means a different
-            # unit at the same dealer.
-            if canonical_price and dup_price:
-                ratio = dup_price / canonical_price
-                if not (0.99 <= ratio <= 1.01):
+            canonical_price = latest_prices.get(canonical.id)
+            for duplicate in group[i + 1:]:
+                if duplicate.duplicate_of:
                     continue
-            elif canonical_price or dup_price:
-                # One side has a price, the other doesn't — refuse to merge.
-                continue
-            duplicate.duplicate_of = canonical.olx_id
-            _merge_into_canonical(canonical, duplicate)
-            log.info("Same-platform dedup: %s %s is duplicate of %s (%s %s %s, %d km, €%s)",
-                     duplicate.source, duplicate.olx_id, canonical.olx_id,
-                     canonical.brand, canonical.model, canonical.year,
-                     canonical.mileage_km, canonical_price)
-            marked += 1
+                if not _mileage_agrees(canonical.mileage_km, duplicate.mileage_km):
+                    continue
+                dup_price = latest_prices.get(duplicate.id)
+                evidence = _same_car_evidence(
+                    hashes.get(canonical.olx_id), hashes.get(duplicate.olx_id),
+                    canonical.mileage_km, duplicate.mileage_km,
+                    canonical_price, dup_price,
+                )
+                if not evidence:
+                    continue
+                duplicate.duplicate_of = canonical.olx_id
+                _merge_into_canonical(canonical, duplicate)
+                log.info("Same-platform dedup: %s %s is duplicate of %s by %s "
+                         "(%s %s %s, %d km, EUR %s)",
+                         duplicate.source, duplicate.olx_id, canonical.olx_id,
+                         evidence, canonical.brand, canonical.model,
+                         canonical.year, canonical.mileage_km, canonical_price)
+                marked += 1
 
     if marked:
         session.commit()
@@ -1348,6 +1429,11 @@ def record_relist_events(session: Session, events_df: pd.DataFrame) -> int:
     in place — re-runs of the detection job with newer data or
     different threshold tunables can update an existing row without
     duplicating it. The detected_at timestamp is preserved on update.
+
+    ``photo_score`` is the exception to refreshing in place: a run that could
+    not check the photographs leaves whatever is stored alone, because NULL
+    there means "not checked" and must never be written over a real score by a
+    pass that simply had no fingerprints to look at.
     """
     if events_df is None or events_df.empty:
         return 0
@@ -1390,6 +1476,8 @@ def record_relist_events(session: Session, events_df: pd.DataFrame) -> int:
                 int(row["mileage_delta_km"])
                 if pd.notna(row.get("mileage_delta_km")) else None
             )
+            if pd.notna(row.get("photo_score")):
+                existing.photo_score = float(row["photo_score"])
             continue
 
         ev = RelistEvent(
@@ -1416,6 +1504,10 @@ def record_relist_events(session: Session, events_df: pd.DataFrame) -> int:
             mileage_delta_km=(
                 int(row["mileage_delta_km"])
                 if pd.notna(row.get("mileage_delta_km")) else None
+            ),
+            photo_score=(
+                float(row["photo_score"])
+                if pd.notna(row.get("photo_score")) else None
             ),
         )
         session.add(ev)

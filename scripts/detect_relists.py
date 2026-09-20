@@ -29,8 +29,38 @@ from src.analytics.relist import (
     compute_segment_dom_median,
     find_relists,
 )
+from src.analytics.photo_match import load_photo_hashes, photo_overlap
 from src.storage.database import get_session, init_db
 from src.storage.repository import get_listings_df, record_relist_events
+
+
+def annotate_photo_score(session, relist_df: pd.DataFrame) -> pd.DataFrame:
+    """Add ``photo_score`` to detected pairs: the share of the smaller gallery
+    the two ads have in common.
+
+    NaN where the pair could not be checked — one side has no stored
+    fingerprints, which is every pair from before the photo table existed. That
+    is deliberately not zero: "we did not look" and "the photographs disagree"
+    are different claims, and a threshold filter that conflates them silently
+    drops the entire history.
+    """
+    if relist_df.empty:
+        return relist_df
+    ids = set(relist_df["original_olx_id"]) | set(relist_df["relist_olx_id"])
+    hashes = load_photo_hashes(session, ids)
+    if not hashes:
+        relist_df["photo_score"] = float("nan")
+        return relist_df
+
+    def score(row):
+        a = hashes.get(row["original_olx_id"])
+        b = hashes.get(row["relist_olx_id"])
+        if not a or not b:
+            return float("nan")
+        return photo_overlap(a, b)[1]
+
+    relist_df["photo_score"] = relist_df.apply(score, axis=1)
+    return relist_df
 
 
 def main() -> int:
@@ -89,6 +119,16 @@ def main() -> int:
         relist_df["gap_days"].median(),
         median_pct,
     )
+
+    relist_df = annotate_photo_score(session, relist_df)
+    checked = relist_df["photo_score"].notna()
+    if checked.any():
+        log.info(
+            "Photo check: %d of %d pairs had fingerprints on both sides, "
+            "%d share at least one frame",
+            int(checked.sum()), len(relist_df),
+            int((relist_df["photo_score"].fillna(0) > 0).sum()),
+        )
 
     top = relist_df.nlargest(min(10, len(relist_df)), "match_score")
     log.info("Top matches:")

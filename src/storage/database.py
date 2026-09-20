@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
 
 from src.models.listing import Base
+import src.models.photo  # noqa: F401 — register ListingPhoto with Base
 import src.models.portfolio  # noqa: F401 — register PortfolioDeal with Base
 import src.models.relist  # noqa: F401 — register RelistEvent with Base
 import src.models.seller  # noqa: F401 — register Seller with Base
@@ -184,7 +185,7 @@ def _merge_import_listings(conn, batch: int = 2000) -> int:
     return moved
 
 
-_SCHEMA_VERSION = 8  # bump when _migrate_columns or _dead_json_keys changes
+_SCHEMA_VERSION = 9  # bump when _migrate_columns or _dead_json_keys changes
 
 
 def _read_schema_version(conn) -> int:
@@ -317,6 +318,9 @@ def init_db(db_url: str | None = None):
     # Indexes that ADD COLUMN doesn't create automatically. ``create_all``
     # builds them on fresh DBs, but existing rows added via ALTER TABLE
     # need an explicit ``CREATE INDEX IF NOT EXISTS`` to match the ORM.
+    _migrate_relist_columns = [
+        ("photo_score", "REAL"),
+    ]
     _migrate_indexes = [
         ("ix_listings_seller_uuid", "listings", "seller_uuid"),
         ("ix_listings_last_scraped_at", "listings", "last_scraped_at"),
@@ -361,6 +365,18 @@ def init_db(db_url: str | None = None):
             try:
                 conn.execute(text(
                     f"ALTER TABLE unmatched_listings ADD COLUMN {col_name} "
+                    f"{col_type}"
+                ))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+        existing_relist_columns = _get_table_columns(conn, "relist_events")
+        for col_name, col_type in _migrate_relist_columns:
+            if col_name in existing_relist_columns:
+                continue
+            try:
+                conn.execute(text(
+                    f"ALTER TABLE relist_events ADD COLUMN {col_name} "
                     f"{col_type}"
                 ))
                 conn.commit()

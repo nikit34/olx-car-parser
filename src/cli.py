@@ -25,7 +25,7 @@ from src.storage.repository import (
     add_price_snapshot, compute_market_stats, deduplicate_cross_platform,
     deduplicate_same_platform, revalidate_recent_sold,
     get_duplicate_ids, get_listings_df, heal_mass_sweeps, mark_inactive,
-    upsert_listing, upsert_unmatched,
+    save_listing_photos, upsert_listing, upsert_unmatched,
 )
 
 app = typer.Typer(help="OLX.pt Car Parser — scrape, store, analyze")
@@ -118,6 +118,8 @@ def _db_worker(db_queue: Queue, result: dict):
         if generation:
             data["generation"] = generation
             listing = upsert_listing(session, data)
+            save_listing_photos(session, raw.olx_id,
+                                getattr(raw, "photo_refs", None))
             if raw.price_eur is not None:
                 add_price_snapshot(session, listing.id, raw.price_eur, raw.negotiable)
             active_ids.add(raw.olx_id)
@@ -1804,6 +1806,58 @@ def init():
 
 
 
+
+
+
+@app.command("hash-photos")
+def hash_photos(
+    limit: int = typer.Option(5000, help="Max photos to hash in this run"),
+    workers: int = typer.Option(8, help="Parallel thumbnail downloads"),
+    active_only: bool = typer.Option(True, help="Hash photos of live listings first"),
+):
+    """Fill in perceptual hashes for stored photos that have none.
+
+    Split off from the scrape on purpose: recording a gallery costs no request
+    because both platforms hand it over in payloads we already fetch, but
+    hashing it costs one thumbnail download per photo. Keeping that here makes
+    it restartable and lets it run at whatever pace the CDN tolerates without
+    ever holding up a scrape.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from src.models.listing import Listing
+    from src.models.photo import ListingPhoto
+    from src.parser.photo_hash import _utcnow, fetch_hash
+
+    init_db()
+    session = get_session()
+
+    q = session.query(ListingPhoto).filter(ListingPhoto.phash.is_(None))
+    if active_only:
+        live = session.query(Listing.olx_id).filter(Listing.is_active.is_(True))
+        q = q.filter(ListingPhoto.olx_id.in_(live.scalar_subquery()))
+    rows = q.order_by(ListingPhoto.id.desc()).limit(limit).all()
+    if not rows:
+        console.print("[green]Nothing to hash.[/green]")
+        return
+
+    console.print(f"[bold]Hashing {len(rows)} photos[/bold] ({workers} workers)")
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        hashes = list(ex.map(lambda r: fetch_hash(r.photo_id, r.url), rows))
+
+    done = failed = 0
+    now = _utcnow()
+    for row, phash in zip(rows, hashes):
+        if not phash:
+            failed += 1
+            continue
+        row.phash = phash
+        row.hashed_at = now
+        row.url = None
+        done += 1
+    session.commit()
+    session.close()
+    console.print(f"[green]Hashed {done}[/green], failed {failed}")
 
 
 if __name__ == "__main__":

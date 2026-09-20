@@ -20,6 +20,7 @@ What lives here:
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 from pathlib import Path
@@ -194,3 +195,58 @@ def download_photos(
         if download_photo(url, p):
             paths.append(p)
     return paths
+
+
+_SV_JWT_RE = re.compile(r"/v1/files/([\w-]+)\.([\w-]+)\.([\w-]+)/image")
+_PLAIN_FILE_RE = re.compile(r"/v1/files/([\w-]+)/image")
+
+
+def photo_id_from_url(url: str) -> str | None:
+    """The CDN's own file id behind a photo URL, for either platform.
+
+    OLX puts the id straight in the path. StandVirtual signs a JWT whose
+    payload names the file in ``fn`` (and the watermark overlay in ``w``,
+    which is the same image for every advert and is ignored).
+    """
+    if not url:
+        return None
+    m = _SV_JWT_RE.search(url)
+    if m:
+        payload = m.group(2)
+        payload += "=" * (-len(payload) % 4)
+        try:
+            return json.loads(base64.urlsafe_b64decode(payload)).get("fn")
+        except (ValueError, TypeError):
+            return None
+    m = _PLAIN_FILE_RE.search(url)
+    return m.group(1) if m else None
+
+
+def photo_refs_olx_api(offer: dict) -> list[tuple[str, None]]:
+    """``(file id, None)`` per photo of a JSON-API offer, in gallery order.
+
+    No URL is kept: an OLX photo URL is a plain path around the id, so it is
+    rebuilt on demand instead of stored.
+    """
+    refs: list[tuple[str, None]] = []
+    for p in offer.get("photos") or []:
+        fid = (p or {}).get("filename") or photo_id_from_url((p or {}).get("link") or "")
+        if fid:
+            refs.append((fid, None))
+    return refs
+
+
+def photo_refs_standvirtual(advert: dict) -> list[tuple[str, str]]:
+    """``(file id, signed URL)`` per photo of a StandVirtual advert.
+
+    The URL is carried along because it cannot be rebuilt from the id — the
+    JWT is signed by StandVirtual — and the image still has to be fetched once
+    to be hashed.
+    """
+    refs: list[tuple[str, str]] = []
+    for p in ((advert.get("images") or {}).get("photos") or []):
+        url = (p or {}).get("url") or (p or {}).get("id") or ""
+        fid = photo_id_from_url(url)
+        if fid:
+            refs.append((fid, url))
+    return refs

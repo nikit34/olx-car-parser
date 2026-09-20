@@ -33,6 +33,15 @@ class RelistEvent(Base):
     price_delta_eur = Column(Float)
     price_delta_pct = Column(Float)
     mileage_delta_km = Column(Integer)
+
+    """Share of the smaller gallery whose photos the two ads have in common.
+
+    NULL means the pair was never photo-checked — either it predates the
+    fingerprint table or one side has no stored gallery — and must not be read
+    as "the photos disagree". A threshold filter has to test for NULL
+    separately, or it silently drops every pair from before this column.
+    """
+    photo_score = Column(Float)
     detected_at = Column(DateTime, default=_utcnow)
 
     __table_args__ = (
