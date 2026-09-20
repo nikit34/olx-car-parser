@@ -263,6 +263,48 @@ def prepare(listings: pd.DataFrame, now: pd.Timestamp | None = None) -> pd.DataF
     return df
 
 
+def relist_roots(listings: pd.DataFrame, pairs: pd.DataFrame) -> pd.Series:
+    """``advert id → id of the first advert of the same car``, empty when unknown.
+
+    The matcher is not one-to-one — on 2026-09-19, 5 459 re-listings had more
+    than one candidate parent and 6 388 adverts more than one candidate child —
+    so each link keeps the best-scoring candidate with ties broken by the
+    shorter gap, and then each advert keeps one parent and one child. What
+    survives is a forest, and this walks each advert up to its root.
+    """
+    need = {"original_olx_id", "relist_olx_id"}
+    if (listings is None or listings.empty or pairs is None or pairs.empty
+            or not need.issubset(pairs.columns) or "olx_id" not in listings.columns):
+        return pd.Series(dtype=object)
+    ids = listings["olx_id"].astype(str)
+    known = set(ids)
+
+    links = pairs.copy()
+    for col in ("original_olx_id", "relist_olx_id"):
+        links[col] = links[col].astype(str)
+    links = links[links["original_olx_id"].isin(known) & links["relist_olx_id"].isin(known)]
+    links = links[links["original_olx_id"] != links["relist_olx_id"]]
+    if links.empty:
+        return pd.Series(dtype=object)
+    order = [c for c in ("match_score", "gap_days") if c in links.columns]
+    if order:
+        links = links.sort_values(order, ascending=[c == "gap_days" for c in order])
+    links = links.drop_duplicates("relist_olx_id").drop_duplicates("original_olx_id")
+    parent = dict(zip(links["relist_olx_id"], links["original_olx_id"]))
+
+    root_of: dict[str, str] = {}
+    for node in ids:
+        seen, cur = [], node
+        while cur in parent and cur not in root_of and len(seen) < 20:
+            seen.append(cur)
+            cur = parent[cur]
+        root = root_of.get(cur, cur)
+        for n in seen:
+            root_of[n] = root
+        root_of[node] = root
+    return pd.Series(root_of, dtype=object)
+
+
 def chain_relists(listings: pd.DataFrame, pairs: pd.DataFrame) -> pd.DataFrame:
     """One row per car instead of one per advert, when the pairs are known.
 
@@ -282,39 +324,12 @@ def chain_relists(listings: pd.DataFrame, pairs: pd.DataFrame) -> pd.DataFrame:
     one seen on the chain and ``first_price_eur`` stays the first, so the
     discount stats describe the whole campaign rather than its final advert.
     """
-    need = {"original_olx_id", "relist_olx_id"}
-    if (listings is None or listings.empty or pairs is None or pairs.empty
-            or not need.issubset(pairs.columns) or "olx_id" not in listings.columns):
+    roots = relist_roots(listings, pairs)
+    if roots.empty:
         return listings
     df = listings.copy()
     df["olx_id"] = df["olx_id"].astype(str)
-    known = set(df["olx_id"])
-
-    links = pairs.copy()
-    for col in ("original_olx_id", "relist_olx_id"):
-        links[col] = links[col].astype(str)
-    links = links[links["original_olx_id"].isin(known) & links["relist_olx_id"].isin(known)]
-    links = links[links["original_olx_id"] != links["relist_olx_id"]]
-    if links.empty:
-        return listings
-    order = [c for c in ("match_score", "gap_days") if c in links.columns]
-    if order:
-        links = links.sort_values(order, ascending=[c == "gap_days" for c in order])
-    links = links.drop_duplicates("relist_olx_id").drop_duplicates("original_olx_id")
-    parent = dict(zip(links["relist_olx_id"], links["original_olx_id"]))
-
-    root_of: dict[str, str] = {}
-    for node in df["olx_id"]:
-        seen, cur = [], node
-        while cur in parent and cur not in root_of and len(seen) < 20:
-            seen.append(cur)
-            cur = parent[cur]
-        root = root_of.get(cur, cur)
-        for n in seen:
-            root_of[n] = root
-        root_of[node] = root
-
-    df["_root"] = df["olx_id"].map(root_of)
+    df["_root"] = df["olx_id"].map(roots)
     end = (pd.to_datetime(df.get("last_scraped_at"), utc=True, errors="coerce")
            if "last_scraped_at" in df.columns else pd.Series(pd.NaT, index=df.index))
     if "deactivated_at" in df.columns:
