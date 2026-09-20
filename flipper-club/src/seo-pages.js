@@ -4018,6 +4018,7 @@ function venderFacts(rec, market) {
     days: (lq && lq.md != null) ? lq.md : (rec.sd != null ? rec.sd : null),
     s30: pick("s30"), s60: pick("s60"), s90: pick("s90"),
     cu: pick("cu"), cp: pick("cp"), cd: pick("cd"), hd: pick("hd"),
+    q3: pick("q3"), rb: pick("rb"),
     mktS30: mkt.s30 != null ? mkt.s30 : null,
     mktCu: mkt.cu != null ? mkt.cu : null,
     mktCp: mkt.cp != null ? mkt.cp : null,
@@ -4036,6 +4037,8 @@ export function venderJson(rec, slug, { host, builtAt } = {}) {
     days_to_sell_median: f.days,
     sold_within: { d30: f.s30, d60: f.s60, d90: f.s90 },
     price_cut: { share: f.cu, median_pct: f.cp },
+    still_on_sale_at_90d: f.s90 != null ? Math.round((1 - f.s90) * 1000) / 1000 : null,
+    relisted_share: f.rb,
     years: yearCells(rec, 1).map(c => ({ year: c.y, median: c.fm, p25: c.fl, p75: c.fh, listings: c.n })),
   };
 }
@@ -4086,6 +4089,11 @@ export function renderVenderPage({ guides = "", rec, slug, market, pageYears = [
       <p class="fc-p"><b>${liqPct(f.cu)} em cada 100</b> anúncios de ${B} ${M} baixaram o preço antes de sair${f.mktCu != null ? ` (no mercado, ${liqPct(f.mktCu)})` : ""}.${f.cp != null ? ` Quando baixam, a descida mediana é de <b>${liqPct(f.cp)}%</b>${f.mktCp != null ? ` (mercado: ${liqPct(f.mktCp)}%)` : ""} — é a margem que o comprador costuma conseguir, e por isso é a folga que faz sentido deixar entre o preço que pedes e o que aceitas.` : ""}</p>
       ${(f.cd != null && f.hd != null) ? `<p class="fc-p">Os que baixaram estiveram <b>${f.cd} dias</b> no ar; os que aguentaram o preço, <b>${f.hd}</b>. Não é a descida que atrasa a venda: baixa-se porque o carro não está a sair.</p>` : ""}` : "";
 
+  const standBlock = (f.days != null && f.s90 != null) ? `
+      <h2 class="fc-h2">Vender sozinho ou entregar a um stand</h2>
+      <p class="fc-p">Juntando o que está acima, anunciar um ${B} ${M} por tua conta custa isto: metade sai em <b>${f.days} dias</b>${f.q3 != null ? `, um quarto ainda cá está ao fim de <b>${f.q3} dias</b>` : ""}, e ao fim de três meses <b>${liqPct(1 - f.s90)} em cada 100</b> continuam à venda.${f.cu != null ? ` Pelo caminho, ${liqPct(f.cu)} em cada 100 cedem no preço` : ""}${f.rb != null ? `, e <b>${liqPct(f.rb)} em cada 100</b> dos anúncios que desapareceram voltaram como anúncio novo, porque não venderam à primeira` : ""}.</p>
+      <p class="fc-p">A alternativa é entregá-lo a um stand ou dá-lo em retoma: recebes hoje, não esperas e não tens de responder a mensagens nem marcar visitas. <b>Quanto custa essa opção não te dizemos</b> — a proposta de um stand não é pública, não aparece em nenhum anúncio, por isso não a medimos e não a vamos inventar. O que está medido é este lado, e é contra ele que uma proposta de compra imediata se lê: a diferença entre o que te oferecem e o que esta página mostra é o preço do tempo que poupas — ${f.days} dias de mediana, e o risco de ${liqPct(1 - f.s90)} em cada 100 não sair em três meses.</p>` : "";
+
   const dt = (f.lq && Array.isArray(f.lq.dt)) ? f.lq.dt.filter(d => d.s30 != null).slice().sort((a, b) => b.s30 - a.s30) : [];
   const dtBlock = dt.length >= 3 ? `
       <h2 class="fc-h2">Onde vende mais depressa</h2>
@@ -4120,6 +4128,7 @@ export function renderVenderPage({ guides = "", rec, slug, market, pageYears = [
       ${speedRows ? `<div class="fc-scroll"><table class="fc-tbl"><thead><tr><th>Ao fim de</th><th>Já saíram</th><th>Ainda à venda</th></tr></thead><tbody>${speedRows}</tbody></table></div>` : ""}
       <p class="fc-p mut" style="font-size:13.5px;">Um anúncio do OLX corre em ciclos de 30 dias; contamos como saída o último ciclo em que o vimos no ar, e a conta inclui os que ainda estão à venda, que é o que a impede de ficar curta.${hasLiquidity ? ` Detalhe por preço, idade e distrito: <a href="/pt/liquidez/${slug}">tempo de venda do ${B} ${M}</a>.` : ""}</p>
       ${cutBlock}
+      ${standBlock}
       ${dtBlock}
       ${pbBlock}
 
@@ -4138,6 +4147,8 @@ export function renderVenderPage({ guides = "", rec, slug, market, pageYears = [
      `A mediana pedida nos ${rec.n} anúncios ativos do OLX é ${FM}; metade dos anúncios pede entre ${FL} e ${FH}. O ano concreto muda o número: a tabela desta página tem a mediana de cada ano.`],
     ...(f.days != null ? [[`Em quantos dias se vende um ${rec.b} ${rec.m}?`,
      `Metade dos ${rec.b} ${rec.m} que saem do OLX sai em ${f.days} dias${f.s30 != null ? `; no primeiro mês saem ${liqPct(f.s30)} em cada 100` : ""}. Medido em anúncios reais acompanhados até saírem.`]] : []),
+    ...(f.days != null && f.s90 != null ? [[`Vale mais a pena vender o ${rec.b} ${rec.m} a um stand?`,
+     `Depende do que valem para ti ${f.days} dias. É essa a mediana até um ${rec.b} ${rec.m} sair do OLX, e ao fim de três meses ${liqPct(1 - f.s90)} em cada 100 continuam à venda${f.cu != null ? `; ${liqPct(f.cu)} em cada 100 baixaram o preço pelo caminho` : ""}. Quanto paga um stand não medimos — a proposta não é pública — mas a diferença entre ela e os preços desta página é o que custa esperar.`]] : []),
     ...(f.cu != null ? [[`Vale a pena baixar o preço de um ${rec.b} ${rec.m}?`,
      `${liqPct(f.cu)} em cada 100 anúncios deste modelo baixaram o preço antes de sair${f.cp != null ? `, em mediana ${liqPct(f.cp)}%` : ""}. Baixa-se porque o carro não está a sair; começar perto da mediana do ano evita a descida.`]] : []),
   ];
@@ -4156,7 +4167,8 @@ export function renderVenderPage({ guides = "", rec, slug, market, pageYears = [
           "description": `Mediana e intervalo do preço pedido por ano, dias até sair do OLX e frequência de descidas de preço para ${rec.b} ${rec.m}.`,
           "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true, "dateModified": builtAt || undefined,
-          "variableMeasured": ["Preço pedido (EUR)", "Dias até sair do OLX", "Anúncios com descida de preço (%)"],
+          "variableMeasured": ["Preço pedido (EUR)", "Dias até sair do OLX", "Anúncios com descida de preço (%)",
+                               "Anúncios ainda à venda ao fim de 90 dias (%)", "Anúncios repostos como novo (%)"],
           "distribution": [{ "@type": "DataDownload", "encodingFormat": "application/json", "contentUrl": `${canonical}.json` }],
         },
         breadcrumbLd(host, [{ name: "Início", href: "/pt" }, { name: "Vender", href: "/pt/vender" }, { name: `${rec.b} ${rec.m}` }]),

@@ -1466,6 +1466,44 @@ check("seller pages render with the numbers, the form and the JSON twin", () => 
   assert(hub.includes(`/pt/vender/${eligible[0]}`), "hub does not link the seller pages");
 });
 
+check("the seller page prices the wait, and says what it cannot price", () => {
+  const eligible = slugs.filter(x => venderOk(models[x]) && liquidityOk(models[x])
+                                     && models[x].lq && models[x].lq.s90 != null);
+  assert(eligible.length > 0, "no model carries the survival numbers the block needs");
+  const s = eligible[0];
+  const rec = models[s];
+  const page = renderVenderPage({ rec, slug: s, market: mdoc.lqm || null, pageYears: yearPageYears(rec),
+                                  hasLiquidity: true, hasDepreciation: false,
+                                  host: HOST, depositCount: 0, builtAt });
+  const i = page.indexOf("Vender sozinho ou entregar a um stand");
+  assert(i > 0, "the seller page never names the alternative it competes with");
+  const block = page.slice(i, i + 2200);
+  const text = block.replace(/<[^>]+>/g, "");
+  assert(/retoma/.test(block), "the block skips the trade-in half of the alternative");
+  assert(/não a medimos e não a vamos inventar/.test(block),
+    "the block must say outright that a dealer's offer is not measured here");
+  assert(!/undefined|NaN/.test(block), "a placeholder leaked into the wait-cost block");
+
+  const still = Math.round((1 - rec.lq.s90) * 100);
+  assert(text.includes(`${still} em cada 100 continuam à venda`),
+    "the 90-day failure share in the block disagrees with the survival table above it");
+  if (rec.lq.q3 != null) assert(text.includes(`${rec.lq.q3} dias`), "the block drops the unit off the quartile");
+  if (rec.lq.rb != null) assert(text.includes(`${Math.round(rec.lq.rb * 100)} em cada 100`),
+    "the block does not say how many had to repost the advert");
+
+  const twin = venderJson(rec, s, { host: HOST, builtAt });
+  assert(twin.still_on_sale_at_90d === Math.round((1 - rec.lq.s90) * 1000) / 1000,
+    "the JSON twin does not carry the 90-day failure share");
+  assert(twin.relisted_share === rec.lq.rb, "the JSON twin does not carry the relist share");
+
+  const bare = { ...rec, lq: null, sd: null };
+  const noLq = renderVenderPage({ rec: bare, slug: s, market: null, pageYears: [],
+                                  hasLiquidity: false, hasDepreciation: false,
+                                  host: HOST, depositCount: 0, builtAt });
+  assert(!noLq.includes("entregar a um stand"),
+    "the block appeared for a model with nothing measured behind it");
+});
+
 check("a six-month window cell is labelled honestly on the year page and the JSON twin", () => {
   const [s] = yearPages[0];
   const rec = models[s];
