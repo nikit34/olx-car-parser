@@ -1,7 +1,7 @@
 """Text scans precomputed at build time instead of shipped as prose.
 
 The witness dropped the ``description`` column (57% of the file, over
-Cloudflare's 25 MiB per-asset cap) and ships four scan-result columns instead.
+Cloudflare's 25 MiB per-asset cap) and ships the scan-result columns instead.
 These tests pin the contract that makes that safe: a frame WITH the columns and
 a frame WITH the prose must reach the same verdict, and the columns must win
 when both are present — otherwise a stale scan would be silently re-derived.
@@ -20,7 +20,7 @@ from src.dashboard.data_loader import _blocking_deal_reason
 
 
 class TestAddTextSignals:
-    def test_adds_all_four_columns(self):
+    def test_adds_every_column(self):
         df = add_text_signals(pd.DataFrame([
             {"title": "Golf 1.6 TDI", "description": "bom estado, sempre na marca"},
         ]))
@@ -43,6 +43,7 @@ class TestAddTextSignals:
         ]))
         assert df.loc[0, "text_import_flag"] == 1
         assert df.loc[0, "text_import_legalised"] == 0
+        assert df.loc[0, "text_import_pending"] == 1
         assert not pd.isna(df.loc[1, "text_minor_fault"])
         assert "não pega" in df.loc[2, "text_hard_block_phrase"]
 

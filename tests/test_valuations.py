@@ -36,6 +36,25 @@ def _snapshots(points):
     ])
 
 
+class TestImportFlagsInTheBlob:
+    def _car(self, **over):
+        return build_valuations(_listings(**over), _predictions())["cars"]["AAA"]
+
+    def test_a_registered_import_carries_no_pending_marker(self):
+        car = self._car(origin="imported")
+        assert car["imp"] == 1
+        assert "ip" not in car
+        assert "il" not in car
+
+    def test_an_advert_on_foreign_plates_is_marked_pending(self):
+        car = self._car(description="ainda por legalizar, matrícula alemã")
+        assert car["imp"] == 1 and car["ip"] == 1
+
+    def test_a_national_car_carries_nothing(self):
+        car = self._car(origin="national")
+        assert "imp" not in car and "ip" not in car
+
+
 class TestPriceTrack:
     def test_a_seller_who_came_down_ships_the_track(self):
         snaps = _snapshots([(68, 10500), (40, 9900), (6, 9000)])

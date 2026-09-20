@@ -567,6 +567,20 @@ class TestPrecomputedTextSignals:
         assert witness.components["isv_eur"] == server.components["isv_eur"]
         assert witness.verdict == server.verdict
 
+    def test_isv_only_when_the_advert_says_it_is_owed(self):
+        """An already-registered import must not be charged the tax again.
+
+        The advert says nothing about foreign plates, so the car carries a
+        Portuguese registration whose ISV a previous owner paid. Charging it
+        here shrank the margin of 15% of the corpus for a cost that does not
+        exist."""
+        row = _row(price_eur=9000.0, title="BMW 320d importado da Alemanha",
+                   description="segundo dono, livro de revisões completo",
+                   origin="imported", co2_g_km=120, engine_cc=1995,
+                   fuel_type="Diesel", year=2015)
+        assert decide(row, _ctx()).components["isv_eur"] == 0
+        assert decide(self._witness(row), _ctx()).components["isv_eur"] == 0
+
     def test_clean_listing_unaffected(self):
         row = _row()
         assert decide(self._witness(row), _ctx()).verdict == decide(row, _ctx()).verdict

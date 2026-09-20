@@ -45,7 +45,7 @@ def _strip_accents(s) -> str:
 _IMPORT_POS = re.compile(
     r"\b(importad[ao]s?|importacao|nacionaliz\w*|legaliza(?:r|cao|do|da)|por\s+legalizar"
     r"|matricul(?:ar|a(?:do|da)?\s+(?:na|nos|em)\s+(?:alemanha|franca|belgica|holanda|espanha|italia|suica))"
-    r"|matricula\s+(?:nl|de|be|fr|es|it|alem\w*|estrangeira|holandesa|alema|francesa|belga)"
+    r"|matricula\s+(?:nl|be|fr|es|it|alem\w*|estrangeira|holandesa|alema|francesa|belga)"
     r"|ainda\s+(?:com|por)\s+matricula\s+estrangeira|vindo\s+d[ao]\s+estrangeiro)\b"
 )
 _IMPORT_NEG = re.compile(
@@ -56,9 +56,18 @@ _IMPORT_NEG = re.compile(
 _IMPORT_LEGAL = re.compile(
     r"\bja\s+(?:legalizad[oa]|nacionalizad[oa])|legalizacao\s+(?:feita|concluida|paga)|isv\s+pag"
 )
+_IMPORT_PENDING = re.compile(
+    r"por\s+legalizar|falta\s+legalizar|a\s+aguardar\s+legaliza\w*"
+    r"|nao\s+(?:esta|foi)\s+legalizad"
+    r"|legalizacao\s+(?:por\s+conta|a\s+cargo)\s+d[oa]\s+comprador"
+    r"|matricula\s+(?:nl|be|fr|es|it|alem\w*|estrangeira|holandesa|alema|francesa|belga)"
+    r"|ainda\s+(?:com|por)\s+matricula\s+estrangeira"
+    r"|(?:vou|vai|para)\s+legalizar"
+)
 
 
-def _import_flags(title: str, description: str, origin: str | None = None) -> tuple[int, int]:
+def _import_flags(title: str, description: str,
+                  origin: str | None = None) -> tuple[int, int, int]:
     # The structured `origin` field reinforces both sides: "imported" is a
     # positive even if the text is silent; "national" clears a text
     # false-positive. Text still supplies the catch-all + legalized nuance.
@@ -67,8 +76,10 @@ def _import_flags(title: str, description: str, origin: str | None = None) -> tu
     pos = (origin == "imported") or bool(_IMPORT_POS.search(hay))
     neg = (origin == "national") or bool(_IMPORT_NEG.search(hay))
     if not (pos and not neg):
-        return 0, 0
-    return 1, (1 if _IMPORT_LEGAL.search(hay) else 0)
+        return 0, 0, 0
+    legal = 1 if _IMPORT_LEGAL.search(hay) else 0
+    pending = 0 if legal else (1 if _IMPORT_PENDING.search(hay) else 0)
+    return 1, legal, pending
 
 
 def _i(v):
@@ -207,9 +218,9 @@ def build_valuations(listings: pd.DataFrame, predictions: pd.DataFrame,
         price = _i(getattr(r, "price_eur", None))
         if fm is None or price is None:
             continue
-        imp, leg = _import_flags(getattr(r, "title", "") or "",
-                                 getattr(r, "description", "") or "",
-                                 getattr(r, "origin", None))
+        imp, leg, pend = _import_flags(getattr(r, "title", "") or "",
+                                       getattr(r, "description", "") or "",
+                                       getattr(r, "origin", None))
         title = _s(getattr(r, "title", None))
         rec = {
             "t": title[:90] if title else None,
@@ -226,6 +237,8 @@ def build_valuations(listings: pd.DataFrame, predictions: pd.DataFrame,
             rec["imp"] = 1
             if leg:
                 rec["il"] = 1
+            if pend:
+                rec["ip"] = 1
         brand, model = getattr(r, "brand", None), getattr(r, "model", None)
         sd = sell_lookup.get((brand, model))
         if sd is not None:

@@ -2435,7 +2435,29 @@ function acceptedPriceErrorBlock(acc) {
 // Every number on this site is an estimate, and the honest move is to publish
 // where it comes from and where it stops working — including the thresholds that
 // make us DROP a figure rather than show a weak one.
-export function renderMethodology({ stats, mq, acc = null, host, depositCount, builtAt, duelHubs = [], wave = null }) {
+function importEffectBlock(imf) {
+  if (!imf || typeof imf !== "object") return "";
+  const s30 = imf.s30 && imf.s30.publishable ? imf.s30 : null;
+  const price = imf.price || null;
+  if (!s30 && !price) return "";
+  const pp = v => `${v > 0 ? "+" : "−"}${Math.abs(v).toFixed(1).replace(".", ",")} pp`;
+  const lines = [];
+  if (price) {
+    lines.push(price.publishable
+      ? `<li class="fc-li">No preço aceite, a diferença é de <b>${pp(price.v)}</b> face ao que a ficha técnica sozinha prevê (${fmtNum(price.n)} carros).</li>`
+      : `<li class="fc-li"><b>No preço não encontrámos diferença.</b> Medida contra o que a ficha técnica sozinha prevê, a diferença é de ${pp(price.v)}, com um intervalo de ${pp(price.lo)} a ${pp(price.hi)} — ou seja, indistinguível de zero (${fmtNum(price.n)} carros em ${price.cells} células).</li>`);
+  }
+  if (s30) {
+    lines.push(`<li class="fc-li"><b>No tempo encontrámos.</b> Um importado tem <b>${pp(s30.v)}</b> de vendas nos primeiros ${imf.window || 30} dias (intervalo de ${pp(s30.lo)} a ${pp(s30.hi)}), sobre ${fmtNum(s30.n)} carros em ${s30.cells} células comparáveis.</li>`);
+  }
+  return `
+      <h3 class="fc-h3">O que vale a etiqueta «importado»</h3>
+      <p class="fc-p">Mostramos a etiqueta há muito tempo; o que ela significa para o preço nunca tinha sido medido. Comparámos carros importados com nacionais <b>da mesma marca, modelo, escalão de idade e no mesmo portal</b> — comparar as duas populações em bruto não serve, porque os importados são em média mais recentes, mais caros e com mais quilómetros, e isso sozinho move qualquer número.</p>
+      <ul class="fc-ul">${lines.join("")}</ul>
+      <p class="fc-p">Por isso a etiqueta deixou de descontar o preço na nota do carro. O aviso de ISV fica apenas para os anúncios que <b>dizem</b> que o carro ainda tem matrícula estrangeira ou legalização por concluir — nos restantes o imposto foi pago por um dono anterior, e cobrá-lo outra vez seria inventar um custo.</p>`;
+}
+
+export function renderMethodology({ stats, mq, acc = null, imf = null, host, depositCount, builtAt, duelHubs = [], wave = null }) {
   const duelList = duelHubs.length
     ? duelHubs.map(d => `<a href="/pt/${d.path}">${escapeHtml(d.question)}</a>`).join(" e ")
     : "diesel ou gasolina e caixa manual ou automática";
@@ -2488,7 +2510,7 @@ export function renderMethodology({ stats, mq, acc = null, host, depositCount, b
       <h3 class="fc-h3">E quanto erra contra um preço que alguém aceitou</h3>
       <p class="fc-p">A medição acima compara a estimativa com o <b>preço pedido</b>, que é o que o vendedor queria. Há um caso em que o pedido é o preço: um carro que saiu do OLX sem nunca mexer no número e sem voltar como anúncio novo — ninguém o fez baixar e foi-se pelo que estava escrito. É o mais perto de uma venda que estes dados chegam, e permite dizer o erro <b>por faixa de preço</b>, que é onde a diferença está:</p>
       ${acceptedPriceErrorBlock(acc)}
-
+${importEffectBlock(imf)}
       <h3 class="fc-h3">O que o modelo não vê</h3>
       <p class="fc-p">Um anúncio não diz o estado da embraiagem, o histórico de manutenção, se houve batida, como estão os pneus, nem se o ISV de um importado já foi pago. Nada disso entra no modelo, porque não existe nos dados. <b>Dois carros com a mesma ficha recebem a mesma estimativa, mesmo que um precise de caixa nova.</b> Daí a estimativa ser um ponto de partida para negociar e para saber onde olhar — nunca a avaliação de uma viatura concreta.</p>
 

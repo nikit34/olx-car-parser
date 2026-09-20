@@ -343,7 +343,8 @@ _extra_cols = [
     # DB carries the prose instead and decide() scans it inline. _present
     # below keeps whichever half this frame actually has.
     "title", "description",
-    "text_import_flag", "text_import_legalised", "text_minor_fault",
+    "text_import_flag", "text_import_legalised", "text_import_pending",
+    "text_minor_fault",
 ]
 _present = [c for c in _extra_cols if c in listings_df.columns]
 if _present:

@@ -13,10 +13,11 @@ Cloudflare's 25 MiB per-asset limit, which broke every Worker deploy from
 2026-08-24. The text is not otherwise rendered: the browser needs the verdicts
 of these scans, not the prose behind them.
 
-So the scans run once, host-side, and land as four narrow columns:
+So the scans run once, host-side, and land as five narrow columns:
 
   ``text_import_flag``        int8  — imported (structured ``origin`` or text)
   ``text_import_legalised``   int8  — ISV already paid / nationalised
+  ``text_import_pending``     int8  — advert says the car is still foreign-plated
   ``text_minor_fault``        str   — disclosed-fault label, else None
   ``text_hard_block_phrase``  str   — matched salvage phrasing, else None
 
@@ -69,6 +70,7 @@ HARD_BLOCK_TEXT_PATTERN = re.compile(
 TEXT_SIGNAL_COLUMNS = (
     "text_import_flag",
     "text_import_legalised",
+    "text_import_pending",
     "text_minor_fault",
     "text_hard_block_phrase",
 )
@@ -126,18 +128,21 @@ def add_text_signals(df: pd.DataFrame) -> pd.DataFrame:
 
     imp_flags: list[int] = []
     leg_flags: list[int] = []
+    pend_flags: list[int] = []
     faults: list[str | None] = []
     blocks: list[str | None] = []
     for title, desc, origin in zip(titles, descs, origins, strict=False):
         t, d = _clean(title), _clean(desc)
-        imp, leg = _import_flags(t, d, origin if isinstance(origin, str) else None)
+        imp, leg, pend = _import_flags(t, d, origin if isinstance(origin, str) else None)
         imp_flags.append(int(imp))
         leg_flags.append(int(leg))
+        pend_flags.append(int(pend))
         faults.append(detect_minor_fault(t, d))
         blocks.append(hard_block_phrase(t, d))
 
     df["text_import_flag"] = pd.array(imp_flags, dtype="int8")
     df["text_import_legalised"] = pd.array(leg_flags, dtype="int8")
+    df["text_import_pending"] = pd.array(pend_flags, dtype="int8")
     df["text_minor_fault"] = faults
     df["text_hard_block_phrase"] = blocks
     return df

@@ -626,7 +626,6 @@ def decide(
 
     # ISV — nationalisation tax: a real cost a PT reseller must pay on a
     # NOT-YET-LEGALISED import. Only subtracted when we can compute it honestly
-    # (import-flagged & not legalised, with CO2 + engine_cc + fuel + reg-year);
     # otherwise 0 (no adjustment). The fair_median is a PT-registered price, so
     # an import's real margin is raw_margin − ISV.
     isv_eur = 0.0
@@ -636,13 +635,13 @@ def decide(
         # browser dashboard never has to carry the raw description. Falls back
         # to scanning the text for callers that still hold it: CLI runs off the
         # DB, older witnesses, bare rows in tests.
-        if _has("text_import_flag"):
-            imp = int(_num(g("text_import_flag")))
-            leg = int(_num(g("text_import_legalised")))
+        if _has("text_import_pending"):
+            pending = int(_num(g("text_import_pending")))
         else:
             from src.analytics.valuations import _import_flags
-            imp, leg = _import_flags(g("title") or "", g("description") or "", g("origin"))
-        if imp and not leg:
+            _imp, _leg, pending = _import_flags(g("title") or "", g("description") or "",
+                                                g("origin"))
+        if pending:
             ry = g("year")
             res = compute_isv(g("co2_g_km"), g("engine_cc"), g("fuel_type"),
                               int(ry) if ry is not None and pd.notna(ry) else None)

@@ -117,13 +117,14 @@ export function listingUrl(id, rec) {
     ? `https://www.standvirtual.com/carros/anuncio/${tail}`
     : `https://www.olx.pt/d/anuncio/${tail}`;
 }
-const IMPORT_POS = /\b(importad[ao]s?|importacao|nacionaliz\w*|legaliza(?:r|cao|do|da)|por\s+legalizar|matricul(?:ar|a(?:do|da)?\s+(?:na|nos|em)\s+(?:alemanha|franca|belgica|holanda|espanha|italia|suica))|matricula\s+(?:nl|de|be|fr|es|it|alem\w*|estrangeira|holandesa|alema|francesa|belga)|ainda\s+(?:com|por)\s+matricula\s+estrangeira|vindo\s+d[ao]\s+estrangeiro)\b/;
+const IMPORT_POS = /\b(importad[ao]s?|importacao|nacionaliz\w*|legaliza(?:r|cao|do|da)|por\s+legalizar|matricul(?:ar|a(?:do|da)?\s+(?:na|nos|em)\s+(?:alemanha|franca|belgica|holanda|espanha|italia|suica))|matricula\s+(?:nl|be|fr|es|it|alem\w*|estrangeira|holandesa|alema|francesa|belga)|ainda\s+(?:com|por)\s+matricula\s+estrangeira|vindo\s+d[ao]\s+estrangeiro)\b/;
 // Clears cars that are NATIVELY Portuguese (never imported). Deliberately does
 // NOT include "já legalizado/nacionalizado" — those are imported-but-legalized
 // cars we still want to flag (as legalized), handled by IMPORT_LEGAL instead.
 const IMPORT_NEG = /matricula\s+(?:portuguesa|nacional)|nacional\s+desde\s+novo|sempre\s+(?:em\s+)?portugal|documentacao\s+(?:regularizada|portuguesa)|matriculado\s+em\s+portugal|nao\s+(?:e\s+)?importad|sem\s+importacao/;
 // Completion words only — bare "vou legalizar" must NOT count as already done.
 const IMPORT_LEGAL = /\bja\s+(?:legalizad[oa]|nacionalizad[oa])|legalizacao\s+(?:feita|concluida|paga)|isv\s+pag/;
+const IMPORT_PENDING = /por\s+legalizar|falta\s+legalizar|a\s+aguardar\s+legaliza\w*|nao\s+(?:esta|foi)\s+legalizad|legalizacao\s+(?:por\s+conta|a\s+cargo)\s+d[oa]\s+comprador|matricula\s+(?:nl|be|fr|es|it|alem\w*|estrangeira|holandesa|alema|francesa|belga)|ainda\s+(?:com|por)\s+matricula\s+estrangeira|(?:vou|vai|para)\s+legalizar/;
 
 // The structured `origin` field (OLX/SV param, "national"|"imported") reinforces
 // BOTH sides when present: an "imported" origin is a positive even if the text is
@@ -136,7 +137,8 @@ function importInfo(deal) {
   const pos = o === "imported" || IMPORT_POS.test(hay);
   const neg = o === "national" || IMPORT_NEG.test(hay);
   const flag = pos && !neg;
-  return { flag, legalized: flag && IMPORT_LEGAL.test(hay) };
+  const legalized = flag && IMPORT_LEGAL.test(hay);
+  return { flag, legalized, pending: flag && !legalized && IMPORT_PENDING.test(hay) };
 }
 
 // Qualitative legalization-cost band by price tier (no CO₂ ⇒ never a single
@@ -200,7 +202,7 @@ export function present(deal) {
   // Display-only grade clamp: an unpriced import cost can't justify A+/A, so the
   // SHOWN grade caps at B with a dagger. The numeric score/grade that drive the
   // gauge and discount bar are left intact (no double-counting, no fabrication).
-  const clampImport = imp.flag && !imp.legalized && (grade === "A+" || grade === "A");
+  const clampImport = imp.pending && (grade === "A+" || grade === "A");
   const gradeDisplay = clampImport ? "B" : grade;
   const gradeDisplayFull = clampImport ? "B †" : `${grade} · ${score}`;
   const gcDisplay = clampImport ? GRADE_COLORS.amber : gc;
@@ -229,7 +231,7 @@ export function present(deal) {
     discStr: "↓ " + fmtPct(disc),
     grade, score, gradeFull: `${grade} · ${score}`,
     gradeDisplay, gradeDisplayFull, gcDisplay,
-    importFlag: imp.flag, importLegalized: imp.legalized,
+    importFlag: imp.flag, importLegalized: imp.legalized, importPending: imp.pending,
     isvTier: tier, isvRange: tier ? ISV_RANGE[tier] : null,
     isvEur: deal.isv_eur ?? null,   // computed ISV (imports w/ CO2); else null → qualitative range
     highKm, veryHighKm,
@@ -784,7 +786,7 @@ function riskChip(p) {
 function importTag(p) {
   if (!p.importFlag) return "";
   const c = GRADE_COLORS.amber;
-  const txt = p.importLegalized ? "🌍 IMPORTADO" : "🌍 IMPORTADO · ISV?";
+  const txt = p.importPending ? "🌍 IMPORTADO · ISV?" : "🌍 IMPORTADO";
   return `<span style="display:inline-block;font-family:var(--mono);font-weight:700;`
     + `font-size:10px;padding:3px 7px;border-radius:6px;margin-top:7px;`
     + `background:${c.bg};color:${c.fg};border:1px solid ${c.br};">${txt}</span>`;
@@ -795,7 +797,7 @@ function importTag(p) {
 // Net it explicitly — with the computed € when we have it, qualitatively otherwise.
 // `base` = the gross figure being netted (buyer: poupas; reseller: margin).
 function netIsvNote(p, base) {
-  if (!p.importFlag || p.importLegalized) return "";
+  if (!p.importPending) return "";
   const a = GRADE_COLORS.amber, red = GRADE_COLORS.red;
   if (p.isvEur != null && base != null) {
     const real = Math.round(base - p.isvEur);
@@ -807,6 +809,15 @@ function netIsvNote(p, base) {
   }
   return `<div style="font-size:12px;color:${a.fg};margin-top:8px;line-height:1.5;">`
     + `⚠️ É a poupança <b>antes de legalizar</b> — falta somar o ISV (vários milhares €), por isso a margem real será menor.</div>`;
+}
+
+function importFactLine(p) {
+  const base = p.importLegalized
+    ? "O anúncio indica legalização concluída, por isso o ISV já está pago. "
+    : "Nada no anúncio indica matrícula estrangeira, por isso o imposto de importação terá sido pago por um dono anterior. ";
+  return base
+    + `Medimos o que estes carros fazem no mercado: fecham ao mesmo preço que um nacional do mesmo modelo e ano, e demoram um pouco mais a vender (<a href="/pt/metodologia" style="color:inherit;">como medimos</a>). `
+    + "Confirma a documentação e o histórico antes de fechar.";
 }
 
 // Photo block for a tile/card — real cover photo, else striped brand placeholder.
@@ -1225,8 +1236,8 @@ export function renderGrid({ deals, zone, sort, view, depositCount,
     // (which a flagged import overstates → asterisk + footnote, never a fake cut).
     const pill = lens === "comprar"
       ? `<div class="profit-pill">${p.saving != null ? "poupas " + fmtEur(p.saving) : p.profitStr}</div>`
-      : `<div class="profit-pill">${p.profitStr}${p.importFlag ? "*" : ""}</div>`;
-    const importNote = (lens === "revender" && p.importFlag)
+      : `<div class="profit-pill">${p.profitStr}${p.importPending ? "*" : ""}</div>`;
+    const importNote = (lens === "revender" && p.importPending)
       ? `<div style="font-size:10.5px;color:${GRADE_COLORS.amber.fg};margin-top:5px;">* antes do ISV + legalização</div>`
       : "";
     return `<a class="tile" href="${href}">
@@ -1385,7 +1396,7 @@ export function renderCarPage({ deal, zone, view, depositCount, modelHref, host,
     { k: "Lucro estimado", v: p.profitStr },
     { k: "Severidade de dano", v: `${deal.damage_severity ?? 0} / 3`, cls: sigClass(deal.damage_severity >= 1, deal.damage_severity >= 2) },
     { k: "Dano em fotos", v: fmtPct1(deal.photo_damage_p), cls: deal.photo_damage_flagged ? "v bad" : "v" },
-    { k: "Origem", v: p.importFlag ? (p.importLegalized ? "Importado (legalizado)" : "Importado · ISV em falta") : "Sem indício de importação", cls: (p.importFlag && !p.importLegalized) ? "v warn" : "v" },
+    { k: "Origem", v: p.importFlag ? (p.importPending ? "Importado · ISV em falta" : (p.importLegalized ? "Importado (legalizado)" : "Importado")) : "Sem indício de importação", cls: p.importPending ? "v warn" : "v" },
     { k: "Quilometragem", v: fmtKm(deal.mileage_km), cls: sigClass(p.highKm, p.veryHighKm) },
     { k: "Vendedor", v: p.sellerType },
     { k: "Dias no mercado", v: deal.days_on_market != null ? String(deal.days_on_market) : "—" },
@@ -1401,18 +1412,23 @@ export function renderCarPage({ deal, zone, view, depositCount, modelHref, host,
   // Imported-car banner (amber) shown above the verdict when flagged. Two
   // variants; the not-legalized one carries the hedged, price-bucketed ISV range.
   const amber = GRADE_COLORS.amber;
-  const importBanner = p.importFlag ? `
+  const importBanner = !p.importFlag ? "" : (p.importPending ? `
             <div class="exclusive" style="background:${amber.bg};border:1px solid ${amber.br};align-items:flex-start;margin-top:16px;">
-              <span style="font-size:15px;">${p.importLegalized ? "🌍" : "⚠️"}</span>
+              <span style="font-size:15px;">⚠️</span>
               <span class="x" style="color:#6B4E12;">
-                <b style="color:${amber.fg};">${p.importLegalized ? "Carro importado — já legalizado" : "Carro importado — ainda por legalizar"}.</b>
-                ${p.importLegalized
-                  ? "Este carro foi importado mas o anúncio indica matrícula/legalização portuguesa concluída. O preço já deve incluir o ISV. Confirma a documentação na inspeção."
-                  : (p.isvEur
+                <b style="color:${amber.fg};">Carro importado — ainda por legalizar.</b>
+                ${p.isvEur
                       ? `O preço justo (${p.fairStr}) é de um carro já registado em Portugal. Como este parece ter matrícula estrangeira / por nacionalizar, falta somar o ISV — <b>estimado em ~${fmtEur(p.isvEur)}</b>${deal.co2_g_km ? ` (com base em ${deal.co2_g_km} g/km CO₂ + idade)` : ""}. Estimativa indicativa — confirma na tabela das Finanças.`
-                      : `O preço justo (${p.fairStr}) é de um carro já registado em Portugal. Este anúncio parece ter matrícula estrangeira ou estar por nacionalizar, por isso é mais barato: o ISV e a legalização ainda não estão pagos. Conta com vários milhares de euros adicionais.<br><span style="display:block;margin-top:6px;">${p.isvRange || ""}</span>`)}
+                      : `O preço justo (${p.fairStr}) é de um carro já registado em Portugal. Este anúncio parece ter matrícula estrangeira ou estar por nacionalizar, por isso é mais barato: o ISV e a legalização ainda não estão pagos. Conta com vários milhares de euros adicionais.<br><span style="display:block;margin-top:6px;">${p.isvRange || ""}</span>`}
               </span>
-            </div>` : "";
+            </div>` : `
+            <div class="exclusive" style="background:#F4F5F7;border:1px solid #E3E5E9;align-items:flex-start;margin-top:16px;">
+              <span style="font-size:15px;">🌍</span>
+              <span class="x" style="color:#5B606B;">
+                <b style="color:#16181D;">Carro importado${p.importLegalized ? " — já legalizado" : ""}.</b>
+                ${importFactLine(p)}
+              </span>
+            </div>`);
 
   // Verdict row (uses the real BUY/WATCH verdict; falls back to grade-driven).
   const verdictBuy = (deal.verdict || "").toUpperCase() === "BUY" || (!deal.verdict && (p.grade === "A+" || p.grade === "A"));
@@ -1423,13 +1439,13 @@ export function renderCarPage({ deal, zone, view, depositCount, modelHref, host,
   // resale margin but asterisks it when an unpriced import cost is in play.
   const verdictProfit = lens === "comprar"
     ? (p.saving != null ? "poupas " + fmtEur(p.saving) : p.profitStr)
-    : `${p.profitStr}${p.importFlag ? "*" : ""}`;
+    : `${p.profitStr}${p.importPending ? "*" : ""}`;
   const verdictFootnote = netIsvNote(p, lens === "comprar" ? p.saving : p.profit);
 
   const originNote = p.importFlag
-    ? `<div class="seller-note"><span class="fc-dot"></span><span>${p.importLegalized
-        ? "Carro importado, já legalizado — confirma a documentação com o vendedor."
-        : "Carro importado ainda por legalizar — ao preço pedido falta somar o ISV."}</span></div>`
+    ? `<div class="seller-note"><span class="fc-dot"></span><span>${p.importPending
+        ? "Carro importado ainda por legalizar — ao preço pedido falta somar o ISV."
+        : "Carro importado — pede os documentos e o histórico antes de fechar."}</span></div>`
     : "";
   const module = `
       <div class="seller-mod">
@@ -1642,16 +1658,21 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
       line = (saving != null && saving > 0) ? `poupas ${fmtEur(saving)} vs a mediana` : "dentro do intervalo de mercado";
     }
     const isvR = ISV_RANGE[isvTier(price)] || "";
-    const importBanner = rec.imp ? `
+    const importBanner = !rec.imp ? "" : (rec.ip ? `
         <div class="exclusive" style="background:${amber.bg};border:1px solid ${amber.br};align-items:flex-start;margin-top:16px;">
-          <span style="font-size:15px;">${rec.il ? "🌍" : "⚠️"}</span>
+          <span style="font-size:15px;">⚠️</span>
           <span class="x" style="color:#6B4E12;">
-            <b style="color:${amber.fg};">${rec.il ? "Carro importado — já legalizado" : "Indícios de importação — possivelmente por legalizar"}.</b>
-            ${rec.il
-              ? " O preço já deve incluir o ISV; confirma a documentação na inspeção."
-              : ` O preço justo acima é de um carro já registado em Portugal. Se a matrícula ainda for estrangeira, falta somar o ISV.<br><span style="display:block;margin-top:6px;">${isvR}</span>`}
+            <b style="color:${amber.fg};">Carro importado — ainda por legalizar.</b>
+            ${` O preço justo acima é de um carro já registado em Portugal. Se a matrícula ainda for estrangeira, falta somar o ISV.<br><span style="display:block;margin-top:6px;">${isvR}</span>`}
           </span>
-        </div>` : "";
+        </div>` : `
+        <div class="exclusive" style="background:#F4F5F7;border:1px solid #E3E5E9;align-items:flex-start;margin-top:16px;">
+          <span style="font-size:15px;">🌍</span>
+          <span class="x" style="color:#5B606B;">
+            <b style="color:#16181D;">Carro importado${rec.il ? " — já legalizado" : ""}.</b>
+            ${importFactLine({ importLegalized: !!rec.il })}
+          </span>
+        </div>`);
     const sellLine = rec.sd != null ? `<div style="font-size:12px;color:#8A8F98;margin-top:14px;line-height:1.5;">Carros deste modelo vendem, em mediana, em <b style="color:#16181D;">~${rec.sd} dias</b> no mercado.</div>` : "";
     const track = Array.isArray(rec.ph) ? rec.ph : null;
     let cutBlock = "";
@@ -1731,7 +1752,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
           <span class="verdict-tag" style="color:${vc.fg};">${tag}</span>
           <span class="verdict-profit" style="color:${vc.fg};">${line}</span>
         </div>
-        ${netIsvNote({ importFlag: !!rec.imp, importLegalized: !!rec.il, isvEur: rec.isv_eur ?? null, isvTier: isvTier(price) }, saving)}
+        ${netIsvNote({ importFlag: !!rec.imp, importPending: !!rec.ip, isvEur: rec.isv_eur ?? null, isvTier: isvTier(price) }, saving)}
         <div style="margin-top:16px;">
           <div class="gauge-head"><span>${fmtEur(fl)}</span><span>intervalo justo de mercado</span><span>${fmtEur(fh)}</span></div>
           <div class="gauge-track"><div class="gauge-pin" style="left:${gaugePos}%;"></div></div>
@@ -2502,7 +2523,7 @@ export function historyCheckBlock({ url, reasons = [], price = null, title = nul
 export function historyReasons(rec, models) {
   if (!rec) return [];
   const out = [];
-  if (rec.imp && !rec.il) out.push("Há indícios de importação e não está claro se o ISV foi pago: confirma a origem e a data de entrada em Portugal.");
+  if (rec.imp && rec.ip) out.push("O anúncio indica matrícula estrangeira ou legalização por concluir: confirma a origem, a data de entrada em Portugal e quem paga o ISV.");
   else if (rec.imp) out.push("Carro importado: o que aconteceu antes de entrar em Portugal só aparece num relatório internacional.");
   const mr = (rec.ms && models) ? models[rec.ms] : null;
   let refKm = null, refYear = false;

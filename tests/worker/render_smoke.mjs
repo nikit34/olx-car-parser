@@ -670,6 +670,30 @@ check("the error against accepted prices is published band by band", () => {
   assert(!/undefined|NaN/.test(bare), "a placeholder leaked with no measurement");
 });
 
+check("what the import label is worth is published, or stays unpublished", () => {
+  const imf = {
+    window: 30,
+    s30: { v: -3.6, lo: -5.7, hi: -1.3, cells: 166, n: 2471, publishable: true },
+    price: { v: -1.1, lo: -3.9, hi: 1.5, cells: 39, n: 424, publishable: false },
+  };
+  const meth = renderMethodology({ stats, imf, host: HOST, depositCount: 0, builtAt });
+  assertPage(meth, { indexable: true, canonical: `https://${HOST}/pt/metodologia`, label: "metodologia+imf" });
+  assert(meth.includes("−3,6 pp"), "the measured 30-day gap is not rendered");
+  assert(meth.includes("indistinguível de zero"), "a gap that spans zero must be said to be absent");
+  assert(/2\D?471/.test(meth), "the sample behind the gap is not shown");
+  assert(!/undefined|NaN/.test(meth), "a placeholder leaked into the import block");
+
+  const noisy = renderMethodology({
+    stats, host: HOST, depositCount: 0, builtAt,
+    imf: { window: 30, s30: { v: -1.2, lo: -2.8, hi: 0.7, cells: 214, n: 3375, publishable: false } },
+  });
+  assert(!noisy.includes("−1,2 pp"), "an unpublishable gap was printed as a fact");
+  assert(!noisy.includes("etiqueta «importado»"), "the section appeared with nothing to say");
+
+  const bare = renderMethodology({ stats, host: HOST, depositCount: 0, builtAt });
+  assert(!bare.includes("etiqueta «importado»"), "the section appeared with no measurement");
+});
+
 check("model quality is rendered when measured, and absent when not", () => {
   const mq = { mae: 1665, mape: 25.7, r2: 0.915, cov: 0.809, n: 79532, folds: 5, ts: "2026-08-30" };
   const meth = renderMethodology({ stats, mq, host: HOST, depositCount: 0, builtAt });

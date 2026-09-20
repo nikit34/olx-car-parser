@@ -402,11 +402,19 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
         model_pages["lqm"] = liquidity["market"]
     if _norms:
         model_pages["ngc"] = _norms
-    _acc = _accuracy_on_accepted_prices(listings, _outcomes)
+    _acc, _accepted_preds = _accuracy_on_accepted_prices(listings, _outcomes)
     if _acc:
         model_pages["acc"] = _acc
         print(f"[build]   published error: {len(_acc)} price bands, "
               f"{sum(b['n'] for b in _acc):,} cars that left at their ask", flush=True)
+    _imf = _import_effect(listings, _outcomes, _accepted_preds)
+    if _imf:
+        model_pages["imf"] = _imf
+        _s30 = _imf.get("s30")
+        if _s30:
+            print(f"[build]   import flag: {_s30['v']:+.1f} pp of 30-day sales "
+                  f"[{_s30['lo']:+.1f}, {_s30['hi']:+.1f}] over {_s30['cells']} "
+                  f"matched cells", flush=True)
     model_pages["built_at"] = built_at   # freshness signal the Worker renders ("atualizado em")
     _mq = _model_quality(_mt if _loaded is not None else None)
     if _mq:
@@ -481,7 +489,18 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
     return manifest
 
 
-def _accuracy_on_accepted_prices(listings, outcomes) -> list[dict]:
+def _import_effect(listings, outcomes, predictions):
+    """Matched import-vs-national gaps for the methodology page, or None."""
+    from src.analytics.import_effect import import_effect
+
+    try:
+        return import_effect(listings, outcomes, predictions)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[build]   import effect skipped: {exc}", flush=True)
+        return None
+
+
+def _accuracy_on_accepted_prices(listings, outcomes) -> tuple[list[dict], dict]:
     """Model error per price band, scored on the cars the market took at the ask.
 
     Predictions come from the bundle's out-of-fold CV wherever the row was in
@@ -494,22 +513,22 @@ def _accuracy_on_accepted_prices(listings, outcomes) -> list[dict]:
 
     rows = accepted_price_rows(outcomes)
     if rows.empty:
-        return []
+        return [], {}
     saved = load_model(max_age_hours=14 * 24)
     if saved is None:
         print("[build]   no model bundle — published error skipped", flush=True)
-        return []
+        return [], {}
     models, cat_maps, _metrics, oof, calibrator, uncertainty = saved
     ads = listings[listings["olx_id"].astype(str).isin(set(rows["car_id"].astype(str)))]
     ads = ads.drop_duplicates("olx_id").reset_index(drop=True)
     if ads.empty:
-        return []
+        return [], {}
     preds = predict_prices(models, cat_maps, ads, oof_preds=oof,
                            median_calibrator=calibrator,
                            uncertainty_bundle=uncertainty)
     by_id = dict(zip(ads["olx_id"].astype(str),
                      preds["predicted_price"].reindex(ads.index).values))
-    return accuracy_by_band(outcomes, by_id)
+    return accuracy_by_band(outcomes, by_id), by_id
 
 
 def main() -> None:

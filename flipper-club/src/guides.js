@@ -147,7 +147,7 @@ export const GUIDES = [
     faq: [
       ["Posso vender um carro com matrícula estrangeira em Portugal?", "Na prática só a quem esteja disposto a legalizá-lo: o comprador terá de pagar o ISV e tratar da matrícula portuguesa. Ou legalizas antes de vender, ou vendes com desconto e dizes isso no anúncio."],
       ["Tive isenção de ISV por mudança de residência. Posso vender já?", "As condições da isenção incluem ter tido o carro pelo menos 6 meses no país de origem, e a venda nos 12 meses seguintes à matrícula implica, segundo a ANECRA e os despachantes, a devolução do imposto. Confirma na Autoridade Tributária antes de anunciar."],
-      ["Um carro importado vale menos do que um nacional?", "Depende do modelo. Nas nossas páginas de importação comparamos o preço pedido em Portugal com o preço alemão mais ISV e legalização; para alguns modelos a diferença é grande, para outros quase nula."],
+      ["Um carro importado vale menos do que um nacional?", "Pelo que medimos, não: comparando carros da mesma marca, modelo e escalão de idade no mesmo portal, o importado fecha ao mesmo preço que o nacional — a diferença que encontrámos é indistinguível de zero. O que muda é o tempo: demora um pouco mais a encontrar comprador. A conta diferente é a de importares tu: nas nossas páginas de importação comparamos o preço pedido em Portugal com o preço alemão mais ISV e legalização."],
     ],
     sources: ["atIsencao", "govMatricula", "anecraIsv"],
   },
