@@ -16,6 +16,19 @@ so :func:`src.parser.photo_hash.is_degenerate` drops them before matching;
 :data:`MAX_LISTINGS_PER_HASH` is a dealer template, a banner or a placeholder,
 not a car, and is excluded rather than allowed to link everything it touches.
 
+That guard needs coverage to work, and coverage is what a dealer with two
+listings does not give it. The first two pairs this found on live data were
+both of that shape: a Volkswagen Golf tied to a Citroen Spacetourer by the
+black card reading BENTO AUTO BROKER that the dealer opens every gallery with,
+and two different Teslas tied by a battery-health certificate — same form,
+different VIN, different state of health, distance 1. Both shared exactly one
+frame. So a single shared frame is not enough to call two ads one car:
+:data:`MIN_MATCHED_PHOTOS` is what a caller deciding to merge should ask for.
+It costs about a fifth of the true pairs (6 of the 34 confirmed in the OLX
+sample shared only one photo, and at least one of those — a Mini door card —
+was genuine), and that is the right side to err on, because a wrong merge
+deletes a real observation while a missed one only leaves a duplicate.
+
 What this cannot see: a re-shoot. A reseller who photographs the car again
 shares no pixels with the ad they bought from, so photo evidence covers
 "the seller re-posted" and leaves "someone else re-sold it" to the text
@@ -30,6 +43,8 @@ from src.parser.photo_hash import MATCH_DISTANCE, hamming, is_degenerate
 
 
 MAX_LISTINGS_PER_HASH = 4
+
+MIN_MATCHED_PHOTOS = 2
 
 BANDS = 4
 BAND_HEX = 16 // BANDS

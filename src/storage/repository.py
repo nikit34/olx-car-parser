@@ -772,10 +772,12 @@ def _same_car_evidence(a_hashes, b_hashes, a_km, b_km,
     attribute rule still applies, so listings recorded before the fingerprint
     table keep being deduplicated exactly as they were.
     """
-    from src.analytics.photo_match import photo_overlap
+    from src.analytics.photo_match import MIN_MATCHED_PHOTOS, photo_overlap
     if a_hashes and b_hashes:
         matched, _score = photo_overlap(a_hashes, b_hashes)
-        return f"{matched} shared photos" if matched else None
+        if matched >= MIN_MATCHED_PHOTOS:
+            return f"{matched} shared photos"
+        return None
     if a_km != b_km:
         return None
     if a_price and b_price:
@@ -810,6 +812,12 @@ def deduplicate_same_platform(session: Session) -> int:
     210000/200000), and the exact-match rule gave up a fifth of what was
     findable for it. Beyond 5 % apart nothing was ever confirmed, and neither
     was anything in the control group, so the window closes there.
+
+    Two shared frames are required, not one. Dealers open their galleries with
+    a branded card and close them with a certificate, and those frames are
+    identical across their stock: the first two matches found on live data were
+    a Golf tied to a Spacetourer by one dealer's logo card, and two different
+    Teslas tied by the same battery-certificate template.
 
     Pairs where either side has no stored photo hashes — everything from
     before the fingerprint table — fall back to the old attribute rule, so

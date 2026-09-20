@@ -214,7 +214,8 @@ class TestDedupDecidedByPhotos:
                       hashes=["0f1e2d3c4b5a6978", "7a3b19e5c2d40816"],
                       seen=datetime(2026, 4, 1))
         self._listing(db_session, "dup-b", price=1750,
-                      hashes=["0f1e2d3c4b5a6978"], seen=datetime(2026, 4, 9))
+                      hashes=["0f1e2d3c4b5a6978", "7a3b19e5c2d40817"],
+                      seen=datetime(2026, 4, 9))
         db_session.commit()
 
         assert deduplicate_same_platform(db_session) == 1
@@ -222,18 +223,33 @@ class TestDedupDecidedByPhotos:
 
     def test_shared_photos_beat_mileage_that_drifted(self, db_session):
         self._listing(db_session, "km-a", mileage=265000,
-                      hashes=["0f1e2d3c4b5a6978"], seen=datetime(2026, 4, 1))
+                      hashes=["0f1e2d3c4b5a6978", "7a3b19e5c2d40816"],
+                      seen=datetime(2026, 4, 1))
         self._listing(db_session, "km-b", mileage=275000,
-                      hashes=["0f1e2d3c4b5a6979"], seen=datetime(2026, 4, 9))
+                      hashes=["0f1e2d3c4b5a6979", "7a3b19e5c2d40817"],
+                      seen=datetime(2026, 4, 9))
         db_session.commit()
         assert deduplicate_same_platform(db_session) == 1
+
+    def test_one_shared_frame_is_not_a_car(self, db_session):
+        """A dealer opens every gallery with the same branded card and closes
+        it with the same certificate template. On live data the first two
+        matches were exactly that, so one frame in common decides nothing."""
+        self._listing(db_session, "logo-a", price=2500,
+                      hashes=["0f1e2d3c4b5a6978", "7a3b19e5c2d40816"],
+                      seen=datetime(2026, 4, 1))
+        self._listing(db_session, "logo-b", price=1750,
+                      hashes=["0f1e2d3c4b5a6978", "13579bdf02468ace"],
+                      seen=datetime(2026, 4, 9))
+        db_session.commit()
+        assert deduplicate_same_platform(db_session) == 0
 
     def test_mileage_further_than_five_percent_apart_is_not_considered(self, db_session):
         """Nothing beyond that window was ever confirmed, control included."""
         self._listing(db_session, "far-a", mileage=200000,
-                      hashes=["0f1e2d3c4b5a6978"])
+                      hashes=["0f1e2d3c4b5a6978", "7a3b19e5c2d40816"])
         self._listing(db_session, "far-b", mileage=240000,
-                      hashes=["0f1e2d3c4b5a6978"])
+                      hashes=["0f1e2d3c4b5a6978", "7a3b19e5c2d40816"])
         db_session.commit()
         assert deduplicate_same_platform(db_session) == 0
 
@@ -260,7 +276,8 @@ class TestDedupDecidedByPhotos:
 
     def test_one_side_without_fingerprints_falls_back_too(self, db_session):
         self._listing(db_session, "half-a", price=2500,
-                      hashes=["0f1e2d3c4b5a6978"], seen=datetime(2026, 4, 1))
+                      hashes=["0f1e2d3c4b5a6978", "7a3b19e5c2d40816"],
+                      seen=datetime(2026, 4, 1))
         self._listing(db_session, "half-b", price=1750, seen=datetime(2026, 4, 9))
         db_session.commit()
         assert deduplicate_same_platform(db_session) == 0
