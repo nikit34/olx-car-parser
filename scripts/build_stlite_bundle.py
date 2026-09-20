@@ -34,6 +34,7 @@ DASHBOARD = SRC / "dashboard"
 DEPLOY_DIR = ROOT / "dashboard-static"           # CF Pages output directory
 BUNDLE_DIR = DEPLOY_DIR / "files"                # python sources here
 DATA_DIR = DEPLOY_DIR / "data" / "dashboard"     # witness parquets here (same-origin)
+BROWSER_PACKAGES = (SRC / "analytics", DASHBOARD)
 
 # Files produced by scripts/build_dashboard_data.py — must match the
 # ``files: {}`` map in dashboard-static/index.html.
@@ -106,14 +107,25 @@ def _resolve_internal(modname: str) -> Path | None:
     return None
 
 
-def _top_level_imports(tree: ast.Module):
+def _unguarded_imports(node: ast.AST):
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, (ast.Import, ast.ImportFrom)):
+            yield child
+        elif not isinstance(child, ast.Try):
+            yield from _unguarded_imports(child)
+
+
+def _required_imports(tree: ast.Module):
     for node in tree.body:
         if isinstance(node, (ast.Import, ast.ImportFrom)):
-            yield node
+            yield node, False
         elif isinstance(node, (ast.If, ast.Try)):
             for sub in ast.walk(node):
                 if isinstance(sub, (ast.Import, ast.ImportFrom)) and sub is not node:
-                    yield sub
+                    yield sub, False
+        else:
+            for sub in _unguarded_imports(node):
+                yield sub, True
 
 
 def _walk_imports(start: Path, visited: set[Path]) -> None:
@@ -121,7 +133,7 @@ def _walk_imports(start: Path, visited: set[Path]) -> None:
         return
     visited.add(start)
     tree = ast.parse(start.read_text(encoding="utf-8"))
-    for node in _top_level_imports(tree):
+    for node, deferred in _required_imports(tree):
         if isinstance(node, ast.Import):
             names = [a.name for a in node.names]
         else:
@@ -130,8 +142,11 @@ def _walk_imports(start: Path, visited: set[Path]) -> None:
             names = [node.module] if node.module else []
         for name in names:
             target = _resolve_internal(name)
-            if target is not None:
-                _walk_imports(target, visited)
+            if target is None:
+                continue
+            if deferred and not any(target.is_relative_to(d) for d in BROWSER_PACKAGES):
+                continue
+            _walk_imports(target, visited)
 
 
 def _bundle_path(source: Path) -> str:
