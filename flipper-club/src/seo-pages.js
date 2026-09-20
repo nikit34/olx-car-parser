@@ -29,7 +29,7 @@
 
 import {
   layout, escapeHtml, fmtEur, fmtKm, fmtNum, fmtBuilt, slugify,
-  present, thumbBlock, gradeChip, historyCheckBlock, sellerHelpBlock, monthTag,
+  present, thumbBlock, gradeChip, historyCheckBlock, sellerHelpBlock, monthTag, priceFork,
   analyticsClick,
 } from "./templates.js";
 
@@ -1057,14 +1057,10 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
     ],
   })}</section>` : "";
 
-  const sellHref = hasVender ? `/pt/vender/${slug}#vender` : `/pt/avaliar?modelo=${encodeURIComponent(slug)}&ano=${year}#vender`;
-  const sellBlock = `
-    <section class="section" style="padding:18px 22px 0;max-width:680px;margin:0 auto;">
-      <div class="exclusive" style="background:#F4F6FB;border:1px solid #D9E0F0;align-items:flex-start;">
-        <span style="font-size:15px;">🏷️</span>
-        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">Vais vender o teu ${B} ${M} de ${year}?</b> Metade dos anúncios deste ano pede entre ${FL} e ${FH}${rec.sd != null ? `, e um ${B} ${M} sai do OLX em ~${rec.sd} dias` : ""}. É a referência para decidires por quanto anunciar. <a href="${sellHref}" style="color:#177A47;font-weight:600;">Ver quanto pedir&nbsp;→</a></span>
-      </div>
-    </section>`;
+  const fork = priceFork({
+    name: `${B} ${M}`, slug, year, n: cell.n, fl: cell.fl, fh: cell.fh, age,
+    lq: rec.lq || null, sellDays: rec.sd, hasVender,
+  });
   const sellForm = `
     <section class="section" style="padding:0 22px;max-width:680px;margin:0 auto;">
       ${sellerHelpBlock({ slug, name: `${rec.b} ${rec.m}`, year, median: cell.fm, vender: hasVender })}
@@ -1073,7 +1069,7 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
   const body = crumbs([
     { name: "Início", href: "/pt" }, { name: "Preços", href: "/pt/precos" },
     { name: `${rec.b} ${rec.m}`, href: `/pt/preco/${slug}` }, { name: String(year) },
-  ]) + `<div style="padding-top:14px;">${hero}</div>${cars}${sellBlock}${histBlock}${stepBlock}${table}${yearNav}${deals}${cta}${sellForm}${links}${guides}`;
+  ]) + `<div style="padding-top:14px;">${hero}</div>${fork}${cars}${histBlock}${stepBlock}${table}${yearNav}${deals}${cta}${sellForm}${links}${guides}`;
 
   const faqs = [[
     `Quanto vale um ${rec.b} ${rec.m} de ${year} em Portugal?`,
@@ -3101,7 +3097,7 @@ export function facetKeys(rec) {
           ...publishedCells(rec, "district")].map(c => c.k);
 }
 
-export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, host, depositCount, builtAt, duelSpec = null, altJson = null }) {
+export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, host, depositCount, builtAt, duelSpec = null, altJson = null, hasVender = false }) {
   const B = escapeHtml(rec.b), M = escapeHtml(rec.m);
   const label = escapeHtml(cell.lbl);
   const canonical = `https://${host}/pt/preco/${slug}/${cell.k}`;
@@ -3161,6 +3157,10 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
   const ageNote = !age ? ""
     : ageMoves ? ` Ajustado pela idade, este corte pede ${more(age.pct)} ${agePct}% do que ${refAll}: a mediana acima é em bruto e inclui a diferença de anos.`
     : ` Ajustado pela idade, este corte pede o mesmo que ${refAll} — a distância entre as duas medianas em bruto é a diferença de anos.`;
+  const facetFork = priceFork({
+    name: `${B} ${M}`, slug, n: cell.n, fl: cell.fl, fh: cell.fh,
+    lq: rec.lq || null, sellDays: rec.sd, hasVender,
+  });
   const body = crumbs([
     { name: "Início", href: "/pt" }, { name: "Preços", href: "/pt/precos" },
     { name: `${rec.b} ${rec.m}`, href: `/pt/preco/${slug}` }, { name: cell.lbl },
@@ -3181,6 +3181,7 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
         ${provenance({ n: cell.n, builtAt, measure: `Preço pedido, ${titlePhrase} (mediana e P25-P75)` })}
       </div>
     </div>
+    ${facetFork}
     ${(compare || vsAll != null) ? `
     <section class="section fc-wrap">
       <h2 class="fc-h2">${sibHead}</h2>

@@ -670,6 +670,58 @@ check("the error against accepted prices is published band by band", () => {
   assert(!/undefined|NaN/.test(bare), "a placeholder leaked with no measurement");
 });
 
+check("the price page forks into the two jobs it serves", () => {
+  const rec = models[deep];
+  const mp = renderModelPage({
+    rec, slug: deep, liveDeals: [], siblings: [], host: HOST, depositCount: 0, builtAt,
+    yearPages: yearPageYears(rec), competitors: [], comparisons: [], hasVender: true,
+  });
+  const forkOf = html => {
+    const i = html.indexOf("VOU COMPRAR");
+    assert(i > 0, "the price page has no buyer branch");
+    return html.slice(i - 400, html.indexOf("VOU VENDER") + 1400);
+  };
+  const mf = forkOf(mp);
+  assert(mf.includes("VOU VENDER"), "the model page offers only one way out");
+  assert(mf.includes(`href="/pt/avaliar?modelo=${deep}"`), "the buyer branch does not carry the model");
+  assert(mf.includes(`href="/pt/vender/${deep}#vender"`), "the seller branch skips the seller page it has");
+  assert(mp.indexOf("VOU COMPRAR") < mp.indexOf("À VENDA AGORA") || !mp.includes("À VENDA AGORA"),
+    "the fork sits below the car list instead of right after the answer");
+  assert(!/undefined|NaN/.test(mf), "a placeholder leaked into the fork");
+
+  const noVender = forkOf(renderModelPage({
+    rec, slug: deep, liveDeals: [], siblings: [], host: HOST, depositCount: 0, builtAt,
+    yearPages: yearPageYears(rec), competitors: [], comparisons: [],
+  }));
+  assert(noVender.includes(`href="/pt/avaliar?modelo=${deep}#vender"`),
+    "with no seller page the seller branch must fall back to the lead form");
+
+  const ys = yearPageYears(rec);
+  if (ys.length) {
+    const y = ys[0];
+    const yf = forkOf(renderYearPage({
+      rec, slug: deep, year: y, cell: yearCell(rec, y),
+      neighbours: { older: null, newer: null, window: [] },
+      liveDeals: [], pageYears: ys, stats, host: HOST, depositCount: 0, builtAt,
+    }));
+    assert(yf.includes(`&ano=${y}`), "the year is lost on the way to the valuation");
+    assert(yf.includes(`de ${y}`), "the fork does not say which year it is talking about");
+    assert(!/undefined|NaN/.test(yf), "a placeholder leaked into the year fork");
+    const ab = (rec.lq && rec.lq.ab) || [];
+    if (ab.length) {
+      const age = (parseInt(builtAt.slice(0, 4), 10) || 0) - y;
+      const band = ab.find(b => {
+        const m = /^(\d+)(?:-(\d+))?(\+)?$/.exec(b.k || "");
+        if (!m) return false;
+        const lo = +m[1], hi = m[2] ? +m[2] : (m[3] ? Infinity : lo);
+        return age >= lo && age <= hi;
+      });
+      if (band) assert(yf.includes(band.lbl.toLowerCase()),
+        "the year page quotes the model-wide sale speed instead of the one for this age");
+    }
+  }
+});
+
 check("what the import label is worth is published, or stays unpublished", () => {
   const imf = {
     window: 30,

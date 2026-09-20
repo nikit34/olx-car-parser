@@ -895,6 +895,58 @@ function analyticsEvent(name, params = {}) {
   return `<script>if(typeof gtag==='function')gtag('event',${JSON.stringify(name)},${payload});</script>`;
 }
 
+export function priceFork({ name, slug, year = null, n, fl, fh, lq = null,
+                            sellDays = null, age = null, hasVender = false }) {
+  const yr = year ? ` de ${year}` : "";
+  const q = s => encodeURIComponent(s);
+  const sellHref = hasVender
+    ? `/pt/vender/${q(slug)}#vender`
+    : `/pt/avaliar?modelo=${q(slug)}${year ? `&ano=${year}` : ""}#vender`;
+  const buyHref = `/pt/avaliar?modelo=${q(slug)}${year ? `&ano=${year}` : ""}`;
+  const pct = x => Math.round(x * 100);
+  const dec = x => (x * 100).toFixed(1).replace(".", ",");
+
+  const band = (lq && age != null && Array.isArray(lq.ab))
+    ? lq.ab.find(b => {
+        const m = /^(\d+)(?:-(\d+))?(\+)?$/.exec(b.k || "");
+        if (!m) return false;
+        const lo = +m[1], hi = m[2] ? +m[2] : (m[3] ? Infinity : lo);
+        return age >= lo && age <= hi;
+      })
+    : null;
+  let speed = "";
+  if (band && band.s30 != null)
+    speed = `Entre os que têm ${escapeHtml(band.lbl.toLowerCase())}, <b>${pct(band.s30)} em cada 100</b> saem do OLX no primeiro mês.`;
+  else if (lq && lq.s30 != null)
+    speed = `<b>${pct(lq.s30)} em cada 100</b> anúncios deste modelo saem do OLX no primeiro mês${lq.md != null ? `, metade em ${lq.md} dias` : ""}.`;
+  else if (sellDays != null)
+    speed = `Um ${name} sai do OLX em <b>~${sellDays} dias</b>.`;
+
+  const haggle = (lq && lq.cu != null)
+    ? `<b>${pct(lq.cu)} em cada 100</b> vendedores deste modelo acabaram por baixar o preço${lq.cp != null ? `, em mediana ${dec(lq.cp)}%` : ""}.`
+    : "";
+
+  const card = (eyebrow, title, lines, href, btn, cls, ev) => `
+      <div style="flex:1 1 262px;border:1px solid #E8E6E1;border-radius:16px;background:#fff;padding:17px 18px 18px;">
+        <div class="mono" style="font-size:10.5px;letter-spacing:0.08em;color:#8A8F98;margin-bottom:8px;">${eyebrow}</div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:16px;color:#16181D;line-height:1.25;margin-bottom:7px;">${title}</div>
+        <p style="font-size:13.5px;color:#5B606B;line-height:1.5;margin:0 0 15px;">${lines.filter(Boolean).join(" ")}</p>
+        <a class="${cls}" href="${href}" style="display:inline-block;font-size:14px;padding:11px 18px;"${analyticsClick(ev, { modelo: slug, ano: year ? String(year) : "" })}>${btn}&nbsp;&nbsp;→</a>
+      </div>`;
+
+  return `
+    <section class="section" style="padding:20px 22px 0;max-width:680px;margin:0 auto;">
+      <div style="display:flex;flex-wrap:wrap;gap:12px;">
+        ${card("VOU COMPRAR", "Tens um anúncio à vista?",
+               [`Cola o link e dizemos onde cai entre os ${n} anúncios${yr}.`, haggle],
+               buyHref, "Avaliar esse anúncio", "btn-dark", "fork_comprar")}
+        ${card("VOU VENDER", `Tens um ${name}${yr} para vender?`,
+               [`Metade pede entre ${fmtEur(fl)} e ${fmtEur(fh)}.`, speed],
+               sellHref, "Ver quanto pedir", "btn-bright", "fork_vender")}
+      </div>
+    </section>`;
+}
+
 export function analyticsClick(name, params = {}) {
   if (!GA4_MEASUREMENT_ID) return "";
   const attr = v => JSON.stringify(v).replace(/</g, "\\u003c").replace(/"/g, "&quot;");
@@ -2194,13 +2246,10 @@ export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, h
       </div>
     </section>` : "";
 
-  const venderLink = hasVender ? `
-    <section class="section" style="padding:26px 22px 0;max-width:680px;">
-      <div class="exclusive" style="background:#F4F6FB;border:1px solid #D9E0F0;align-items:flex-start;">
-        <span style="font-size:15px;">🏷️</span>
-        <span class="x" style="color:#3A3F47;"><b style="color:#16181D;">Vais vender o teu ${B} ${M}?</b> Quanto pedir por ano, em quantos dias sai e quantos vendedores acabam por baixar o preço. <a href="/pt/vender/${slug}" style="color:#177A47;font-weight:600;">Ver quanto pedir&nbsp;→</a></span>
-      </div>
-    </section>` : "";
+  const fork = priceFork({
+    name: `${B} ${M}`, slug, n: rec.n, fl: rec.fl, fh: rec.fh,
+    lq: rec.lq || null, sellDays: rec.sd, hasVender,
+  });
 
   const liqLink = hasLiquidity ? `
     <section class="section" style="padding:26px 22px 0;max-width:680px;">
@@ -2240,7 +2289,7 @@ export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, h
   // internal links back to /pt and /pt/precos (reinforcing the crawl spine).
   const crumb = `<nav class="section" aria-label="Breadcrumb" style="max-width:680px;padding:22px 22px 0;font-size:12.5px;color:#8A8F98;">`
     + `<a href="/pt" style="color:#8A8F98;">Início</a> › <a href="/pt/precos" style="color:#8A8F98;">Preços</a> › <span style="color:#16181D;">${B} ${M}</span></nav>`;
-  const body = `${crumb}<div style="padding-top:14px;">${hero}</div>${gbmCard}${insightBlock}${bridge1}${table}${facetBlock}${duelLink}${depLink}${liqLink}${venderLink}${bridge2}${trust}${rivals}${sellerCta}${sib}${guides}`;
+  const body = `${crumb}<div style="padding-top:14px;">${hero}</div>${fork}${gbmCard}${insightBlock}${bridge1}${table}${facetBlock}${duelLink}${depLink}${liqLink}${bridge2}${trust}${rivals}${sellerCta}${sib}${guides}`;
 
   const canonical = `https://${host}/pt/preco/${slug}`;
   const faq = (q, a) => ({

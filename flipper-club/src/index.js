@@ -817,6 +817,7 @@ async function renderFacet({ request, env, url, models, rec, slug, facet, builtA
             : null,
     siblingsCells: publishedCells(rec, kind),
     stats: corpusStats(models, builtAt),
+    hasVender: publishedVender(models, slug, rec, builtAt),
     host: url.host, depositCount: null, builtAt,
   }));
 }
