@@ -59,6 +59,7 @@ from src.analytics.model_pages import slugify
 MIN_EVENTS = 40
 MIN_CELL_EVENTS = 40
 MIN_SELL_EVENTS = 8
+RB_MIN_SCORE = 0.8
 WINDOW_DAYS = 365
 MAX_DAYS = 400
 HORIZONS = (30, 60, 90)
@@ -342,6 +343,12 @@ def chain_relists(listings: pd.DataFrame, pairs: pd.DataFrame) -> pd.DataFrame:
     roots = df[df["olx_id"] == df["_root"]].copy()
     size = df.groupby("_root", sort=False).size()
     roots["_hops"] = roots["_root"].map(size).fillna(1).astype(int)
+    if "match_score" in pairs.columns:
+        best = pairs.copy()
+        best["original_olx_id"] = best["original_olx_id"].astype(str)
+        best = best.groupby("original_olx_id")["match_score"].max()
+        by_root = df.assign(_s=df["olx_id"].map(best)).groupby("_root", sort=False)["_s"].max()
+        roots["_conf"] = roots["_root"].map(by_root).fillna(0.0)
     for col in ("last_scraped_at", "deactivated_at", "is_active", "price_eur"):
         if col in roots.columns and col in last.columns:
             roots[col] = roots["_root"].map(last[col])
@@ -369,6 +376,15 @@ def build_liquidity(
     that needed more than one advert. Given only ``relisted`` — the set of ids
     that came back — the unit stays the advert and those endings are censored.
     Both are honest; the chain measures the longer, truer stretch of time.
+
+    ``rb`` counts only chains whose best link clears ``RB_MIN_SCORE``, because
+    it is published as a floor — "at least this many did not sell first time" —
+    and a floor built on uncertain matches is not a floor. It matters: on
+    2026-09-20 the figure ran 0.107 over every pair, 0.047 over pairs scoring
+    0.8 or better and 0.016 over 0.9, and a peer session's photo audit found
+    the long-gap OLX pairs showed no photo-set continuity at all. The chain
+    itself still uses every pair — there a missed re-listing reads as a sale
+    and flatters the market, so the cautious side is the inclusive one.
     """
     if pairs is not None and not pairs.empty:
         listings = chain_relists(listings, pairs)
@@ -381,7 +397,12 @@ def build_liquidity(
     relisted = relisted or set()
     came_back = (df["olx_id"].astype(str).isin(relisted)
                  if relisted and "olx_id" in df.columns else None)
-    back = (df["_hops"] > 1) if "_hops" in df.columns else came_back
+    if "_conf" in df.columns:
+        back = (df["_hops"] > 1) & (df["_conf"] >= RB_MIN_SCORE)
+    elif "_hops" in df.columns:
+        back = df["_hops"] > 1
+    else:
+        back = came_back
     df["_gone"] = df["_event"]
     if came_back is not None:
         df["_event"] = df["_gone"] & ~came_back

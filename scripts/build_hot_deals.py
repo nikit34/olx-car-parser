@@ -334,11 +334,12 @@ def _build_signals(db_url: str | None) -> pd.DataFrame:
               f"(>=8 sold); matched {merged['sell_days'].notna().sum():,}/{len(merged):,} signals",
               flush=True)
 
-    merged = _annotate_decisions(merged, listings)
+    merged = _annotate_decisions(merged, listings, pairs=relist_pairs)
     return merged
 
 
-def _annotate_decisions(signals: pd.DataFrame, listings: pd.DataFrame) -> pd.DataFrame:
+def _annotate_decisions(signals: pd.DataFrame, listings: pd.DataFrame,
+                        pairs: pd.DataFrame | None = None) -> pd.DataFrame:
     """Attach ``verdict`` + ``decision_score`` columns using the same decision
     engine the /analytics dashboard runs (``src.analytics.decision``).
 
@@ -383,7 +384,7 @@ def _annotate_decisions(signals: pd.DataFrame, listings: pd.DataFrame) -> pd.Dat
         print(f"[hot_deals]   coverage history unavailable ({e}) — band-confidence neutral", flush=True)
 
     ctx = build_context(listings, snapshots, coverage_80=coverage_80,
-                        predicted_lookup=predicted_lookup, pairs=relist_pairs)
+                        predicted_lookup=predicted_lookup, pairs=pairs)
     decisions = [decide(row, ctx) for _, row in signals.iterrows()]
     signals = signals.copy()
     signals["verdict"] = [d.verdict for d in decisions]

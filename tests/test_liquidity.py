@@ -218,6 +218,27 @@ class TestRelistsAndDiscounts:
         assert chained["md"] > flat["md"]
         assert chained["rb"] == pytest.approx(1.0, abs=0.01)
 
+    def test_a_floor_is_only_a_floor_when_the_matches_behind_it_are_solid(self):
+        first = _rows(50, days=10, spread=0)
+        second = _rows(50, days=10, start=300, spread=0)
+        for i, row in enumerate(second):
+            row["first_seen_at"] = first[i]["last_scraped_at"] + pd.Timedelta(days=7)
+            row["last_scraped_at"] = row["first_seen_at"] + pd.Timedelta(days=10)
+            row["deactivated_at"] = row["last_scraped_at"]
+        def _pairs(score):
+            return pd.DataFrame([
+                {"original_olx_id": first[i]["olx_id"], "relist_olx_id": second[i]["olx_id"],
+                 "match_score": score, "gap_days": 7.0} for i in range(50)])
+        key = ("Volkswagen", "Golf")
+        solid = build_liquidity(_df(first, second, _watchers()), pairs=_pairs(0.9),
+                                now=NOW)["models"][key]
+        shaky = build_liquidity(_df(first, second, _watchers()), pairs=_pairs(0.7),
+                                now=NOW)["models"][key]
+        assert solid["rb"] == pytest.approx(1.0, abs=0.01)
+        assert shaky["rb"] == pytest.approx(0.0, abs=0.01)
+        assert solid["md"] == shaky["md"]
+        assert solid["n"] == shaky["n"]
+
     def test_a_car_still_on_sale_under_its_second_advert_is_censored(self):
         first = _rows(40, days=10, spread=0)
         for row in first:

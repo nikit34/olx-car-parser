@@ -134,3 +134,86 @@ class TestFirstCutDay:
         row = build_outcomes(ads, snaps, pairs, now=NOW).iloc[0]
         assert row["first_cut_day"] == pytest.approx(40, abs=0.5)
         assert bool(row["cut"]) is True
+
+
+class TestCrossPosting:
+    """The same car on OLX and StandVirtual is one car. Counting it twice
+    inflated every sample size published off this table by 19%."""
+
+    def _both_sites(self):
+        olx = _ad("o1", 60, 40, 9000)
+        sv = _ad("s1", 55, 35, 9000)
+        sv["duplicate_of"] = "o1"
+        olx["duplicate_of"] = None
+        return pd.DataFrame([olx, sv])
+
+    def test_a_car_posted_on_two_sites_at_once_is_one_row(self):
+        out = build_outcomes(self._both_sites(), None, None, now=NOW)
+        assert len(out) == 1
+        row = out.iloc[0]
+        assert row["car_id"] == "o1"
+        assert row["n_ads"] == 2
+        assert row["n_relists"] == 0
+
+    def test_without_the_duplicate_mark_it_reads_as_two_cars(self):
+        ads = self._both_sites()
+        ads["duplicate_of"] = None
+        assert len(build_outcomes(ads, None, None, now=NOW)) == 2
+
+    def test_a_cross_post_is_not_a_second_attempt_but_a_relist_is(self):
+        ads = self._both_sites()
+        later = _ad("o2", 20, 15, 8500)
+        later["duplicate_of"] = None
+        ads = pd.concat([ads, pd.DataFrame([later])], ignore_index=True)
+        pairs = pd.DataFrame([{"original_olx_id": "o1", "relist_olx_id": "o2",
+                               "match_score": 0.9, "gap_days": 5.0}])
+        row = build_outcomes(ads, None, pairs, now=NOW).iloc[0]
+        assert row["n_ads"] == 3
+        assert row["n_relists"] == 1
+
+    def test_a_duplicate_pointing_outside_the_corpus_is_left_alone(self):
+        ads = self._both_sites()
+        ads.loc[ads["olx_id"] == "s1", "duplicate_of"] = "gone-from-db"
+        assert len(build_outcomes(ads, None, None, now=NOW)) == 2
+
+
+class TestPriceStoryOfACrossPostedCar:
+    """The two sites carry different numbers for the same car, so pouring both
+    into one trajectory invents a cut the seller never made."""
+
+    def _car_on_two_sites(self, olx_price, sv_price):
+        olx = _ad("o1", 60, 40, olx_price)
+        olx["duplicate_of"] = None
+        sv = _ad("s1", 58, 38, sv_price)
+        sv["duplicate_of"] = "o1"
+        snaps = pd.DataFrame(_snaps("o1", 60, [olx_price, olx_price], step=10)
+                             + _snaps("s1", 58, [sv_price, sv_price], step=10))
+        return pd.DataFrame([olx, sv]), snaps
+
+    def test_a_platform_gap_is_not_a_price_cut(self):
+        ads, snaps = self._car_on_two_sites(7500, 5000)
+        row = build_outcomes(ads, snaps, None, now=NOW).iloc[0]
+        assert row["n_ads"] == 2
+        assert bool(row["cut"]) is False
+        assert row["first_ask"] == 7500 and row["last_ask"] == 7500
+
+    def test_a_real_cut_on_the_surviving_advert_still_counts(self):
+        ads, _ = self._car_on_two_sites(9000, 8000)
+        snaps = pd.DataFrame(_snaps("o1", 60, [9000, 8100], step=20)
+                             + _snaps("s1", 58, [8000, 8000], step=10))
+        row = build_outcomes(ads, snaps, None, now=NOW).iloc[0]
+        assert bool(row["cut"]) is True
+        assert row["ask_change_pct"] == pytest.approx(-10.0, abs=0.01)
+
+    def test_an_advert_that_replaced_a_dead_one_keeps_telling_the_story(self):
+        first = _ad("a1", 90, 20, 10000)
+        second = _ad("a2", 50, 20, 9000)
+        for row in (first, second):
+            row["duplicate_of"] = None
+        pairs = pd.DataFrame([{"original_olx_id": "a1", "relist_olx_id": "a2",
+                               "match_score": 0.9, "gap_days": 20.0}])
+        snaps = pd.DataFrame(_snaps("a1", 90, [10000, 10000], step=10)
+                             + _snaps("a2", 50, [9000, 9000], step=10))
+        row = build_outcomes(pd.DataFrame([first, second]), snaps, pairs, now=NOW).iloc[0]
+        assert row["first_ask"] == 10000 and row["last_ask"] == 9000
+        assert bool(row["cut"]) is True
