@@ -363,7 +363,7 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
           f"{len(_outcomes):,} cars, "
           f"{sum(len(b.get('ag', [])) for b in _norms)} age cells", flush=True)
     valuations = build_valuations(listings, predictions, sell_speed,
-                                  snapshots=snapshots, pairs=_rel, norms=_norms)
+                                  snapshots=snapshots, pairs=_rel)
     val_path = out_dir / "valuations.json"
     # allow_nan=False: a non-finite value (pandas NaN leaking through) emits the
     # literal `NaN`, which is valid for Python's json.load but breaks the Worker's
@@ -400,6 +400,8 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
                                     published=_published_models(out_dir))
     if liquidity.get("market"):
         model_pages["lqm"] = liquidity["market"]
+    if _norms:
+        model_pages["ngc"] = _norms
     _acc = _accuracy_on_accepted_prices(listings, _outcomes)
     if _acc:
         model_pages["acc"] = _acc

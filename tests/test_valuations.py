@@ -173,9 +173,3 @@ class TestCarHistoryAndNorms:
         car = build_valuations(self._two_ads(), _predictions())["cars"]["AAA"]
         assert "dc" not in car
 
-    def test_the_bands_ride_along_so_a_quiet_listing_still_has_a_norm(self):
-        norms = [{"lo": 8000, "hi": 15000, "lbl": "€8.000 a €15.000",
-                  "n": 10305, "cu": 0.604, "cp": 4.8, "md": 69}]
-        blob = build_valuations(_listings(), _predictions(), norms=norms)
-        assert blob["neg"] == norms
-        assert "neg" not in build_valuations(_listings(), _predictions())

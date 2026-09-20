@@ -161,10 +161,8 @@ def _chain_history(listings: pd.DataFrame, pairs: pd.DataFrame | None):
 def build_valuations(listings: pd.DataFrame, predictions: pd.DataFrame,
                      sell_speed: pd.DataFrame | None = None,
                      snapshots: pd.DataFrame | None = None,
-                     pairs: pd.DataFrame | None = None,
-                     norms: list[dict] | None = None) -> dict:
-    """Return ``{"v":3, "cars": {olx_id: {...}}, "neg": [...]}`` for active,
-    priced listings.
+                     pairs: pd.DataFrame | None = None) -> dict:
+    """Return ``{"v":3, "cars": {olx_id: {...}}}`` for active, priced listings.
 
     - ``listings``: enriched listings DataFrame (needs olx_id, is_active, title,
       description, brand, model, year, mileage_km, fuel_type, price_eur, city).
@@ -177,10 +175,7 @@ def build_valuations(listings: pd.DataFrame, predictions: pd.DataFrame,
     Blob version 2 carries ``sv`` on StandVirtual rows, which is what lets a
     reader rebuild the listing URL from the id alone.
 
-    Version 3 adds two things a buyer can hold against a seller. ``neg`` is
-    ``negotiation.price_band_norms`` — how often sellers in this price band
-    come down and by how much — so a listing that has not moved can still be
-    read against what usually happens. And with ``pairs`` (``relist_events``)
+    Version 3 adds the car's own history. With ``pairs`` (``relist_events``)
     the record carries ``dc`` and ``na``: the days since the car's FIRST
     advert and how many adverts it has had. A car on its third advert has been
     for sale far longer than ``dom`` admits, and that is the strongest fact in
@@ -188,8 +183,6 @@ def build_valuations(listings: pd.DataFrame, predictions: pd.DataFrame,
     """
     cars: dict[str, dict] = {}
     blob: dict = {"v": 3, "cars": cars}
-    if norms:
-        blob["neg"] = norms
     if listings.empty or predictions.empty:
         return blob
 

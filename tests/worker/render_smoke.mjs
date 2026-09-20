@@ -1428,6 +1428,49 @@ check("the bare /avaliar page carries the valuation guide with real numbers", ()
   assert(!withQuery.includes("Quanto vale um carro usado por idade"), "guide leaked onto a noindex result page");
 });
 
+check("the page people search for carries the two facts nobody else publishes", () => {
+  const norms = [
+    { lo: 0, hi: 4000, lbl: "até €4.000", n: 25228, cu: 0.26, cp: 14.3, md: 17,
+      ag: [[14, 0.25, 14.6, 11870], [60, 0.27, 16.7, 2623]] },
+    { lo: 8000, hi: 15000, lbl: "€8.000 a €15.000", n: 18419, cu: 0.46, cp: 8.9, md: 30,
+      ag: [[14, 0.37, 8.5, 11479], [60, 0.39, 9.1, 2456]] },
+  ];
+  const acc = [
+    { lo: 0, hi: 4000, lbl: "até €4.000", n: 17815, err: 25.7, within: 0.22, bias: 15.5 },
+    { lo: 15000, hi: 25000, lbl: "€15.000 a €25.000", n: 6117, err: 11.0, within: 0.458, bias: -6.1 },
+  ];
+  const page = renderAvaliar({ rec: null, olxId: null, sourceUrl: null, query: "", models,
+                               spec: null, depositCount: 0, host: HOST, builtAt,
+                               market: mdoc.lqm || { s30: 0.6, md: 29, cu: 0.35, cp: 0.08 },
+                               stats: corpusStats(models, builtAt), norms, acc });
+  assertPage(page, { indexable: true, canonical: `https://${HOST}/pt/avaliar`, label: "avaliar+facts" });
+  assert(page.includes("Quanto se costuma baixar no preço"), "the negotiation table is missing");
+  assert(page.includes("46 em 100"), "the share who come down is not rendered");
+  assert(page.includes("14,3%"), "the median cut is not rendered");
+  assert(page.includes("39 em 100"), "the 60-day column is not rendered");
+  assert(page.includes("Quanto erra esta avaliação"), "the published error is missing");
+  assert(page.includes("11,0%") && page.includes("25,7%"), "the best and worst bands are not named");
+  assert(page.includes("/pt/metodologia"), "the error section does not link the full table");
+  assert(page.includes("Quanto se costuma baixar no preço de um carro usado?"),
+    "the measured question is missing from the visible FAQ");
+  const faqLd = JSON.parse(page.match(/<script type="application\/ld\+json">(.*?)<\/script>/s)[1]);
+  const graph = Array.isArray(faqLd["@graph"]) ? faqLd["@graph"] : [faqLd];
+  const faqNode = graph.find(n => n["@type"] === "FAQPage");
+  assert(faqNode.mainEntity.some(q => /costuma baixar/.test(q.name)),
+    "the measured question never reached the FAQ schema");
+  assert(faqNode.mainEntity.some(q => /18\D?419/.test(q.acceptedAnswer.text)),
+    "the FAQ answer does not carry its sample size");
+
+  const bare = renderAvaliar({ rec: null, olxId: null, sourceUrl: null, query: "", models,
+                               spec: null, depositCount: 0, host: HOST, builtAt,
+                               market: mdoc.lqm || { s30: 0.6 }, stats: corpusStats(models, builtAt) });
+  assert(!bare.includes("Quanto se costuma baixar"), "a table appeared with nothing measured");
+  assert(!bare.includes("Quanto erra esta avaliação"), "an error claim appeared unmeasured");
+  assert(!bare.includes("costuma baixar no preço de um carro usado?"),
+    "the measured question appeared with nothing measured");
+  assert(!/undefined|NaN/.test(bare), "a placeholder leaked");
+});
+
 check("year pages carry the seller path and a prefilled lead form", () => {
   const [s, y] = yearPages[0];
   const rec = models[s];

@@ -522,7 +522,6 @@ async function handleAvaliar(request, env, url) {
     if (olxId) {
       const doc = await getValuations(env);
       rec = (doc && doc.cars) ? (doc.cars[olxId] || null) : null;
-      norms = (doc && Array.isArray(doc.neg)) ? doc.neg : null;
     }
   }
 
@@ -530,6 +529,7 @@ async function handleAvaliar(request, env, url) {
   // options, and the spec lookup. (cf-cached; cheap.)
   const mdoc = await getModels(env);
   const models = mdoc && mdoc.models;
+  norms = (mdoc && Array.isArray(mdoc.ngc)) ? mdoc.ngc : null;
   let spec = null;
   if (!rec && modelo && models && models[modelo]) {
     const mrec = models[modelo];
@@ -542,6 +542,7 @@ async function handleAvaliar(request, env, url) {
     contact: env.SITE_CONTACT_EMAIL,
     historyUrl: env.HISTORY_REPORT_URL || null,
     market: (mdoc && mdoc.lqm) || null,
+    acc: (mdoc && Array.isArray(mdoc.acc)) ? mdoc.acc : null,
     stats: models ? corpusStats(models, mdoc.built_at) : null,
   }), 200);
 }

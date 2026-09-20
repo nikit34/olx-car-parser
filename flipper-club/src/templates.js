@@ -1614,7 +1614,7 @@ const AVALIAR_FAQ = [
            "De anúncios ativos de carros no OLX Portugal, recolhidos diariamente. Trabalhamos com preços pedidos, com a mediana e o intervalo interquartil, e com um modelo estatístico para o valor justo. O método completo está publicado na página de metodologia."],
         ];
 
-export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depositCount, host, builtAt, contact, historyUrl = null, market = null, stats = null, norms = null }) {
+export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depositCount, host, builtAt, contact, historyUrl = null, market = null, stats = null, norms = null, acc = null }) {
   const to = (contact || "").trim();
   const mailto = to
     ? `mailto:${encodeURIComponent(to)}?subject=Avaliar%20o%20meu%20carro`
@@ -1854,7 +1854,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
     ${result}
     ${specResult}
     ${!rec ? specForm : ""}
-    ${(!rec && !spec && !query) ? avaliarHub({ models, market, stats, builtAt }) : ""}
+    ${(!rec && !spec && !query) ? avaliarHub({ models, market, stats, builtAt, norms, acc }) : ""}
     ${rec ? "" : `
     <section class="section" style="padding:18px 22px 70px;">
       <div class="cta-banner">
@@ -1921,7 +1921,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
       },
       {
         "@type": "FAQPage",
-        "mainEntity": AVALIAR_FAQ.map(([q, a]) => ({
+        "mainEntity": avaliarFaq(norms).map(([q, a]) => ({
           "@type": "Question", "name": q,
           "acceptedAnswer": { "@type": "Answer", "text": a },
         })),
@@ -2559,7 +2559,62 @@ export function ageTable(models, builtAt) {
   return rows;
 }
 
-export function avaliarHub({ models, market, stats, builtAt }) {
+function avaliarFaq(norms) {
+  const band = Array.isArray(norms)
+    ? norms.find(b => b.lo === 8000) || norms[Math.floor(norms.length / 2)] : null;
+  if (!band || band.cu == null) return AVALIAR_FAQ;
+  const cut = band.cp != null ? `, e o corte mediano é de ${band.cp.toFixed(1).replace(".", ",")}%` : "";
+  const held = normAgeCell(band, 60);
+  const tail = held
+    ? ` Esperar não ajuda muito: entre os que chegaram aos 60 dias sem mexer no preço, ${Math.round(held[1] * 100)} em cada 100 acabaram por ceder, quase o mesmo que aos 14 dias.`
+    : "";
+  return AVALIAR_FAQ.concat([[
+    "Quanto se costuma baixar no preço de um carro usado?",
+    `Depende da faixa de preço e menos do que diz a regra dos dez por cento. Na faixa ${band.lbl}, `
+    + `${Math.round(band.cu * 100)} em cada 100 vendedores baixam o preço antes de o carro sair${cut}. `
+    + `Medido em ${fmtNum(band.n)} carros do OLX Portugal seguidos do primeiro anúncio ao último.${tail}`,
+  ]]);
+}
+
+function negotiationSection(norms) {
+  if (!Array.isArray(norms) || !norms.length) return "";
+  const pc = v => `${v.toFixed(1).replace(".", ",")}%`;
+  const rows = norms.map(b => {
+    const held = normAgeCell(b, 60);
+    return `<tr>
+      <td>${escapeHtml(b.lbl)}</td>
+      <td><b>${Math.round(b.cu * 100)} em 100</b></td>
+      <td>${b.cp != null ? pc(b.cp) : "—"}</td>
+      <td class="mut">${held ? `${Math.round(held[1] * 100)} em 100` : "—"}</td>
+      <td class="mut">${fmtNum(b.n)}</td>
+    </tr>`;
+  }).join("");
+  const total = norms.reduce((s, b) => s + (b.n || 0), 0);
+  return `
+    <h2 class="fc-h2">Quanto se costuma baixar no preço</h2>
+    <p class="fc-p">A regra de bolso diz "oferece menos dez por cento" e não é verdade em faixa nenhuma. Seguimos ${fmtNum(total)} carros do primeiro anúncio ao último e contámos quem acabou por baixar o preço antes de sair, e quanto. Carros caros baixam mais vezes e menos fundo; carros baratos raramente baixam, mas quando baixam é a sério.</p>
+    <div class="fc-scroll"><table class="fc-tbl">
+      <thead><tr>
+        <th>Faixa de preço</th><th>Baixam o preço</th><th>Corte mediano</th>
+        <th>Se já passou 60 dias sem baixar</th><th>Carros</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <p class="fc-p">A última coluna é a que interessa quando o anúncio já está parado há semanas: entre os carros que chegaram aos 60 dias com o preço intacto, esta é a fração que ainda acabou por ceder. Aguentar mais tempo quase não muda as probabilidades — quem ia baixar, baixa cedo (a mediana da primeira descida é ao 15.º dia).</p>`;
+}
+
+function publishedErrorSection(acc) {
+  if (!Array.isArray(acc) || !acc.length) return "";
+  const pc = v => `${v.toFixed(1).replace(".", ",")}%`;
+  const best = acc.slice().sort((a, b) => a.err - b.err)[0];
+  const worst = acc.slice().sort((a, b) => b.err - a.err)[0];
+  const total = acc.reduce((s, b) => s + (b.n || 0), 0);
+  return `
+    <h2 class="fc-h2">Quanto erra esta avaliação</h2>
+    <p class="fc-p">Um carro que saiu do OLX sem nunca mexer no preço foi-se pelo que estava escrito: aí o pedido é o preço aceite. Comparámos a nossa estimativa com esse número em ${fmtNum(total)} carros. Na faixa ${escapeHtml(best.lbl)} erramos <b>${pc(best.err)}</b> em mediana; na faixa ${escapeHtml(worst.lbl)}, <b>${pc(worst.err)}</b>${worst.bias > 5 ? ` — e aí lemos sistematicamente <b>acima</b> do mercado, em ${pc(worst.bias)}, que é a razão para não publicarmos estimativa abaixo dos 5 000 €` : ""}. <a href="/pt/metodologia">A tabela completa, faixa a faixa</a>.</p>`;
+}
+
+export function avaliarHub({ models, market, stats, builtAt, norms = null, acc = null }) {
   if (!models) return "";
   const pct = x => Math.round(x * 100);
   const rows = ageTable(models, builtAt);
@@ -2569,7 +2624,7 @@ export function avaliarHub({ models, market, stats, builtAt }) {
   const ageRows = rows.map(r => `<tr><td>${r.label}</td><td><b>${fmtEur(r.med)}</b></td><td class="mut">${fmtNum(r.n)}</td><td class="mut">${r.models}</td></tr>`).join("");
   const top = Object.entries(models).filter(([, r]) => r.n > 0).sort((a, b) => b[1].n - a[1].n).slice(0, 12)
     .map(([slug, r]) => `<a href="/pt/preco/${encodeURIComponent(slug)}">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a>`).join(" · ");
-  const faq = AVALIAR_FAQ.map(([q, a]) => `<details class="indep-note" style="margin:0 0 8px;"><summary>${escapeHtml(q)}</summary><p style="margin:8px 0 0;">${escapeHtml(a)}</p></details>`).join("");
+  const faq = avaliarFaq(norms).map(([q, a]) => `<details class="indep-note" style="margin:0 0 8px;"><summary>${escapeHtml(q)}</summary><p style="margin:8px 0 0;">${escapeHtml(a)}</p></details>`).join("");
   return `
     <section class="section fc-wrap" style="padding-top:34px;">
       <h2 class="fc-h2">Como se calcula o valor de um carro usado em Portugal</h2>
@@ -2599,6 +2654,9 @@ export function avaliarHub({ models, market, stats, builtAt }) {
 
       ${mk.s30 != null ? `<h2 class="fc-h2">Vais vender? Quanto pedir e quanto tempo demora</h2>
       <p class="fc-p">No conjunto do mercado saem <b>${pct(mk.s30)} em cada 100</b> anúncios no primeiro mês${mk.md != null ? `, com mediana de <b>${mk.md} dias</b>` : ""}${mk.cu != null ? `; <b>${pct(mk.cu)} em cada 100</b> baixam o preço antes de sair${mk.cp != null ? `, em mediana ${pct(mk.cp)}%` : ""}` : ""}. Começar perto da mediana do teu ano evita a descida. <a href="/pt/vender">Quanto pedir, modelo a modelo</a> · <a href="/pt/liquidez">tempo de venda por modelo</a>.</p>` : ""}
+
+      ${negotiationSection(norms)}
+      ${publishedErrorSection(acc)}
 
       ${top ? `<p class="fc-p"><b>Modelos mais anunciados:</b> ${top}.</p>` : ""}
 
