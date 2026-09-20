@@ -400,6 +400,11 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
                                     published=_published_models(out_dir))
     if liquidity.get("market"):
         model_pages["lqm"] = liquidity["market"]
+    _acc = _accuracy_on_accepted_prices(listings, _outcomes)
+    if _acc:
+        model_pages["acc"] = _acc
+        print(f"[build]   published error: {len(_acc)} price bands, "
+              f"{sum(b['n'] for b in _acc):,} cars that left at their ask", flush=True)
     model_pages["built_at"] = built_at   # freshness signal the Worker renders ("atualizado em")
     _mq = _model_quality(_mt if _loaded is not None else None)
     if _mq:
@@ -472,6 +477,37 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
     for name, sz in sorted(sizes.items(), key=lambda kv: -kv[1]):
         print(f"           {sz/1e6:>6.2f} MB  {name}")
     return manifest
+
+
+def _accuracy_on_accepted_prices(listings, outcomes) -> list[dict]:
+    """Model error per price band, scored on the cars the market took at the ask.
+
+    Predictions come from the bundle's out-of-fold CV wherever the row was in
+    training, so the published number is not the model grading its own memory.
+    Returns [] when the bundle is missing — the page then shows no table rather
+    than a number nobody can stand behind.
+    """
+    from src.analytics.accuracy import accepted_price_rows, accuracy_by_band
+    from src.analytics.price_model import load_model, predict_prices
+
+    rows = accepted_price_rows(outcomes)
+    if rows.empty:
+        return []
+    saved = load_model(max_age_hours=14 * 24)
+    if saved is None:
+        print("[build]   no model bundle — published error skipped", flush=True)
+        return []
+    models, cat_maps, _metrics, oof, calibrator, uncertainty = saved
+    ads = listings[listings["olx_id"].astype(str).isin(set(rows["car_id"].astype(str)))]
+    ads = ads.drop_duplicates("olx_id").reset_index(drop=True)
+    if ads.empty:
+        return []
+    preds = predict_prices(models, cat_maps, ads, oof_preds=oof,
+                           median_calibrator=calibrator,
+                           uncertainty_bundle=uncertainty)
+    by_id = dict(zip(ads["olx_id"].astype(str),
+                     preds["predicted_price"].reindex(ads.index).values))
+    return accuracy_by_band(outcomes, by_id)
 
 
 def main() -> None:

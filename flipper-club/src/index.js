@@ -857,6 +857,7 @@ async function withModels(request, env, url, fn) {
   }
   return fn({ models, builtAt: mdoc.built_at, depositCount: null, setCookie: null,
               mq: mdoc.mq || null, market: mdoc.lqm || null,
+              acc: Array.isArray(mdoc.acc) ? mdoc.acc : null,
               stats: corpusStats(models, mdoc.built_at) });
 }
 
@@ -1065,9 +1066,9 @@ async function handleImportPage(request, env, url) {
 
 // /pt/metodologia, /pt/sobre, /pt/isv
 async function handleMethodology(request, env, url) {
-  return withModels(request, env, url, ({ models, builtAt, depositCount, stats, mq }) =>
+  return withModels(request, env, url, ({ models, builtAt, depositCount, stats, mq, acc }) =>
     publicHtml(renderMethodology({
-      stats, mq, host: url.host, depositCount, builtAt,
+      stats, mq, acc, host: url.host, depositCount, builtAt,
       duelHubs: Object.values(DUELS).filter(d => duelSlugs(models, d.kind, builtAt).length),
       wave: (() => {
         const w = waveSlugs(models, builtAt);

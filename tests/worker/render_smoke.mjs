@@ -652,6 +652,24 @@ check("trust pages render, and stay honest with no identity configured", () => {
   setSiteIdentity({});
 });
 
+check("the error against accepted prices is published band by band", () => {
+  const acc = [
+    { lo: 0, hi: 4000, lbl: "até €4.000", n: 18637, err: 25.3, within: 0.31, bias: 14.5 },
+    { lo: 8000, hi: 15000, lbl: "€8.000 a €15.000", n: 9455, err: 12.9, within: 0.42, bias: -6.9 },
+  ];
+  const meth = renderMethodology({ stats, acc, host: HOST, depositCount: 0, builtAt });
+  assertPage(meth, { indexable: true, canonical: `https://${HOST}/pt/metodologia`, label: "metodologia+acc" });
+  assert(meth.includes("12,9%"), "the band error is not rendered");
+  assert(meth.includes("+14,5%"), "a positive bias must keep its sign");
+  assert(meth.includes("-6,9%"), "a negative bias must keep its sign");
+  assert(/9\D?455/.test(meth), "the sample behind a band is not shown");
+  assert(meth.includes("sem nunca mexer no preço"), "the page does not say what the sample is");
+
+  const bare = renderMethodology({ stats, host: HOST, depositCount: 0, builtAt });
+  assert(!bare.includes("preço aceite"), "the table appeared with nothing measured");
+  assert(!/undefined|NaN/.test(bare), "a placeholder leaked with no measurement");
+});
+
 check("model quality is rendered when measured, and absent when not", () => {
   const mq = { mae: 1665, mape: 25.7, r2: 0.915, cov: 0.809, n: 79532, folds: 5, ts: "2026-08-30" };
   const meth = renderMethodology({ stats, mq, host: HOST, depositCount: 0, builtAt });

@@ -2404,12 +2404,38 @@ function modelQualityBlock(mq) {
     <p class="mono" style="color:#5B606B;font-size:13px;margin-top:-4px;">Medido em ${mq.n ? fmtNum(mq.n) + " anúncios" : "todos os anúncios com preço"}${mq.folds ? `, em ${mq.folds} partes` : ""}${mq.ts ? ` · treino de ${escapeHtml(mq.ts)}` : ""}</p>`;
 }
 
+function acceptedPriceErrorBlock(acc) {
+  if (!Array.isArray(acc) || !acc.length) return "";
+  const pct = v => `${v.toFixed(1).replace(".", ",")}%`;
+  const rows = acc.map(b => `<tr>
+      <td style="padding:7px 10px;">${escapeHtml(b.lbl)}</td>
+      <td style="padding:7px 10px;text-align:right;" class="mono">${pct(b.err)}</td>
+      <td style="padding:7px 10px;text-align:right;" class="mono">${Math.round(b.within * 100)}%</td>
+      <td style="padding:7px 10px;text-align:right;" class="mono">${b.bias > 0 ? "+" : ""}${pct(b.bias)}</td>
+      <td style="padding:7px 10px;text-align:right;" class="mono">${fmtNum(b.n)}</td>
+    </tr>`).join("");
+  return `
+    <div style="overflow-x:auto;margin:10px 0 6px;">
+      <table style="width:100%;border-collapse:collapse;font-size:13.5px;">
+        <thead><tr style="background:#FAFAF8;color:#5B606B;text-align:left;">
+          <th style="padding:7px 10px;">Faixa de preço</th>
+          <th style="padding:7px 10px;text-align:right;">Erro mediano</th>
+          <th style="padding:7px 10px;text-align:right;">A menos de 10%</th>
+          <th style="padding:7px 10px;text-align:right;">Viés</th>
+          <th style="padding:7px 10px;text-align:right;">Carros</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p class="mono" style="color:#5B606B;font-size:13px;margin-top:-2px;">Viés positivo = a estimativa lê acima do preço aceite. Medido em carros que saíram do OLX sem nunca mexer no preço e sem voltar como anúncio novo: aí o pedido foi o preço aceite.</p>`;
+}
+
 // ═══ /pt/metodologia ═════════════════════════════════════════════════════════
 //
 // Every number on this site is an estimate, and the honest move is to publish
 // where it comes from and where it stops working — including the thresholds that
 // make us DROP a figure rather than show a weak one.
-export function renderMethodology({ stats, mq, host, depositCount, builtAt, duelHubs = [], wave = null }) {
+export function renderMethodology({ stats, mq, acc = null, host, depositCount, builtAt, duelHubs = [], wave = null }) {
   const duelList = duelHubs.length
     ? duelHubs.map(d => `<a href="/pt/${d.path}">${escapeHtml(d.question)}</a>`).join(" e ")
     : "diesel ou gasolina e caixa manual ou automática";
@@ -2458,6 +2484,10 @@ export function renderMethodology({ stats, mq, host, depositCount, builtAt, duel
       <h3 class="fc-h3">Quanto erra — medido, não afirmado</h3>
       <p class="fc-p">O erro é medido por <b>validação cruzada em cinco partes</b>: o modelo é treinado em quatro quintos dos anúncios e avaliado no quinto que não viu, cinco vezes seguidas. Publicar uma estimativa sem dizer quanto ela erra é publicar meia verdade, por isso aqui está a última medição:</p>
       ${modelQualityBlock(mq)}
+
+      <h3 class="fc-h3">E quanto erra contra um preço que alguém aceitou</h3>
+      <p class="fc-p">A medição acima compara a estimativa com o <b>preço pedido</b>, que é o que o vendedor queria. Há um caso em que o pedido é o preço: um carro que saiu do OLX sem nunca mexer no número e sem voltar como anúncio novo — ninguém o fez baixar e foi-se pelo que estava escrito. É o mais perto de uma venda que estes dados chegam, e permite dizer o erro <b>por faixa de preço</b>, que é onde a diferença está:</p>
+      ${acceptedPriceErrorBlock(acc)}
 
       <h3 class="fc-h3">O que o modelo não vê</h3>
       <p class="fc-p">Um anúncio não diz o estado da embraiagem, o histórico de manutenção, se houve batida, como estão os pneus, nem se o ISV de um importado já foi pago. Nada disso entra no modelo, porque não existe nos dados. <b>Dois carros com a mesma ficha recebem a mesma estimativa, mesmo que um precise de caixa nova.</b> Daí a estimativa ser um ponto de partida para negociar e para saber onde olhar — nunca a avaliação de uma viatura concreta.</p>
