@@ -97,3 +97,40 @@ def test_an_empty_corpus_keeps_the_shape():
     out = build_outcomes(pd.DataFrame())
     assert list(out.columns)[:4] == ["car_id", "n_ads", "brand", "model"]
     assert out.empty
+
+
+class TestFirstCutDay:
+    """When the seller moved matters as much as whether: a norm read against a
+    listing's own age needs to know who had already moved by day 30."""
+
+    def test_the_day_counts_from_the_first_advert(self):
+        ads = pd.DataFrame([_ad("a1", 60, 40, 8000)])
+        snaps = pd.DataFrame(_snaps("a1", 60, [9000, 9000, 8400], step=10))
+        row = build_outcomes(ads, snaps, None, now=NOW).iloc[0]
+        assert row["first_cut_day"] == pytest.approx(20, abs=0.5)
+
+    def test_a_seller_who_never_moved_has_no_day(self):
+        ads = pd.DataFrame([_ad("a1", 60, 40, 9000)])
+        snaps = pd.DataFrame(_snaps("a1", 60, [9000, 9000, 9000]))
+        row = build_outcomes(ads, snaps, None, now=NOW).iloc[0]
+        assert pd.isna(row["first_cut_day"])
+        assert bool(row["cut"]) is False
+
+    def test_a_relist_that_goes_back_up_is_not_a_cut(self):
+        ads = pd.DataFrame([_ad("a1", 90, 20, 9000), _ad("a2", 50, 20, 9500)])
+        pairs = pd.DataFrame([{"original_olx_id": "a1", "relist_olx_id": "a2",
+                               "match_score": 0.9, "gap_days": 20.0}])
+        snaps = pd.DataFrame(_snaps("a1", 90, [9000, 9000], step=10)
+                             + _snaps("a2", 50, [9500, 9500], step=10))
+        row = build_outcomes(ads, snaps, pairs, now=NOW).iloc[0]
+        assert pd.isna(row["first_cut_day"])
+
+    def test_the_cut_is_found_across_the_chain_not_only_inside_one_advert(self):
+        ads = pd.DataFrame([_ad("a1", 90, 20, 9000), _ad("a2", 50, 20, 8000)])
+        pairs = pd.DataFrame([{"original_olx_id": "a1", "relist_olx_id": "a2",
+                               "match_score": 0.9, "gap_days": 20.0}])
+        snaps = pd.DataFrame(_snaps("a1", 90, [9000, 9000], step=10)
+                             + _snaps("a2", 50, [8000, 8000], step=10))
+        row = build_outcomes(ads, snaps, pairs, now=NOW).iloc[0]
+        assert row["first_cut_day"] == pytest.approx(40, abs=0.5)
+        assert bool(row["cut"]) is True

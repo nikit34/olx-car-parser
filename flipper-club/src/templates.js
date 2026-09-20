@@ -56,6 +56,11 @@ function normForPrice(norms, price) {
   if (!Array.isArray(norms) || price == null || !Number.isFinite(price)) return null;
   return norms.find(n => price >= n.lo && (n.hi == null || price < n.hi)) || null;
 }
+function normAgeCell(band, ageDays) {
+  if (!band || !Array.isArray(band.ag) || ageDays == null || !Number.isFinite(ageDays)) return null;
+  const reached = band.ag.filter(c => ageDays >= c[0]);
+  return reached.length ? reached[reached.length - 1] : null;
+}
 
 function fmtRelativeDays(iso) {
   if (!iso) return null;
@@ -1668,11 +1673,16 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
       }
     }
     const band = normForPrice(norms, rec.p);
-    const normBlock = (band && band.cu != null)
+    const ageCell = normAgeCell(band, rec.dc != null ? rec.dc : rec.dom);
+    const normBlock = ageCell
       ? `<div style="font-size:12px;color:#8A8F98;margin-top:12px;line-height:1.5;">
-           Nesta faixa de preço, <b style="color:#16181D;">${Math.round(band.cu * 100)} em cada 100</b> vendedores baixam o preço antes de o carro sair${band.cp != null ? `, com um corte mediano de <b style="color:#16181D;">${band.cp.toFixed(1)}%</b>` : ""}. Medido em ${fmtNum(band.n)} carros do OLX seguidos do primeiro anúncio ao último.
+           Dos carros desta faixa que chegaram aos <b style="color:#16181D;">${ageCell[0]} dias</b> com o preço intacto, <b style="color:#16181D;">${Math.round(ageCell[1] * 100)} em cada 100</b> acabaram por baixar${ageCell[2] != null ? `, com um corte mediano de <b style="color:#16181D;">${ageCell[2].toFixed(1)}%</b>` : ""}. Medido em ${fmtNum(ageCell[3])} carros do OLX seguidos do primeiro anúncio ao último.
          </div>`
-      : "";
+      : ((band && band.cu != null)
+        ? `<div style="font-size:12px;color:#8A8F98;margin-top:12px;line-height:1.5;">
+             Nesta faixa de preço, <b style="color:#16181D;">${Math.round(band.cu * 100)} em cada 100</b> vendedores baixam o preço antes de o carro sair${band.cp != null ? `, com um corte mediano de <b style="color:#16181D;">${band.cp.toFixed(1)}%</b>` : ""}. Medido em ${fmtNum(band.n)} carros do OLX seguidos do primeiro anúncio ao último.
+           </div>`
+        : "");
     const chainBlock = (rec.dc != null && rec.na != null)
       ? `<div style="font-size:12.5px;color:#6B4E12;background:${amber.bg};border:1px solid ${amber.br};border-radius:10px;padding:10px 12px;margin-top:12px;line-height:1.5;">
            Este carro anda à venda há <b>${rec.dc} dias</b>, em <b>${rec.na} anúncios</b> — o atual é o mais recente. Quem já reanunciou uma vez costuma estar mais disponível para negociar.

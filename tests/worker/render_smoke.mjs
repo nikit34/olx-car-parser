@@ -1100,6 +1100,30 @@ check("a quiet listing still gets the band's negotiation norm", () => {
   assert(!bare.includes("em cada 100"), "a norm appeared without any norms to show");
 });
 
+check("a listing that has already sat gets the norm for cars that sat too", () => {
+  const norms = [{ lo: 8000, hi: 15000, lbl: "€8.000 a €15.000", n: 25071, cu: 0.46,
+                   cp: 9.1, md: 30, ag: [[14, 0.52, 8.6, 12000], [60, 0.63, 7.4, 4812]] }];
+  const base = { t: "VW Golf", y: 2015, p: 9000, fl: 9500, fm: 11000, fh: 12500 };
+  const fresh = renderAvaliar({ rec: { ...base, dom: 3 }, olxId: "JqGTZ", sourceUrl: null,
+                                query: "", models, spec: null, depositCount: 0, host: HOST,
+                                builtAt, norms });
+  assert(fresh.includes("46 em cada 100"), "a fresh listing lost the market-wide norm");
+  assert(!fresh.includes("com o preço intacto"), "a three-day-old listing got an age cell");
+
+  const sat = renderAvaliar({ rec: { ...base, dom: 75 }, olxId: "JqGTZ", sourceUrl: null,
+                              query: "", models, spec: null, depositCount: 0, host: HOST,
+                              builtAt, norms });
+  assert(sat.includes("60 dias"), "the age cell did not pick the deepest step reached");
+  assert(sat.includes("63 em cada 100"), "the conditional share is not rendered");
+  assert(!sat.includes("46 em cada 100"), "both norms rendered at once");
+
+  const chained = renderAvaliar({ rec: { ...base, dom: 5, dc: 75, na: 2 }, olxId: "JqGTZ",
+                                  sourceUrl: null, query: "", models, spec: null,
+                                  depositCount: 0, host: HOST, builtAt, norms });
+  assert(chained.includes("63 em cada 100"),
+    "the car's own age, not the advert's, must choose the cell");
+});
+
 check("a car on its second advert says so, and the clock runs from the first", () => {
   const rec = { t: "VW Golf 1.6 TDI", y: 2015, p: 9000, fl: 9500, fm: 11000,
                 fh: 12500, dom: 68, dc: 200, na: 2 };

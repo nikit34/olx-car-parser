@@ -53,11 +53,13 @@ def build_outcomes(
     ``ended_at``, ``days`` (calendar, the gaps between adverts included),
     ``sold`` (it ended and did not come back), ``first_ask``, ``last_ask``,
     ``min_ask``, ``ask_change_pct`` (negative = the seller came down),
-    ``cut`` (came down by more than 1%), plus brand/model/year carried from
-    the first advert.
+    ``cut`` (came down by more than 1%), ``first_cut_day`` (days from the first
+    advert to the first time the ask stepped down, NaN when it never did), plus
+    brand/model/year carried from the first advert.
     """
     cols = ["car_id", "n_ads", "brand", "model", "year", "first_seen_at", "ended_at",
-            "days", "sold", "first_ask", "last_ask", "min_ask", "ask_change_pct", "cut"]
+            "days", "sold", "first_ask", "last_ask", "min_ask", "ask_change_pct", "cut",
+            "first_cut_day"]
     if listings is None or listings.empty or "olx_id" not in listings.columns:
         return pd.DataFrame(columns=cols)
 
@@ -105,19 +107,38 @@ def build_outcomes(
 
 
 def _ask_trajectory(df: pd.DataFrame, snapshots: pd.DataFrame | None) -> pd.DataFrame:
-    """First, last and lowest ask per car, over every advert it ever had."""
+    """First, last and lowest ask per car, plus the day it first came down.
+
+    ``first_cut_day`` counts from the car's first advert, so a seller who held
+    for two months and then moved is distinguishable from one who moved in the
+    first week — that is what lets the norm be read against a listing's own
+    age instead of against the whole market. A step counts as a cut when it is
+    more than 1% below the ask before it, which is the same threshold the
+    price track on the card uses; a relist that goes back UP resets nothing and
+    is simply not a cut.
+    """
     if (snapshots is not None and not snapshots.empty
             and {"olx_id", "price_eur", "scraped_at"}.issubset(snapshots.columns)):
         snap = snapshots.copy()
         snap["olx_id"] = snap["olx_id"].astype(str)
+        car_start = df.groupby("car_id", sort=False)["_start"].min().rename("_car_start")
         snap = snap.merge(df[["olx_id", "car_id"]], on="olx_id", how="inner")
+        snap = snap.merge(car_start, left_on="car_id", right_index=True, how="left")
         snap["price_eur"] = pd.to_numeric(snap["price_eur"], errors="coerce")
         snap = snap[snap["price_eur"] >= MIN_ASK_EUR]
-        snap = snap.sort_values("scraped_at")
+        snap["scraped_at"] = pd.to_datetime(snap["scraped_at"], errors="coerce", utc=True)
+        snap = snap.dropna(subset=["price_eur", "scraped_at"]).sort_values(
+            ["car_id", "scraped_at"])
         if not snap.empty:
             g = snap.groupby("car_id", sort=False)["price_eur"]
+            prev = g.shift(1)
+            cut_rows = snap[snap["price_eur"] < prev * 0.99]
+            first_cut = cut_rows.groupby("car_id", sort=False).first()
+            cut_day = ((first_cut["scraped_at"] - first_cut["_car_start"])
+                       .dt.total_seconds() / 86400.0).round(0)
             return pd.DataFrame({"first_ask": g.first(), "last_ask": g.last(),
-                                 "min_ask": g.min()})
+                                 "min_ask": g.min()}).join(
+                cut_day.rename("first_cut_day"))
     price = pd.to_numeric(df.get("price_eur"), errors="coerce")
     flat = df.assign(_p=price).dropna(subset=["_p"])
     flat = flat[flat["_p"] >= MIN_ASK_EUR].sort_values("_start")
