@@ -32,7 +32,7 @@ import {
   renderImportPage, renderImportHub, importJson, importOk, importSlugs,
   renderVenderPage, renderVenderHub, venderJson, venderOk,
 } from "../../flipper-club/src/seo-pages.js";
-import { GUIDES, renderGuide, renderGuidesHub } from "../../flipper-club/src/guides.js";
+import { GUIDES, guideBySlug, guideBlock, renderGuide, renderGuidesHub } from "../../flipper-club/src/guides.js";
 
 const HOST = "carsbuyer.org";
 const RELEASE = "https://github.com/nikit34/olx-car-parser/releases/download/latest-data/models.json";
@@ -1629,6 +1629,44 @@ check("every seller guide renders as an indexable article with FAQ and sources",
   const hub = renderGuidesHub({ market: mdoc.lqm || null, stats: st, host: HOST, depositCount: 0, builtAt });
   assertPage(hub, { indexable: true, canonical: `https://${HOST}/pt/guias`, label: "guias hub" });
   for (const guide of GUIDES) assert(hub.includes(`/pt/guias/${guide.slug}`), `hub does not link ${guide.slug}`);
+});
+
+check("the two jobs with no entry of their own each have a page", () => {
+  const st = corpusStats(models, builtAt);
+  const mk = mdoc.lqm || { s30: 0.6, md: 29, q3: 54, s90: 0.86, cu: 0.35, cp: 0.08, rb: 0.21, n: 60000 };
+  const render = slug => {
+    const g = guideBySlug(slug);
+    assert(g, `${slug} is not in the registry`);
+    return { g, html: renderGuide({ guide: g, models, market: mk, stats: st, host: HOST, depositCount: 0, builtAt }) };
+  };
+
+  const { html: stand } = render("vender-carro-a-stand");
+  const standText = stand.replace(/<[^>]+>/g, " ");
+  assert(/retoma/.test(standText) && /consigna/i.test(standText),
+    "the stand guide skips one of the three routes it exists to compare");
+  assert(/não medimos|Não medimos/.test(standText),
+    "the stand guide must say outright that a dealer's offer is not measured here");
+  assert(standText.includes(`${Math.round((1 - mk.s90) * 100)} em cada 100`),
+    "the stand guide does not price the wait with the market's own survival number");
+  assert(stand.includes("/pt/vender"), "the stand guide does not hand off to the per-model pages");
+
+  const { html: buy } = render("verificar-antes-de-comprar-carro-usado");
+  const buyText = buy.replace(/<[^>]+>/g, " ");
+  assert(buy.includes("guia para quem compra"), "a buyer guide still carries the seller subtitle");
+  assert(!buy.includes("Vais vender o teu carro?"), "the buyer guide closes with a seller CTA");
+  assert(buy.includes('href="/pt/avaliar"'), "the buyer guide has no way into the valuation");
+  assert(/84\/2021/.test(buyText) && /entre um profissional e um consumidor/.test(buyText),
+    "the guarantee section does not say who the regime binds");
+  assert(/dois anos/.test(buyText), "the presumption period is missing from the guarantee section");
+  assert(buy.includes("diariodarepublica.pt"), "the legal claim is published without its primary source");
+  for (const s of ["burlas-e-pagamento-seguro", "registo-de-propriedade-automovel", "documentos-para-vender-carro"])
+    assert(buy.includes(`/pt/guias/${s}`), `the buyer guide does not reach ${s}`);
+
+  const onPrice = guideBlock("preco");
+  for (const s of ["verificar-antes-de-comprar-carro-usado", "vender-carro-a-stand"])
+    assert(onPrice.includes(`/pt/guias/${s}`), `the price page does not link ${s}, so nothing points at it`);
+  assert(guideBlock("comprar").includes("/pt/guias/verificar-antes-de-comprar-carro-usado"),
+    "the buyer set does not carry the buyer guide");
 });
 
 check("the localised shell stays out of the Portuguese pages", () => {

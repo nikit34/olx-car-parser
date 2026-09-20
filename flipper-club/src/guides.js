@@ -21,11 +21,26 @@ const SRC = {
   pspBurla: ["Alerta da PSP sobre burla na compra e venda de carros (Notícias ao Minuto)", "https://www.noticiasaominuto.com/auto/2511293/psp-alerta-para-burla-com-compra-e-venda-de-carros-saiba-do-que-se-trata"],
   decoMbway: ["MB WAY: cuidado com a nova burla (DECO PROteste)", "https://www.deco.proteste.pt/tecnologia/ciberseguranca/noticias/mb-way-cuidado-nova-burla"],
   olxAjuda: ["Anúncios de carros no OLX (Ajuda OLX)", "https://help.olx.pt/hc/pt/articles/206187279"],
+  drGarantias: ["Decreto-Lei n.º 84/2021, garantia de conformidade (Diário da República)", "https://diariodarepublica.pt/dr/detalhe/decreto-lei/84-2021-172938301"],
+  decoGarantia: ["Garantia de bens móveis: prazos e como acionar (DECO PROteste)", "https://www.deco.proteste.pt/familia-consumo/direitos-consumidor/dicas/garantia-bens-moveis-imoveis-prazos-como-acionar"],
 };
 
 function marketLine(mk) {
   if (!mk || mk.s30 == null) return "";
   return `No conjunto do mercado de particulares que acompanhamos, <b>${pct(mk.s30)} em cada 100</b> anúncios saem do OLX no primeiro mês${mk.md != null ? `, com mediana de <b>${mk.md} dias</b>` : ""}${mk.cu != null ? `, e <b>${pct(mk.cu)} em cada 100</b> vendedores baixam o preço antes de vender${mk.cp != null ? `, em mediana ${pct(mk.cp)}%` : ""}` : ""}.`;
+}
+
+function slowestTable(models) {
+  const rows = Object.entries(models || {})
+    .filter(([, r]) => r.lq && r.lq.s90 != null && r.lq.n >= 100 && r.fm > 0)
+    .sort((a, b) => a[1].lq.s90 - b[1].lq.s90)
+    .slice(0, 8)
+    .map(([slug, r]) => `<tr><td><a href="/pt/vender/${slug}">${escapeHtml(r.b)} ${escapeHtml(r.m)}</a></td><td><b>${pct(1 - r.lq.s90)} em cada 100</b></td><td class="mut">${r.lq.md != null ? `${r.lq.md} dias` : "—"}</td><td class="mut">${fmtEur(r.fm)}</td></tr>`)
+    .join("");
+  if (!rows) return "";
+  return `<div class="fc-scroll"><table class="fc-tbl">
+      <thead><tr><th>Modelo</th><th>Ainda à venda aos 90 dias</th><th>Mediana</th><th>Mediana pedida</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
 }
 
 function fastestTable(models) {
@@ -207,6 +222,101 @@ export const GUIDES = [
     sources: [],
   },
   {
+    slug: "vender-carro-a-stand",
+    title: "Vender o carro a um stand ou por tua conta: o que cada opção custa",
+    h1: "Vender a um stand ou por tua conta",
+    description: "As três saídas para um carro usado: anúncio próprio, venda imediata a um stand e retoma. Quanto custa esperar, medido em anúncios reais, e como ler uma proposta de compra imediata.",
+    body: ({ market, models }) => {
+      const m = market || {};
+      const wait = m.md != null ? `<b>${m.md} dias</b>` : "cerca de um mês";
+      return `
+      <p class="fc-p">Um carro tem três saídas, e a diferença entre elas é sempre a mesma: tempo contra dinheiro. Podes anunciá-lo tu, entregá-lo a um stand por um valor imediato, ou dá-lo em retoma na compra do seguinte. Esta página mede a primeira, diz o que a segunda te dá, e é honesta sobre o que não sabemos dela.</p>
+
+      <h2 class="fc-h2">O que custa vender por tua conta</h2>
+      <p class="fc-p">Acompanhamos os anúncios de particulares no OLX até saírem${m.n ? `, ${fmtNum(m.n)} até agora` : ""}. Metade sai em ${wait}${m.q3 != null ? `, mas um quarto ainda cá está ao fim de <b>${m.q3} dias</b>` : ""}${m.s90 != null ? `, e ao fim de três meses <b>${pct(1 - m.s90)} em cada 100</b> continuam à venda` : ""}.${m.cu != null ? ` Pelo caminho, <b>${pct(m.cu)} em cada 100</b> vendedores baixam o preço${m.cp != null ? `, em mediana ${pct(m.cp)}%` : ""}.` : ""}${m.rb != null ? ` E <b>${pct(m.rb)} em cada 100</b> dos anúncios que desapareceram voltaram como anúncio novo: não venderam à primeira.` : ""}</p>
+      <p class="fc-p">Não é o mesmo para todos os carros. Estes são os modelos onde esperar custa mais — os que, ao fim de três meses, mais vezes continuam à espera de comprador:</p>
+      ${slowestTable(models)}
+      <p class="fc-p">Os números do teu modelo estão em <a href="/pt/vender">quanto pedir por modelo</a>, e o detalhe por preço, idade e distrito em <a href="/pt/liquidez">tempo de venda</a>.</p>
+
+      <h2 class="fc-h2">O que um stand te dá</h2>
+      <p class="fc-p">Recebes hoje, ou em dois ou três dias. Não respondes a mensagens, não marcas visitas, não deixas estranhos conduzir o teu carro e não tratas do registo com alguém que acabaste de conhecer. Para quem já comprou o carro seguinte, ou precisa do dinheiro numa data, isso vale alguma coisa — e a conta é essa: quanto vale para ti.</p>
+
+      <h2 class="fc-h2">O que um stand te custa, e porque não to dizemos</h2>
+      <p class="fc-p"><b>Não medimos o que um stand paga.</b> A proposta de compra imediata não é pública, não aparece em anúncio nenhum e o nosso acompanhamento cobre só anúncios de particulares. Podíamos escrever aqui uma percentagem plausível; não vamos, porque seria inventada. O que temos é o outro lado da conta, medido, e é com ele que se lê uma proposta: a diferença entre o que te oferecem e o que os anúncios do teu modelo pedem é o preço do tempo que poupas.</p>
+
+      <h2 class="fc-h2">A retoma esconde o número</h2>
+      <p class="fc-p">Numa retoma há dois preços — o do carro que compras e o do que entregas — e é fácil mexer num para compensar o outro. Um desconto generoso na retoma pode sair de um desconto que deixaste de ter no carro novo, e ninguém te mente para isso acontecer. Pede os dois números separados: <b>quanto custa o carro novo sem retoma</b> e <b>quanto dão pelo teu</b>. Só depois de os teres em separado é que a comparação com esta página faz sentido.</p>
+
+      <h2 class="fc-h2">E a consignação</h2>
+      <p class="fc-p">Há uma terceira via: deixar o carro num stand para ele vender em teu nome, contra uma comissão ou uma margem combinada. Ganhas a montra e a confiança de quem compra a um profissional, e continuas a esperar. Faz sentido para carros que se vendem devagar — e devagar é o que está na tabela acima.</p>
+
+      <h2 class="fc-h2">Como ler uma proposta</h2>
+      <ul class="fc-ul">
+        <li class="fc-li"><b>Começa pela mediana do teu modelo e ano</b>, não pelo que pagaste. Está na <a href="/pt/avaliar">avaliação por modelo e ano</a>.</li>
+        <li class="fc-li"><b>Tira a cedência habitual.</b>${m.cu != null && m.cp != null ? ` No mercado, ${pct(m.cu)} em cada 100 acabam por baixar, em mediana ${pct(m.cp)}%.` : ""} É onde uma venda entre particulares costuma fechar.</li>
+        <li class="fc-li"><b>Compara com a proposta.</b> A diferença é o que estás a pagar por não esperar ${wait} — e por não correr o risco de ficar dos que ainda cá estão aos três meses.</li>
+        <li class="fc-li"><b>Pede a proposta por escrito</b>, com a matrícula e a data. Uma proposta que muda quando chegas ao stand não é uma proposta.</li>
+      </ul>`;
+    },
+    faq: [
+      ["Quanto paga um stand por um carro usado?", "Não medimos esse número e não o vamos inventar: a proposta de um stand não é pública e o nosso acompanhamento cobre anúncios de particulares. O que medimos é quanto custa a alternativa — os dias até vender e a cedência habitual — e é contra isso que uma proposta se lê."],
+      ["Vale a pena dar o carro em retoma?", "Depende de conseguires ver o número. Numa retoma há dois preços e um pode compensar o outro, por isso pede em separado quanto custa o carro novo sem retoma e quanto dão pelo teu. Com os dois números em cima da mesa, a comparação com os anúncios do teu modelo passa a ser possível."],
+      ["Quanto tempo demora vender um carro por minha conta?", "No mercado de particulares que acompanhamos, metade dos anúncios sai perto de um mês, um quarto ainda está no ar ao fim de quase dois, e uma parte continua à venda aos três meses. Por modelo o valor muda bastante e está na página de cada um."],
+    ],
+    sources: [],
+  },
+  {
+    slug: "verificar-antes-de-comprar-carro-usado",
+    audience: "comprador",
+    title: "O que verificar antes de comprar um carro usado",
+    h1: "O que verificar antes de comprar um carro usado",
+    description: "O que o anúncio diz, o que esconde e o que só se vê no carro: preço face ao mercado, há quanto tempo está à venda, importação, papéis, garantia e a diferença entre comprar a um stand e a um particular.",
+    body: ({ market, stats }) => {
+      const m = market || {};
+      return `
+      <p class="fc-p">Um anúncio responde a três perguntas — modelo, ano, quilómetros — e cala-se nas outras. Esta lista separa o que dá para verificar antes de sair de casa${stats && stats.listings ? `, com o que medimos em ${fmtNum(stats.listings)} anúncios` : ""}, do que só se vê com o carro à frente.</p>
+
+      <h2 class="fc-h2">Antes de sair de casa</h2>
+      <h3 class="fc-h3">O preço, contra o mercado e não contra o vendedor</h3>
+      <p class="fc-p">A pergunta não é se o preço parece bom: é onde cai entre os anúncios do mesmo modelo e ano. Cola o link em <a href="/pt/avaliar">avaliar um anúncio</a> e vês a mediana, o intervalo onde fica metade dos anúncios e onde este cai. Publicamos também <a href="/pt/metodologia">quanto a nossa própria estimativa erra</a>, por faixa de preço: abaixo dos 4 000 € lê alto e deve ser usada com desconfiança; acima dos 8 000 € acerta melhor.</p>
+      <h3 class="fc-h3">Há quanto tempo está à venda, e se já baixou</h3>
+      <p class="fc-p">É a informação que o anúncio nunca mostra e que muda a conversa.${m.cu != null ? ` No mercado, <b>${pct(m.cu)} em cada 100</b> vendedores acabam por baixar o preço${m.cp != null ? `, em mediana ${pct(m.cp)}%` : ""}` : ""}${m.cd != null && m.hd != null ? `, e os anúncios que baixaram estiveram <b>${m.cd} dias</b> no ar contra <b>${m.hd}</b> dos que aguentaram o preço` : ""}. Um carro parado há semanas tem margem; um carro de ontem, ao preço da mediana, não tem.${m.rb != null ? ` E <b>${pct(m.rb)} em cada 100</b> dos anúncios que desapareceram voltaram como anúncio novo — se o carro já foi recusado pelo mercado uma vez, vale perguntar porquê.` : ""}</p>
+      <h3 class="fc-h3">Se é importado</h3>
+      <p class="fc-p">Uma parte grande dos anúncios é de carros importados, e o rótulo assusta mais do que devia. <a href="/pt/metodologia">Medimos o que ele vale</a>: dentro do mesmo modelo, ano e quilometragem, um importado <b>fecha ao mesmo preço</b> que um nacional, só demora um pouco mais a vender. Quase todos já circulam com matrícula portuguesa e o ISV foi pago por um dono anterior. A exceção é o anúncio que <b>diz</b> que o carro ainda tem matrícula estrangeira ou legalização por concluir: aí o imposto é teu, e o <a href="/pt/isv">simulador de ISV</a> dá a ordem de grandeza.</p>
+      <h3 class="fc-h3">Os quilómetros face à idade</h3>
+      <p class="fc-p">Cada página de <a href="/pt/precos">preço por modelo e ano</a> traz a quilometragem mediana desse ano. Muito abaixo dela não é sorte: é um número para confirmar nas inspeções anteriores, onde a quilometragem fica registada em cada visita.</p>
+
+      <h2 class="fc-h2">Com o carro à frente</h2>
+      <ul class="fc-ul">
+        <li class="fc-li"><b>Arranque a frio.</b> Combina ver o carro com o motor frio e não deixes que o liguem antes de chegares: fumo, ruídos e dificuldade em pegar desaparecem com o motor quente.</li>
+        <li class="fc-li"><b>Test drive a sério.</b> Estrada e cidade, travagem forte, volante às direitas, marchas todas. Desliga o rádio.</li>
+        <li class="fc-li"><b>Distribuição e embraiagem.</b> Pergunta quando foi feita a correia e pede fatura. É a reparação que apaga a diferença de preço entre dois carros iguais.</li>
+        <li class="fc-li"><b>Ferrugem e alinhamento dos painéis.</b> Folgas desiguais entre portas, capô e guarda-lamas contam uma batida que o anúncio não conta.</li>
+        <li class="fc-li"><b>Eletrónica e avisos no quadrante.</b> Liga tudo: vidros, climatização, sensores, luzes. Uma luz apagada à pressa volta a acender.</li>
+        <li class="fc-li"><b>Uma inspeção paga por ti.</b> Uma revisão numa oficina da tua confiança, ou uma inspeção facultativa num centro, custa uma fração do que custa descobrir o problema depois.</li>
+      </ul>
+
+      <h2 class="fc-h2">Os papéis, antes de entregar dinheiro</h2>
+      <ul class="fc-ul">
+        <li class="fc-li"><b>O nome no DUA é o de quem vende?</b> Se não é, o carro não é dele para vender.</li>
+        <li class="fc-li"><b>Reserva de propriedade cancelada?</b> Enquanto o banco a tiver, a venda não se regista. O passo a passo está em <a href="/pt/guias/vender-carro-com-credito">vender um carro com crédito</a>.</li>
+        <li class="fc-li"><b>IUC pago e inspeção em dia?</b> Ambos seguem o carro e vão dar-te trabalho a ti.</li>
+        <li class="fc-li"><b>Contrato e registo.</b> O que tem de ficar escrito e em que prazo está em <a href="/pt/guias/documentos-para-vender-carro">documentos</a> e em <a href="/pt/guias/registo-de-propriedade-automovel">registo de propriedade</a>.</li>
+        <li class="fc-li"><b>O pagamento.</b> As burlas mais comuns e como receber em segurança estão em <a href="/pt/guias/burlas-e-pagamento-seguro">burlas e pagamento seguro</a>.</li>
+      </ul>
+
+      <h2 class="fc-h2">A um stand ou a um particular</h2>
+      <p class="fc-p">A diferença não é só o preço. Quem compra a um profissional tem <b>garantia legal de conformidade</b>: o Decreto-Lei n.º 84/2021 fixa três anos para bens móveis e, num bem usado, o prazo pode ser reduzido a 18 meses <i>por acordo entre as partes</i>. Nos primeiros <b>dois anos</b>, um defeito que apareça presume-se existente à data da entrega, e é ao vendedor que cabe provar o contrário — não a ti.</p>
+      <p class="fc-p">Esse regime rege os contratos <b>entre um profissional e um consumidor</b>. Numa compra a um particular não existe: o carro vai no estado em que está, e tudo o que não perguntaste antes fica para ti. É por isso que a mesma máquina custa mais numa montra — e é uma diferença que faz sentido pagar ou não, consoante o que já verificaste.</p>`;
+    },
+    faq: [
+      ["O que devo verificar antes de comprar um carro usado?", "Antes de sair de casa: onde cai o preço face aos anúncios do mesmo modelo e ano, há quanto tempo está à venda e se já baixou, se é importado e se os quilómetros batem certo com a idade. Com o carro à frente: arranque a frio, test drive completo, correia de distribuição, ferrugem e alinhamento dos painéis. E os papéis antes do dinheiro."],
+      ["Comprar um carro a um particular tem garantia?", "Não. A garantia legal de conformidade do Decreto-Lei n.º 84/2021 aplica-se aos contratos entre um profissional e um consumidor: três anos para bens móveis, redutíveis a 18 meses num bem usado por acordo entre as partes. Entre particulares o carro vende-se no estado em que está."],
+      ["Um carro importado vale menos?", "Pelo que medimos, não: dentro do mesmo modelo, ano e quilometragem, um importado fecha ao mesmo preço que um nacional e apenas demora um pouco mais a vender. O ISV já costuma ter sido pago por um dono anterior; a exceção é o anúncio que diz que o carro ainda tem matrícula estrangeira."],
+    ],
+    sources: ["drGarantias", "decoGarantia", "govRegisto", "decoReserva"],
+  },
+  {
     slug: "depois-de-vender-seguro-iuc-via-verde",
     title: "Depois de vender o carro: seguro, IUC, Via Verde e a declaração de venda",
     h1: "Depois de vender: seguro, IUC, Via Verde e a prova da venda",
@@ -238,6 +348,7 @@ export function guideBySlug(slug) {
 
 const GUIDE_SETS = {
   vender: ["Antes de fechar negócio", [
+    ["vender-carro-a-stand", "vender a um stand ou por tua conta: o que cada opção custa"],
     ["documentos-para-vender-carro", "que documentos entregar e o contrato de compra e venda"],
     ["registo-de-propriedade-automovel", "como se faz o registo automóvel, em que prazo e quem paga"],
     ["burlas-e-pagamento-seguro", "receber o dinheiro sem levar uma burla"],
@@ -247,9 +358,16 @@ const GUIDE_SETS = {
     ["vender-carro-importado", "vender um carro importado: matrícula portuguesa e a regra dos 12 meses"],
     ["registo-de-propriedade-automovel", "como se faz o registo automóvel, em que prazo e quem paga"],
   ]],
-  preco: ["Se estás a pensar vender", [
-    ["quanto-pedir-e-quanto-tempo-demora", "quanto pedir e em quantos dias costuma sair"],
+  preco: ["Antes de decidir", [
+    ["verificar-antes-de-comprar-carro-usado", "se vais comprar: o que verificar antes de entregar dinheiro"],
+    ["quanto-pedir-e-quanto-tempo-demora", "se vais vender: quanto pedir e em quantos dias costuma sair"],
+    ["vender-carro-a-stand", "vender a um stand ou por tua conta: o que cada opção custa"],
     ["documentos-para-vender-carro", "que documentos entregar e o contrato de compra e venda"],
+  ]],
+  comprar: ["Antes de entregar dinheiro", [
+    ["verificar-antes-de-comprar-carro-usado", "o que verificar antes de comprar um carro usado"],
+    ["burlas-e-pagamento-seguro", "receber e pagar sem levar uma burla"],
+    ["registo-de-propriedade-automovel", "como se faz o registo automóvel, em que prazo e quem paga"],
   ]],
 };
 
@@ -267,6 +385,14 @@ export function guideBlock(kind) {
     </section>`;
 }
 
+function buyerHelpBlock() {
+  return `
+    <div class="exclusive" style="background:#F4F5F7;border:1px solid #E3E5E9;align-items:flex-start;">
+      <span style="font-size:15px;">🔎</span>
+      <span class="x" style="color:#5B606B;"><b style="color:#16181D;">Tens um anúncio à vista?</b> Cola o link e dizemos onde cai o preço face aos anúncios do mesmo modelo e ano, e quanto costuma haver para negociar. <a href="/pt/avaliar" style="color:#177A47;font-weight:600;">Avaliar esse anúncio&nbsp;→</a></span>
+    </div>`;
+}
+
 function guideNav(current) {
   return GUIDES.filter(g => g.slug !== current).map(g => `<li class="fc-li"><a href="/pt/guias/${g.slug}">${escapeHtml(g.title)}</a></li>`).join("");
 }
@@ -279,17 +405,18 @@ function sourcesBlock(keys) {
 
 export function renderGuide({ guide, models, market, stats, host, depositCount, builtAt }) {
   const canonical = `https://${host}/pt/guias/${guide.slug}`;
+  const buyer = guide.audience === "comprador";
   const body = crumbs([{ name: "Início", href: "/pt" }, { name: "Guias", href: "/pt/guias" }, { name: guide.title }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">${escapeHtml(guide.h1)}</h1>
-      <div class="mono" style="font-size:11.5px;color:#9A9FA8;margin:-6px 0 18px;">Atualizado a ${UPDATED} · guia para vendedores particulares · não substitui aconselhamento jurídico</div>
+      <div class="mono" style="font-size:11.5px;color:#9A9FA8;margin:-6px 0 18px;">Atualizado a ${UPDATED} · ${buyer ? "guia para quem compra a um particular" : "guia para vendedores particulares"} · não substitui aconselhamento jurídico</div>
       ${guide.body({ models, market, stats })}
       <h2 class="fc-h2">Perguntas frequentes</h2>
       ${guide.faq.map(([q, a]) => `<details class="indep-note" style="margin:0 0 8px;"><summary>${escapeHtml(q)}</summary><p style="margin:8px 0 0;">${escapeHtml(a)}</p></details>`).join("")}
       ${sourcesBlock(guide.sources)}
     </section>
     <section class="section" style="padding:0 22px;max-width:680px;margin:0 auto;">
-      ${sellerHelpBlock({ slug: "", name: "", year: null, median: null, heading: "Vais vender o teu carro?" })}
+      ${buyer ? buyerHelpBlock() : sellerHelpBlock({ slug: "", name: "", year: null, median: null, heading: "Vais vender o teu carro?" })}
     </section>
     <section class="section fc-wrap" style="padding-bottom:70px;">
       <h2 class="fc-h2">Outros guias</h2>
@@ -323,8 +450,8 @@ export function renderGuidesHub({ market, stats, host, depositCount, builtAt }) 
   const items = GUIDES.map(g => `<li class="fc-li"><a href="/pt/guias/${g.slug}"><b>${escapeHtml(g.title)}</b></a><br>${escapeHtml(g.description)}</li>`).join("");
   const body = crumbs([{ name: "Início", href: "/pt" }, { name: "Guias" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
-      <h1 class="fc-h1">Guias para vender um carro usado em Portugal</h1>
-      <p class="fc-p">O que um vendedor particular precisa de saber, do preço aos papéis: documentos, registo de propriedade, crédito e reserva, carros importados, burlas e o que fazer depois da venda. Escritos a partir das páginas oficiais do IRN, do gov.pt e da Autoridade Tributária, com os números do nosso acompanhamento do mercado.</p>
+      <h1 class="fc-h1">Guias para comprar e vender um carro usado em Portugal</h1>
+      <p class="fc-p">O que é preciso saber dos dois lados do negócio: o que verificar antes de comprar, quanto pedir e em quantos dias vende, vender a um stand ou por conta própria, documentos, registo de propriedade, crédito e reserva, carros importados, burlas e o que fazer depois da venda. Escritos a partir das páginas oficiais do IRN, do gov.pt, da Autoridade Tributária e do Diário da República, com os números do nosso acompanhamento do mercado.</p>
       ${market && market.s30 != null ? `<p class="fc-p">${marketLine(market)}</p>` : ""}
       <ul class="fc-ul">${items}</ul>
       ${stats && stats.listings ? provenance({ n: stats.listings, builtAt, measure: "Preço pedido em anúncios ativos (mediana e P25-P75); dias até sair do OLX" }) : ""}
@@ -332,8 +459,8 @@ export function renderGuidesHub({ market, stats, host, depositCount, builtAt }) 
     </section>
     <div style="height:60px;"></div>`;
   return layout({
-    title: "Guias para vender um carro usado em Portugal",
-    description: "Documentos, registo de propriedade, crédito e reserva, carros importados, burlas e o que fazer depois da venda: guias para vendedores particulares, com os números do mercado.",
+    title: "Guias para comprar e vender um carro usado em Portugal",
+    description: "O que verificar antes de comprar, quanto pedir e em quantos dias vende, vender a um stand ou por conta própria, documentos, registo de propriedade, carros importados e burlas. Com os números do mercado.",
     canonical, body, zone: "all", nav: "avaliar", depositCount, index: true, host,
     jsonLd: {
       "@context": "https://schema.org",
