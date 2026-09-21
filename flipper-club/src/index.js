@@ -244,6 +244,8 @@ async function handlePt(request, env, url, pathname, method) {
   return notFoundPage(request, env, url);
 }
 
+const FUNNEL_BOT_UA = /facebookexternalhit|facebookcatalog|meta-externalagent|twitterbot|telegrambot|whatsapp|slackbot|discordbot|linkedinbot|googlebot|bingbot|yandex|applebot|pinterest|redditbot|embedly|preview|crawler|spider|bot\b|curl|wget|python-requests|headless/i;
+
 function trackFunnel(env, event, fields = {}) {
   const ds = env && env.FUNNEL;
   if (!ds || typeof ds.writeDataPoint !== "function") return;
@@ -386,7 +388,8 @@ const worker = {
 
       const utmSource = (url.searchParams.get("utm_source") || "").trim();
       if (utmSource && method === "GET") {
-        trackFunnel(env, "visit", {
+        const ua = request.headers.get("user-agent") || "";
+        trackFunnel(env, FUNNEL_BOT_UA.test(ua) || !ua ? "visit_bot" : "visit", {
           src: utmSource,
           campaign: (url.searchParams.get("utm_campaign") || "").trim(),
           path: pathname,

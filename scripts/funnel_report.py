@@ -39,12 +39,14 @@ def main():
 
     rows = by_event.get("data", [])
     visits_fb = sum(int(r["n"]) for r in rows if r["event"] == "visit" and r["src"] == "fb")
+    bots_fb = sum(int(r["n"]) for r in rows if r["event"] == "visit_bot" and r["src"] == "fb")
     visits_all = sum(int(r["n"]) for r in rows if r["event"] == "visit")
     valuations = sum(int(r["n"]) for r in rows if r["event"] == "valuation")
     val_fb = sum(int(r["n"]) for r in rows if r["event"] == "valuation" and r["src"] == "fb")
 
     print(f"период: {DAYS} дней")
     print(f"переходов с меткой fb:        {visits_fb}   (порог 300, стоп по каналу ниже 150)")
+    print(f"из них отсеяно как боты:      {bots_fb}   (скрейперы соцсетей, в порог не идут)")
     print(f"переходов со всеми метками:   {visits_all}")
     print(f"оценок всего:                 {valuations}")
     print(f"оценок с сохранённой меткой:  {val_fb}")
