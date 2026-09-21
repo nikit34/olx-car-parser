@@ -244,6 +244,24 @@ async function handlePt(request, env, url, pathname, method) {
   return notFoundPage(request, env, url);
 }
 
+function trackFunnel(env, event, fields = {}) {
+  const ds = env && env.FUNNEL;
+  if (!ds || typeof ds.writeDataPoint !== "function") return;
+  try {
+    ds.writeDataPoint({
+      indexes: [String(event).slice(0, 32)],
+      blobs: [
+        String(event).slice(0, 32),
+        String(fields.src || "").slice(0, 32),
+        String(fields.campaign || "").slice(0, 32),
+        String(fields.path || "").slice(0, 64),
+        String(fields.detail || "").slice(0, 64),
+      ],
+      doubles: [1],
+    });
+  } catch (e) {}
+}
+
 const worker = {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -259,6 +277,15 @@ const worker = {
     // Measurement ID для GA4. Ставится до любой ветки, потому что сниппет
     // рендерится в общей обёртке страниц. Пусто = аналитики нет вообще.
     setAnalyticsId(env.GA4_MEASUREMENT_ID);
+
+    const utmSource = (url.searchParams.get("utm_source") || "").trim();
+    if (utmSource && method === "GET") {
+      trackFunnel(env, "visit", {
+        src: utmSource,
+        campaign: (url.searchParams.get("utm_campaign") || "").trim(),
+        path: pathname,
+      });
+    }
 
     try {
       if (pathname === "/healthz") {
@@ -535,6 +562,13 @@ async function handleAvaliar(request, env, url) {
     const mrec = models[modelo];
     spec = { rec: mrec, slug: modelo, year: ano, cell: pickYearCell(mrec, ano),
              vender: publishedVender(models, modelo, mrec, mdoc.built_at) };
+  }
+  if (rec) {
+    trackFunnel(env, "valuation", {
+      src: (url.searchParams.get("utm_source") || "").trim(),
+      path: "/avaliar",
+      detail: String(olxId || ""),
+    });
   }
   return html(renderAvaliar({
     rec, olxId, sourceUrl, query, models, spec, depositCount: null, norms,

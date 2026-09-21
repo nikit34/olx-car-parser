@@ -1935,7 +1935,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
           <h2>Vais vender o teu carro?</h2>
           <p>Escolhe o modelo e o ano acima: vês o que o mercado está a pedir por um carro como o teu, a faixa onde fica metade dos anúncios e quantos dias costuma demorar a sair${mailto ? " — e se preferires, pede uma avaliação por email" : ""}.</p>
         </div>
-        ${mailto ? `<a class="btn-bright" href="${mailto}">Pedir avaliação por email&nbsp;&nbsp;→</a>` : `<a class="btn-bright" href="#escolher">Escolher o meu carro&nbsp;&nbsp;→</a>`}
+        ${mailto ? `<a class="btn-bright" href="${mailto}"${analyticsClick("lead_email", { source: "avaliar" })}>Pedir avaliação por email&nbsp;&nbsp;→</a>` : `<a class="btn-bright" href="#escolher">Escolher o meu carro&nbsp;&nbsp;→</a>`}
       </div>
     </section>`}`;
   const origin = host ? `https://${host}` : "";

@@ -25,6 +25,11 @@ main = "flipper-club/src/index.js"
 compatibility_date = "2024-12-01"
 account_id = "6545f93bd664df2dfebb147bda85a191"
 
+[[analytics_engine_datasets]]
+binding = "FUNNEL"
+dataset = "carsbuyer_funnel"
+
+
 # Public domain. Registered through Cloudflare Registrar, so the zone is
 # already in this account and `custom_domain = true` lets the deploy create
 # both the Custom Domain and its DNS record — no dashboard step.
