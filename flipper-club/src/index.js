@@ -278,15 +278,6 @@ const worker = {
     // рендерится в общей обёртке страниц. Пусто = аналитики нет вообще.
     setAnalyticsId(env.GA4_MEASUREMENT_ID);
 
-    const utmSource = (url.searchParams.get("utm_source") || "").trim();
-    if (utmSource && method === "GET") {
-      trackFunnel(env, "visit", {
-        src: utmSource,
-        campaign: (url.searchParams.get("utm_campaign") || "").trim(),
-        path: pathname,
-      });
-    }
-
     try {
       if (pathname === "/healthz") {
         // С флагом verbose отдаём только булевы признаки настройки, без самих
@@ -391,6 +382,15 @@ const worker = {
           dest.pathname = norm;
           return redirect(dest.toString(), 301);
         }
+      }
+
+      const utmSource = (url.searchParams.get("utm_source") || "").trim();
+      if (utmSource && method === "GET") {
+        trackFunnel(env, "visit", {
+          src: utmSource,
+          campaign: (url.searchParams.get("utm_campaign") || "").trim(),
+          path: pathname,
+        });
       }
 
       const intl = localeForPath(pathname, intlLocales());
