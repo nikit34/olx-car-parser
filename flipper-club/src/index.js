@@ -566,11 +566,12 @@ async function handleAvaliar(request, env, url) {
     spec = { rec: mrec, slug: modelo, year: ano, cell: pickYearCell(mrec, ano),
              vender: publishedVender(models, modelo, mrec, mdoc.built_at) };
   }
-  if (rec) {
-    trackFunnel(env, "valuation", {
+  if (rec || (spec && spec.rec)) {
+    const ua = request.headers.get("user-agent") || "";
+    trackFunnel(env, FUNNEL_BOT_UA.test(ua) || !ua ? "valuation_bot" : "valuation", {
       src: (url.searchParams.get("utm_source") || "").trim(),
       path: "/avaliar",
-      detail: String(olxId || ""),
+      detail: rec ? `listing:${olxId || ""}` : `model:${spec.slug}${spec.year ? "/" + spec.year : ""}`,
     });
   }
   return html(renderAvaliar({
