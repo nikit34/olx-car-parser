@@ -1149,7 +1149,7 @@ export function renderIntlCar({ loc, host, deal, rec = null, builtAt = null }) {
     sd: deal.sell_days != null ? deal.sell_days : null, ms: slugOf(deal),
   };
   const photos = Array.isArray(deal.photo_urls) && deal.photo_urls.length
-    ? deal.photo_urls.slice(0, 5)
+    ? deal.photo_urls
     : (deal.image_url ? [deal.image_url] : []);
   const shots = photos.length
     ? photoGallery(photos, photoLabels(loc, name)) + photoThumbs(photos)

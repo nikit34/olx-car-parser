@@ -698,17 +698,12 @@ def _to_listing(item: dict, mk: Market) -> DeListing | None:
     )
 
 
-PHOTO_LIMIT = 8
-
-
-def _photo_list(images: list | None, limit: int = PHOTO_LIMIT) -> list[str] | None:
+def _photo_list(images: list | None) -> list[str] | None:
     """A gallery at the size a page can actually show it.
 
     The search payload links thumbnails (``/250x188.webp``), which look like
     mud at card width; the same object is served at ``/720x540.webp`` and the
-    swap costs one string replacement instead of a detail fetch. The card
-    carries three photos and the advert the whole set, so the cap is what keeps
-    a row from growing without bound.
+    swap costs one string replacement instead of a detail fetch.
     """
     if not images:
         return None
@@ -717,14 +712,12 @@ def _photo_list(images: list | None, limit: int = PHOTO_LIMIT) -> list[str] | No
         url = str(item or "").strip().replace("/250x188.webp", "/720x540.webp")
         if url and url not in out:
             out.append(url)
-        if len(out) >= limit:
-            break
     return out or None
 
 
 def _cover_image(images: list | None) -> str | None:
     """The first photo of the gallery, for readers that want exactly one."""
-    photos = _photo_list(images, 1)
+    photos = _photo_list(images)
     return photos[0] if photos else None
 
 

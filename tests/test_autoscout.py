@@ -663,7 +663,7 @@ class TestTheAdvertPage:
         card = _card(images=[f"https://prod.pictures.autoscout24.net/x_{i}.jpg/250x188.webp"
                              for i in range(12)])
         (listing,), _ = parse_search(_page([card]))
-        assert listing.photo_urls and len(listing.photo_urls) == 8, "the gallery is not capped"
+        assert listing.photo_urls and len(listing.photo_urls) == 12, "the gallery lost photos"
         assert all(u.endswith("/720x540.webp") for u in listing.photo_urls), "thumbnails travelled"
         assert listing.image_url == listing.photo_urls[0]
 
@@ -680,5 +680,5 @@ class TestTheAdvertPage:
             "vehicle": {"rawData": {}},
         }}}})
         patch = parse_detail(page, "fr")
-        assert len(patch["photo_urls"]) == 8
+        assert len(patch["photo_urls"]) == 18
         assert patch["photo_urls"][0].endswith("/720x540.webp")

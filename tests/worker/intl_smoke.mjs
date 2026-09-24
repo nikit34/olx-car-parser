@@ -21,6 +21,9 @@ const mdoc = JSON.parse(readFileSync(ptPath, "utf8"));
 const ddoc = JSON.parse(readFileSync(dePath, "utf8"));
 const deModels = ddoc.models;
 
+const GALLERY = Array.from({ length: 12 },
+  (_, i) => `https://prod.pictures.autoscout24.net/bbb_${i}.jpg/720x540.webp`);
+
 const DEALS = [
   {
     olx_id: "as24_de:aaa", url: "https://www.autoscout24.de/angebote/aaa",
@@ -32,7 +35,7 @@ const DEALS = [
   },
   {
     olx_id: "as24_de:bbb", url: "https://www.autoscout24.de/angebote/bbb",
-    image_url: "https://prod.pictures.autoscout24.net/bbb/720x540.webp",
+    image_url: "https://prod.pictures.autoscout24.net/bbb/720x540.webp", photo_urls: GALLERY,
     brand: "BMW", model: "320", year: 2014, mileage_km: 191000,
     fuel_type: "Gasolina", seller_type: "Particular", district: "Hessen",
     price_eur: 8400, fair_median: 9900, fair_low: 8900, fair_high: 11200,
@@ -388,6 +391,15 @@ await check("a deal in the feed has its own page, in the local language, on ever
     assert(miss.status === 302, `${m.car} with an unknown car → ${miss.status}`);
     assert(miss.headers.get("location") === m.feed,
       `${m.car} sends an unknown car to ${miss.headers.get("location")}`);
+  }
+});
+
+await check("the car page shows every photo the crawl stored", async () => {
+  for (const [code, m] of Object.entries(MARKETS)) {
+    const html = await body(`${m.car}?olx_id=as24_${code}:bbb`);
+    assert(html.includes(`data-count="${GALLERY.length}"`),
+      `${m.car} cuts the gallery below the ${GALLERY.length} photos it was given`);
+    for (const u of GALLERY) assert(html.includes(u), `${m.car} drops ${u}`);
   }
 });
 
