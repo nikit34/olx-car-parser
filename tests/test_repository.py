@@ -20,6 +20,7 @@ from src.storage.repository import (
     deactivate_import_missing,
     expire_import_listings,
     get_import_listings_df,
+    retire_import_listings,
     get_listings_df,
     get_unmatched_df,
     upsert_import_listings,
@@ -1063,6 +1064,18 @@ class TestImportListings:
         upsert_import_listings(db_session, [dict(self._rows(1)[0], photo_urls=["a", "b"])])
         row = db_session.query(Listing).filter(Listing.external_id == "de-0").one()
         assert json.loads(row.extras) == {"previous_owners": 2, "photo_urls": ["a", "b"]}
+
+    def test_retiring_touches_only_the_named_rows_of_the_named_source(self, db_session):
+        rows = self._rows(2)
+        other = dict(rows[0], source="as24_fr")
+        upsert_import_listings(db_session, rows + [other])
+        assert retire_import_listings(db_session, "autoscout24", ["de-0", "nope"]) == 1
+        assert retire_import_listings(db_session, "autoscout24", ["de-0"]) == 0
+        state = {(r.source, r.external_id): (r.is_active, r.deactivation_reason)
+                 for r in db_session.query(Listing).all()}
+        assert state == {("autoscout24", "de-0"): (False, "expired"),
+                         ("autoscout24", "de-1"): (True, None),
+                         ("as24_fr", "de-0"): (True, None)}
 
     def test_deactivation_with_no_cells_is_a_no_op(self, db_session):
         upsert_import_listings(db_session, self._rows(1))

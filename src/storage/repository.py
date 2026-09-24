@@ -1805,6 +1805,26 @@ def deactivate_import_missing(session: Session, source: str,
     return count
 
 
+def retire_import_listings(session: Session, source: str, external_ids,
+                           now: datetime | None = None) -> int:
+    """Retire the named rows of one source that a complete search no longer lists."""
+    stamp = now or _utcnow()
+    count = 0
+    for chunk in _chunked({str(e) for e in external_ids}):
+        rows = (session.query(Listing)
+                .filter(Listing.source == source,
+                        Listing.external_id.in_(chunk),
+                        Listing.is_active.isnot(False))
+                .all())
+        for row in rows:
+            row.is_active = False
+            row.deactivated_at = stamp
+            row.deactivation_reason = "expired"
+            count += 1
+    session.commit()
+    return count
+
+
 def expire_import_listings(session: Session, source: str, max_age_days: int = 21,
                            now: datetime | None = None) -> int:
     """Retire every active row of *source* not seen for ``max_age_days``.

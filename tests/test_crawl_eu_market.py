@@ -108,7 +108,7 @@ def _golf_discovered(at=NOW):
 @pytest.fixture
 def repo_spy(monkeypatch):
     """Replace the repository writes with recorders so no test here needs a database."""
-    calls = {"upsert": [], "deactivate": [], "expire": []}
+    calls = {"upsert": [], "deactivate": [], "expire": [], "retire": []}
 
     def fake_upsert(session, listings):
         items = list(listings)
@@ -123,7 +123,13 @@ def repo_spy(monkeypatch):
         calls["expire"].append((source, max_age_days))
         return 0
 
+    def fake_retire(session, source, external_ids, now=None):
+        ids = list(external_ids)
+        calls["retire"].append((source, ids))
+        return len(ids)
+
     monkeypatch.setattr(crawl, "upsert_import_listings", fake_upsert)
+    monkeypatch.setattr(crawl, "retire_import_listings", fake_retire)
     monkeypatch.setattr(crawl, "deactivate_import_missing", fake_deactivate)
     monkeypatch.setattr(crawl, "expire_import_listings", fake_expire)
     monkeypatch.setattr(crawl, "cell_last_seen", lambda session, source: {})
@@ -571,18 +577,51 @@ class TestFeedRefresh:
             "the row moved away from the model the deal was stored under"
         assert stored["photo_urls"] == _gallery("a")
         assert repo_spy["deactivate"] == [], "a search narrowed to one car retired the cell"
+        assert repo_spy["retire"] == []
         assert (result.feed_found, result.feed_missed) == (1, 0)
 
-    def test_a_deal_the_search_no_longer_returns_is_left_as_it_was(self, tmp_path, repo_spy):
+    def test_a_deal_missing_from_a_full_answer_is_retired_alone(self, tmp_path, repo_spy):
         client = FakeClient(searches={
             ("volkswagen", "golf", 2018, "km", 78300): ([_listing("other")],
                                                         {"results": 1, "pages": 1}),
+            ("volkswagen", "golf", 2018, "km", 1000): ([_listing("b")],
+                                                       {"results": 1, "pages": 1}),
         })
         result = crawl.CountryResult(code="FR", source="as24_fr")
-        crawl.refresh_feed(client, country("FR"), object(), [_feed_deal("a")],
-                           self._slugs(tmp_path), result=result)
-        assert repo_spy["upsert"] == [] and repo_spy["deactivate"] == []
-        assert (result.feed_found, result.feed_missed) == (0, 1)
+        crawl.refresh_feed(client, country("FR"), object(),
+                           [_feed_deal("a"), _feed_deal("b", km=1000)], self._slugs(tmp_path),
+                           result=result)
+        assert repo_spy["retire"] == [("as24_fr", ["a"])]
+        assert [row["external_id"] for (row,) in repo_spy["upsert"]] == ["b"]
+        assert repo_spy["deactivate"] == []
+        assert (result.feed_found, result.feed_missed, result.feed_retired) == (1, 1, 1)
+
+    def test_a_site_that_lost_every_car_at_once_retires_nothing(self, tmp_path, repo_spy):
+        empty = ([], {"results": 0, "pages": 1})
+        client = FakeClient(searches={
+            ("volkswagen", "golf", 2018, "km", 78300): empty,
+            ("volkswagen", "golf", 2018, "km", 1000): empty,
+        })
+        result = crawl.CountryResult(code="FR", source="as24_fr")
+        crawl.refresh_feed(client, country("FR"), object(),
+                           [_feed_deal("a"), _feed_deal("b", km=1000)], self._slugs(tmp_path),
+                           result=result)
+        assert repo_spy["retire"] == [], "an empty site emptied the feed"
+        assert (result.feed_found, result.feed_missed, result.feed_retired) == (0, 2, 0)
+
+    def test_a_search_that_did_not_answer_or_ran_past_a_page_retires_nothing(
+            self, tmp_path, repo_spy):
+        client = FakeClient(searches={
+            ("volkswagen", "golf", 2018, "km", 1000): ([_listing("other")],
+                                                       {"results": 25, "pages": 2}),
+        })
+        result = crawl.CountryResult(code="FR", source="as24_fr")
+        crawl.refresh_feed(client, country("FR"), object(),
+                           [_feed_deal("a"), _feed_deal("b", km=1000)], self._slugs(tmp_path),
+                           result=result)
+        assert client.spent == 2
+        assert repo_spy["retire"] == []
+        assert (result.feed_missed, result.feed_retired) == (2, 0)
 
     def test_a_deal_that_cannot_be_searched_costs_no_request(self, tmp_path, repo_spy):
         deals = [_feed_deal("a", km=None), _feed_deal("b", model="Up"),
@@ -628,7 +667,7 @@ class TestFeedRefresh:
                               feed_dir=feed_dir, log=lambda *a, **k: 0)
         assert client.calls[0][9] == 78300, "the harvest spent the budget before the feed"
         assert result.feed_found == 1
-        assert "1 feed deals found again (0 not)" in crawl.summary(result)
+        assert "1 feed deals found again (0 not, 0 retired)" in crawl.summary(result)
 
 
 class TestHarvestAgainstTheDatabase:
@@ -701,6 +740,27 @@ class TestHarvestAgainstTheDatabase:
         assert extras["photo_urls"] == _gallery("a")
         assert extras["previous_owners"] == 1, "the card wiped what the advert had added"
         assert float(row["price_eur"]) == 13900.0 and result.feed_found == 1
+
+    def test_a_sold_deal_leaves_the_corpus_and_its_neighbours_stay(self, tmp_path, db_session):
+        from src.storage.repository import get_country_listings_df, upsert_import_listings
+
+        rows = [_listing("sold"), _listing("found"), _listing("neighbour")]
+        crawl.stamp(rows, "as24_fr", "Volkswagen", "Golf")
+        upsert_import_listings(db_session, rows)
+        client = FakeClient(searches={
+            ("volkswagen", "golf", 2018, "km", 78300): ([], {"results": 0, "pages": 1}),
+            ("volkswagen", "golf", 2018, "km", 1000): ([_listing("found")],
+                                                       {"results": 1, "pages": 1}),
+        })
+        result = crawl.CountryResult(code="FR", source="as24_fr")
+        slugs = crawl.model_slugs(_state(tmp_path, "FR", discovered=_golf_discovered()), "FR")
+        crawl.refresh_feed(client, country("FR"), db_session,
+                           [_feed_deal("sold"), _feed_deal("found", km=1000)], slugs,
+                           result=result)
+        df = get_country_listings_df(db_session, "FR").set_index("external_id")
+        assert {ext: bool(a) for ext, a in df["is_active"].items()} == {
+            "sold": False, "found": True, "neighbour": True}
+        assert result.feed_retired == 1
 
 
 class TestRun:

@@ -91,6 +91,7 @@ from src.storage.repository import (  # noqa: E402
     deactivate_import_missing,
     expire_import_listings,
     listings_with_body,
+    retire_import_listings,
     upsert_import_listings,
 )
 
@@ -268,6 +269,7 @@ class CountryResult:
     source: str
     feed_found: int = 0
     feed_missed: int = 0
+    feed_retired: int = 0
     makes_read: int = 0
     makes_empty: int = 0
     models_probed: int = 0
@@ -643,7 +645,12 @@ def _feed_target(deal: dict, slugs: dict[tuple[str, str], tuple[str, str]]
 def refresh_feed(client, cty: Country, session, deals: list[dict],
                  slugs: dict[tuple[str, str], tuple[str, str]], *, result: CountryResult,
                  log=print) -> None:
-    """Find each published deal again by its model, year and exact mileage, and store it."""
+    """Find each published deal again by its model, year and exact mileage, and store it.
+
+    A deal missing from a search that answered in full is retired, unless such
+    misses outnumber the deals found.
+    """
+    gone: list[str] = []
     for deal in deals:
         if not _budget_left(client):
             break
@@ -652,18 +659,22 @@ def refresh_feed(client, cty: Country, session, deals: list[dict],
             result.feed_missed += 1
             continue
         external_id, make_slug, model_slug, year, km = target
-        listings, _ = client.search(make_slug, model_slug, year=year, km=km,
-                                    ustate="U", sort="age", desc=True)
+        listings, meta = client.search(make_slug, model_slug, year=year, km=km,
+                                       ustate="U", sort="age", desc=True)
         found = [item for item in used_only(listings) if str(item.external_id) == external_id]
         if not found:
             result.feed_missed += 1
+            if meta.get("results") is not None and int(meta["results"]) <= PAGE_SIZE:
+                gone.append(external_id)
             continue
         stamp(found[:1], cty.source, deal["brand"], deal["model"])
         upsert_import_listings(session, [asdict(found[0])])
         result.feed_found += 1
+    if gone and len(gone) <= result.feed_found:
+        result.feed_retired = retire_import_listings(session, cty.source, gone)
     if deals:
-        log(f"[{cty.source}] feed: {result.feed_found}/{len(deals)} deals found again",
-            flush=True)
+        log(f"[{cty.source}] feed: {result.feed_found}/{len(deals)} deals found again, "
+            f"{result.feed_retired}/{len(gone)} missing ones retired", flush=True)
 
 
 def crawl_country(cty: Country, cfg: MarketConfig, state: CrawlState, client, session, *,
@@ -711,7 +722,8 @@ def summary(result: CountryResult) -> str:
             f"{result.models_probed} models probed, {result.models_kept} kept, "
             f"{result.cells_read}/{result.cells_pending} cells read "
             f"({result.cells_empty} with nothing, {result.cells_failed} failed), "
-            f"{result.feed_found} feed deals found again ({result.feed_missed} not), "
+            f"{result.feed_found} feed deals found again ({result.feed_missed} not, "
+            f"{result.feed_retired} retired), "
             f"{result.inserted} new listings, {result.updated} refreshed, "
             f"{result.adverts_read} adverts read "
             f"({result.adverts_missed} not read), "
