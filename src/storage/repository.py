@@ -1588,6 +1588,15 @@ _MARKET_RENAMES = {"region": "district", "motor_type": "sub_model"}
 _MARKET_EXTRAS = ("model_group", "variant", "version", "offer_type", "photo_urls")
 
 
+def _extras_dict(value) -> dict:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return {}
+    return dict(value) if isinstance(value, dict) else {}
+
+
 def _market_values(data: dict) -> dict:
     """A reader's payload as Listing column values, extras packed into JSON.
 
@@ -1603,13 +1612,7 @@ def _market_values(data: dict) -> dict:
     for foreign, native in _MARKET_RENAMES.items():
         if data.get(foreign) is not None and values.get(native) is None:
             values[native] = data[foreign]
-    extras = data.get("extras")
-    if isinstance(extras, str):
-        try:
-            extras = json.loads(extras)
-        except ValueError:
-            extras = {}
-    extras = dict(extras or {})
+    extras = _extras_dict(data.get("extras"))
     for key in _MARKET_EXTRAS:
         if data.get(key) is not None:
             extras[key] = data[key]
@@ -1711,6 +1714,9 @@ def upsert_import_listings(session: Session, listings) -> tuple[int, int]:
             inserted += 1
         else:
             for key, value in values.items():
+                if key == "extras" and value is not None:
+                    value = json.dumps({**_extras_dict(row.extras), **_extras_dict(value)},
+                                       ensure_ascii=False, sort_keys=True)
                 if value is not None:
                     setattr(row, key, value)
             row.last_seen_at = now

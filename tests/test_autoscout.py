@@ -491,6 +491,15 @@ class TestTheQueriesTheCountryCrawlMakes:
         assert "fregfrom=2018" in path and "fregto=2018" in path and "page=2" in path
         assert robots_allows(path)
 
+    def test_one_mileage_is_still_a_path_robots_leaves_open_on_every_market(self):
+        for tld, cy in (("de", "D"), ("fr", "F"), ("it", "I")):
+            path = search_path("volkswagen", "t-roc", year=2018, country=cy, sort="age",
+                               desc=True, ustate="U", km=78300)
+            assert path.startswith("/lst/volkswagen/t-roc?")
+            assert "kmfrom=78300" in path and "kmto=78300" in path
+            assert "fregfrom=2018" in path and "fregto=2018" in path
+            assert robots_allows(path, tld), tld
+
     def test_left_alone_the_query_is_the_one_the_import_benchmark_always_sent(self):
         assert search_path("bmw", "320", year=2016) == (
             "/lst/bmw/320?atype=C&cy=D&damaged_listing=exclude&powertype=kw"

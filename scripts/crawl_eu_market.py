@@ -96,6 +96,7 @@ from src.storage.repository import (  # noqa: E402
 
 DEFAULT_CONFIG = REPO_ROOT / "config" / "eu_markets.yaml"
 DEFAULT_STATE = REPO_ROOT / "data" / "eu_crawl_state.json"
+DEFAULT_FEED_DIR = REPO_ROOT / "data" / "intl"
 PAGE_SIZE = 20
 STATE_FLUSH_EVERY = 20
 DRY_RUN_CELLS = 30
@@ -265,6 +266,8 @@ def stamp(listings, source: str, brand: str, model: str) -> None:
 class CountryResult:
     code: str
     source: str
+    feed_found: int = 0
+    feed_missed: int = 0
     makes_read: int = 0
     makes_empty: int = 0
     models_probed: int = 0
@@ -603,17 +606,80 @@ def harvest(client, cfg: MarketConfig, cells: list[Cell], state: CrawlState, cty
             state.save()
 
 
+def feed_deals(code: str, feed_dir: str | Path = DEFAULT_FEED_DIR) -> list[dict]:
+    """The deals of the country feed the last build published, or none."""
+    path = Path(feed_dir) / f"hot_deals_{code.lower()}_all.json"
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    deals = doc.get("deals") if isinstance(doc, dict) else None
+    return [d for d in deals if isinstance(d, dict)] if isinstance(deals, list) else []
+
+
+def model_slugs(state: CrawlState, code: str) -> dict[tuple[str, str], tuple[str, str]]:
+    """{(brand, model): (make slug, model slug)} for every model discovery learned."""
+    cstate = state.country(code)
+    out: dict[tuple[str, str], tuple[str, str]] = {}
+    with state.lock:
+        for make, entry in cstate["discovered"].items():
+            brand = normalize_brand(entry.get("label") or make)
+            for model in entry.get("models") or []:
+                out.setdefault((brand, model["label"]), (make, model["slug"]))
+    return out
+
+
+def _feed_target(deal: dict, slugs: dict[tuple[str, str], tuple[str, str]]
+                 ) -> tuple[str, str, str, int, int] | None:
+    """(external id, make slug, model slug, year, km) of a deal, or None if unsearchable."""
+    external_id = str(deal.get("olx_id") or "").partition(":")[2]
+    where = slugs.get((deal.get("brand"), deal.get("model")))
+    year, km = deal.get("year"), deal.get("mileage_km")
+    if not external_id or where is None or not isinstance(year, int) or not isinstance(km, int):
+        return None
+    return external_id, where[0], where[1], year, km
+
+
+def refresh_feed(client, cty: Country, session, deals: list[dict],
+                 slugs: dict[tuple[str, str], tuple[str, str]], *, result: CountryResult,
+                 log=print) -> None:
+    """Find each published deal again by its model, year and exact mileage, and store it."""
+    for deal in deals:
+        if not _budget_left(client):
+            break
+        target = _feed_target(deal, slugs)
+        if target is None:
+            result.feed_missed += 1
+            continue
+        external_id, make_slug, model_slug, year, km = target
+        listings, _ = client.search(make_slug, model_slug, year=year, km=km,
+                                    ustate="U", sort="age", desc=True)
+        found = [item for item in used_only(listings) if str(item.external_id) == external_id]
+        if not found:
+            result.feed_missed += 1
+            continue
+        stamp(found[:1], cty.source, deal["brand"], deal["model"])
+        upsert_import_listings(session, [asdict(found[0])])
+        result.feed_found += 1
+    if deals:
+        log(f"[{cty.source}] feed: {result.feed_found}/{len(deals)} deals found again",
+            flush=True)
+
+
 def crawl_country(cty: Country, cfg: MarketConfig, state: CrawlState, client, session, *,
                   now: datetime | None = None, pages_per_cell: int | None = None,
                   years_back: int | None = None, adverts: bool = True,
-                  log=print) -> CountryResult:
-    """The three passes for one country, then the age-based expiry."""
+                  deals: list[dict] | None = None, log=print) -> CountryResult:
+    """The published deals found again, the three passes, then the age-based expiry."""
     now = now or _utcnow()
     pages = pages_per_cell if pages_per_cell is not None else cfg.pages_per_cell
     years = years_back if years_back is not None else cfg.years_back
     result = CountryResult(code=cty.code, source=cty.source)
     t0 = time.perf_counter()
     try:
+        if deals:
+            refresh_feed(client, cty, session, deals, model_slugs(state, cty.code),
+                         result=result, log=log)
         ceiling = int(client.config.budget * cfg.enrich_share)
         result.makes_read, result.makes_empty = discover(client, cfg, state, cty.code,
                                                          now=now, log=log)
@@ -645,6 +711,7 @@ def summary(result: CountryResult) -> str:
             f"{result.models_probed} models probed, {result.models_kept} kept, "
             f"{result.cells_read}/{result.cells_pending} cells read "
             f"({result.cells_empty} with nothing, {result.cells_failed} failed), "
+            f"{result.feed_found} feed deals found again ({result.feed_missed} not), "
             f"{result.inserted} new listings, {result.updated} refreshed, "
             f"{result.adverts_read} adverts read "
             f"({result.adverts_missed} not read), "
@@ -657,7 +724,7 @@ def summary(result: CountryResult) -> str:
 def run(countries: list[Country], configs: dict[str, MarketConfig], state: CrawlState, *,
         client_factory, session_factory, pages_per_cell: int | None = None,
         years_back: int | None = None, adverts: bool = True,
-        log=print) -> list[CountryResult]:
+        feed_dir: str | Path | None = None, log=print) -> list[CountryResult]:
     """One thread per country; a blocked or crashed country leaves the others running."""
     results: dict[str, CountryResult] = {}
     for cty in countries:
@@ -671,7 +738,10 @@ def run(countries: list[Country], configs: dict[str, MarketConfig], state: Crawl
                 results[cty.code] = crawl_country(cty, cfg, state, client, session,
                                                   pages_per_cell=pages_per_cell,
                                                   years_back=years_back,
-                                                  adverts=adverts, log=log)
+                                                  adverts=adverts,
+                                                  deals=(feed_deals(cty.code, feed_dir)
+                                                         if feed_dir is not None else None),
+                                                  log=log)
         except Exception as exc:
             results[cty.code] = CountryResult(code=cty.code, source=cty.source,
                                               error=f"{type(exc).__name__}: {exc}")
@@ -707,7 +777,8 @@ def _client_factory(budget: int | None, delay_min: float | None, delay_max: floa
 
 def dry_run(countries: list[Country], configs: dict[str, MarketConfig], state: CrawlState,
             session, *, budget: int | None = None, years_back: int | None = None,
-            now: datetime | None = None, log=print) -> None:
+            now: datetime | None = None, feed_dir: str | Path | None = None,
+            log=print) -> None:
     """Print each country's queue as the run would see it, without one request."""
     now = now or _utcnow()
     for cty in countries:
@@ -727,10 +798,14 @@ def dry_run(countries: list[Country], configs: dict[str, MarketConfig], state: C
         cells = order_cells(build_cells(kept, now_year=now.year, years_back=years),
                             cell_last_seen(session, cty.source),
                             now=now, cell_max_age_days=cfg.cell_max_age_days)
+        deals = feed_deals(cty.code, feed_dir) if feed_dir is not None else []
+        slugs = model_slugs(state, cty.code)
+        findable = sum(1 for d in deals if _feed_target(d, slugs) is not None)
         log(f"[{cty.source}] discovery: {len(stale_makes)}/{len(cfg.makes)} makes to read; "
             f"inventory: {to_probe} models to probe; harvest: {len(kept)} models kept, "
             f"{len(cells)} cells stale enough to fetch; "
-            f"budget {budget if budget is not None else cfg.daily_budget}", flush=True)
+            f"budget {budget if budget is not None else cfg.daily_budget}; "
+            f"feed: {findable}/{len(deals)} deals to find again", flush=True)
         seen = cell_last_seen(session, cty.source)
         for cell in cells[:DRY_RUN_CELLS]:
             last = seen.get(cell.key)
@@ -761,6 +836,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--delay-max", type=float, default=None)
     ap.add_argument("--state", default=str(DEFAULT_STATE))
     ap.add_argument("--config", default=str(DEFAULT_CONFIG))
+    ap.add_argument("--feed-dir", default=str(DEFAULT_FEED_DIR),
+                    help="where the last build left hot_deals_{cc}_all.json; its deals "
+                         "are found again first, one search each")
     args = ap.parse_args(argv)
 
     codes = [c.upper() for c in (args.country or list(EU_COUNTRIES))]
@@ -779,7 +857,7 @@ def main(argv: list[str] | None = None) -> int:
         session = get_session()
         try:
             dry_run(countries, configs, state, session, budget=args.budget,
-                    years_back=args.years)
+                    years_back=args.years, feed_dir=args.feed_dir)
         finally:
             session.close()
         return 0
@@ -787,7 +865,8 @@ def main(argv: list[str] | None = None) -> int:
     results = run(countries, configs, state,
                   client_factory=_client_factory(args.budget, args.delay_min, args.delay_max),
                   session_factory=get_session, pages_per_cell=args.pages,
-                  years_back=args.years, adverts=not args.no_adverts)
+                  years_back=args.years, adverts=not args.no_adverts,
+                  feed_dir=args.feed_dir)
     for result in results:
         print(summary(result), flush=True)
     if any(r.blocked for r in results):

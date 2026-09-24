@@ -856,7 +856,8 @@ def parse_detail(html: str, tld: str = "de") -> dict:
 
 
 def _list_path(segments, *, year: int | None = None, page: int = 1, country: str = "D",
-               sort: str | None = None, desc: bool = False, ustate: str = "N,U") -> str:
+               sort: str | None = None, desc: bool = False, ustate: str = "N,U",
+               km: int | None = None) -> str:
     params = {
         "atype": "C",
         "cy": country,
@@ -870,6 +871,9 @@ def _list_path(segments, *, year: int | None = None, page: int = 1, country: str
     if year:
         params["fregfrom"] = year
         params["fregto"] = year
+    if km is not None:
+        params["kmfrom"] = km
+        params["kmto"] = km
     if page and page > 1:
         params["page"] = page
     tail = "/".join(str(s).strip("/") for s in segments if s)
@@ -878,7 +882,7 @@ def _list_path(segments, *, year: int | None = None, page: int = 1, country: str
 
 def search_path(make: str, model: str, *, year: int | None = None, page: int = 1,
                 country: str = "D", body: str | None = None, sort: str | None = None,
-                desc: bool = False, ustate: str = "N,U") -> str:
+                desc: bool = False, ustate: str = "N,U", km: int | None = None) -> str:
     """The path+query for one model-year page, in the form robots.txt leaves open.
 
     ``body`` is AutoScout24's body-type segment (``bt_kombi`` and friends). It
@@ -892,7 +896,7 @@ def search_path(make: str, model: str, *, year: int | None = None, page: int = 1
     order, which is what the import benchmark has always asked for.
     """
     return _list_path([make, model, body], year=year, page=page, country=country,
-                      sort=sort, desc=desc, ustate=ustate)
+                      sort=sort, desc=desc, ustate=ustate, km=km)
 
 
 def make_path(make: str, *, page: int = 1, country: str = "D", sort: str | None = None,
@@ -955,7 +959,7 @@ class AutoScoutClient:
 
     def search(self, make: str, model: str, *, year: int | None = None, page: int = 1,
                body: str | None = None, sort: str | None = None, desc: bool = False,
-               ustate: str = "U") -> tuple[list[DeListing], dict]:
+               ustate: str = "U", km: int | None = None) -> tuple[list[DeListing], dict]:
         """One search page as (listings, meta); ``([], {})`` when nothing was read.
 
         The empty meta is the caller's signal to stop: a budget that ran out, a
@@ -964,7 +968,7 @@ class AutoScoutClient:
         """
         html = self.fetch(search_path(make, model, year=year, page=page,
                                       country=self.config.country, body=body,
-                                      sort=sort, desc=desc, ustate=ustate))
+                                      sort=sort, desc=desc, ustate=ustate, km=km))
         if html is None:
             return [], {}
         return parse_search(html, self.config.tld)

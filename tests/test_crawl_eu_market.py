@@ -69,11 +69,13 @@ class FakeClient:
         return self.make_pages.get(make, ([], {}))
 
     def search(self, make, model, *, year=None, page=1, body=None, sort=None, desc=False,
-               ustate="U"):
+               ustate="U", km=None):
         """A body-filtered search is keyed by its filter; one nobody wrote down
         answers the way the site does, with a page that holds no cars."""
         self.spent += 1
-        self.calls.append(("search", make, model, year, page, sort, desc, ustate, body))
+        self.calls.append(("search", make, model, year, page, sort, desc, ustate, body, km))
+        if km is not None:
+            return self.searches.get((make, model, year, "km", km), ([], {}))
         if body is not None:
             return self.searches.get((make, model, year, page, body),
                                      ([], {"results": 0, "pages": 1}))
@@ -532,6 +534,103 @@ class TestTheMarketWithNoAdvert:
         assert crawl.body_order(None, autoscout.market("fr").body_filters) == []
 
 
+def _feed_deal(ext, *, market="fr", model="Golf", year=2018, km=78300):
+    return {"olx_id": f"as24_{market}:{ext}", "brand": "Volkswagen", "model": model,
+            "year": year, "mileage_km": km}
+
+
+def _gallery(ext, n=12):
+    return [f"https://prod.pictures.autoscout24.net/{ext}_{i}.jpg/720x540.webp"
+            for i in range(n)]
+
+
+class TestFeedRefresh:
+
+    @staticmethod
+    def _slugs(tmp_path):
+        return crawl.model_slugs(_state(tmp_path, "FR", discovered=_golf_discovered()), "FR")
+
+    def test_each_deal_is_found_again_by_its_mileage_and_stored_with_its_gallery(
+            self, tmp_path, repo_spy):
+        card = _listing("a")
+        card.model = "Golf Variant"
+        card.photo_urls = _gallery("a")
+        client = FakeClient(searches={
+            ("volkswagen", "golf", 2018, "km", 78300): ([_listing("other"), card],
+                                                        {"results": 2, "pages": 1}),
+        })
+        result = crawl.CountryResult(code="FR", source="as24_fr")
+        crawl.refresh_feed(client, country("FR"), object(), [_feed_deal("a")],
+                           self._slugs(tmp_path), result=result)
+        assert client.spent == 1, "one search per deal"
+        assert client.calls[0][1:4] == ("volkswagen", "golf", 2018) and client.calls[0][9] == 78300
+        assert len(repo_spy["upsert"]) == 1
+        (stored,) = repo_spy["upsert"][0]
+        assert stored["external_id"] == "a" and stored["source"] == "as24_fr"
+        assert (stored["brand"], stored["model"]) == ("Volkswagen", "Golf"), \
+            "the row moved away from the model the deal was stored under"
+        assert stored["photo_urls"] == _gallery("a")
+        assert repo_spy["deactivate"] == [], "a search narrowed to one car retired the cell"
+        assert (result.feed_found, result.feed_missed) == (1, 0)
+
+    def test_a_deal_the_search_no_longer_returns_is_left_as_it_was(self, tmp_path, repo_spy):
+        client = FakeClient(searches={
+            ("volkswagen", "golf", 2018, "km", 78300): ([_listing("other")],
+                                                        {"results": 1, "pages": 1}),
+        })
+        result = crawl.CountryResult(code="FR", source="as24_fr")
+        crawl.refresh_feed(client, country("FR"), object(), [_feed_deal("a")],
+                           self._slugs(tmp_path), result=result)
+        assert repo_spy["upsert"] == [] and repo_spy["deactivate"] == []
+        assert (result.feed_found, result.feed_missed) == (0, 1)
+
+    def test_a_deal_that_cannot_be_searched_costs_no_request(self, tmp_path, repo_spy):
+        deals = [_feed_deal("a", km=None), _feed_deal("b", model="Up"),
+                 dict(_feed_deal("c"), olx_id="")]
+        client = FakeClient()
+        result = crawl.CountryResult(code="FR", source="as24_fr")
+        crawl.refresh_feed(client, country("FR"), object(), deals, self._slugs(tmp_path),
+                           result=result)
+        assert client.spent == 0
+        assert (result.feed_found, result.feed_missed) == (0, 3)
+
+    def test_the_budget_stops_the_refresh(self, tmp_path, repo_spy):
+        client = FakeClient(budget=1)
+        result = crawl.CountryResult(code="FR", source="as24_fr")
+        crawl.refresh_feed(client, country("FR"), object(),
+                           [_feed_deal("a"), _feed_deal("b", km=1000)], self._slugs(tmp_path),
+                           result=result)
+        assert client.spent == 1
+        assert result.feed_found + result.feed_missed == 1
+
+    def test_the_last_feed_is_read_from_the_build_output(self, tmp_path):
+        assert crawl.feed_deals("DE", tmp_path) == []
+        path = tmp_path / "hot_deals_de_all.json"
+        path.write_text("{broken", encoding="utf-8")
+        assert crawl.feed_deals("DE", tmp_path) == []
+        path.write_text(json.dumps({"deals": [{"olx_id": "as24_de:a"}, "junk"]}), encoding="utf-8")
+        assert crawl.feed_deals("DE", tmp_path) == [{"olx_id": "as24_de:a"}]
+
+    def test_a_country_run_finds_the_published_deals_before_anything_else(self, tmp_path,
+                                                                          repo_spy):
+        feed_dir = tmp_path / "intl"
+        feed_dir.mkdir()
+        (feed_dir / "hot_deals_fr_all.json").write_text(
+            json.dumps({"deals": [_feed_deal("a")]}), encoding="utf-8")
+        state = _state(tmp_path, "FR", discovered=_golf_discovered(at=crawl._utcnow()))
+        client = FakeClient(searches={
+            ("volkswagen", "golf", 2018, "km", 78300): ([_listing("a")],
+                                                        {"results": 1, "pages": 1}),
+        })
+        (result,) = crawl.run([country("FR")], {"FR": _cfg()}, state,
+                              client_factory=lambda cty, cfg: client,
+                              session_factory=lambda: SimpleNamespace(close=lambda: None),
+                              feed_dir=feed_dir, log=lambda *a, **k: 0)
+        assert client.calls[0][9] == 78300, "the harvest spent the budget before the feed"
+        assert result.feed_found == 1
+        assert "1 feed deals found again (0 not)" in crawl.summary(result)
+
+
 class TestHarvestAgainstTheDatabase:
 
     def test_the_missing_row_is_retired_and_the_seen_one_kept(self, tmp_path, db_session,
@@ -576,6 +675,32 @@ class TestHarvestAgainstTheDatabase:
                                   now_year=2019, years_back=2)
         ordered = crawl.order_cells(cells, seen, now=now, cell_max_age_days=7)
         assert [c.year for c in ordered] == [2019, 2017]
+
+    def test_a_deal_found_again_gets_its_gallery_and_keeps_what_its_advert_added(
+            self, tmp_path, db_session):
+        from dataclasses import asdict
+
+        from src.storage.repository import get_country_listings_df, upsert_import_listings
+
+        first = _listing("a")
+        first.photo_urls = _gallery("a", n=1)
+        crawl.stamp([first], "as24_fr", "Volkswagen", "Golf")
+        upsert_import_listings(db_session, [dict(asdict(first), extras={"previous_owners": 1})])
+        card = _listing("a")
+        card.photo_urls = _gallery("a")
+        card.price_eur = 13900.0
+        client = FakeClient(searches={
+            ("volkswagen", "golf", 2018, "km", 78300): ([card], {"results": 1, "pages": 1}),
+        })
+        result = crawl.CountryResult(code="FR", source="as24_fr")
+        slugs = crawl.model_slugs(_state(tmp_path, "FR", discovered=_golf_discovered()), "FR")
+        crawl.refresh_feed(client, country("FR"), db_session, [_feed_deal("a")], slugs,
+                           result=result)
+        row = get_country_listings_df(db_session, "FR").set_index("external_id").loc["a"]
+        extras = json.loads(row["extras"])
+        assert extras["photo_urls"] == _gallery("a")
+        assert extras["previous_owners"] == 1, "the card wiped what the advert had added"
+        assert float(row["price_eur"]) == 13900.0 and result.feed_found == 1
 
 
 class TestRun:

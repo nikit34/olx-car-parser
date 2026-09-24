@@ -1,5 +1,6 @@
 """Integration tests for repository CRUD (in-memory SQLite)."""
 
+import json
 from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
@@ -1055,6 +1056,13 @@ class TestImportListings:
         df = get_import_listings_df(db_session, source=None)
         state = {ext: bool(active) for ext, active in zip(df["external_id"], df["is_active"])}
         assert state == {"de-0": True, "de-1": False, "de-2": True, "fr-0": True}
+
+    def test_a_refresh_keeps_the_extras_the_card_does_not_carry(self, db_session):
+        first = dict(self._rows(1)[0], extras={"previous_owners": 2, "photo_urls": ["old"]})
+        upsert_import_listings(db_session, [first])
+        upsert_import_listings(db_session, [dict(self._rows(1)[0], photo_urls=["a", "b"])])
+        row = db_session.query(Listing).filter(Listing.external_id == "de-0").one()
+        assert json.loads(row.extras) == {"previous_owners": 2, "photo_urls": ["a", "b"]}
 
     def test_deactivation_with_no_cells_is_a_no_op(self, db_session):
         upsert_import_listings(db_session, self._rows(1))
