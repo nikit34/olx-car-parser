@@ -25,11 +25,6 @@ main = "flipper-club/src/index.js"
 compatibility_date = "2024-12-01"
 account_id = "6545f93bd664df2dfebb147bda85a191"
 
-[[analytics_engine_datasets]]
-binding = "FUNNEL"
-dataset = "carsbuyer_funnel"
-
-
 # Public domain. Registered through Cloudflare Registrar, so the zone is
 # already in this account and `custom_domain = true` lets the deploy create
 # both the Custom Domain and its DNS record — no dashboard step.
@@ -50,6 +45,10 @@ routes = [
 # is not disposable: ~243 pSEO URLs are indexed on it. Dropping it took the
 # whole product down for the minutes between the deploy and the apex resolving.
 workers_dev = true
+
+[[analytics_engine_datasets]]
+binding = "FUNNEL"
+dataset = "carsbuyer_funnel"
 
 # Assets are served via env.ASSETS.fetch() — the Worker chooses which paths
 # get to them (Basic-Auth-gated /analytics dashboard + /files /data assets)

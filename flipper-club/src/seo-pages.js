@@ -988,7 +988,7 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
       c.dom != null ? `${c.dom}d no mercado` : "",
       c.hb ? `o anúncio diz ${carQuote(c.hb)}` : (c.mf ? `menciona ${carQuote(c.mf)}` : ""),
     ].filter(Boolean).join(" · ");
-    return `<a href="${escapeHtml(c.url)}" target="_blank" rel="noopener nofollow"${analyticsClick("olx_open", { source: "ano", olx_id: String(c.id) })} style="display:flex;gap:14px;align-items:baseline;justify-content:space-between;flex-wrap:wrap;padding:13px 0;border-top:1px solid #E7EAF1;text-decoration:none;color:inherit;">
+    return `<a href="${escapeHtml(c.url)}" target="_blank" rel="noopener nofollow"${analyticsClick("olx_open", { click_source: "ano", olx_id: String(c.id), market: "pt" })} style="display:flex;gap:14px;align-items:baseline;justify-content:space-between;flex-wrap:wrap;padding:13px 0;border-top:1px solid #E7EAF1;text-decoration:none;color:inherit;">
       <span style="flex:1 1 230px;min-width:0;">
         <span style="display:block;font-size:14.5px;font-weight:600;color:#16181D;">${escapeHtml(c.t || `${rec.b} ${rec.m}`)}</span>
         <span style="display:block;font-size:12.5px;color:#8A8F98;margin-top:3px;">${sub}</span>

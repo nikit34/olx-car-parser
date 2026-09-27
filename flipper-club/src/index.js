@@ -244,8 +244,6 @@ async function handlePt(request, env, url, pathname, method) {
   return notFoundPage(request, env, url);
 }
 
-const FUNNEL_BOT_UA = /facebookexternalhit|facebookcatalog|meta-externalagent|twitterbot|telegrambot|whatsapp|slackbot|discordbot|linkedinbot|googlebot|bingbot|yandex|applebot|pinterest|redditbot|embedly|preview|crawler|spider|bot\b|curl|wget|python-requests|headless/i;
-
 function trackFunnel(env, event, fields = {}) {
   const ds = env && env.FUNNEL;
   if (!ds || typeof ds.writeDataPoint !== "function") return;
@@ -258,6 +256,7 @@ function trackFunnel(env, event, fields = {}) {
         String(fields.campaign || "").slice(0, 32),
         String(fields.path || "").slice(0, 64),
         String(fields.detail || "").slice(0, 64),
+        String(fields.why || "").slice(0, 16),
       ],
       doubles: [1],
     });
@@ -388,11 +387,12 @@ const worker = {
 
       const utmSource = (url.searchParams.get("utm_source") || "").trim();
       if (utmSource && method === "GET") {
-        const ua = request.headers.get("user-agent") || "";
-        trackFunnel(env, FUNNEL_BOT_UA.test(ua) || !ua ? "visit_bot" : "visit", {
+        const why = trafficVerdict(request);
+        trackFunnel(env, why ? "visit_bot" : "visit", {
           src: utmSource,
           campaign: (url.searchParams.get("utm_campaign") || "").trim(),
           path: pathname,
+          why,
         });
       }
 
@@ -567,10 +567,11 @@ async function handleAvaliar(request, env, url) {
              vender: publishedVender(models, modelo, mrec, mdoc.built_at) };
   }
   if (rec || (spec && spec.rec)) {
-    const ua = request.headers.get("user-agent") || "";
-    trackFunnel(env, FUNNEL_BOT_UA.test(ua) || !ua ? "valuation_bot" : "valuation", {
+    const why = trafficVerdict(request);
+    trackFunnel(env, why ? "valuation_bot" : "valuation", {
       src: (url.searchParams.get("utm_source") || "").trim(),
       path: "/avaliar",
+      why,
       detail: rec ? `listing:${olxId || ""}` : `model:${spec.slug}${spec.year ? "/" + spec.year : ""}`,
     });
   }
@@ -1439,7 +1440,7 @@ async function handleIntl(request, env, url, intl) {
   const path = rest === "/" ? "" : rest;
   if (path === "") return intlLanding(env, url, loc);
   if (path === `/${R.hub}`) return intlHub(env, url, loc);
-  if (path === `/${R.avaliar}`) return intlAvaliar(env, url, loc);
+  if (path === `/${R.avaliar}`) return intlAvaliar(request, env, url, loc);
   if (path === `/${R.mercado}`) return intlFeed(env, url, loc);
   if (path === `/${R.car}`) return intlCar(env, url, loc);
   if (path === `/${R.arquivo}`) return intlArchive(env, url, loc, "");
@@ -1599,7 +1600,7 @@ async function intlModel(env, url, loc, tail) {
   }));
 }
 
-async function intlAvaliar(env, url, loc) {
+async function intlAvaliar(request, env, url, loc) {
   const query = (url.searchParams.get("q") || "").toString().trim();
   const modelo = (url.searchParams.get("modelo") || "").toString().trim().toLowerCase();
   const anoRaw = parseInt(url.searchParams.get("ano") || "", 10);
@@ -1620,6 +1621,15 @@ async function intlAvaliar(env, url, loc) {
   if (!rec && modelo && models && models[modelo]) {
     const mrec = models[modelo];
     spec = { rec: mrec, slug: modelo, year: ano, cell: pickYearCell(mrec, ano) };
+  }
+  if (rec || (spec && spec.rec)) {
+    const why = trafficVerdict(request);
+    trackFunnel(env, why ? "valuation_bot" : "valuation", {
+      src: (url.searchParams.get("utm_source") || "").trim(),
+      path: url.pathname,
+      why,
+      detail: rec ? `listing:${carId || ""}` : `model:${spec.slug}${spec.year ? "/" + spec.year : ""}`,
+    });
   }
   return html(renderIntlAvaliar({
     loc, host: url.host, models, builtAt: c && c.builtAt, stats: c && c.stats,
@@ -2785,8 +2795,9 @@ const HIT_TTL_SEC = 30 * 24 * 3600;
 const HIT_SAMPLE_MAX = 150;
 const HIT_SAMPLE_PER_BUCKET = 20;
 const CLICK_SOURCES = new Set(["avaliar", "ano", "car", "importar", "vender", "modelo", "outro"]);
-const BOT_UA = /bot|crawl|spider|slurp|fetch|monitor|headless|curl|wget|python/i;
+const BOT_UA = /(?<!cu)bot|crawl|spider|slurp|fetch|monitor|headless|curl|wget|python|scrapy|httpx|aiohttp|okhttp|go-http-client|java\/|node-fetch|axios|libwww|phantomjs|puppeteer|playwright|selenium|lighthouse|pagespeed|facebookexternalhit|facebookcatalog|meta-externalagent|whatsapp|embedly|iframely|preview|-user\b/i;
 const PREFETCH_HINT = /prefetch|prerender|preview/i;
+const HOSTING_NET = /amazon|microsoft|azure|alibaba|tencent|aceville|collyer quay|huawei cloud|ovh|hetzner|digitalocean|linode|akamai connected cloud|oracle|contabo|scaleway|leaseweb|vultr|choopa|m247|datacamp|cdn77|g-core|gcore|psychz|quadranet|colocrossing|hostinger|ionos|kamatera|zenlayer|ucloud|byteplus|bytedance|hostkey|servers\.com|clouvider|worldstream|netcup|frantech|ponynet/i;
 
 function hitPurpose(request) {
   return (request.headers.get("sec-purpose")
@@ -2796,11 +2807,16 @@ function hitPurpose(request) {
     || "").trim();
 }
 
-function clickDrop(request) {
-  const ua = (request.headers.get("user-agent") || "").trim();
+function trafficVerdict(request) {
+  const h = request.headers;
+  const cf = request.cf || {};
+  const ua = (h.get("user-agent") || "").trim();
   if (!ua) return "sem-ua";
   if (PREFETCH_HINT.test(hitPurpose(request))) return "prefetch";
-  if (BOT_UA.test(ua)) return "bot";
+  if (cf.verifiedBotCategory || BOT_UA.test(ua) || aiAgent(ua)) return "bot";
+  if (!(h.get("accept-language") || "").trim()) return "lang";
+  if ((h.get("sec-fetch-mode") || "").trim().toLowerCase() !== "navigate") return "nav";
+  if (HOSTING_NET.test(cf.asOrganization || "")) return "dc";
   return null;
 }
 
@@ -2809,7 +2825,7 @@ async function handleHistoryRedirect(request, env, url) {
   if (!target) return notFoundPage(request, env, url);
   const raw = (url.searchParams.get("from") || "outro").toString().toLowerCase();
   const from = CLICK_SOURCES.has(raw) ? raw : "outro";
-  const drop = clickDrop(request);
+  const drop = trafficVerdict(request);
   const day = new Date().toISOString().slice(0, 10);
   const key = drop ? `click:drop:${day}:${drop}` : `click:hist:${day}:${from}`;
   let seen = HIT_SAMPLE_PER_BUCKET;

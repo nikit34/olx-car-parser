@@ -1,5 +1,5 @@
 import {
-  escapeHtml, layout, analyticsClick, photoGallery, photoThumbs, photoLabels,
+  escapeHtml, layout, analyticsClick, analyticsEvent, photoGallery, photoThumbs, photoLabels,
 } from "./templates.js";
 import {
   crumbs, breadcrumbLd, faqLd, yearCells, yearCell, yearPageYears,
@@ -831,6 +831,13 @@ export function renderIntlAvaliar({ loc, host, models, builtAt, stats, rec = nul
     <p class="fc-p mono" style="font-size:12px;">${t(loc, "av.spec_note")}</p>`;
   const verdict = rec ? verdictBlock(loc, rec, sourceUrl, carId) : "";
   const specOut = (!rec && spec) ? specBlock(loc, spec) : "";
+  const valuation = (rec || (spec && spec.rec)) ? analyticsEvent("valuation_result", {
+    model: rec ? (rec.t || "")
+                : (`${spec.rec.b || ""} ${spec.rec.m || ""}`.trim() || spec.slug || ""),
+    valuation_path: rec ? "listing" : "model",
+    has_listing: Boolean(carId),
+    market: loc.code,
+  }) : "";
   const body = crumbs([homeCrumb(loc), { name: t(loc, "av.crumb") }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       ${eyebrow(t(loc, "av.eyebrow", { source: loc.source.name }))}
@@ -850,7 +857,7 @@ export function renderIntlAvaliar({ loc, host, models, builtAt, stats, rec = nul
         <a class="btn-dark" href="#escolher">${t(loc, "av.cta_btn")}</a>
       </div>
       ${intlProvenance(loc, { n: stats ? stats.listings : null, builtAt })}
-    </section>`;
+    </section>` + valuation;
   return layout({
     title: t(loc, "av.title"),
     description: t(loc, "av.desc", { source: loc.source.name }),
@@ -910,7 +917,7 @@ function verdictBlock(loc, rec, sourceUrl, carId, from = "avaliar") {
     ${gauge(loc, { lo, hi, at: price, label: t(loc, "av.v_gauge") })}
     ${rec.sd != null ? `<p class="fc-p" style="margin-top:12px;">${t(loc, "av.v_sell", { days: fmtNumL(loc, rec.sd) })}</p>` : ""}
     <div class="hero-actions" style="margin-top:12px;">
-      ${open ? `<a class="btn-dark" href="${escapeHtml(open)}" target="_blank" rel="noopener nofollow"${analyticsClick("olx_open", { source: from, market: loc.code, site: loc.source.host })}>${t(loc, "av.v_open")}</a>` : ""}
+      ${open ? `<a class="btn-dark" href="${escapeHtml(open)}" target="_blank" rel="noopener nofollow"${analyticsClick("olx_open", { click_source: from, market: loc.code, site: loc.source.host })}>${t(loc, "av.v_open")}</a>` : ""}
       ${rec.ms ? `<a class="chip" href="${href(loc, "model", rec.ms)}">${t(loc, "av.v_model")}</a>` : ""}
       <a class="chip" href="${href(loc, "avaliar")}">${t(loc, "av.v_another")}</a>
       <a class="chip" href="${href(loc, "mercado")}">${t(loc, "av.v_market")}</a>
@@ -1216,7 +1223,7 @@ function dealTile(loc, d) {
         ${days ? `<span>${escapeHtml(days)}</span>` : ""}
         <span class="seller">${escapeHtml(seller)}</span>
       </div>
-      ${d.url ? `<a class="btn-outline" href="${escapeHtml(d.url)}" target="_blank" rel="noopener nofollow"${analyticsClick("olx_open", { source: "feed", market: loc.code, site: loc.source.host })}
+      ${d.url ? `<a class="btn-outline" href="${escapeHtml(d.url)}" target="_blank" rel="noopener nofollow"${analyticsClick("olx_open", { click_source: "feed", market: loc.code, site: loc.source.host })}
         style="width:100%;margin-top:14px;font-size:14px;padding:11px;background:#FAFAF8;text-align:center;">${t(loc, "feed.open")}</a>` : ""}
     </div>
   </article>`;

@@ -1127,7 +1127,8 @@ check("the valuation event still fires on both /avaliar paths", () => {
     depositCount: 0, host: HOST, builtAt,
   });
   assert(withSpec.includes("valuation_result"), "valuation event lost on the model-pick path");
-  assert(withSpec.includes('"source":"model"'), "valuation event lost its source on the model-pick path");
+  assert(withSpec.includes('"valuation_path":"model"'), "valuation event lost its path on the model-pick path");
+  assert(withSpec.includes('"market":"pt"'), "valuation event does not say which market it came from");
   setAnalyticsId("");
   const bare = renderAvaliar({ rec: null, olxId: null, sourceUrl: null, query: "", models,
                                spec: null, depositCount: 0, host: HOST, builtAt });
@@ -1275,6 +1276,38 @@ check("analytics stays off unless a measurement id is set", () => {
   assert(on.includes("analytics_storage:'denied'"), "consent mode default is not denied");
   assert(on.indexOf("consent','default'") < on.indexOf("googletagmanager"),
     "consent declared after the gtag loader");
+  assert(/fc_internal[\s\S]*traffic_type='internal'[\s\S]*gtag\('config'/.test(on),
+    "the owner's browser cannot mark itself as internal traffic before the config hit");
+  setAnalyticsId("");
+});
+
+check("no GA4 event sends a parameter GA4 reads as a traffic source", () => {
+  setAnalyticsId("G-TESTONLY");
+  const slug = deep;
+  const rec = { t: "VW Golf", y: 2015, km: 40000, fu: "Diesel", p: 9000, fl: 9500, fm: 11000, fh: 12500,
+                imp: 1, ms: slug, sd: 20, dom: 70 };
+  const deal = {
+    olx_id: "ID1", brand: models[deep].b, model: models[deep].m, title: "Carro de teste",
+    price_eur: 7000, fair_median: 8500, fair_low: 7600, fair_high: 9400, discount_pct: 0.17,
+    est_profit_eur: 1500, year: 2014, mileage_km: 180000, fuel_type: "Diesel",
+    city: "Porto", seller_type: "Particular", photos: [], url: "https://www.olx.pt/x.html",
+  };
+  const pages = [
+    renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models, spec: null,
+                    depositCount: 0, host: HOST, builtAt, historyUrl: "https://example.test/h" }),
+    renderAvaliar({ rec: null, olxId: null, sourceUrl: null, query: "", models, spec: null,
+                    depositCount: 0, host: HOST, builtAt, contact: "ola@carsbuyer.org" }),
+    renderCarPage({ deal, zone: "all", view: "comprar", depositCount: 0,
+                    modelHref: `/pt/preco/${deep}`, host: HOST, historyUrl: "https://example.test/h" }),
+  ];
+  const reserved = /(?:&quot;|")(?:source|medium|campaign|term|content|campaign_[a-z]+)(?:&quot;|"):/;
+  for (const html of pages) {
+    const calls = html.match(/gtag\('event',[^)]*\)/g) || [];
+    assert(calls.length > 0, "a page under test sends no event at all");
+    for (const call of calls) assert(!reserved.test(call), `an event still sends a reserved campaign key: ${call}`);
+  }
+  assert(pages[0].includes("&quot;click_source&quot;:&quot;avaliar&quot;"), "the OLX click lost its placement");
+  assert(pages[2].includes("&quot;click_source&quot;:&quot;car&quot;"), "the deal-page OLX click lost its placement");
   setAnalyticsId("");
 });
 

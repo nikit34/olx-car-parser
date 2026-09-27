@@ -512,6 +512,31 @@ await check("every market has its own seller guides, written in its own language
   }
 });
 
+await check("an intl valuation is measured in GA4 and in the server funnel", async () => {
+  const points = [];
+  const ga = { ...makeEnv("de,fr,it"), GA4_MEASUREMENT_ID: "G-TESTONLY",
+               FUNNEL: { writeDataPoint(p) { points.push(p); } } };
+  const headers = { "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) Version/18.6 Mobile Safari/604.1",
+                    "accept-language": "de-DE,de;q=0.9", "sec-fetch-mode": "navigate" };
+  for (const [code, m] of Object.entries(MARKETS)) {
+    const path = `${m.avaliar}?modelo=${deep}&ano=${deepYears[0]}`;
+    const before = points.length;
+    const r = await worker.fetch(new Request(`https://${HOST}${path}`, { headers }), ga);
+    const html = await r.text();
+    assert(html.includes('gtag(\'event\',"valuation_result"'), `${m.avaliar}: a shown valuation sends no valuation_result`);
+    assert(html.includes(`"market":"${code}"`) && html.includes('"valuation_path":"model"'),
+      `${m.avaliar}: valuation_result does not say which market and path it came from`);
+    assert(!/"source":/.test(html.match(/gtag\('event',"valuation_result",[^)]*\)/)[0]),
+      `${m.avaliar}: valuation_result still sends a reserved campaign key`);
+    assert(points.length === before + 1, `${m.avaliar}: the server funnel wrote ${points.length - before} points`);
+    const b = points[points.length - 1].blobs;
+    assert(b[0] === "valuation" && b[3] === m.avaliar && b[5] === "",
+      `${m.avaliar}: the server funnel filed ${b[0]} at ${b[3]} (${b[5]})`);
+  }
+  const bare = await (await get(MARKETS.de.avaliar, { ...makeEnv("de,fr,it"), GA4_MEASUREMENT_ID: "G-TESTONLY" })).text();
+  assert(!bare.includes("valuation_result"), "the empty valuation form already reports a valuation");
+});
+
 await check("the outbound click is measured on the intl markets too", async () => {
   const ga = { ...makeEnv("de,fr,it"), GA4_MEASUREMENT_ID: "G-TESTONLY" };
   for (const path of ["/de/markt", "/de/auto?olx_id=as24_de:aaa"]) {

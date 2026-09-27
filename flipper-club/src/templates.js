@@ -861,7 +861,7 @@ try{if(localStorage.getItem('fc_consent')==='granted'){gtag('consent','update',{
 gtag('js',new Date());
 </script>
 <script async src="https://www.googletagmanager.com/gtag/js?id=${id}"></script>
-<script>gtag('config','${id}',{anonymize_ip:true});</script>`;
+<script>(function(){var c={anonymize_ip:true};try{var m=/[?&]fc_internal=([01])(?:&|#|$)/.exec(location.search);if(m){if(m[1]==='1')localStorage.setItem('fc_internal','1');else localStorage.removeItem('fc_internal');}if(localStorage.getItem('fc_internal')==='1')c.traffic_type='internal';}catch(e){}gtag('config','${id}',c);})();</script>`;
 }
 
 // Баннер согласия. Отказ такой же простой, как согласие - это требование, а не
@@ -889,7 +889,7 @@ box.hidden=true;});})();</script>`;
 // Событие GA4. Пусто, когда аналитика выключена, поэтому вызов безопасно
 // вставлять в любой шаблон. Значения прогоняются через JSON.stringify: они
 // попадают внутрь <script>, где escapeHtml не защищает.
-function analyticsEvent(name, params = {}) {
+export function analyticsEvent(name, params = {}) {
   if (!GA4_MEASUREMENT_ID) return "";
   const payload = JSON.stringify(params).replace(/</g, "\\u003c");
   return `<script>if(typeof gtag==='function')gtag('event',${JSON.stringify(name)},${payload});</script>`;
@@ -1515,7 +1515,7 @@ export function renderCarPage({ deal, zone, view, depositCount, modelHref, host,
             <div><div class="nm">${escapeHtml(p.sellerType)}</div><div class="meta">Anúncio público no OLX</div></div>
           </div>
           <div class="olx-row">
-            <a class="olx-btn" href="${escapeHtml(deal.url || "#")}" target="_blank" rel="noopener nofollow"${analyticsClick("olx_open", { source: "car", olx_id: String(deal.olx_id || "") })}>Abrir anúncio no OLX&nbsp;&nbsp;↗</a>
+            <a class="olx-btn" href="${escapeHtml(deal.url || "#")}" target="_blank" rel="noopener nofollow"${analyticsClick("olx_open", { click_source: "car", olx_id: String(deal.olx_id || ""), market: "pt" })}>Abrir anúncio no OLX&nbsp;&nbsp;↗</a>
           </div>
           ${originNote}
         </div>
@@ -1817,7 +1817,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
         ${chainBlock}
         ${normBlock}
         ${hist}
-        ${olxHref ? `<a class="olx-btn" style="display:block;margin-top:18px;" href="${escapeHtml(olxHref)}" target="_blank" rel="noopener nofollow"${analyticsClick("olx_open", { source: "avaliar", olx_id: String(olxId || "") })}>Ver anúncio original&nbsp;&nbsp;↗</a>` : ""}
+        ${olxHref ? `<a class="olx-btn" style="display:block;margin-top:18px;" href="${escapeHtml(olxHref)}" target="_blank" rel="noopener nofollow"${analyticsClick("olx_open", { click_source: "avaliar", olx_id: String(olxId || ""), market: "pt" })}>Ver anúncio original&nbsp;&nbsp;↗</a>` : ""}
         ${whatsappShare(`${rec.t || "Viatura"}: pedido ${fmtEur(price)}, justo ${fmtEur(fm)} (${fmtEur(fl)}–${fmtEur(fh)}). Avaliação independente:`, host ? `https://${host}/pt/avaliar?q=${encodeURIComponent(olxId || "")}` : "")}
         ${modelHref ? `<a href="${modelHref}" style="display:block;text-align:center;margin-top:12px;font-size:13.5px;color:#177A47;font-weight:600;">Ver preços deste modelo por ano&nbsp;→</a>` : ""}
         <a href="${sellHref}" style="display:block;text-align:center;margin-top:10px;font-size:13.5px;color:#5B606B;">É o teu carro? Vê por quanto anunciar&nbsp;→</a>
@@ -1935,7 +1935,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
           <h2>Vais vender o teu carro?</h2>
           <p>Escolhe o modelo e o ano acima: vês o que o mercado está a pedir por um carro como o teu, a faixa onde fica metade dos anúncios e quantos dias costuma demorar a sair${mailto ? " — e se preferires, pede uma avaliação por email" : ""}.</p>
         </div>
-        ${mailto ? `<a class="btn-bright" href="${mailto}"${analyticsClick("lead_email", { source: "avaliar" })}>Pedir avaliação por email&nbsp;&nbsp;→</a>` : `<a class="btn-bright" href="#escolher">Escolher o meu carro&nbsp;&nbsp;→</a>`}
+        ${mailto ? `<a class="btn-bright" href="${mailto}"${analyticsClick("lead_email", { click_source: "avaliar", market: "pt" })}>Pedir avaliação por email&nbsp;&nbsp;→</a>` : `<a class="btn-bright" href="#escolher">Escolher o meu carro&nbsp;&nbsp;→</a>`}
       </div>
     </section>`}`;
   const origin = host ? `https://${host}` : "";
@@ -1956,8 +1956,9 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
   const valuation = shown ? analyticsEvent("valuation_result", {
     model: rec ? (rec.t || "")
                 : (`${spec.rec.b || ""} ${spec.rec.m || ""}`.trim() || spec.slug || ""),
-    source: rec ? "listing" : "model",
+    valuation_path: rec ? "listing" : "model",
     has_listing: Boolean(olxId),
+    market: "pt",
   }) : "";
   // Structured data for the site's most commercial query ("quanto vale o meu
   // carro"). This page had none at all — it is a free tool, so WebApplication

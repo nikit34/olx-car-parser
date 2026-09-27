@@ -77,6 +77,8 @@ globalThis.fetch = async (input, init) => {
 
 const get = (path, method = "GET") =>
   worker.fetch(new Request(`https://${HOST}${path}`, { method }), env);
+const browser = ua => ({ "user-agent": ua, "accept-language": "pt-PT,pt;q=0.9", "sec-fetch-mode": "navigate" });
+const withCf = (req, cf) => Object.defineProperty(req, "cf", { value: cf });
 
 // ── the 401 regression ──────────────────────────────────────────────────────
 await check("unknown paths are 404, not 401", async () => {
@@ -1399,14 +1401,14 @@ await check("the history link is a counted redirect to the partner url", async (
   env.HISTORY_REPORT_URL = "https://partner.example/pt";
   try {
     const before = [...kv.keys()].filter(k => k.startsWith("click:hist:")).length;
-    const r = await worker.fetch(new Request(`https://${HOST}/pt/ir/historico?from=ano`, { headers: { "user-agent": "Mozilla/5.0 (iPhone)" } }), env);
+    const r = await worker.fetch(new Request(`https://${HOST}/pt/ir/historico?from=ano`, { headers: browser("Mozilla/5.0 (iPhone)") }), env);
     assert(r.status === 302 && r.headers.get("location") === "https://partner.example/pt", `redirect → ${r.status} ${r.headers.get("location")}`);
     const keys = [...kv.keys()].filter(k => k.startsWith("click:hist:"));
     assert(keys.length === before + 1 && keys.some(k => k.endsWith(":ano")), "click was not counted under its source");
     const bot = await worker.fetch(new Request(`https://${HOST}/pt/ir/historico?from=ano`, { headers: { "user-agent": "Googlebot/2.1" } }), env);
     assert(bot.status === 302, `bot redirect → ${bot.status}`);
     assert(kv.get(keys[0]) === "1", "a bot click was counted");
-    const odd = await worker.fetch(new Request(`https://${HOST}/pt/ir/historico?from=<script>`, { headers: { "user-agent": "Mozilla/5.0" } }), env);
+    const odd = await worker.fetch(new Request(`https://${HOST}/pt/ir/historico?from=<script>`, { headers: browser("Mozilla/5.0") }), env);
     assert(odd.status === 302 && [...kv.keys()].some(k => k.endsWith(":outro")), "unknown source is not folded into outro");
     const pre = await worker.fetch(new Request(`https://${HOST}/pt/ir/historico?from=ano`, {
       headers: { "user-agent": "Mozilla/5.0 (Macintosh) Safari/605", "sec-purpose": "prefetch;anonymous-client-ip" },
@@ -1420,6 +1422,19 @@ await check("the history link is a counted redirect to the partner url", async (
     assert(samples.length === 5, `every hit must leave one sample, got ${samples.length}`);
     const asBot = JSON.parse(kv.get(samples.find(k => JSON.parse(kv.get(k)).drop === "bot")));
     assert(asBot.ua.includes("Googlebot") && asBot.from === "ano", "the dropped sample does not carry what was dropped");
+    const disguised = await worker.fetch(new Request(`https://${HOST}/pt/ir/historico?from=ano`, {
+      headers: { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0 Safari/537.36", "accept-language": "en" },
+    }), env);
+    assert(disguised.status === 302 && [...kv.keys()].some(k => k.endsWith(":nav")),
+      "a browser user-agent with no navigation headers was counted as a click");
+    const hosted = withCf(new Request(`https://${HOST}/pt/ir/historico?from=ano`, { headers: browser("Mozilla/5.0 (Macintosh) Safari/605") }),
+      { asOrganization: "Alibaba Cloud LLC" });
+    assert((await worker.fetch(hosted, env)).status === 302 && [...kv.keys()].some(k => k.endsWith(":dc")),
+      "a click from a hosting network was counted as a person");
+    const verified = withCf(new Request(`https://${HOST}/pt/ir/historico?from=ano`, { headers: browser("Mozilla/5.0 (Macintosh) Safari/605") }),
+      { verifiedBotCategory: "Search Engine Crawler" });
+    await worker.fetch(verified, env);
+    assert(kv.get(keys[0]) === "1", "a bot verified by Cloudflare was counted as a click");
     const page = await (await get(`/pt/preco/${deep}/${yearPageYears(models[deep])[0]}`)).text();
     assert(page.includes('href="/pt/ir/historico?from=ano"'), "year page history link does not go through the counter");
     assert(!page.includes("partner.example"), "partner url leaks into the page instead of the redirect");
@@ -1428,6 +1443,31 @@ await check("the history link is a counted redirect to the partner url", async (
     const robots = await (await get("/robots.txt")).text();
     assert(robots.includes("Disallow: /pt/ir/"), "robots does not block the redirect path");
   } finally { delete env.HISTORY_REPORT_URL; }
+});
+
+await check("the server funnel tells people from crawlers and says why", async () => {
+  const points = [];
+  env.FUNNEL = { writeDataPoint(p) { points.push(p); } };
+  try {
+    const year = yearPageYears(models[deep])[0];
+    const iphone = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 Version/18.6 Mobile/15E148 Safari/604.1";
+    const hit = async (path, headers) => {
+      const before = points.length;
+      const r = await worker.fetch(new Request(`https://${HOST}${path}`, { headers }), env);
+      assert(r.status === 200, `${path} → ${r.status}`);
+      assert(points.length === before + 1, `${path} wrote ${points.length - before} points instead of one`);
+      return points[points.length - 1].blobs;
+    };
+    let b = await hit(`/pt/avaliar?modelo=${deep}&ano=${year}`, browser(iphone));
+    assert(b[0] === "valuation" && b[3] === "/avaliar" && b[5] === "", `a person's valuation was filed as ${b[0]}/${b[5]}`);
+    assert(b[4] === `model:${deep}/${year}`, `the valuation lost what was valued: ${b[4]}`);
+    b = await hit(`/pt/avaliar?modelo=${deep}&ano=${year}`, { "user-agent": iphone });
+    assert(b[0] === "valuation_bot" && b[5] === "lang", `a crawler with a phone user-agent was filed as ${b[0]}/${b[5]}`);
+    b = await hit("/pt?utm_source=chatgpt.com", browser(iphone));
+    assert(b[0] === "visit" && b[1] === "chatgpt.com" && b[5] === "", `a click from ChatGPT was filed as ${b[0]}/${b[5]}`);
+    b = await hit("/pt?utm_source=chatgpt.com", browser("Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; ChatGPT-User/1.0; +https://openai.com/bot"));
+    assert(b[0] === "visit_bot" && b[5] === "bot", `ChatGPT fetching the page itself was filed as ${b[0]}/${b[5]}`);
+  } finally { delete env.FUNNEL; }
 });
 
 await check("a year page lists the cars of that year with a verdict and a working link", async () => {

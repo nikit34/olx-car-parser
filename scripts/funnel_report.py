@@ -37,21 +37,44 @@ def main():
         GROUP BY day, event ORDER BY day
     """)
 
+    by_path = query(f"""
+        SELECT blob1 AS event, blob4 = '/avaliar' AS pt, sum(_sample_interval) AS n
+        FROM {DATASET}
+        WHERE timestamp > NOW() - INTERVAL '{DAYS}' DAY AND blob1 = 'valuation'
+        GROUP BY event, pt
+    """)
+    dropped = query(f"""
+        SELECT blob1 AS event, blob2 AS src, blob6 AS why, sum(_sample_interval) AS n
+        FROM {DATASET}
+        WHERE timestamp > NOW() - INTERVAL '{DAYS}' DAY
+          AND blob1 IN ('visit', 'visit_bot', 'valuation_bot')
+        GROUP BY event, src, why ORDER BY n DESC
+    """)
+
     rows = by_event.get("data", [])
     visits_fb = sum(int(r["n"]) for r in rows if r["event"] == "visit" and r["src"] == "fb")
     bots_fb = sum(int(r["n"]) for r in rows if r["event"] == "visit_bot" and r["src"] == "fb")
     visits_all = sum(int(r["n"]) for r in rows if r["event"] == "visit")
-    valuations = sum(int(r["n"]) for r in rows if r["event"] == "valuation")
+    visits_gpt = sum(int(r["n"]) for r in rows if r["event"] == "visit" and r["src"] == "chatgpt.com")
+    split = {str(r["pt"]): int(r["n"]) for r in by_path.get("data", [])}
+    valuations = split.get("1", 0)
+    val_intl = split.get("0", 0)
     val_fb = sum(int(r["n"]) for r in rows if r["event"] == "valuation" and r["src"] == "fb")
 
     print(f"период: {DAYS} дней")
     print(f"переходов с меткой fb:        {visits_fb}   (порог 300, стоп по каналу ниже 150)")
     print(f"из них отсеяно как боты:      {bots_fb}   (скрейперы соцсетей, в порог не идут)")
+    print(f"переходов из chatgpt.com:     {visits_gpt}")
     print(f"переходов со всеми метками:   {visits_all}")
-    print(f"оценок всего:                 {valuations}")
+    print(f"оценок на /pt/avaliar:        {valuations}")
+    print(f"оценок на de/fr/it:           {val_intl}   (в порог fb не идут)")
     print(f"оценок с сохранённой меткой:  {val_fb}")
     if visits_fb:
         print(f"оценок на переход из fb:      {100 * valuations / visits_fb:.1f}%  (норма 20, граница жизни 10)")
+    print()
+    print("человек или нет (why пусто = человек; sem-ua/prefetch/bot/lang/nav/dc = отсеяно):")
+    for r in dropped.get("data", []):
+        print(f"  {r['event']:13} {r['src'] or '-':14} {r['why'] or '-':9} {r['n']}")
     print()
     print("по дням:")
     for r in by_day.get("data", []):
