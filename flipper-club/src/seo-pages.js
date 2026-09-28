@@ -2626,10 +2626,10 @@ export function renderAbout({ stats, mq, host, depositCount, builtAt }) {
       <p class="fc-p">O Carsbuyer é um projeto independente que mede o mercado português de carros usados a partir dos anúncios que estão de facto à venda. Nasceu de uma pergunta simples que ninguém em Portugal respondia com números: <i>quanto vale mesmo este carro?</i></p>
 
       <h2 class="fc-h2">Independentes de quem?</h2>
-      <p class="fc-p">Não somos stand, não somos intermediário e não representamos nenhum vendedor. Não temos carros para colocar, por isso não temos motivo para inflacionar nem para desvalorizar nenhum modelo. Os números que publicamos são os mesmos que usamos para as nossas próprias decisões — se estivessem enviesados, seríamos os primeiros prejudicados.</p>
+      <p class="fc-p">Não somos stand e não representamos nenhum vendedor. Não temos carros para colocar, por isso não temos motivo para inflacionar nem para desvalorizar nenhum modelo. Os números que publicamos são os mesmos que usamos para as nossas próprias decisões — se estivessem enviesados, seríamos os primeiros prejudicados.</p>
 
       <h2 class="fc-h2">Como nos pagamos</h2>
-      <p class="fc-p">As avaliações e os preços por modelo são gratuitos e ficam gratuitos: ver um anúncio avaliado, o <a href="/pt/mercado">mercado</a> ou os preços por modelo não custa nada e não exige registo. Neste momento o site não tem qualquer receita: sem publicidade, sem comissões, sem venda de contactos e sem pagamento para mexer numa avaliação. Se um dia passar a ter, fica escrito aqui — e os números continuam a sair dos anúncios e do modelo, não de quem paga.</p>
+      <p class="fc-p">As avaliações e os preços por modelo são gratuitos e ficam gratuitos: ver um anúncio avaliado, o <a href="/pt/mercado">mercado</a> ou os preços por modelo não custa nada e não exige registo. Ninguém paga para mexer numa avaliação. Queremos financiar o projeto de duas formas. Primeiro, contactos de quem quer vender: se o pedires expressamente, passamos o teu contacto a stands parceiros, que nos pagam por isso; sem o teu consentimento, o teu contacto não sai daqui. Segundo, ligações a serviços úteis, como relatórios de histórico, que nos podem render uma parte do preço e ficam assinaladas onde aparecem. Os números continuam a sair dos anúncios e do modelo, não de quem paga.</p>
 
       <h2 class="fc-h2">O que temos hoje</h2>
       <ul class="fc-ul">

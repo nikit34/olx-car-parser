@@ -1366,6 +1366,17 @@ check("brand and revenue copy: Carsbuyer everywhere, no single-revenue claim", (
   assert(!landing.includes("em breve"), "seller path is still a placeholder");
 });
 
+check("the pages say how the site makes money, and that a contact leaves only with consent", () => {
+  const landing = renderLanding({ stats: { deals: 0 }, featured: null, depositCount: 0, host: HOST });
+  const about = renderAbout({ stats, host: HOST, depositCount: 0, builtAt });
+  for (const [label, html] of [["landing", landing], ["sobre", about]]) {
+    assert(!/venda de contactos|vendemos o teu contacto|não te pomos em contacto/i.test(html),
+      `${label} still denies selling seller contacts`);
+    assert(/stands parceiros/.test(html) && /consentimento/.test(html),
+      `${label} does not say who pays and that the seller has to consent`);
+  }
+});
+
 check("no public page sells a deposit, buyer offers, or a commission", () => {
   const deal = {
     olx_id: "ID1", brand: models[deep].b, model: models[deep].m, title: "Carro de teste",

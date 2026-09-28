@@ -1092,7 +1092,7 @@ export function layout({ title, body, zone, nav, depositCount, index = false, de
   </div>
 </footer>` : `<footer class="footer">
   <div class="footer-in">
-    <span class="mono">AVALIAÇÃO INDEPENDENTE&nbsp;· dados de anúncios públicos do OLX e do Standvirtual&nbsp;· estimativas indicativas, não vinculativas&nbsp;· não somos stand nem intermediário</span>
+    <span class="mono">AVALIAÇÃO INDEPENDENTE&nbsp;· dados de anúncios públicos do OLX e do Standvirtual&nbsp;· estimativas indicativas, não vinculativas&nbsp;· não somos stand</span>
     <span class="mono"><a href="/pt/precos" style="color:#5B606B;">Preços por modelo</a>&nbsp;· <a href="/pt/depreciacao" style="color:#5B606B;">Desvalorização</a>&nbsp;· <a href="/pt/comparar" style="color:#5B606B;">Comparar</a>&nbsp;· <a href="/pt/liquidez" style="color:#5B606B;">Tempo de venda</a>&nbsp;· <a href="/pt/mercado/indice" style="color:#5B606B;">Índice de mercado</a>&nbsp;· <a href="/pt/avaliar" style="color:#5B606B;">Quanto vale o meu carro</a>&nbsp;· <a href="/pt/vender" style="color:#5B606B;">Vender o meu carro</a>&nbsp;· <a href="/pt/guias" style="color:#5B606B;">Guias para vender</a></span>
     <span class="mono"><a href="/pt/metodologia" style="color:#5B606B;">Metodologia</a>&nbsp;· <a href="/pt/sobre" style="color:#5B606B;">Quem somos</a>&nbsp;· <a href="/pt/isv" style="color:#5B606B;">Simulador ISV</a>&nbsp;· <a href="/pt/importar" style="color:#5B606B;">Importar da Alemanha</a>&nbsp;· <a href="/pt/privacidade" style="color:#5B606B;">Privacidade</a>&nbsp;· Portugal&nbsp;🇵🇹</span>${switcherLine}
   </div>
@@ -1217,7 +1217,7 @@ export function renderLanding({ stats, featured, depositCount, host, corpus = nu
           <p>O OLX nunca te vai dizer que o anúncio está caro, nem que aquele preço baixo é de um carro ainda por legalizar. Nós dizemos — e mostramos o que o vendedor não escreve: quantas vezes já baixou o preço e há quanto tempo o carro está à venda.</p>
           <details class="indep-note">
             <summary>Quem nos paga — e porque é que isso não mexe na avaliação</summary>
-            <p>Hoje não ganhamos nada com isto. Não há publicidade, não há comissões, ninguém paga para aparecer melhor avaliado e não vendemos o teu contacto a ninguém. É um projeto pessoal que corre sobre anúncios públicos. Se um dia houver uma forma de o financiar, fica escrita aqui e assinalada na própria página — e a avaliação continua a sair dos anúncios e do modelo, não de quem paga.</p>
+            <p>A avaliação é grátis e ninguém paga para aparecer melhor avaliado: o valor sai dos anúncios e do modelo, não de quem paga. É assim que queremos financiar o projeto: se quiseres vender o carro, podes pedir-nos que passemos o teu contacto a stands parceiros, que nos pagam por isso — só com o teu consentimento expresso e nunca sem o pedires. Ligações a serviços úteis, como relatórios de histórico, também nos podem render uma parte do preço, e ficam assinaladas onde aparecem.</p>
           </details>
         </div>
         <a class="btn-bright" href="/pt/mercado">Ver os carros avaliados&nbsp;&nbsp;→</a>
@@ -1505,7 +1505,7 @@ export function renderCarPage({ deal, zone, view, depositCount, modelHref, host,
           <div class="seller-check">↗</div>
           <div style="flex:1;">
             <div class="t">Anúncio original no OLX</div>
-            <div class="d">Falas direto com o vendedor — não somos stand nem intermediário</div>
+            <div class="d">Falas direto com o vendedor — não somos stand</div>
           </div>
         </div>
         <div class="seller-body">
@@ -1675,9 +1675,9 @@ const AVALIAR_FAQ = [
           ["Quanto vale o meu carro usado em Portugal?",
            "Cola o link do anúncio do teu carro no OLX e devolvemos o valor justo estimado para essa viatura concreta, com os seus quilómetros, ano e versão, além do preço mediano pedido pelo mesmo modelo no mercado. Se ainda não tens anúncio, escolhe o modelo e o ano para veres a mediana do mercado."],
           ["A avaliação é grátis?",
-           "Sim, e sem registo: a avaliação de um anúncio, os preços por modelo e os guias. Neste momento o site não tem qualquer receita — sem publicidade, sem comissões e sem venda de contactos. Se isso mudar, fica escrito na página sobre quem somos."],
+           "Sim, e sem registo: a avaliação de um anúncio, os preços por modelo e os guias. Financiamo-nos de duas formas: stands parceiros pagam pelo contacto de quem quer vender e o pede expressamente, e alguns serviços ligados, como relatórios de histórico, podem render-nos uma parte do preço. Nenhuma delas mexe na avaliação."],
           ["Esta avaliação serve para vender ao meu stand ou ao seguro?",
-           "É uma estimativa independente a partir de anúncios reais e serve para saber por quanto anunciar ou quanto oferecer. Não é uma avaliação oficial para efeitos de seguro, sinistro ou fiscais, e não somos stand nem intermediário."],
+           "É uma estimativa independente a partir de anúncios reais e serve para saber por quanto anunciar ou quanto oferecer. Não é uma avaliação oficial para efeitos de seguro, sinistro ou fiscais, e não somos stand."],
           ["De onde vêm os valores?",
            "De anúncios ativos de carros no OLX Portugal e no Standvirtual, recolhidos diariamente. Trabalhamos com preços pedidos, com a mediana e o intervalo interquartil, e com um modelo estatístico para o valor justo. O método completo está publicado na página de metodologia."],
         ];
@@ -1920,7 +1920,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
         <h1 class="hero-title" style="font-size:40px;">Quanto vale o teu carro usado?</h1>
         <p class="lede" style="margin:0 auto 26px;">Cola o link de qualquer anúncio de carro do OLX ou StandVirtual e dizemos-te o preço justo de mercado, quanto estás a poupar (ou a pagar a mais) e se é importado com ISV por pagar. Grátis, sem registo.</p>
         ${form}
-        <div class="mono" style="font-size:12px;color:#8A8F98;margin-top:14px;">Estimativa indicativa · independente · não somos stand nem intermediário${builtAt && fmtBuilt(builtAt) ? ` · atualizado a ${fmtBuilt(builtAt).replace(/ /g, "\u00a0")}` : ""}</div>
+        <div class="mono" style="font-size:12px;color:#8A8F98;margin-top:14px;">Estimativa indicativa · independente · não somos stand${builtAt && fmtBuilt(builtAt) ? ` · atualizado a ${fmtBuilt(builtAt).replace(/ /g, "\u00a0")}` : ""}</div>
       </div>
     </section>
     ${notice}
@@ -2550,7 +2550,7 @@ export function sellerHelpBlock({ slug = "", name = "", year = null, median = nu
   return `
       <section id="vender" class="side-card" style="margin-top:16px;">
         <div class="panel-title" style="font-size:16px;margin-bottom:6px;">${heading ? escapeHtml(heading) : `Vais vender${what}?`}</div>
-        <p style="font-size:14px;color:#5B606B;margin:0 0 14px;line-height:1.5;">Não compramos carros e não te pomos em contacto com quem compra. O que temos é o que o mercado pede por um carro como o teu${median != null ? `, a começar pela mediana de ${fmtEur(median)}` : ""}: a faixa onde fica metade dos anúncios e quantos dias costuma demorar a sair. Chega para decidires por quanto anunciar.</p>
+        <p style="font-size:14px;color:#5B606B;margin:0 0 14px;line-height:1.5;">Não compramos carros. O que temos é o que o mercado pede por um carro como o teu${median != null ? `, a começar pela mediana de ${fmtEur(median)}` : ""}: a faixa onde fica metade dos anúncios e quantos dias costuma demorar a sair. Chega para decidires por quanto anunciar.</p>
         <a class="btn-dark" href="${href}" style="display:inline-block;padding:12px 20px;font-size:15px;">${cta}&nbsp;&nbsp;→</a>
       </section>`;
 }
