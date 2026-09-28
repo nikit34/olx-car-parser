@@ -1374,6 +1374,8 @@ check("the pages say how the site makes money, and that a contact leaves only wi
       `${label} still denies selling seller contacts`);
     assert(/stands parceiros/.test(html) && /consentimento/.test(html),
       `${label} does not say who pays and that the seller has to consent`);
+    assert(!/stands parceiros, que nos pagam|podes pedir-nos que passemos|Financiamo-nos de duas formas/.test(html),
+      `${label} describes a stand partnership that does not exist yet as if it did`);
   }
 });
 

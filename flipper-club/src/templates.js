@@ -1217,7 +1217,7 @@ export function renderLanding({ stats, featured, depositCount, host, corpus = nu
           <p>O OLX nunca te vai dizer que o anúncio está caro, nem que aquele preço baixo é de um carro ainda por legalizar. Nós dizemos — e mostramos o que o vendedor não escreve: quantas vezes já baixou o preço e há quanto tempo o carro está à venda.</p>
           <details class="indep-note">
             <summary>Quem nos paga — e porque é que isso não mexe na avaliação</summary>
-            <p>A avaliação é grátis e ninguém paga para aparecer melhor avaliado: o valor sai dos anúncios e do modelo, não de quem paga. É assim que queremos financiar o projeto: se quiseres vender o carro, podes pedir-nos que passemos o teu contacto a stands parceiros, que nos pagam por isso — só com o teu consentimento expresso e nunca sem o pedires. Ligações a serviços úteis, como relatórios de histórico, também nos podem render uma parte do preço, e ficam assinaladas onde aparecem.</p>
+            <p>A avaliação é grátis e ninguém paga para aparecer melhor avaliado: o valor sai dos anúncios e do modelo, não de quem paga. É assim que queremos financiar o projeto: quando tivermos stands parceiros, quem quiser vender poderá pedir-nos que passemos o seu contacto a um deles, que nos pagará por isso — só com consentimento expresso e nunca sem o pedir. Ligações a serviços úteis, como relatórios de histórico, também poderão render-nos uma parte do preço, e ficarão assinaladas onde aparecerem. Hoje ainda não temos nenhum destes acordos.</p>
           </details>
         </div>
         <a class="btn-bright" href="/pt/mercado">Ver os carros avaliados&nbsp;&nbsp;→</a>
@@ -1675,7 +1675,7 @@ const AVALIAR_FAQ = [
           ["Quanto vale o meu carro usado em Portugal?",
            "Cola o link do anúncio do teu carro no OLX e devolvemos o valor justo estimado para essa viatura concreta, com os seus quilómetros, ano e versão, além do preço mediano pedido pelo mesmo modelo no mercado. Se ainda não tens anúncio, escolhe o modelo e o ano para veres a mediana do mercado."],
           ["A avaliação é grátis?",
-           "Sim, e sem registo: a avaliação de um anúncio, os preços por modelo e os guias. Financiamo-nos de duas formas: stands parceiros pagam pelo contacto de quem quer vender e o pede expressamente, e alguns serviços ligados, como relatórios de histórico, podem render-nos uma parte do preço. Nenhuma delas mexe na avaliação."],
+           "Sim, e sem registo: a avaliação de um anúncio, os preços por modelo e os guias. Ainda não temos receitas. Queremos financiar-nos de duas formas: stands parceiros que paguem pelo contacto de quem quer vender e o peça expressamente, e serviços ligados, como relatórios de histórico, que nos rendam uma parte do preço. Nenhuma delas mexe na avaliação."],
           ["Esta avaliação serve para vender ao meu stand ou ao seguro?",
            "É uma estimativa independente a partir de anúncios reais e serve para saber por quanto anunciar ou quanto oferecer. Não é uma avaliação oficial para efeitos de seguro, sinistro ou fiscais, e não somos stand."],
           ["De onde vêm os valores?",
