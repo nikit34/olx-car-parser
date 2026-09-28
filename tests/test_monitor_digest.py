@@ -259,3 +259,41 @@ def test_clicks_summary_stays_quiet_when_nothing_was_dropped():
     fetch = fake_fetch({"clicks.json": (200, json.dumps(payload).encode())})
     lines, _ = md.clicks_summary(fetch, "u", "p", dt.date(2026, 9, 3))
     assert len(lines) == 1 and "отсеяно" not in lines[0]
+
+
+def _cf_post(workers, googlebot, fail=None):
+    def post(url, payload, headers=None, timeout=30):
+        assert headers["Authorization"] == "Bearer t"
+        if fail:
+            return fail
+        if "workersInvocationsAdaptive" in payload["query"]:
+            rows = [{"sum": {"requests": n}, "dimensions": {"status": s}} for s, n in workers.items()]
+            return 200, json.dumps({"data": {"viewer": {"accounts": [{"workersInvocationsAdaptive": rows}]}}}).encode()
+        rows = [{"count": n, "dimensions": {"edgeResponseStatus": c}} for c, n in googlebot.items()]
+        return 200, json.dumps({"data": {"viewer": {"zones": [{"httpRequestsAdaptiveGroups": rows}]}}}).encode()
+    return post
+
+
+def test_worker_health_quiet_day_has_no_warning():
+    lines, warns = md.worker_health(_cf_post({"success": 18715, "exceededResources": 7}, {200: 60, 301: 37, 404: 1}),
+                                    "t", dt.date(2026, 9, 27))
+    assert lines == ["Воркер 27.09: 18722 запросов, превышений CPU 7", "• Googlebot: 98 запросов, 5xx 0, 404 1"]
+    assert warns == []
+
+
+def test_worker_health_warns_on_cpu_limit_and_googlebot_errors():
+    lines, warns = md.worker_health(_cf_post({"success": 9000, "exceededResources": 333}, {200: 50, 503: 9}),
+                                    "t", dt.date(2026, 9, 18))
+    assert any("333 превышений CPU" in w for w in warns)
+    assert any("9 ответов 5xx" in w for w in warns)
+
+
+def test_worker_health_says_why_cloudflare_refused():
+    lines, warns = md.worker_health(_cf_post({}, {}, fail=(200, json.dumps({"errors": [{"message": "not authorized"}]}).encode())),
+                                    "t", dt.date(2026, 9, 27))
+    assert "not authorized" in lines[0] and "not authorized" in warns[0]
+
+
+def test_worker_health_without_a_token_stays_quiet():
+    lines, warns = md.worker_health(None, None, dt.date(2026, 9, 27))
+    assert "CF_API_TOKEN" in lines[0] and warns == []

@@ -38,6 +38,7 @@ jobs:
           MAIL_IMAP_USER: ${{ secrets.MAIL_IMAP_USER }}
           MAIL_IMAP_PASSWORD: ${{ secrets.MAIL_IMAP_PASSWORD }}
           GSC_ADC_JSON: ${{ secrets.GSC_ADC_JSON }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.force }}" = "true" ]; then
             python scripts/monitor_digest.py --force

@@ -391,6 +391,62 @@ def gsc_summary(post, adc_json, today):
     ], []
 
 
+CF_GRAPHQL = "https://api.cloudflare.com/client/v4/graphql"
+CF_ACCOUNT = "6545f93bd664df2dfebb147bda85a191"
+CF_ZONE = "8e62dd00726a3150eb7fb278cbb1865b"
+CF_WORKER = "olx-car-parser"
+CPU_LIMIT_WARN = 50
+WORKER_QUERY = """query($acc:String!,$script:String!,$from:Time!,$to:Time!){viewer{accounts(filter:{accountTag:$acc}){
+workersInvocationsAdaptive(limit:50,filter:{scriptName:$script,datetime_geq:$from,datetime_lt:$to}){sum{requests} dimensions{status}}}}}"""
+GOOGLEBOT_QUERY = """query($zone:String!,$day:Date!){viewer{zones(filter:{zoneTag:$zone}){
+httpRequestsAdaptiveGroups(limit:100,filter:{date:$day,userAgent_like:"%Googlebot%",verifiedBotCategory:"Search Engine Crawler"}){count dimensions{edgeResponseStatus}}}}}"""
+
+
+def cf_graphql(post, token, query, variables):
+    status, body = post(CF_GRAPHQL, {"query": query, "variables": variables}, {"Authorization": f"Bearer {token}"})
+    try:
+        data = json.loads(body or b"{}")
+    except Exception:
+        data = {}
+    if status != 200 or data.get("errors") or not data.get("data"):
+        errors = data.get("errors") or []
+        return None, (errors[0].get("message") if errors else None) or f"HTTP {status}"
+    return data["data"], None
+
+
+def worker_health(post, token, day):
+    if not token:
+        return ["Воркер: нет доступа к аналитике Cloudflare (CF_API_TOKEN)"], []
+    label = day.strftime("%d.%m")
+    data, why = cf_graphql(post, token, WORKER_QUERY, {
+        "acc": CF_ACCOUNT, "script": CF_WORKER,
+        "from": f"{day.isoformat()}T00:00:00Z", "to": f"{(day + dt.timedelta(days=1)).isoformat()}T00:00:00Z"})
+    if data is None:
+        return [f"Воркер: аналитика Cloudflare не ответила — {why}"], [f"Cloudflare: запрос аналитики отклонён — {why}"]
+    by_status = {}
+    for row in data["viewer"]["accounts"][0]["workersInvocationsAdaptive"]:
+        key = row["dimensions"]["status"]
+        by_status[key] = by_status.get(key, 0) + row["sum"]["requests"]
+    cpu = by_status.get("exceededResources", 0)
+    lines = [f"Воркер {label}: {sum(by_status.values())} запросов, превышений CPU {cpu}"]
+    warnings = []
+    if cpu >= CPU_LIMIT_WARN:
+        warnings.append(f"Воркер: {cpu} превышений CPU за {label} (Error 1102, посетитель видит 503)")
+    gb, why = cf_graphql(post, token, GOOGLEBOT_QUERY, {"zone": CF_ZONE, "day": day.isoformat()})
+    if gb is None:
+        lines.append(f"• Googlebot: аналитика зоны не ответила — {why}")
+        return lines, warnings
+    codes = {}
+    for row in gb["viewer"]["zones"][0]["httpRequestsAdaptiveGroups"]:
+        code = row["dimensions"]["edgeResponseStatus"]
+        codes[code] = codes.get(code, 0) + row["count"]
+    errors = sum(n for code, n in codes.items() if code >= 500)
+    lines.append(f"• Googlebot: {sum(codes.values())} запросов, 5xx {errors}, 404 {codes.get(404, 0)}")
+    if errors:
+        warnings.append(f"Googlebot получил {errors} ответов 5xx за {label}")
+    return lines, warnings
+
+
 REMINDERS = (
     (dt.date(2026, 10, 5), dt.date(2026, 10, 8),
      "📰 Пресс-рассылка индекса ушла 28.09 в 9 редакций: проверить ответы в ящике carsbuyer, напомнить только тем, кто не ответил."),
@@ -429,6 +485,7 @@ def main(argv=None):
 
     site_lines, site_warn = check_site(http_get)
     rel_lines, rel_warn = check_release(http_get, env("GITHUB_TOKEN"), now)
+    health_lines, health_warn = worker_health(http_post_json, env("CF_API_TOKEN"), now.date() - dt.timedelta(days=1))
     lead_lines, lead_warn, fresh_leads = leads_summary(http_get, env("ANALYTICS_USER"), env("ANALYTICS_PASS"), now)
     click_lines, fresh_clicks = clicks_summary(http_get, env("ANALYTICS_USER"), env("ANALYTICS_PASS"), now.date())
     ai_lines = ai_summary(http_get, env("ANALYTICS_USER"), env("ANALYTICS_PASS"), now.date())
@@ -436,12 +493,12 @@ def main(argv=None):
                                         env("MAIL_IMAP_USER"), env("MAIL_IMAP_PASSWORD"), now - dt.timedelta(days=1))
     weekly = args.force or now.weekday() == 0
     reminders = dated_reminders(now.date())
-    sections = [site_lines, rel_lines, lead_lines, click_lines, ai_lines, mail_lines, reminders]
+    sections = [site_lines, health_lines, rel_lines, lead_lines, click_lines, ai_lines, mail_lines, reminders]
     gsc_warn = []
     if weekly:
         gsc_lines, gsc_warn = gsc_summary(http_post_json, env("GSC_ADC_JSON"), now.date())
         sections.append(gsc_lines)
-    warnings = site_warn + rel_warn + lead_warn + gsc_warn
+    warnings = site_warn + health_warn + rel_warn + lead_warn + gsc_warn
     text = build_digest(now, sections, warnings)
     print(text)
     quiet = not warnings and not fresh_leads and not fresh_clicks and not mail_new and not weekly and not reminders
