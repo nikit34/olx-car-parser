@@ -2034,7 +2034,7 @@ async function handleLlmsTxt(request, env, url) {
     "# Carsbuyer",
     "",
     "> Avaliação independente de carros usados em Portugal. Preços medianos e",
-    "> intervalos calculados a partir de anúncios ativos do OLX Portugal,",
+    "> intervalos calculados a partir de anúncios ativos do OLX Portugal e do Standvirtual,",
     "> recolhidos e atualizados diariamente por nós.",
     "",
     "## O que estes números são",
@@ -2138,7 +2138,7 @@ async function handleLlmsTxt(request, env, url) {
     `- \`${base}/pt/preco/{slug}/{ano}.json\``,
     `- \`${base}/pt/preco/{slug}/{combustivel|caixa|distrito}.json\` — o mesmo corte, com a razão contra o modelo controlada pela idade (ano a ano onde a amostra chega, anúncio a anúncio onde não chega)`,
     `- \`${base}/pt/depreciacao/{slug}.json\` — taxa anual, meia-vida do valor, custo de um ano de idade por idade, e se a taxa quebra em alguma idade`,
-    `- \`${base}/pt/liquidez/{slug}.json\` — dias até sair do anúncio, percentagem que sai em 30/60/90 dias, quantos voltam a ser anunciados e quanto se costuma baixar no preço`,
+    `- \`${base}/pt/liquidez/{slug}.json\` — dias até sair do mercado, percentagem que sai em 30/60/90 dias, quantos voltam a ser anunciados e quanto se costuma baixar no preço`,
     "",
     waveCount
       ? "Um endereço que não exista devolve 404: ou a amostra é fina demais, ou o modelo ainda não entrou na vaga de publicação."

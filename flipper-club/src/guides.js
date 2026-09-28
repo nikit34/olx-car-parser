@@ -27,7 +27,7 @@ const SRC = {
 
 function marketLine(mk) {
   if (!mk || mk.s30 == null) return "";
-  return `No conjunto do mercado de particulares que acompanhamos, <b>${pct(mk.s30)} em cada 100</b> anúncios saem do OLX no primeiro mês${mk.md != null ? `, com mediana de <b>${mk.md} dias</b>` : ""}${mk.cu != null ? `, e <b>${pct(mk.cu)} em cada 100</b> vendedores baixam o preço antes de vender${mk.cp != null ? `, em mediana ${pct(mk.cp)}%` : ""}` : ""}.`;
+  return `No conjunto do mercado de particulares que acompanhamos, <b>${pct(mk.s30)} em cada 100</b> anúncios saem do ar no primeiro mês${mk.md != null ? `, com mediana de <b>${mk.md} dias</b>` : ""}${mk.cu != null ? `, e <b>${pct(mk.cu)} em cada 100</b> vendedores baixam o preço antes de o anúncio sair do ar${mk.cp != null ? `, em mediana ${pct(mk.cp)}%` : ""}` : ""}.`;
 }
 
 function slowestTable(models) {
@@ -216,7 +216,9 @@ export const GUIDES = [
       <p class="fc-p">Ainda não temos um ano completo de dados para o afirmar com números, e não vamos inventar. O que já medimos é o que decide dentro de cada mês: o preço a que pões o carro e os quilómetros face à idade. Um carro ao preço da mediana sai no primeiro ciclo em muitos modelos; um carro acima do intervalo espera um segundo ciclo e acaba por baixar.</p>`,
     faq: [
       ["Como sei quanto pedir pelo meu carro?", "Pela mediana e pelo intervalo dos anúncios do mesmo modelo e ano, corrigidos pelos teus quilómetros e estado. A avaliação por modelo e ano dá esse número em segundos; a página do modelo mostra a evolução por ano."],
-      ["Quantos vendedores baixam o preço?", "No mercado de particulares que acompanhamos, cerca de um terço dos anúncios baixa o preço antes de sair, em mediana perto de 8%. Por modelo o valor varia e está em cada página de vender."],
+      ["Quantos vendedores baixam o preço?", mk => (mk && mk.cu != null)
+        ? `No mercado de particulares que acompanhamos, ${pct(mk.cu)} em cada 100 anúncios baixam o preço antes de sair do ar${mk.cp != null ? `, em mediana ${pct(mk.cp)}% face ao primeiro preço registado` : ""}. Por modelo o valor varia e está em cada página de vender.`
+        : "Depende do modelo: a percentagem de anúncios com descida de preço e a descida mediana estão em cada página de vender."],
       ["Em quantos dias se vende um carro usado em Portugal?", "A mediana do mercado anda perto de um mês, com grandes diferenças entre modelos: os pequenos citadinos populares saem em duas semanas, os carros caros e os menos comuns esperam dois ciclos ou mais."],
     ],
     sources: [],
@@ -406,13 +408,14 @@ function sourcesBlock(keys) {
 export function renderGuide({ guide, models, market, stats, host, depositCount, builtAt }) {
   const canonical = `https://${host}/pt/guias/${guide.slug}`;
   const buyer = guide.audience === "comprador";
+  const faq = guide.faq.map(([q, a]) => [q, typeof a === "function" ? a(market) : a]);
   const body = crumbs([{ name: "Início", href: "/pt" }, { name: "Guias", href: "/pt/guias" }, { name: guide.title }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">${escapeHtml(guide.h1)}</h1>
       <div class="mono" style="font-size:11.5px;color:#9A9FA8;margin:-6px 0 18px;">Atualizado a ${UPDATED} · ${buyer ? "guia para quem compra a um particular" : "guia para vendedores particulares"} · não substitui aconselhamento jurídico</div>
       ${guide.body({ models, market, stats })}
       <h2 class="fc-h2">Perguntas frequentes</h2>
-      ${guide.faq.map(([q, a]) => `<details class="indep-note" style="margin:0 0 8px;"><summary>${escapeHtml(q)}</summary><p style="margin:8px 0 0;">${escapeHtml(a)}</p></details>`).join("")}
+      ${faq.map(([q, a]) => `<details class="indep-note" style="margin:0 0 8px;"><summary>${escapeHtml(q)}</summary><p style="margin:8px 0 0;">${escapeHtml(a)}</p></details>`).join("")}
       ${sourcesBlock(guide.sources)}
     </section>
     <section class="section" style="padding:0 22px;max-width:680px;margin:0 auto;">
@@ -439,7 +442,7 @@ export function renderGuide({ guide, models, market, stats, host, depositCount, 
           "mainEntityOfPage": canonical,
         },
         breadcrumbLd(host, [{ name: "Início", href: "/pt" }, { name: "Guias", href: "/pt/guias" }, { name: guide.title }]),
-        faqLd(guide.faq),
+        faqLd(faq),
       ],
     },
   });

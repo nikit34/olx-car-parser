@@ -434,7 +434,7 @@ check("every liquidity page renders without throwing", () => {
     });
     assertPage(html, { indexable: true, canonical: `https://${HOST}/pt/liquidez/${s2}`, label: `liquidez/${s2}` });
     assert(html.includes("<svg"), `${s2}: liquidity page has no curve`);
-    assert(html.includes("Sair do OLX não é o mesmo que vender"), `${s2}: drops the expiry caveat`);
+    assert(html.includes("Sair do ar não é o mesmo que vender"), `${s2}: drops the expiry caveat`);
     assert(/\d+ em cada 100 desaparecem no primeiro mês/.test(html), `${s2}: no headline share`);
     assert(html.includes('"@type": "FAQPage"') || html.includes('"@type":"FAQPage"'), `${s2}: no FAQ block`);
   }
@@ -1299,7 +1299,7 @@ check("the index pages say what they measure, where it comes from and whether it
     "the frozen month page still says its number changes");
   assert(!/DIAS ATÉ VENDER|Dias até vender|até vender/.test(month), "the month page still calls days on OLX time to sale");
   assert(month.includes("recolhidos a 31/08, 06/09, 13/09 e 20/09"), "the month page does not say when its cuts were taken");
-  assert(month.includes("<th>Recolhido</th>") && month.includes("<th>Modelos</th>"),
+  assert(month.includes("<th>Recolha</th>") && month.includes("<th>Modelos</th>"),
     "the month's week table hides the collection date or the model count");
   assert(month.includes("mediana das medianas") && month.includes("cada modelo conta uma vez"),
     "the month page does not define its price");

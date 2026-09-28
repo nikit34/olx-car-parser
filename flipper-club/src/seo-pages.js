@@ -612,7 +612,7 @@ export function modelInsights(rec, stats) {
   // 2. Time to sell — the seller's question, and the buyer's leverage.
   if (rec.lq && rec.lq.s30 != null && stats.goneMed) {
     const mine = rec.lq.s30, mkt = stats.goneMed;
-    const tail = `${pct(mine)} em cada 100 saem do OLX no primeiro mês (mercado: ${pct(mkt)}), em ${fmtNum(rec.lq.n)} anúncios acompanhados`;
+    const tail = `${pct(mine)} em cada 100 saem do ar no primeiro mês (mercado: ${pct(mkt)}), em ${fmtNum(rec.lq.n)} anúncios acompanhados`;
     if (mine >= mkt * 1.12) {
       out.push(`Sai depressa: <b>${tail}</b>. A anunciar, tens pouca pressão para descer o preço; a comprar, os bons exemplares desaparecem em dias.`);
     } else if (mine <= mkt * 0.88) {
@@ -623,9 +623,9 @@ export function modelInsights(rec, stats) {
   } else if (rec.sd != null && rec.sn != null && stats.sellMed) {
     const d = rec.sd, mkt = stats.sellMed;
     if (d <= mkt * 0.75) {
-      out.push(`Vende rápido: mediana de <b>${d} dias</b> no OLX (mercado: ${mkt} dias), em ${rec.sn} vendas observadas. A anunciar, tens pouca pressão para descer o preço; a comprar, os bons exemplares desaparecem em dias.`);
+      out.push(`Vende rápido: mediana de <b>${d} dias</b> à venda (mercado: ${mkt} dias), em ${rec.sn} vendas observadas. A anunciar, tens pouca pressão para descer o preço; a comprar, os bons exemplares desaparecem em dias.`);
     } else if (d >= mkt * 1.25) {
-      out.push(`Demora a sair: mediana de <b>${d} dias</b> no OLX contra ${mkt} do mercado, em ${rec.sn} vendas observadas. Quem vende costuma ter de ceder no preço, e quem compra tem margem para negociar.`);
+      out.push(`Demora a sair: mediana de <b>${d} dias</b> à venda contra ${mkt} do mercado, em ${rec.sn} vendas observadas. Quem vende costuma ter de ceder no preço, e quem compra tem margem para negociar.`);
     } else {
       out.push(`Tempo até vender em linha com o mercado: mediana de <b>${d} dias</b> (mercado: ${mkt}), em ${rec.sn} vendas observadas.`);
     }
@@ -876,9 +876,9 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
 
   const hero = `
     <div class="side-card" style="max-width:680px;margin:0 auto;">
-      <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">${B.toUpperCase()} ${M.toUpperCase()} · ${year} · OLX PORTUGAL</span></div>
+      <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">${B.toUpperCase()} ${M.toUpperCase()} · ${year} · OLX E STANDVIRTUAL</span></div>
       <h1 class="fc-h1">Quanto vale um ${B} ${M} de ${year}?</h1>
-      <p class="lede" style="font-size:16px;margin:0 0 20px;">Nos <b>${cell.n} ${sample}</b> de ${B} ${M} do ano ${year} no OLX${win && cell.na ? ` (${cell.na} ainda ativos)` : ""}, o preço pedido mediano é <b>${FM}</b>${cell.km != null ? `, com ${fmtKm(cell.km)} de quilometragem mediana` : ""}. É o que o mercado pede hoje por este ano concreto, não uma avaliação da tua viatura.</p>
+      <p class="lede" style="font-size:16px;margin:0 0 20px;">Nos <b>${cell.n} ${sample}</b> de ${B} ${M} do ano ${year} no OLX e no Standvirtual${win && cell.na ? ` (${cell.na} ainda ativos)` : ""}, o preço pedido mediano é <b>${FM}</b>${cell.km != null ? `, com ${fmtKm(cell.km)} de quilometragem mediana` : ""}. É o que o mercado pede hoje por este ano concreto, não uma avaliação da tua viatura.</p>
       <div class="side-prices">
         <div><div class="cap">Preço mediano (pedido) · ${year}${win ? ` · últimos ${win} meses` : ""}</div><div class="big">${FM}</div></div>
         <div class="side-fair"><div class="cap">${cell.n} anúncios${age != null ? ` · ${age} ano${age === 1 ? "" : "s"}` : ""}</div><div class="v">${cell.km != null ? fmtKm(cell.km) : "—"}</div></div>
@@ -1075,7 +1075,7 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
 
   const faqs = [[
     `Quanto vale um ${rec.b} ${rec.m} de ${year} em Portugal?`,
-    `Nos ${cell.n} ${sample} de ${rec.b} ${rec.m} do ano ${year} no OLX Portugal, o preço pedido mediano é ${FM}, com metade dos anúncios entre ${FL} e ${FH}.${sampleNote} São preços pedidos em anúncios ativos, não preços de venda fechados.`,
+    `Nos ${cell.n} ${sample} de ${rec.b} ${rec.m} do ano ${year} no OLX Portugal e no Standvirtual, o preço pedido mediano é ${FM}, com metade dos anúncios entre ${FL} e ${FH}.${sampleNote} São preços pedidos em anúncios ativos, não preços de venda fechados.`,
   ]];
   if (cell.km != null) faqs.push([
     `Qual é a quilometragem típica de um ${rec.b} ${rec.m} de ${year}?`,
@@ -1104,7 +1104,7 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
         "@type": "Dataset",
         "license": licenseUrl(host),
         "name": `Preços de ${rec.b} ${rec.m} de ${year} em Portugal`,
-        "description": `Mediana e intervalo interquartil dos preços pedidos em ${cell.n} ${sample} de ${rec.b} ${rec.m} do ano ${year} no OLX Portugal.`,
+        "description": `Mediana e intervalo interquartil dos preços pedidos em ${cell.n} ${sample} de ${rec.b} ${rec.m} do ano ${year} no OLX Portugal e no Standvirtual.`,
         "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
         "isAccessibleForFree": true,
         "temporalCoverage": String(year),
@@ -1146,9 +1146,9 @@ export function renderYearPage({ guides = "", rec, slug, year, cell, neighbours,
   const armB = yearCarsTotal > 0 && snippetArm(slug, year) === "b";
   const built = (builtAt || "").slice(0, 10);
   const titleA = `${rec.b} ${rec.m} ${year} usado: preço ${FM}${monthTag(builtAt) ? ` em ${monthTag(builtAt)}` : ""} (${cell.n} anúncios)`;
-  const descA = `${rec.b} ${rec.m} de ${year} usado: preço mediano ${FM} (${FL}–${FH}) em ${cell.n} ${sample} do OLX Portugal${cell.km != null ? `, ${fmtKm(cell.km)} medianos` : ""}. Avaliação independente, atualizada${built ? ` a ${built}` : ""}.`;
+  const descA = `${rec.b} ${rec.m} de ${year} usado: preço mediano ${FM} (${FL}–${FH}) em ${cell.n} ${sample} do OLX Portugal e do Standvirtual${cell.km != null ? `, ${fmtKm(cell.km)} medianos` : ""}. Avaliação independente, atualizada${built ? ` a ${built}` : ""}.`;
   const titleB = `${rec.b} ${rec.m} ${year}: ${yearCarsTotal} usados à venda e o preço justo de cada um`;
-  const descB = `Os ${yearCarsTotal} ${rec.b} ${rec.m} de ${year} à venda hoje no OLX, um a um: quilómetros, há quantos dias esperam e se o que pedem está acima ou abaixo do valor justo. Avaliação independente, atualizada${built ? ` a ${built}` : ""}.`;
+  const descB = `Os ${yearCarsTotal} ${rec.b} ${rec.m} de ${year} à venda hoje no OLX e no Standvirtual, um a um: quilómetros, há quantos dias esperam e se o que pedem está acima ou abaixo do valor justo. Avaliação independente, atualizada${built ? ` a ${built}` : ""}.`;
 
   return layout({
     title: armB ? titleB : titleA,
@@ -1259,7 +1259,7 @@ export function renderDepreciationPage({ rec, slug, fit, stats, pageYears, host,
   ]) + `
     <div style="padding-top:14px;">
       <div class="side-card" style="max-width:680px;margin:0 auto;">
-        <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">CURVA DE DESVALORIZAÇÃO · OLX PORTUGAL</span></div>
+        <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">CURVA DE DESVALORIZAÇÃO · OLX E STANDVIRTUAL</span></div>
         <h1 class="fc-h1">Quanto se desvaloriza um ${B} ${M}?</h1>
         <p class="lede" style="font-size:16px;margin:0 0 18px;">Medido nos preços pedidos de <b>${rec.n} anúncios ativos</b> entre ${oldest.y} e ${newest.y}, um ${B} ${M} perde cerca de <b>${ratePct}% por cada ano de idade</b>${av && av.halfLife ? `, ou seja metade do valor a cada <b>${dec(av.halfLife)} anos</b>` : ""}. ${vsMarket}</p>
         <div class="fc-stat-row">
@@ -1312,13 +1312,13 @@ export function renderDepreciationPage({ rec, slug, fit, stats, pageYears, host,
 
   const faqs = [
     [`Quanto se desvaloriza um ${rec.b} ${rec.m} por ano?`,
-     `Cerca de ${ratePct}% do valor restante por cada ano de idade, medido nos preços pedidos de ${rec.n} anúncios ativos de ${rec.b} ${rec.m} entre ${oldest.y} e ${newest.y} no OLX Portugal. A percentagem é constante, mas em euros a perda é muito maior nos primeiros anos.`],
+     `Cerca de ${ratePct}% do valor restante por cada ano de idade, medido nos preços pedidos de ${rec.n} anúncios ativos de ${rec.b} ${rec.m} entre ${oldest.y} e ${newest.y} no OLX Portugal e no Standvirtual. A percentagem é constante, mas em euros a perda é muito maior nos primeiros anos.`],
     [`Quanto vale um ${rec.b} ${rec.m} ao fim de 5 anos?`,
      `Ao ritmo medido, um ${rec.b} ${rec.m} mantém cerca de ${keep(5)}% do valor ao fim de 5 anos. Sobre os ${fmtEur(base)} que a curva dá a um exemplar de ${baseYear}, isso são cerca de ${fmtEur(loseEur(5))} perdidos.`],
   ];
   if (av && av.halfLife) faqs.push([
     `Em quantos anos um ${rec.b} ${rec.m} perde metade do valor?`,
-    `Cerca de ${dec(av.halfLife)} anos, ao ritmo de ${ratePct}% ao ano medido nos anúncios ativos do OLX Portugal. É a mesma taxa dita de outra maneira: a cada ${dec(av.halfLife)} anos de idade o preço pedido mediano fica a metade.`]);
+    `Cerca de ${dec(av.halfLife)} anos, ao ritmo de ${ratePct}% ao ano medido nos anúncios ativos do OLX Portugal e do Standvirtual. É a mesma taxa dita de outra maneira: a cada ${dec(av.halfLife)} anos de idade o preço pedido mediano fica a metade.`]);
   if (av) faqs.push([
     `A partir de que idade um ${rec.b} ${rec.m} deixa de perder valor?`,
     bend && bend.dir === "slows"
@@ -1335,7 +1335,7 @@ export function renderDepreciationPage({ rec, slug, fit, stats, pageYears, host,
         "@type": "Dataset",
         "license": licenseUrl(host),
         "name": `Desvalorização de ${rec.b} ${rec.m} em Portugal`,
-        "description": `Preço pedido mediano de ${rec.b} ${rec.m} por ano de fabrico (${oldest.y}-${newest.y}), taxa de desvalorização anual de ${ratePct}% e custo em euros de cada ano de idade, a partir de ${rec.n} anúncios ativos do OLX Portugal.`,
+        "description": `Preço pedido mediano de ${rec.b} ${rec.m} por ano de fabrico (${oldest.y}-${newest.y}), taxa de desvalorização anual de ${ratePct}% e custo em euros de cada ano de idade, a partir de ${rec.n} anúncios ativos do OLX Portugal e do Standvirtual.`,
         "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
         "isAccessibleForFree": true,
         "temporalCoverage": `${oldest.y}/${newest.y}`,
@@ -1353,7 +1353,7 @@ export function renderDepreciationPage({ rec, slug, fit, stats, pageYears, host,
   };
   return layout({
     title: `${rec.b} ${rec.m}: desvalorização por ano`,
-    description: `Um ${rec.b} ${rec.m} perde cerca de ${ratePct}% por ano de idade e mantém ${keep(5)}% ao fim de 5 anos, medido em ${rec.n} anúncios ativos do OLX Portugal. Curva completa, custo de cada ano de idade e onde a queda abranda.`,
+    description: `Um ${rec.b} ${rec.m} perde cerca de ${ratePct}% por ano de idade e mantém ${keep(5)}% ao fim de 5 anos, medido em ${rec.n} anúncios ativos do OLX Portugal e do Standvirtual. Curva completa, custo de cada ano de idade e onde a queda abranda.`,
     canonical, jsonLd, body, zone: "all", nav: "precos", depositCount, index: true, host,
     altJson: `${canonical}.json`,
   });
@@ -1378,13 +1378,13 @@ export function renderDepreciationHub({ rows, stats, host, depositCount, builtAt
     const verdict = b >= a - 1
       ? `A percentagem <b>não abranda com a idade</b> — o que abranda é a fatura em euros, porque ${a}% de um carro de 12 000 € e ${a}% de um de 3 000 € não são a mesma conta.`
       : `A percentagem abranda com a idade, mas menos do que se costuma dizer: são ${a - b} pontos entre um troço e o outro.`;
-    return `<p class="fc-p">Entre os ${yg.from} e os ${yg.to} anos de idade, a mediana destes modelos perde <b>${a}% ao ano</b> (${yg.models} modelos com amostra nesse troço); dos ${od.from} anos em diante, <b>${b}%</b> (${od.models} modelos). ${verdict}</p>`;
+    return `<p class="fc-p">Dos ${yg.from} aos ${yg.to - 1} anos de idade, a taxa mediana é de <b>${a}% ao ano</b> (${yg.models} modelos com amostra em pelo menos 3 anos desse troço, e não apenas os da tabela abaixo); dos ${od.from} aos ${od.to - 1} anos, <b>${b}%</b> (${od.models} modelos). ${verdict}</p>`;
   })() : "";
 
   const body = crumbs([{ name: "Início", href: "/pt" }, { name: "Desvalorização" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">Que carros se desvalorizam mais em Portugal</h1>
-      <p class="fc-p">Taxa de desvalorização por ano de idade, medida nos preços pedidos de anúncios ativos do OLX. Só entram modelos com histórico suficiente para a curva significar alguma coisa: pelo menos ${DEP_MIN_CELLS} anos com amostra e ${DEP_MIN_SPAN} anos de intervalo.</p>
+      <p class="fc-p">Taxa de desvalorização por ano de idade, medida nos preços pedidos de anúncios ativos do OLX e do Standvirtual. Só entram modelos com histórico suficiente para a curva significar alguma coisa: pelo menos ${DEP_MIN_CELLS} anos com amostra e ${DEP_MIN_SPAN} anos de intervalo.</p>
       ${stats.depMed ? `<p class="fc-p">A mediana do mercado é <b>${Math.round(stats.depMed * 100)}% por ano</b>. Acima disso, o carro custa-te mais a ter; abaixo, revendes com menos perda.</p>` : ""}
       ${ageBand}
       <div class="fc-scroll"><table class="fc-tbl">
@@ -1398,7 +1398,7 @@ export function renderDepreciationHub({ rows, stats, host, depositCount, builtAt
     <div style="height:60px;"></div>`;
   return layout({
     title: "Desvalorização de carros usados em Portugal",
-    description: `Que modelos perdem mais valor por ano em Portugal, medido em anúncios ativos do OLX. ${rows.length} modelos com curva completa, valor retido aos 5 anos e a idade a partir da qual o ano de matrícula deixa de mandar no preço.`,
+    description: `Que modelos perdem mais valor por ano em Portugal, medido em anúncios ativos do OLX e do Standvirtual. ${rows.length} modelos com curva completa, valor retido aos 5 anos e a idade a partir da qual o ano de matrícula deixa de mandar no preço.`,
     canonical, body, zone: "all", nav: "precos", depositCount, index: true, host,
     jsonLd: {
       "@context": "https://schema.org",
@@ -1521,7 +1521,7 @@ export function renderComparePage({ a, b, ra, rb, stats, host, depositCount, bui
     { name: `${nameA} vs ${nameB}` },
   ]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
-      <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">COMPARAÇÃO A PARTIR DE ANÚNCIOS ATIVOS · OLX PORTUGAL</span></div>
+      <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">COMPARAÇÃO A PARTIR DE ANÚNCIOS ATIVOS · OLX E STANDVIRTUAL</span></div>
       <h1 class="fc-h1">${A} ou ${Bn}: qual comprar usado?</h1>
       <p class="fc-p">Comparação com números do mercado português de hoje: ${ra.n} anúncios ativos de ${A} e ${rb.n} de ${Bn}. Não dizemos qual é o melhor carro — dizemos o que cada um custa a comprar, a ter e a revender, e deixamos a escolha contigo.</p>
       <div class="fc-vs">
@@ -1563,21 +1563,21 @@ export function renderComparePage({ a, b, ra, rb, stats, host, depositCount, bui
   const faqs = [
     [`${nameA} ou ${nameB}: qual é mais barato em Portugal?`,
      gPct === 0
-       ? `Ao mesmo ano de modelo os dois pedem praticamente o mesmo, na mediana dos ${gap.years} anos em que ambos têm amostra no OLX Portugal.`
-       : `Ao mesmo ano de modelo, o ${gDearer === "a" ? nameA : nameB} pede cerca de ${gPct}% mais do que o ${gDearer === "a" ? nameB : nameA}, na mediana dos ${gap.years} anos em que ambos têm amostra no OLX Portugal. Nas medianas de tudo o que está à venda a diferença parece outra (${fmtEur(ra.fm)} contra ${fmtEur(rb.fm)}), porque os dois modelos não estão à venda com a mesma idade.`],
+       ? `Ao mesmo ano de modelo os dois pedem praticamente o mesmo, na mediana dos ${gap.years} anos em que ambos têm amostra no OLX Portugal e no Standvirtual.`
+       : `Ao mesmo ano de modelo, o ${gDearer === "a" ? nameA : nameB} pede cerca de ${gPct}% mais do que o ${gDearer === "a" ? nameB : nameA}, na mediana dos ${gap.years} anos em que ambos têm amostra no OLX Portugal e no Standvirtual. Nas medianas de tudo o que está à venda a diferença parece outra (${fmtEur(ra.fm)} contra ${fmtEur(rb.fm)}), porque os dois modelos não estão à venda com a mesma idade.`],
   ];
   if (depA != null && depB != null) faqs.push([
     `${nameA} ou ${nameB}: qual perde menos valor?`,
     `O ${depA <= depB ? nameA : nameB} desvaloriza cerca de ${Math.round(Math.min(depA, depB) * 100)}% por ano de idade, contra ${Math.round(Math.max(depA, depB) * 100)}% do outro. Sobre cinco anos, essa diferença costuma pesar mais do que o desconto na compra.`]);
   if (ra.sd != null && rb.sd != null) faqs.push([
     `Qual se vende mais depressa, ${nameA} ou ${nameB}?`,
-    `O ${ra.sd <= rb.sd ? nameA : nameB} vende em mediana em ${Math.min(ra.sd, rb.sd)} dias no OLX, contra ${Math.max(ra.sd, rb.sd)} dias do outro. Um modelo que sai depressa dá menos margem de negociação a quem compra.`]);
+    `O ${ra.sd <= rb.sd ? nameA : nameB} fica em mediana ${Math.min(ra.sd, rb.sd)} dias à venda, contra ${Math.max(ra.sd, rb.sd)} dias do outro. Um modelo que sai depressa dá menos margem de negociação a quem compra.`]);
 
   return layout({
     title: `${nameA} ou ${nameB}? Comparação de preços usados`,
     description: gap
-      ? `${nameA} contra ${nameB} no mercado português de usados: preço comparado ao mesmo ano de modelo (${gPct === 0 ? "empate" : `${gDearer === "a" ? nameA : nameB} +${gPct}%`}), quilometragem, tempo até vender e desvalorização, em anúncios ativos do OLX.`
-      : `${nameA} (${fmtEur(ra.fm)}) contra ${nameB} (${fmtEur(rb.fm)}) no mercado português de usados: preço, quilometragem, tempo até vender e desvalorização, em anúncios ativos do OLX.`,
+      ? `${nameA} contra ${nameB} no mercado português de usados: preço comparado ao mesmo ano de modelo (${gPct === 0 ? "empate" : `${gDearer === "a" ? nameA : nameB} +${gPct}%`}), quilometragem, tempo até vender e desvalorização, em anúncios ativos do OLX e do Standvirtual.`
+      : `${nameA} (${fmtEur(ra.fm)}) contra ${nameB} (${fmtEur(rb.fm)}) no mercado português de usados: preço, quilometragem, tempo até vender e desvalorização, em anúncios ativos do OLX e do Standvirtual.`,
     canonical, body, zone: "all", nav: "precos", depositCount, index: true, host,
     jsonLd: {
       "@context": "https://schema.org",
@@ -1620,7 +1620,7 @@ export function renderCompareHub({ pairs, models, host, depositCount, builtAt })
   const body = crumbs([{ name: "Início", href: "/pt" }, { name: "Comparar" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">Comparar carros usados em Portugal</h1>
-      <p class="fc-p">Cada comparação usa os anúncios ativos dos dois modelos no OLX: preço, dispersão, quilometragem, tempo até vender e desvalorização. Só pomos frente a frente modelos de marcas diferentes que jogam no mesmo segmento — é entre esses que a escolha existe de facto, e é por isso que não vais encontrar aqui um citadino contra uma berlina.</p>
+      <p class="fc-p">Cada comparação usa os anúncios ativos dos dois modelos no OLX e no Standvirtual: preço, dispersão, quilometragem, tempo até vender e desvalorização. Só pomos frente a frente modelos de marcas diferentes que jogam no mesmo segmento — é entre esses que a escolha existe de facto, e é por isso que não vais encontrar aqui um citadino contra uma berlina.</p>
       <p class="fc-p">O preço é comparado <b>ao mesmo ano de modelo</b>, não pela mediana de tudo o que está à venda. Um modelo cujos anúncios são em média mais velhos parece mais barato sem o ser, e essa é a comparação que toda a gente faz por engano.</p>
       ${items}
       ${provenance({ n: null, builtAt, measure: "Preço pedido mediano dos dois modelos comparados" })}
@@ -1629,7 +1629,7 @@ export function renderCompareHub({ pairs, models, host, depositCount, builtAt })
     <div style="height:60px;"></div>`;
   return layout({
     title: "Comparar carros usados em Portugal",
-    description: `${pairs.length} comparações de carros usados em Portugal com preço, quilometragem, tempo até vender e desvalorização, a partir de anúncios ativos do OLX.`,
+    description: `${pairs.length} comparações de carros usados em Portugal com preço, quilometragem, tempo até vender e desvalorização, a partir de anúncios ativos do OLX e do Standvirtual.`,
     canonical, body, zone: "all", nav: "precos", depositCount, index: true, host,
     jsonLd: {
       "@context": "https://schema.org",
@@ -1773,18 +1773,18 @@ export function renderLiquidityPage({ rec, slug, market, hasDepreciation = false
   ]) + `
     <div style="padding-top:14px;">
       <div class="side-card" style="max-width:680px;margin:0 auto;">
-        <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">TEMPO DE VENDA · OLX PORTUGAL</span></div>
+        <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">TEMPO DE VENDA · OLX E STANDVIRTUAL</span></div>
         <h1 class="fc-h1">Quanto tempo demora a vender um ${B} ${M}?</h1>
-        <p class="lede" style="font-size:16px;margin:0 0 18px;">Acompanhámos <b>${fmtNum(lq.n)} anúncios</b> de ${B} ${M} até saírem do OLX${lq.cn ? `, mais ${fmtNum(lq.cn)} que ainda lá estão` : ""}: <b>${s30} em cada 100 desaparecem no primeiro mês</b>${lq.md != null ? `, e a mediana está nos <b>${lq.md} dias</b>` : ""}. ${verdict}</p>
+        <p class="lede" style="font-size:16px;margin:0 0 18px;">Acompanhámos <b>${fmtNum(lq.n)} anúncios</b> de ${B} ${M} até saírem do ar${lq.cn ? `, mais ${fmtNum(lq.cn)} que ainda lá estão` : ""}: <b>${s30} em cada 100 desaparecem no primeiro mês</b>${lq.md != null ? `, e a mediana está nos <b>${lq.md} dias</b>` : ""}. ${verdict}</p>
         <div class="fc-stat-row">
           <div class="fc-stat"><div class="k">EM 30 DIAS</div><div class="v">${s30}%</div><div class="s">${mkt.s30 != null ? `mercado: ${liqPct(mkt.s30)}%` : "dos anúncios saem"}</div></div>
-          ${lq.md != null ? `<div class="fc-stat"><div class="k">MEDIANA</div><div class="v">${lq.md} d</div><div class="s">${(lq.q1 != null && lq.q3 != null) ? `metade sai entre ${lq.q1} e ${lq.q3} dias` : "até sair do OLX"}</div></div>` : ""}
+          ${lq.md != null ? `<div class="fc-stat"><div class="k">MEDIANA</div><div class="v">${lq.md} d</div><div class="s">${(lq.q1 != null && lq.q3 != null) ? `metade sai entre ${lq.q1} e ${lq.q3} dias` : "até sair do mercado"}</div></div>` : ""}
           ${still90 != null ? `<div class="fc-stat"><div class="k">AOS 90 DIAS</div><div class="v">${still90}%</div><div class="s">ainda à venda</div></div>` : ""}
           ${lq.rb != null ? `<div class="fc-stat"><div class="k">PRECISAM DE 2º ANÚNCIO</div><div class="v">${liqPct(lq.rb)}%</div><div class="s">não venderam à primeira</div></div>` : ""}
         </div>
         ${provenance({ n: lq.n, builtAt, unit: "carros acompanhados até saírem",
                        measureId: "days-on-market-km",
-                       measure: "Dias entre o carro aparecer no OLX e o último ciclo que o viu no ar, somando os anúncios repetidos do mesmo carro",
+                       measure: "Dias entre o carro aparecer no OLX ou no Standvirtual e o último ciclo que o viu no ar, somando os anúncios repetidos do mesmo carro",
                        extra: `Kaplan-Meier, com ${lq.cn ? fmtNum(lq.cn) + " anúncios" : "os anúncios"} ainda à venda contados como censurados` })}
       </div>
     </div>
@@ -1797,7 +1797,7 @@ export function renderLiquidityPage({ rec, slug, market, hasDepreciation = false
       <p class="fc-p" style="margin-top:12px;">A conta inclui os anúncios que ainda estão à venda, não só os que já acabaram. É a diferença entre medir o mercado e medir apenas os anúncios que tiveram pressa — olhar só para os que já saíram encurta o resultado em cerca de dez dias.</p>
     </section>
     <section class="section fc-wrap">
-      <h2 class="fc-h2">Sair do OLX não é o mesmo que vender</h2>
+      <h2 class="fc-h2">Sair do ar não é o mesmo que vender</h2>
       <p class="fc-p">Um anúncio do OLX corre em ciclos de 30 dias, e isso vê-se nos dados: há uma acumulação de saídas exatamente nesse dia, em todos os modelos. Um anúncio que acaba aí tanto pode ter vendido como ter expirado sem que ninguém o renovasse, e nós não distinguimos as duas coisas — quem sabe é o vendedor. É por isso que a primeira frase desta página é a percentagem que sai no primeiro mês e não uma mediana: a mediana cai dentro desse degrau em quase todos os modelos e acaba a descrever o ciclo do OLX em vez do ${B} ${M}.</p>
       ${relistBlock}
     </section>
@@ -1832,21 +1832,21 @@ export function renderLiquidityPage({ rec, slug, market, hasDepreciation = false
 
   const faqs = [
     [`Quanto tempo demora a vender um ${rec.b} ${rec.m} em Portugal?`,
-     `${s30} em cada 100 anúncios de ${rec.b} ${rec.m} saem do OLX no primeiro mês${lq.md != null ? `, e a mediana é de ${lq.md} dias` : ""}, medido em ${lq.n} anúncios acompanhados até ao fim${lq.cn ? ` e ${lq.cn} ainda à venda` : ""}. Sair do OLX não prova a venda: um anúncio corre em ciclos de 30 dias e pode expirar sem ter vendido.`],
+     `${s30} em cada 100 anúncios de ${rec.b} ${rec.m} saem do ar no primeiro mês${lq.md != null ? `, e a mediana é de ${lq.md} dias` : ""}, medido em ${lq.n} anúncios acompanhados até ao fim${lq.cn ? ` e ${lq.cn} ainda à venda` : ""}. Sair do ar não prova a venda: um anúncio corre em ciclos de 30 dias e pode expirar sem ter vendido.`],
   ];
   if (spread) faqs.push([
     `O preço muda o tempo que um ${rec.b} ${rec.m} demora a vender?`,
-    `Muda. Na faixa ${cheap.lbl.toLowerCase()} saem ${liqPct(cheap.s30)} em cada 100 no primeiro mês; na faixa ${dear.lbl.toLowerCase()}, ${liqPct(dear.s30)}. Medido nos mesmos anúncios de ${rec.b} ${rec.m} do OLX Portugal.`]);
+    `Muda. Na faixa ${cheap.lbl.toLowerCase()} saem ${liqPct(cheap.s30)} em cada 100 no primeiro mês; na faixa ${dear.lbl.toLowerCase()}, ${liqPct(dear.s30)}. Medido nos mesmos anúncios de ${rec.b} ${rec.m} do OLX Portugal e do Standvirtual.`]);
   if (lq.cu != null) faqs.push([
     `Quanto se costuma baixar no preço de um ${rec.b} ${rec.m}?`,
     `${liqPct(lq.cu)}% dos anúncios de ${rec.b} ${rec.m} que acompanhámos baixaram o preço antes de sair${lq.cp != null ? `, com um corte mediano de ${liqPct(lq.cp)}%` : ""}. É a margem que este modelo costuma ceder, e o ponto de partida para negociar.`]);
   if (lq.rb != null) faqs.push([
-    `Os anúncios de ${rec.b} ${rec.m} que desaparecem do OLX foram todos vendidos?`,
-    `Não. Pelo menos ${liqPct(lq.rb)}% destes carros voltaram ao OLX como anúncio novo do mesmo carro, ou seja o primeiro anúncio não vendeu. Contamos o carro e não o anúncio: os dias até à venda incluem as duas tentativas. É um mínimo, só entram os reaparecimentos que conseguimos emparelhar.`]);
+    `Os anúncios de ${rec.b} ${rec.m} que desaparecem do ar foram todos vendidos?`,
+    `Não. Pelo menos ${liqPct(lq.rb)}% destes carros voltaram a aparecer como anúncio novo do mesmo carro, ou seja o primeiro anúncio não vendeu. Contamos o carro e não o anúncio: os dias até à venda incluem as duas tentativas. É um mínimo, só entram os reaparecimentos que conseguimos emparelhar.`]);
 
   return layout({
     title: `${rec.b} ${rec.m}: quanto tempo demora a vender`,
-    description: `${s30}% dos anúncios de ${rec.b} ${rec.m} saem do OLX Portugal no primeiro mês${lq.md != null ? ` e a mediana é de ${lq.md} dias` : ""}, medido em ${lq.n} anúncios acompanhados ao longo do tempo. Por faixa de preço, idade e distrito.`,
+    description: `${s30}% dos anúncios de ${rec.b} ${rec.m} saem do ar no primeiro mês${lq.md != null ? ` e a mediana é de ${lq.md} dias` : ""}, medido em ${lq.n} anúncios acompanhados ao longo do tempo. Por faixa de preço, idade e distrito.`,
     canonical, body, zone: "all", nav: "precos", depositCount, index: true, host,
     altJson: `${canonical}.json`,
     jsonLd: {
@@ -1855,7 +1855,7 @@ export function renderLiquidityPage({ rec, slug, market, hasDepreciation = false
         {
           "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
           "name": `Tempo até vender de ${rec.b} ${rec.m} em Portugal`,
-          "description": `Dias que um anúncio de ${rec.b} ${rec.m} fica no OLX Portugal antes de sair, estimado por Kaplan-Meier sobre ${lq.n} anúncios terminados${lq.cn ? ` e ${lq.cn} ainda ativos` : ""}, com cortes por faixa de preço, idade e distrito.`,
+          "description": `Dias que um anúncio de ${rec.b} ${rec.m} fica à venda antes de sair do ar, estimado por Kaplan-Meier sobre ${lq.n} anúncios terminados${lq.cn ? ` e ${lq.cn} ainda ativos` : ""}, com cortes por faixa de preço, idade e distrito.`,
           "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true, "dateModified": builtAt || undefined,
           "variableMeasured": ["Dias até o anúncio sair (mediana)", "Percentagem que sai em 30 dias"],
@@ -1893,7 +1893,7 @@ export function renderLiquidityHub({ rows, market, host, depositCount, builtAt }
   const body = crumbs([{ name: "Início", href: "/pt" }, { name: "Tempo de venda" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">Quanto tempo demora a vender cada carro em Portugal</h1>
-      <p class="fc-p">Quantos anúncios de cada modelo saem do OLX no primeiro mês, e ao fim de quantos dias sai metade. Acompanhamos os anúncios ao longo do tempo — isto não é estimado a partir do preço, é o que aconteceu — e a conta inclui os que ainda estão à venda, que é o que a impede de ficar curta.</p>
+      <p class="fc-p">Quantos anúncios de cada modelo saem do ar no primeiro mês, e ao fim de quantos dias sai metade. Acompanhamos os anúncios ao longo do tempo — isto não é estimado a partir do preço, é o que aconteceu — e a conta inclui os que ainda estão à venda, que é o que a impede de ficar curta.</p>
       ${(fastest && slowest && fastest !== slowest) ? `<p class="fc-p">Do mais rápido ao mais lento: um ${escapeHtml(fastest.b)} ${escapeHtml(fastest.m)} sai no primeiro mês em <b>${liqPct(fastest.lq.s30)}%</b> dos casos, um ${escapeHtml(slowest.b)} ${escapeHtml(slowest.m)} em <b>${liqPct(slowest.lq.s30)}%</b>. Se vais anunciar, é a diferença entre pedir o preço todo e ter de ceder; se vais comprar, é onde tens margem para negociar.</p>` : ""}
       ${mkt.s30 != null ? `<p class="fc-p">No conjunto do mercado saem <b>${liqPct(mkt.s30)} em cada 100</b> no primeiro mês${mkt.md != null ? `, com uma mediana de <b>${mkt.md} dias</b>` : ""}. Um anúncio do OLX corre em ciclos de 30 dias e muitos desaparecem exatamente aí, por isso desaparecer não prova que vendeu.</p>` : ""}
       <div class="fc-scroll"><table class="fc-tbl">
@@ -1901,13 +1901,13 @@ export function renderLiquidityHub({ rows, market, host, depositCount, builtAt }
         <tbody>${tr}</tbody></table></div>
       ${provenance({ n: rows.reduce((s, r) => s + ((r.lq && r.lq.n) || r.sn || 0), 0), builtAt,
                      unit: "carros acompanhados até saírem", measureId: "days-on-market-km",
-                     measure: "Dias entre o carro aparecer no OLX e o último ciclo que o viu no ar, somando os anúncios repetidos do mesmo carro" })}
+                     measure: "Dias entre o carro aparecer no OLX ou no Standvirtual e o último ciclo que o viu no ar, somando os anúncios repetidos do mesmo carro" })}
       <p class="fc-p" style="margin-top:18px;"><a href="/pt/precos">Preços por modelo</a> · <a href="/pt/depreciacao">Desvalorização</a> · <a href="/pt/sobrevalorizados">Pedido vs. valor justo</a> · <a href="/pt/metodologia">Como medimos</a></p>
     </section>
     <div style="height:60px;"></div>`;
   return layout({
     title: "Quanto tempo demora a vender um carro em Portugal",
-    description: `Quantos anúncios de cada modelo saem do OLX Portugal no primeiro mês${mkt.s30 != null ? ` (mercado: ${liqPct(mkt.s30)}%)` : ""} e ao fim de quantos dias sai metade. Medido em anúncios reais acompanhados ao longo do tempo.`,
+    description: `Quantos anúncios de cada modelo saem do ar no primeiro mês${mkt.s30 != null ? ` (mercado: ${liqPct(mkt.s30)}%)` : ""} e ao fim de quantos dias sai metade. Medido em anúncios reais acompanhados ao longo do tempo.`,
     canonical, body, zone: "all", nav: "precos", depositCount, index: true, host,
     jsonLd: {
       "@context": "https://schema.org",
@@ -1915,7 +1915,7 @@ export function renderLiquidityHub({ rows, market, host, depositCount, builtAt }
         {
           "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
           "name": "Tempo até vender, por modelo (Portugal)",
-          "description": "Percentagem de anúncios que saem no primeiro mês e dias medianos até sair, por modelo, no OLX Portugal.",
+          "description": "Percentagem de anúncios que saem no primeiro mês e dias medianos até sair, por modelo, no OLX Portugal e no Standvirtual.",
           "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true, "dateModified": builtAt || undefined,
           "variableMeasured": ["Percentagem que sai em 30 dias", "Dias até sair (mediana)"],
@@ -1971,7 +1971,7 @@ export function renderValuationGap({ over, under, market, stats, host, depositCo
     <div style="height:60px;"></div>`;
   return layout({
     title: "Preço pedido vs. valor justo por modelo",
-    description: "Que modelos de carros usados em Portugal são pedidos acima ou abaixo do valor justo estimado, a partir de anúncios ativos do OLX.",
+    description: "Que modelos de carros usados em Portugal são pedidos acima ou abaixo do valor justo estimado, a partir de anúncios ativos do OLX e do Standvirtual.",
     canonical, body, zone: "all", nav: "precos", depositCount, index: true, host,
     jsonLd: {
       "@context": "https://schema.org",
@@ -2065,8 +2065,8 @@ export function monthLabel(month) {
 
 export const IDX_MIN_MONTH_WEEKS = 2;
 
-const IDX_NOTE_COVERAGE_2026_09 = "Entre 28 de agosto e 2 de setembro passámos a reconhecer mais marcas, modelos e anos nos anúncios, e deixámos de retirar um modelo do índice quando a amostra desce pouco abaixo do mínimo. Por isso, nestas semanas, o crescimento do número de anúncios e de modelos mede sobretudo essa cobertura e não a oferta, e a variação semanal do preço mediano reflete também a entrada desses modelos no cálculo.";
-const IDX_NOTE_RELIST_2026_09 = "A partir de 19 de setembro, um carro que volta a ser anunciado deixa de contar como saída, por isso os dias até sair desde essa data não se comparam diretamente com os das semanas anteriores.";
+const IDX_NOTE_COVERAGE_2026_09 = "Entre 28 de agosto e 2 de setembro, passámos a reconhecer mais marcas, modelos e anos nos anúncios e deixámos de retirar um modelo do índice quando a amostra fica ligeiramente abaixo do mínimo. Por isso, nas semanas de setembro, o crescimento do número de anúncios e de modelos reflete sobretudo o alargamento da cobertura, e não um aumento da oferta. A variação semanal do preço mediano também é afetada pela entrada destes modelos no cálculo.";
+const IDX_NOTE_RELIST_2026_09 = "Desde 19 de setembro, quando um carro sai do ar e volta mais tarde num anúncio novo, essa saída deixou de contar. Por isso, os dias até sair calculados depois dessa data não são diretamente comparáveis com os das semanas anteriores.";
 export const INDEX_NOTES = {
   "2026-W36": [IDX_NOTE_COVERAGE_2026_09],
   "2026-W37": [IDX_NOTE_COVERAGE_2026_09],
@@ -2220,7 +2220,7 @@ export function renderMarketIndex({ snapshot, history, host, depositCount, isArc
     title: isArchive
       ? `Índice do mercado de usados em Portugal — ${wk}`
       : "Índice do mercado de carros usados em Portugal",
-    description: `Semana ${wk}: preço mediano ${fmtEur(snapshot.priceMed)} em ${fmtNum(snapshot.listings)} anúncios ativos de ${snapshot.models} modelos no OLX Portugal e Standvirtual${snapshot.sellMed != null ? `, ${snapshot.sellMed} dias medianos até sair do anúncio` : ""}.`,
+    description: `Semana ${wk}: mediana por modelo de ${fmtEur(snapshot.priceMed)} pedidos${snapshot.sellMed != null ? ` e de ${snapshot.sellMed} dias até o anúncio sair do ar` : ""}, em ${fmtNum(snapshot.listings)} anúncios de particulares de ${snapshot.models} modelos no OLX Portugal e no Standvirtual.`,
     canonical, body, zone: "all", nav: "feed", depositCount, index: true, host,
     jsonLd: {
       "@context": "https://schema.org",
@@ -2228,12 +2228,12 @@ export function renderMarketIndex({ snapshot, history, host, depositCount, isArc
         {
           "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
           "name": `Índice do mercado de carros usados em Portugal — ${wk}`,
-          "description": "Preço pedido mediano, número de anúncios ativos, quilometragem mediana e dias medianos até sair do anúncio no mercado português de carros usados.",
+          "description": "Preço pedido mediano, número de anúncios ativos, quilometragem mediana e dias medianos até o anúncio sair do ar, no mercado português de carros usados.",
           "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true,
           "temporalCoverage": snapshot.date || undefined,
           "dateModified": snapshot.builtAt || undefined,
-          "variableMeasured": ["Preço pedido mediano por modelo (EUR)", "Anúncios ativos", "Dias até sair do anúncio (mediana)"],
+          "variableMeasured": ["Preço pedido mediano por modelo (EUR)", "Anúncios ativos", "Dias até sair do mercado (mediana)"],
         },
         breadcrumbLd(host, isArchive
           ? [{ name: "Início", href: "/pt" }, { name: "Índice de mercado", href: "/pt/mercado/indice" }, { name: wk }]
@@ -2259,8 +2259,7 @@ export function renderMarketMonth({ cut, months = [], host, depositCount }) {
 
   const weekRows = cut.rows.slice().sort((a, b) => a.week < b.week ? 1 : -1).map(h => `<tr>
       <td><a href="/pt/mercado/indice/${escapeHtml(h.week.toLowerCase())}" style="color:#177A47;font-weight:600;">${escapeHtml(h.week)}</a></td>
-      <td class="mut">${escapeHtml(h.date || "")}</td>
-      <td class="mut">${escapeHtml(String(h.builtAt || "").slice(0, 10))}</td>
+      <td class="mut">${escapeHtml(String(h.builtAt || h.date || "").slice(0, 10))}</td>
       <td>${fmtEur(h.priceMed)}</td>
       <td class="mut">${fmtNum(h.listings)}</td>
       <td class="mut">${h.models != null ? h.models : "—"}</td>
@@ -2279,7 +2278,7 @@ export function renderMarketMonth({ cut, months = [], host, depositCount }) {
       <h1 class="fc-h1">Índice do mercado de usados em Portugal — ${escapeHtml(label)}</h1>
       <p class="fc-p">Corte mensal do que estava à venda nos anúncios de particulares do OLX Portugal e do Standvirtual em ${escapeHtml(label)}: a mediana dos ${cut.n} cortes semanais desse mês${collected ? `, recolhidos a ${escapeHtml(collected)}` : ""}. O preço é a mediana das medianas por modelo: cada modelo conta uma vez, tenha muitos ou poucos anúncios. Este é o registo permanente do mês — os números desta página não voltam a mudar.</p>
       <div class="fc-stat-row" style="margin:20px 0 8px;">
-        <div class="fc-stat"><div class="k">PREÇO MEDIANO</div><div class="v">${fmtEur(cut.priceMed)}</div>${delta(cut.priceMed, prev && prev.priceMed) || `<div class="s">mediana por modelo</div>`}</div>
+        <div class="fc-stat"><div class="k">PREÇO MEDIANO</div><div class="v">${fmtEur(cut.priceMed)}</div>${delta(cut.priceMed, prev && prev.priceMed) || `<div class="s">cada modelo conta uma vez</div>`}</div>
         <div class="fc-stat"><div class="k">ANÚNCIOS ATIVOS</div><div class="v">${fmtNum(cut.listings)}</div>${delta(cut.listings, prev && prev.listings) || `<div class="s">mediana das semanas</div>`}</div>
         <div class="fc-stat"><div class="k">MODELOS COBERTOS</div><div class="v">${cut.models != null ? cut.models : "—"}</div><div class="s">com amostra suficiente</div></div>
         <div class="fc-stat"><div class="k">DIAS ATÉ SAIR</div><div class="v">${cut.sellMed != null ? cut.sellMed : "—"}</div><div class="s">mediana; não é tempo de venda</div></div>
@@ -2292,7 +2291,7 @@ export function renderMarketMonth({ cut, months = [], host, depositCount }) {
     <section class="section fc-wrap">
       <h2 class="fc-h2">As semanas deste mês</h2>
       <div class="fc-scroll"><table class="fc-tbl">
-        <thead><tr><th>Semana</th><th>Data</th><th>Recolhido</th><th>Preço mediano</th><th>Anúncios</th><th>Modelos</th><th>Dias até sair</th></tr></thead>
+        <thead><tr><th>Semana</th><th>Recolha</th><th>Preço mediano</th><th>Anúncios</th><th>Modelos</th><th>Dias até sair</th></tr></thead>
         <tbody>${weekRows}</tbody></table></div>
       <p class="fc-p" style="margin-top:12px;">Entram as semanas ISO que fecham dentro do mês, por isso o período vai de ${escapeHtml(cut.from || "")} a ${escapeHtml(cut.to || "")} e não do dia 1 ao último dia.${cut.missing.length ? ` Falta${cut.missing.length === 1 ? "" : "m"} ${cut.missing.length} das ${cut.monthWeeks} semanas (${cut.missing.map(escapeHtml).join(", ")}): não ${cut.missing.length === 1 ? "a guardámos" : "as guardámos"} na altura e não ${cut.missing.length === 1 ? "a inventamos" : "as inventamos"} agora, por isso a mediana deste mês é a de ${cut.n} semanas.` : ` Estão cá as ${cut.monthWeeks} semanas do mês.`}</p>
     </section>
@@ -2305,7 +2304,7 @@ export function renderMarketMonth({ cut, months = [], host, depositCount }) {
 
   return layout({
     title: `Índice do mercado de usados em Portugal — ${label}`,
-    description: `${label}: preço mediano ${fmtEur(cut.priceMed)} em ${fmtNum(cut.listings)} anúncios ativos no OLX Portugal e Standvirtual${cut.sellMed != null ? `, ${cut.sellMed} dias medianos até sair do anúncio` : ""} — mediana de ${cut.n} cortes semanais.`,
+    description: `${label.charAt(0).toUpperCase() + label.slice(1)}: mediana por modelo de ${fmtEur(cut.priceMed)} pedidos${cut.sellMed != null ? ` e de ${cut.sellMed} dias até o anúncio sair do ar` : ""}, em ${fmtNum(cut.listings)} anúncios de particulares no OLX Portugal e no Standvirtual (mediana de ${cut.n} cortes semanais).`,
     canonical: permalink, body, zone: "all", nav: "feed", depositCount, index: true, host,
     jsonLd: {
       "@context": "https://schema.org",
@@ -2313,12 +2312,12 @@ export function renderMarketMonth({ cut, months = [], host, depositCount }) {
         {
           "@type": "Dataset", "license": licenseUrl(host), "url": permalink, "inLanguage": "pt-PT",
           "name": `Índice do mercado de carros usados em Portugal — ${label}`,
-          "description": "Preço pedido mediano, número de anúncios ativos, quilometragem mediana e dias medianos até sair do anúncio no mercado português de carros usados, agregados por mês a partir dos cortes semanais.",
+          "description": "Preço pedido mediano, número de anúncios ativos, quilometragem mediana e dias medianos até o anúncio sair do ar, no mercado português de carros usados, agregados por mês a partir dos cortes semanais.",
           "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true,
           "temporalCoverage": cut.from && cut.to ? `${cut.from}/${cut.to}` : undefined,
           "dateModified": cut.builtAt || undefined,
-          "variableMeasured": ["Preço pedido mediano por modelo (EUR)", "Anúncios ativos", "Dias até sair do anúncio (mediana)"],
+          "variableMeasured": ["Preço pedido mediano por modelo (EUR)", "Anúncios ativos", "Dias até sair do mercado (mediana)"],
         },
         breadcrumbLd(host, crumbItems),
       ],
@@ -2356,7 +2355,7 @@ export function renderArchiveHub({ weeks = [], host, depositCount = null }) {
     </section>` : ""}
     <section class="section fc-wrap" style="padding-top:0;">
       <h2 class="fc-h2">O que vem em cada corte</h2>
-      <p class="fc-p">Por modelo: mediana pedida, intervalo interquartil, número de anúncios ativos e quilometragem mediana; e o mesmo por ano do carro. Os valores são <strong>preços pedidos</strong> em anúncios ativos do OLX Portugal, não preços de venda fechados — a <a href="/pt/metodologia">metodologia</a> explica a diferença.</p>
+      <p class="fc-p">Por modelo: mediana pedida, intervalo interquartil, número de anúncios ativos e quilometragem mediana; e o mesmo por ano do carro. Os valores são <strong>preços pedidos</strong> em anúncios ativos do OLX Portugal e do Standvirtual, não preços de venda fechados — a <a href="/pt/metodologia">metodologia</a> explica a diferença.</p>
       <p class="fc-p">Cada resposta traz <span class="mono">week</span>, <span class="mono">date</span> e <span class="mono">built_at</span>, para que a data da citação não dependa de quem cita.</p>
       <p class="fc-p"><a href="/pt/precos">Preços de hoje por modelo</a> · <a href="/pt/mercado/indice">Índice do mercado</a> · <a href="/llms.txt">llms.txt</a></p>
     </section>`;
@@ -2371,7 +2370,7 @@ export function renderArchiveHub({ weeks = [], host, depositCount = null }) {
         {
           "@type": "Dataset", "license": licenseUrl(host), "url": permalink, "inLanguage": "pt-PT",
           "name": "Arquivo semanal de preços de carros usados em Portugal",
-          "description": "Cortes semanais permanentes do preço pedido mediano, intervalo interquartil e número de anúncios ativos por modelo e por ano, a partir de anúncios do OLX Portugal.",
+          "description": "Cortes semanais permanentes do preço pedido mediano, intervalo interquartil e número de anúncios ativos por modelo e por ano, a partir de anúncios do OLX Portugal e do Standvirtual.",
           "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true,
           "distribution": shown.slice(0, 20).map(w => ({
@@ -2451,7 +2450,7 @@ function acceptedPriceErrorBlock(acc) {
         <tbody>${rows}</tbody>
       </table>
     </div>
-    <p class="mono" style="color:#5B606B;font-size:13px;margin-top:-2px;">Viés positivo = a estimativa lê acima do preço aceite. Medido em carros que saíram do OLX sem nunca mexer no preço e sem voltar como anúncio novo: aí o pedido foi o preço aceite.</p>`;
+    <p class="mono" style="color:#5B606B;font-size:13px;margin-top:-2px;">Viés positivo = a estimativa lê acima do preço aceite. Medido em carros que saíram do ar sem nunca mexer no preço e sem voltar como anúncio novo: aí o pedido foi o preço aceite.</p>`;
 }
 
 // ═══ /pt/metodologia ═════════════════════════════════════════════════════════
@@ -2492,7 +2491,7 @@ export function renderMethodology({ stats, mq, acc = null, imf = null, host, dep
       <p class="fc-p">Sem caixa preta: aqui está de onde vêm os números, o que cada um mede, e em que casos preferimos não mostrar nada a mostrar um valor fraco.</p>
 
       <h2 class="fc-h2">1. De onde vêm os dados</h2>
-      <p class="fc-p">Recolhemos diariamente os anúncios de automóveis de <b>particulares</b> do <b>OLX Portugal</b> e do <b>Standvirtual</b> e guardamos o histórico de cada um: preço, alterações de preço, e o dia em que o anúncio desaparece. Usamos apenas anúncios <b>ativos</b> no momento do cálculo${stats.listings ? `; hoje são ${fmtNum(stats.listings)} anúncios em ${stats.models} modelos` : ""}. Não compramos nem vendemos carros, não somos stand e não recebemos de nenhum vendedor.</p>
+      <p class="fc-p">Recolhemos diariamente os anúncios de automóveis publicados por <b>particulares</b> no <b>OLX Portugal</b> e no <b>Standvirtual</b>, e guardamos o histórico de cada um: preço, alterações de preço e o dia em que o anúncio desaparece. As medianas de preço pedido contam só os anúncios <b>ativos</b> no momento do cálculo${stats.listings ? `; hoje são ${fmtNum(stats.listings)} anúncios de ${stats.models} modelos` : ""}. O histórico dos anúncios que já saíram serve para os dias até sair, para as descidas de preço e para treinar o valor justo estimado. Não compramos nem vendemos carros, não somos stand e não recebemos dinheiro de nenhum vendedor.</p>
       <p class="fc-p">Um carro anunciado nos dois sites pode entrar duas vezes nas contagens: identificamos esses pares, mas as estatísticas ainda não os descontam.</p>
 
       <h2 class="fc-h2">2. O que é um "preço" aqui</h2>
@@ -2533,7 +2532,7 @@ export function renderMethodology({ stats, mq, acc = null, imf = null, host, dep
       ${modelQualityBlock(mq)}
 
       <h3 class="fc-h3">E quanto erra contra um preço que alguém aceitou</h3>
-      <p class="fc-p">A medição acima compara a estimativa com o <b>preço pedido</b>, que é o que o vendedor queria. Há um caso em que o pedido é o preço: um carro que saiu do OLX sem nunca mexer no número e sem voltar como anúncio novo — ninguém o fez baixar e foi-se pelo que estava escrito. É o mais perto de uma venda que estes dados chegam, e permite dizer o erro <b>por faixa de preço</b>, que é onde a diferença está:</p>
+      <p class="fc-p">A medição acima compara a estimativa com o <b>preço pedido</b>, que é o que o vendedor queria. Há um caso em que o pedido é o preço: um carro que saiu do ar sem nunca mexer no número e sem voltar como anúncio novo — ninguém o fez baixar e foi-se pelo que estava escrito. É o mais perto de uma venda que estes dados chegam, e permite dizer o erro <b>por faixa de preço</b>, que é onde a diferença está:</p>
       ${acceptedPriceErrorBlock(acc)}
 ${importEffectBlock(imf)}
       <h3 class="fc-h3">O que o modelo não vê</h3>
@@ -2555,6 +2554,7 @@ ${importEffectBlock(imf)}
         <li class="fc-li"><b>O dia que conta é o último em que o vimos vivo</b>, não o dia em que reparámos que tinha saído. Quando a recolha fica bloqueada uns dias, a varredura seguinte marca tudo de uma vez, e usar essa data acrescentaria a duração da avaria ao tempo de venda de milhares de carros.</li>
         <li class="fc-li"><b>Um anúncio do OLX corre em ciclos de 30 dias</b>, e vê-se: há uma acumulação de saídas exatamente aí. Por isso a figura principal é a <b>percentagem que sai no primeiro mês</b> e não a mediana — a mediana cai dentro desse degrau em quase todos os modelos e acaba a descrever o ciclo do OLX.</li>
       </ul>
+      <p class="fc-p"><b>Quantos baixam o preço.</b> Entre os carros que acompanhámos até o anúncio sair do ar (anunciados nos últimos 365 dias; os anúncios repetidos do mesmo carro contam como um só), contamos a percentagem cujo último preço ficou abaixo do primeiro preço que registámos. A descida é a mediana dessa diferença, só entre os que baixaram, em percentagem do primeiro preço. É uma conta líquida: quem baixou e voltou a subir até ao preço inicial não conta como descida.</p>
       <p class="fc-p">Um anúncio pode desaparecer por venda ou por desistência, e não distinguimos os dois: a leitura correta é <b>tempo até sair do mercado</b>. O que conseguimos afirmar é um mínimo do que não vendeu — os anúncios que reaparecem semanas depois como anúncio novo do mesmo carro, que emparelhamos pela ficha e pela quilometragem. Uma página de tempo de venda existe a partir de <b>40 anúncios acompanhados até ao fim</b>, e cada corte dentro dela (preço, idade, distrito) precisa dos seus próprios 40.</p>
 
       <h2 class="fc-h2" id="importar">7. Importar da Alemanha</h2>
@@ -2623,7 +2623,7 @@ export function renderAbout({ stats, mq, host, depositCount, builtAt }) {
       <ul class="fc-ul">
         <li class="fc-li"><b>${stats.models}</b> modelos com amostra suficiente para publicar preços${stats.listings ? `, sobre ${fmtNum(stats.listings)} anúncios ativos` : ""}.</li>
         <li class="fc-li">Preço mediano por modelo e <b>por ano de fabrico</b>, sempre com o intervalo onde cabe metade dos anúncios.</li>
-        <li class="fc-li"><a href="/pt/liquidez">Tempo até sair do anúncio</a> — medido em anúncios reais, não estimado.</li>
+        <li class="fc-li"><a href="/pt/liquidez">Tempo até sair do mercado</a> — medido em anúncios reais, não estimado.</li>
         <li class="fc-li"><a href="/pt/depreciacao">Curvas de desvalorização</a> para os modelos com histórico suficiente.</li>
         <li class="fc-li">Um <a href="/pt/mercado/indice">índice semanal do mercado</a>, com registo permanente de cada semana.</li>
       </ul>
@@ -2643,7 +2643,7 @@ export function renderAbout({ stats, mq, host, depositCount, builtAt }) {
     <div style="height:60px;"></div>`;
   return layout({
     title: "Quem somos — avaliação independente de usados",
-    description: `Projeto independente que mede o mercado português de carros usados a partir de anúncios ativos do OLX: ${stats.models} modelos, método publicado, sem ligação a stands.`,
+    description: `Projeto independente que mede o mercado português de carros usados a partir de anúncios ativos do OLX e do Standvirtual: ${stats.models} modelos, método publicado, sem ligação a stands.`,
     canonical, body, zone: "all", nav: null, depositCount, index: true, host,
     jsonLd: {
       "@context": "https://schema.org",
@@ -2653,7 +2653,7 @@ export function renderAbout({ stats, mq, host, depositCount, builtAt }) {
           "mainEntity": {
             "@type": "Organization", "name": "Carsbuyer", "alternateName": "Flipper Club",
             "url": `https://${host}/`, "areaServed": "PT",
-            "description": "Avaliação independente de carros usados em Portugal a partir de anúncios ativos do OLX.",
+            "description": "Avaliação independente de carros usados em Portugal a partir de anúncios ativos do OLX e do Standvirtual.",
             ...(SITE_CONTACT ? { "email": SITE_CONTACT } : {}),
             ...(SITE_AUTHOR ? { "founder": { "@type": "Person", "name": SITE_AUTHOR } } : {}),
           },
@@ -2909,7 +2909,7 @@ export function modelJson(rec, slug, { host, builtAt, models = null }) {
     source_url: `${base}/pt/preco/${slug}`,
     licence: "Citação permitida com atribuição a Carsbuyer e indicação da data.",
     measured: "asking_price",
-    measured_note: "Preços PEDIDOS em anúncios ativos do OLX Portugal, não preços de venda fechados.",
+    measured_note: "Preços PEDIDOS em anúncios ativos do OLX Portugal e do Standvirtual, não preços de venda fechados.",
     collected_until: (builtAt || "").slice(0, 10) || null,
     updated_at: builtAt || null,
     market: "PT", currency: "EUR",
@@ -2961,7 +2961,7 @@ export function depreciationJson(rec, slug, fit, av, { host, builtAt }) {
     source_url: `${base}/pt/depreciacao/${slug}`,
     licence: "Citação permitida com atribuição a Carsbuyer e indicação da data.",
     measured: "asking_price",
-    measured_note: "Preços PEDIDOS em anúncios ativos do OLX Portugal, não preços de venda fechados.",
+    measured_note: "Preços PEDIDOS em anúncios ativos do OLX Portugal e do Standvirtual, não preços de venda fechados.",
     collected_until: (builtAt || "").slice(0, 10) || null,
     updated_at: builtAt || null,
     market: "PT", currency: "EUR",
@@ -3018,7 +3018,7 @@ export function facetJson(rec, slug, kind, cell, siblings, { host, builtAt }) {
     source_url: `${base}/pt/preco/${slug}/${cell.k}`,
     licence: "Citação permitida com atribuição a Carsbuyer e indicação da data.",
     measured: "asking_price",
-    measured_note: "Preços PEDIDOS em anúncios ativos do OLX Portugal, não preços de venda fechados.",
+    measured_note: "Preços PEDIDOS em anúncios ativos do OLX Portugal e do Standvirtual, não preços de venda fechados.",
     collected_until: (builtAt || "").slice(0, 10) || null,
     updated_at: builtAt || null,
     market: "PT", currency: "EUR",
@@ -3055,8 +3055,8 @@ export function yearJson(rec, slug, year, cell, { host, builtAt }) {
     licence: "Citação permitida com atribuição a Carsbuyer e indicação da data.",
     measured: "asking_price",
     measured_note: cell.w
-      ? `Preços PEDIDOS em anúncios do OLX Portugal dos últimos ${cell.w} dias, ativos e já fechados, não preços de venda.`
-      : "Preços PEDIDOS em anúncios ativos do OLX Portugal, não preços de venda fechados.",
+      ? `Preços PEDIDOS em anúncios do OLX Portugal e do Standvirtual dos últimos ${cell.w} dias, ativos e já fechados, não preços de venda.`
+      : "Preços PEDIDOS em anúncios ativos do OLX Portugal e do Standvirtual, não preços de venda fechados.",
     collected_until: (builtAt || "").slice(0, 10) || null,
     updated_at: builtAt || null,
     market: "PT", currency: "EUR",
@@ -3196,7 +3196,7 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
   ]) + `
     <div style="padding-top:14px;">
       <div class="side-card" style="max-width:680px;margin:0 auto;">
-        <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">${escapeHtml(cell.lbl).toUpperCase()} · OLX PORTUGAL</span></div>
+        <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">${escapeHtml(cell.lbl).toUpperCase()} · OLX E STANDVIRTUAL</span></div>
         <h1 class="fc-h1">Quanto vale um ${phrase} usado?</h1>
         <p class="lede" style="font-size:16px;margin:0 0 20px;">Em <b>${cell.n} anúncios ativos</b>${isFuel || isGear ? "" : " no distrito"}, um ${phrase} pede em mediana <b>${fmtEur(cell.fm)}</b>${cell.km != null ? `, com ${fmtKm(cell.km)} medianos` : ""}${cell.y0 && cell.y1 ? `, para anos ${cell.y0}-${cell.y1}` : ""}.${ageNote}</p>
         <div class="side-prices">
@@ -3242,7 +3242,7 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
 
   const faqs = [[
     `Quanto vale um ${titlePhrase} usado?`,
-    `Em ${cell.n} anúncios ativos no OLX Portugal, um ${titlePhrase} pede em mediana ${fmtEur(cell.fm)}, com metade dos anúncios entre ${fmtEur(cell.fl)} e ${fmtEur(cell.fh)}. São preços pedidos, não preços de venda fechados.`,
+    `Em ${cell.n} anúncios ativos no OLX Portugal e no Standvirtual, um ${titlePhrase} pede em mediana ${fmtEur(cell.fm)}, com metade dos anúncios entre ${fmtEur(cell.fl)} e ${fmtEur(cell.fh)}. São preços pedidos, não preços de venda fechados.`,
   ]];
   if (others.length) {
     const o = others[0];
@@ -3260,7 +3260,7 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
 
   return layout({
     title: `${titlePhrase} usado: preço ${fmtEur(cell.fm)}${monthTag(builtAt) ? ` em ${monthTag(builtAt)}` : ""} (${cell.n} anúncios)`,
-    description: `${titlePhrase}: preço mediano ${fmtEur(cell.fm)} (${fmtEur(cell.fl)}–${fmtEur(cell.fh)}) em ${cell.n} anúncios ativos do OLX Portugal.${ageMoves ? ` Ajustado pela idade, o corte pede ${more(age.pct)} ${agePct}% do que ${refAll}.` : ""}`,
+    description: `${titlePhrase}: preço mediano ${fmtEur(cell.fm)} (${fmtEur(cell.fl)}–${fmtEur(cell.fh)}) em ${cell.n} anúncios ativos do OLX Portugal e do Standvirtual.${ageMoves ? ` Ajustado pela idade, o corte pede ${more(age.pct)} ${agePct}% do que ${refAll}.` : ""}`,
     canonical, body, zone: "all", nav: "precos", depositCount, index: true, host, altJson,
     jsonLd: {
       "@context": "https://schema.org",
@@ -3269,7 +3269,7 @@ export function renderFacetPage({ rec, slug, kind, cell, siblingsCells, stats, h
           "@type": "Dataset",
         "license": licenseUrl(host),
           "name": `Preços de ${titlePhrase} em Portugal`,
-          "description": `Mediana e intervalo interquartil dos preços pedidos em ${cell.n} anúncios ativos de ${titlePhrase} no OLX Portugal.`,
+          "description": `Mediana e intervalo interquartil dos preços pedidos em ${cell.n} anúncios ativos de ${titlePhrase} no OLX Portugal e no Standvirtual.`,
           "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true, "dateModified": builtAt || undefined,
           "variableMeasured": "Preço pedido (EUR)", "url": canonical,
@@ -3347,7 +3347,7 @@ export function renderDistrictPage({ key, rec, models, districts, stats, host, d
     { name: "Início", href: "/pt" }, { name: "Preços", href: "/pt/precos" }, { name: rec.lbl },
   ]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
-      <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">${L.toUpperCase()} · OLX PORTUGAL</span></div>
+      <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">${L.toUpperCase()} · OLX E STANDVIRTUAL</span></div>
       <h1 class="fc-h1">Preços de carros usados ${emDistrito(key, L)}</h1>
       <p class="fc-p">Nos <b>${fmtNum(rec.n)} anúncios ativos</b> com localização ${emDistrito(key, L)}, o preço pedido mediano é <b>${fmtEur(rec.fm)}</b>${rec.kmm != null ? `, com ${fmtKm(rec.kmm)} de quilometragem mediana` : ""}.${vsNational != null ? ` Isso é <b>${Math.abs(Math.round(vsNational * 100))}% ${vsNational >= 0 ? "acima" : "abaixo"}</b> da mediana nacional (${fmtEur(stats.priceMed)}).` : ""}</p>
       <div class="fc-stat-row" style="margin:18px 0 6px;">
@@ -3380,7 +3380,7 @@ export function renderDistrictPage({ key, rec, models, districts, stats, host, d
 
   return layout({
     title: `Preços de carros usados ${emDistrito(key, rec.lbl)}`,
-    description: `Carros usados ${emDistrito(key, rec.lbl)}: preço mediano ${fmtEur(rec.fm)} em ${fmtNum(rec.n)} anúncios ativos do OLX, e como cada modelo se compara com a mediana nacional.`,
+    description: `Carros usados ${emDistrito(key, rec.lbl)}: preço mediano ${fmtEur(rec.fm)} em ${fmtNum(rec.n)} anúncios ativos do OLX e do Standvirtual, e como cada modelo se compara com a mediana nacional.`,
     canonical, body, zone: "all", nav: "precos", depositCount, index: true, host,
     jsonLd: {
       "@context": "https://schema.org",
@@ -3605,7 +3605,7 @@ export function renderImportHub({ rows, costs, host, depositCount, builtAt }) {
   const body = crumbs([{ name: "Início", href: "/pt" }, { name: "Importar" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">Importar da Alemanha: em que modelos a conta fecha</h1>
-      <p class="fc-p">Toda a gente que vende importação mostra o mesmo: um simulador de ISV. Um ISV sozinho não decide nada — o que decide é o preço alemão <b>mais</b> o imposto <b>mais</b> a legalização, contra o que o mesmo carro pede em Portugal hoje. É essa conta que está aqui, ano a ano, com as duas pontas medidas em anúncios reais: AutoScout24 de um lado, OLX do outro.</p>
+      <p class="fc-p">Toda a gente que vende importação mostra o mesmo: um simulador de ISV. Um ISV sozinho não decide nada — o que decide é o preço alemão <b>mais</b> o imposto <b>mais</b> a legalização, contra o que o mesmo carro pede em Portugal hoje. É essa conta que está aqui, ano a ano, com as duas pontas medidas em anúncios reais: AutoScout24 de um lado, OLX e Standvirtual do outro.</p>
       <p class="fc-p">Em <b>${winners} dos ${rows.length}</b> modelos que conseguimos comparar a importação fecha a favor na mediana dos anos. Nos outros, não — e isso também é resposta.${lo != null ? ` Fora o ISV, a legalização anda entre ${fmtEur(lo)} e ${fmtEur(hi)}.` : ""}</p>
       <div class="fc-scroll"><table class="fc-tbl">
         <thead><tr><th>Modelo</th><th>Diferença mediana</th><th>Anos a favor</th><th>Anúncios DE</th><th>Anúncios PT</th></tr></thead>
@@ -3860,7 +3860,7 @@ export function renderDuelPage({ rec, slug, av, stats, host, depositCount, built
   ]) + `
     <div style="padding-top:14px;">
       <div class="side-card" style="max-width:680px;margin:0 auto;">
-        <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">${S.eyebrow} · OLX PORTUGAL</span></div>
+        <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">${S.eyebrow} · OLX E STANDVIRTUAL</span></div>
         <h1 class="fc-h1">${B} ${M}: ${S.question} segura melhor o preço?</h1>
         <p class="lede" style="font-size:16px;margin:0 0 18px;">Ajustámos as duas curvas em separado sobre <b>${av.n} anúncios ativos</b> de ${B} ${M} (${av.a.n} ${escapeHtml(S.a.low)}, ${av.b.n} ${escapeHtml(S.b.low)}, matrículas de ${av.y0} a ${av.y1}), com a quilometragem igualada. ${S.a.subj[0].toUpperCase()}${S.a.subj.slice(1)} perde <b>${aPct}% por ano de idade</b>, ${S.b.subj} <b>${bPct}%</b>.</p>
         <div class="fc-stat-row">
@@ -3902,8 +3902,8 @@ export function renderDuelPage({ rec, slug, av, stats, host, depositCount, built
   const faqs = [
     [`Num ${rec.b} ${rec.m}, ${S.a.low} desvaloriza mais do que ${S.b.low}?`,
      av.decisive
-       ? `Não da forma que se costuma dizer: neste modelo é ${win.subj} que segura melhor o preço. Em ${av.n} anúncios ativos do OLX Portugal, com a quilometragem igualada, ${S.a.subj} perde ${aPct}% por ano de idade e ${S.b.subj} ${bPct}% — ${ppc(av.diff)} pontos de diferença por ano a favor ${withPrep("de", win.subj)}, contra ${lose.subj}.`
-       : `Neste modelo a diferença não é distinguível: ${S.a.subj} perde ${aPct}% por ano de idade e ${S.b.subj} ${bPct}%, uma distância de ${ppc(av.diff)} pontos que cabe na margem da medição (±${ppc(av.ci)} pontos) sobre ${av.n} anúncios ativos do OLX Portugal.`],
+       ? `Não da forma que se costuma dizer: neste modelo é ${win.subj} que segura melhor o preço. Em ${av.n} anúncios ativos do OLX Portugal e do Standvirtual, com a quilometragem igualada, ${S.a.subj} perde ${aPct}% por ano de idade e ${S.b.subj} ${bPct}% — ${ppc(av.diff)} pontos de diferença por ano a favor ${withPrep("de", win.subj)}, contra ${lose.subj}.`
+       : `Neste modelo a diferença não é distinguível: ${S.a.subj} perde ${aPct}% por ano de idade e ${S.b.subj} ${bPct}%, uma distância de ${ppc(av.diff)} pontos que cabe na margem da medição (±${ppc(av.ci)} pontos) sobre ${av.n} anúncios ativos do OLX Portugal e do Standvirtual.`],
     [`Um ${rec.b} ${rec.m} ${S.a.low} é mais caro do que ${S.b.low}?`,
      av.gap.length
        ? `Aos ${av.gap[0][0]} anos e com a mesma quilometragem, ${S.a.subj} pede ${av.gap[0][1] >= 0 ? "mais" : "menos"} ${ppc(av.gap[0][1])}% do que ${S.b.subj}. Em bruto, sem igualar quilómetros, a mediana pedida é ${fmtEur(av.a.fm)} (${fmtKm(av.a.km)} medianos) contra ${fmtEur(av.b.fm)} (${fmtKm(av.b.km)}).`
@@ -3912,7 +3912,7 @@ export function renderDuelPage({ rec, slug, av, stats, host, depositCount, built
 
   return layout({
     title: `${rec.b} ${rec.m}: ${S.question} segura melhor o preço?`,
-    description: `Num ${rec.b} ${rec.m}, ${S.a.low} perde ${aPct}% por ano de idade e ${S.b.low} ${bPct}%, medido em ${av.n} anúncios ativos do OLX Portugal com a quilometragem igualada.${av.decisive ? ` Vantagem ${withPrep("de", win.subj)}: ${ppc(av.diff)} pontos por ano.` : " A diferença não é distinguível da margem da medição."}`,
+    description: `Num ${rec.b} ${rec.m}, ${S.a.low} perde ${aPct}% por ano de idade e ${S.b.low} ${bPct}%, medido em ${av.n} anúncios ativos do OLX Portugal e do Standvirtual com a quilometragem igualada.${av.decisive ? ` Vantagem ${withPrep("de", win.subj)}: ${ppc(av.diff)} pontos por ano.` : " A diferença não é distinguível da margem da medição."}`,
     canonical, body, zone: "all", nav: "precos", depositCount, index: true, host,
     altJson: `${canonical}.json`,
     jsonLd: {
@@ -3921,7 +3921,7 @@ export function renderDuelPage({ rec, slug, av, stats, host, depositCount, built
         {
           "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
           "name": `Desvalorização de ${rec.b} ${rec.m} por ${S.kind === "fuel" ? "combustível" : "caixa"}`,
-          "description": `Taxa de desvalorização anual de ${rec.b} ${rec.m} em ${S.a.low} (${aPct}%) e em ${S.b.low} (${bPct}%), ajustada à quilometragem, sobre ${av.n} anúncios ativos do OLX Portugal entre ${av.y0} e ${av.y1}.`,
+          "description": `Taxa de desvalorização anual de ${rec.b} ${rec.m} em ${S.a.low} (${aPct}%) e em ${S.b.low} (${bPct}%), ajustada à quilometragem, sobre ${av.n} anúncios ativos do OLX Portugal e do Standvirtual entre ${av.y0} e ${av.y1}.`,
           "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true, "dateModified": builtAt || undefined,
           "temporalCoverage": `${av.y0}/${av.y1}`,
@@ -3989,7 +3989,7 @@ export function renderDuelHub({ spec, rows, other, stats, host, depositCount, bu
 
   return layout({
     title: S.hubTitle,
-    description: `Em ${rows.length} modelos com amostra para separar as duas curvas, ${S.a.low} segura melhor o preço em ${aWins} e ${S.b.low} em ${bWins}. Taxas por ano de idade medidas em anúncios ativos do OLX Portugal, com a quilometragem controlada.`,
+    description: `Em ${rows.length} modelos com amostra para separar as duas curvas, ${S.a.low} segura melhor o preço em ${aWins} e ${S.b.low} em ${bWins}. Taxas por ano de idade medidas em anúncios ativos do OLX Portugal e do Standvirtual, com a quilometragem controlada.`,
     canonical, body, zone: "all", nav: "precos", depositCount, index: true, host,
     jsonLd: {
       "@context": "https://schema.org",
@@ -3997,7 +3997,7 @@ export function renderDuelHub({ spec, rows, other, stats, host, depositCount, bu
         {
           "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
           "name": `Desvalorização por ${S.kind === "fuel" ? "combustível" : "caixa"}, modelo a modelo (Portugal)`,
-          "description": `Taxa de desvalorização anual em ${S.a.low} e em ${S.b.low} para ${rows.length} modelos, ajustada à quilometragem, a partir de anúncios ativos do OLX Portugal.`,
+          "description": `Taxa de desvalorização anual em ${S.a.low} e em ${S.b.low} para ${rows.length} modelos, ajustada à quilometragem, a partir de anúncios ativos do OLX Portugal e do Standvirtual.`,
           "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true, "dateModified": builtAt || undefined,
           "variableMeasured": ["Desvalorização anual (%)", S.kind === "fuel" ? "Combustível" : "Caixa"],
@@ -4099,7 +4099,7 @@ export function renderVenderPage({ guides = "", rec, slug, market, pageYears = [
   const speedRows = [["30", f.s30], ["60", f.s60], ["90", f.s90]].filter(([, v]) => v != null)
     .map(([d, v]) => `<tr><td>${d} dias</td><td><b>${liqPct(v)} em cada 100</b></td><td class="mut">${liqPct(1 - v)} ainda à venda</td></tr>`).join("");
   const speedLead = f.days != null
-    ? `Metade dos ${B} ${M} que saem do OLX sai em <b>${f.days} dias</b>.`
+    ? `Metade dos ${B} ${M} que saem do ar sai em <b>${f.days} dias</b>.`
     : "";
   const speedMkt = f.s30 != null
     ? ` No primeiro mês saem <b>${liqPct(f.s30)} em cada 100</b>${
@@ -4141,8 +4141,8 @@ export function renderVenderPage({ guides = "", rec, slug, market, pageYears = [
   const body = crumbs([{ name: "Início", href: "/pt" }, { name: "Vender", href: "/pt/vender" }, { name: `${rec.b} ${rec.m}` }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">Vender um ${B} ${M}: quanto pedir e em quantos dias vende</h1>
-      <p class="fc-p">Nos <b>${rec.n} anúncios ativos</b> de ${B} ${M} no OLX, metade pede entre <b>${FL}</b> e <b>${FH}</b>, com mediana de <b>${FM}</b>. ${speedLead}${speedMkt} Estes são os números contra os quais o teu anúncio vai ser lido.</p>
-      ${provenance({ n: rec.n, builtAt, measure: `Preço pedido, ${B} ${M} (mediana e P25-P75); dias até sair do anúncio` })}
+      <p class="fc-p">Nos <b>${rec.n} anúncios ativos</b> de ${B} ${M} no OLX e no Standvirtual, metade pede entre <b>${FL}</b> e <b>${FH}</b>, com mediana de <b>${FM}</b>. ${speedLead}${speedMkt} Estes são os números contra os quais o teu anúncio vai ser lido.</p>
+      ${provenance({ n: rec.n, builtAt, measure: `Preço pedido, ${B} ${M} (mediana e P25-P75); dias até sair do mercado` })}
 
       <h2 class="fc-h2">Quanto pedir</h2>
       <p class="fc-p">Acima de ${FH} ficas na quarta parte mais cara dos anúncios e competes com carros mais novos ou com menos quilómetros. Abaixo de ${FL} estás na quarta parte mais barata, onde o comprador desconfia antes de perguntar. O ponto de partida mais comum é a mediana do teu ano:</p>
@@ -4173,11 +4173,11 @@ export function renderVenderPage({ guides = "", rec, slug, market, pageYears = [
 
   const faqs = [
     [`Quanto pedir por um ${rec.b} ${rec.m} usado?`,
-     `A mediana pedida nos ${rec.n} anúncios ativos do OLX é ${FM}; metade dos anúncios pede entre ${FL} e ${FH}. O ano concreto muda o número: a tabela desta página tem a mediana de cada ano.`],
+     `A mediana pedida nos ${rec.n} anúncios ativos do OLX e do Standvirtual é ${FM}; metade dos anúncios pede entre ${FL} e ${FH}. O ano concreto muda o número: a tabela desta página tem a mediana de cada ano.`],
     ...(f.days != null ? [[`Em quantos dias se vende um ${rec.b} ${rec.m}?`,
-     `Metade dos ${rec.b} ${rec.m} que saem do OLX sai em ${f.days} dias${f.s30 != null ? `; no primeiro mês saem ${liqPct(f.s30)} em cada 100` : ""}. Medido em anúncios reais acompanhados até saírem.`]] : []),
+     `Metade dos ${rec.b} ${rec.m} que saem do ar sai em ${f.days} dias${f.s30 != null ? `; no primeiro mês saem ${liqPct(f.s30)} em cada 100` : ""}. Medido em anúncios reais acompanhados até saírem.`]] : []),
     ...(f.days != null && f.s90 != null ? [[`Vale mais a pena vender o ${rec.b} ${rec.m} a um stand?`,
-     `Depende do que valem para ti ${f.days} dias. É essa a mediana até um ${rec.b} ${rec.m} sair do OLX, e ao fim de três meses ${liqPct(1 - f.s90)} em cada 100 continuam à venda${f.cu != null ? `; ${liqPct(f.cu)} em cada 100 baixaram o preço pelo caminho` : ""}. Quanto paga um stand não medimos — a proposta não é pública — mas a diferença entre ela e os preços desta página é o que custa esperar.`]] : []),
+     `Depende do que valem para ti ${f.days} dias. É essa a mediana até um ${rec.b} ${rec.m} sair do ar, e ao fim de três meses ${liqPct(1 - f.s90)} em cada 100 continuam à venda${f.cu != null ? `; ${liqPct(f.cu)} em cada 100 baixaram o preço pelo caminho` : ""}. Quanto paga um stand não medimos — a proposta não é pública — mas a diferença entre ela e os preços desta página é o que custa esperar.`]] : []),
     ...(f.cu != null ? [[`Vale a pena baixar o preço de um ${rec.b} ${rec.m}?`,
      `${liqPct(f.cu)} em cada 100 anúncios deste modelo baixaram o preço antes de sair${f.cp != null ? `, em mediana ${liqPct(f.cp)}%` : ""}. Baixa-se porque o carro não está a sair; começar perto da mediana do ano evita a descida.`]] : []),
   ];
@@ -4193,10 +4193,10 @@ export function renderVenderPage({ guides = "", rec, slug, market, pageYears = [
         {
           "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
           "name": `Vender ${rec.b} ${rec.m}: preço pedido e tempo de venda em Portugal`,
-          "description": `Mediana e intervalo do preço pedido por ano, dias até sair do OLX e frequência de descidas de preço para ${rec.b} ${rec.m}.`,
+          "description": `Mediana e intervalo do preço pedido por ano, dias até sair do mercado e frequência de descidas de preço para ${rec.b} ${rec.m}.`,
           "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true, "dateModified": builtAt || undefined,
-          "variableMeasured": ["Preço pedido (EUR)", "Dias até sair do OLX", "Anúncios com descida de preço (%)",
+          "variableMeasured": ["Preço pedido (EUR)", "Dias até sair do mercado", "Anúncios com descida de preço (%)",
                                "Anúncios ainda à venda ao fim de 90 dias (%)", "Anúncios repostos como novo (%)"],
           "distribution": [{ "@type": "DataDownload", "encodingFormat": "application/json", "contentUrl": `${canonical}.json` }],
         },
@@ -4220,19 +4220,19 @@ export function renderVenderHub({ rows, market, host, depositCount, builtAt }) {
   const body = crumbs([{ name: "Início", href: "/pt" }, { name: "Vender" }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">Vender carro usado em Portugal: quanto pedir por modelo</h1>
-      <p class="fc-p">Para cada modelo com amostra suficiente no OLX: o que os outros vendedores estão a pedir, em quantos dias os anúncios saem e quantos acabam por baixar o preço. É a referência contra a qual o teu anúncio vai ser comparado — e a que usas para ler uma proposta de compra.</p>
+      <p class="fc-p">Para cada modelo com amostra suficiente no OLX e no Standvirtual: o que os outros vendedores estão a pedir, em quantos dias os anúncios saem e quantos acabam por baixar o preço. É a referência contra a qual o teu anúncio vai ser comparado — e a que usas para ler uma proposta de compra.</p>
       ${mkt.s30 != null ? `<p class="fc-p">No conjunto do mercado saem <b>${liqPct(mkt.s30)} em cada 100</b> anúncios no primeiro mês${mkt.md != null ? `, com mediana de <b>${mkt.md} dias</b>` : ""}${mkt.cu != null ? `, e <b>${liqPct(mkt.cu)} em cada 100</b> baixam o preço antes de sair${mkt.cp != null ? ` (em mediana ${liqPct(mkt.cp)}%)` : ""}` : ""}.</p>` : ""}
       <div class="fc-scroll"><table class="fc-tbl">
         <thead><tr><th>Modelo</th><th>Mediana pedida</th><th>Metade pede entre</th><th>Sai em 30 dias</th><th>Baixam o preço</th><th>Anúncios</th></tr></thead>
         <tbody>${tr}</tbody></table></div>
       <p class="fc-p" style="margin-top:18px;">O teu modelo não está na lista? <a href="/pt/avaliar#escolher">Escolhe-o na avaliação por modelo e ano</a>: mostra a mediana pedida e a faixa do mercado.</p>
-      ${provenance({ n: rows.reduce((s, r) => s + (r.n || 0), 0), builtAt, measure: "Preço pedido em anúncios ativos (mediana e P25-P75); dias até sair do anúncio" })}
+      ${provenance({ n: rows.reduce((s, r) => s + (r.n || 0), 0), builtAt, measure: "Preço pedido em anúncios ativos (mediana e P25-P75); dias até sair do mercado" })}
       <p class="fc-p" style="margin-top:18px;"><a href="/pt/precos">Preços por modelo</a> · <a href="/pt/liquidez">Tempo de venda</a> · <a href="/pt/depreciacao">Desvalorização</a> · <a href="/pt/metodologia">Como medimos</a></p>
     </section>
     <div style="height:60px;"></div>`;
   return layout({
     title: "Vender carro usado: quanto pedir e em quantos dias vende, por modelo",
-    description: `Quanto pedir por um carro usado em Portugal, modelo a modelo: mediana pedida no OLX, em quantos dias os anúncios saem e quantos baixam o preço. ${rows.length} modelos.`,
+    description: `Quanto pedir por um carro usado em Portugal, modelo a modelo: mediana pedida no OLX e no Standvirtual, em quantos dias os anúncios saem e quantos baixam o preço. ${rows.length} modelos.`,
     canonical, body, zone: "all", nav: "avaliar", depositCount, index: true, host,
     jsonLd: {
       "@context": "https://schema.org",
@@ -4240,7 +4240,7 @@ export function renderVenderHub({ rows, market, host, depositCount, builtAt }) {
         {
           "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
           "name": "Quanto pedir por um carro usado, por modelo (Portugal)",
-          "description": "Mediana do preço pedido, dias até sair e frequência de descidas de preço por modelo, no OLX Portugal.",
+          "description": "Mediana do preço pedido, dias até sair e frequência de descidas de preço por modelo, no OLX Portugal e no Standvirtual.",
           "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true, "dateModified": builtAt || undefined,
         },

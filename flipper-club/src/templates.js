@@ -1092,7 +1092,7 @@ export function layout({ title, body, zone, nav, depositCount, index = false, de
   </div>
 </footer>` : `<footer class="footer">
   <div class="footer-in">
-    <span class="mono">AVALIAÇÃO INDEPENDENTE&nbsp;· dados de anúncios públicos OLX&nbsp;· estimativas indicativas, não vinculativas&nbsp;· não somos stand nem intermediário</span>
+    <span class="mono">AVALIAÇÃO INDEPENDENTE&nbsp;· dados de anúncios públicos do OLX e do Standvirtual&nbsp;· estimativas indicativas, não vinculativas&nbsp;· não somos stand nem intermediário</span>
     <span class="mono"><a href="/pt/precos" style="color:#5B606B;">Preços por modelo</a>&nbsp;· <a href="/pt/depreciacao" style="color:#5B606B;">Desvalorização</a>&nbsp;· <a href="/pt/comparar" style="color:#5B606B;">Comparar</a>&nbsp;· <a href="/pt/liquidez" style="color:#5B606B;">Tempo de venda</a>&nbsp;· <a href="/pt/mercado/indice" style="color:#5B606B;">Índice de mercado</a>&nbsp;· <a href="/pt/avaliar" style="color:#5B606B;">Quanto vale o meu carro</a>&nbsp;· <a href="/pt/vender" style="color:#5B606B;">Vender o meu carro</a>&nbsp;· <a href="/pt/guias" style="color:#5B606B;">Guias para vender</a></span>
     <span class="mono"><a href="/pt/metodologia" style="color:#5B606B;">Metodologia</a>&nbsp;· <a href="/pt/sobre" style="color:#5B606B;">Quem somos</a>&nbsp;· <a href="/pt/isv" style="color:#5B606B;">Simulador ISV</a>&nbsp;· <a href="/pt/importar" style="color:#5B606B;">Importar da Alemanha</a>&nbsp;· <a href="/pt/privacidade" style="color:#5B606B;">Privacidade</a>&nbsp;· Portugal&nbsp;🇵🇹</span>${switcherLine}
   </div>
@@ -1679,7 +1679,7 @@ const AVALIAR_FAQ = [
           ["Esta avaliação serve para vender ao meu stand ou ao seguro?",
            "É uma estimativa independente a partir de anúncios reais e serve para saber por quanto anunciar ou quanto oferecer. Não é uma avaliação oficial para efeitos de seguro, sinistro ou fiscais, e não somos stand nem intermediário."],
           ["De onde vêm os valores?",
-           "De anúncios ativos de carros no OLX Portugal, recolhidos diariamente. Trabalhamos com preços pedidos, com a mediana e o intervalo interquartil, e com um modelo estatístico para o valor justo. O método completo está publicado na página de metodologia."],
+           "De anúncios ativos de carros no OLX Portugal e no Standvirtual, recolhidos diariamente. Trabalhamos com preços pedidos, com a mediana e o intervalo interquartil, e com um modelo estatístico para o valor justo. O método completo está publicado na página de metodologia."],
         ];
 
 export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depositCount, host, builtAt, contact, historyUrl = null, market = null, stats = null, norms = null, acc = null }) {
@@ -2346,7 +2346,7 @@ export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, h
         // из seo-pages.js: зависимость между модулями односторонняя.
         "license": `https://${host}/pt/metodologia#licenca`,
         "name": `Preços de ${rec.b} ${rec.m} usado em Portugal`,
-        "description": `Resumo estatístico (mediana, P25–P75) de ${rec.n} anúncios ativos de ${rec.b} ${rec.m} no OLX Portugal, por ano.`,
+        "description": `Resumo estatístico (mediana, P25–P75) de ${rec.n} anúncios ativos de ${rec.b} ${rec.m} no OLX Portugal e no Standvirtual, por ano.`,
         "creator": { "@type": "Organization", "name": "Carsbuyer" },
         "isAccessibleForFree": true,
         "temporalCoverage": yrRange ? `${yr0}/${yr1}` : undefined,
@@ -2434,7 +2434,7 @@ export function renderModelsHub({ models, depositCount, builtAt, host, districts
   const body = `
     <section class="hero" style="padding-bottom:18px;">
       <div class="hero-copy" style="max-width:760px;">
-        <div class="eyebrow" style="margin-bottom:18px;"><span class="e-dot"></span><span class="mono">${models.length} MODELOS · OLX PORTUGAL${FRESH ? ` · ATUALIZADO A ${FRESH}` : ""}</span></div>
+        <div class="eyebrow" style="margin-bottom:18px;"><span class="e-dot"></span><span class="mono">${models.length} MODELOS · OLX E STANDVIRTUAL${FRESH ? ` · ATUALIZADO A ${FRESH}` : ""}</span></div>
         <h1 class="hero-title" style="font-size:38px;">Preço de carros usados em Portugal por modelo</h1>
         <p class="lede">Avaliação independente a partir de anúncios ativos do OLX. Escolhe o modelo para ver o preço mediano e o intervalo por ano.</p>
         <div class="hero-actions">
@@ -2643,7 +2643,7 @@ function avaliarFaq(norms) {
     "Quanto se costuma baixar no preço de um carro usado?",
     `Depende da faixa de preço e menos do que diz a regra dos dez por cento. Na faixa ${band.lbl}, `
     + `${Math.round(band.cu * 100)} em cada 100 vendedores baixam o preço antes de o carro sair${cut}. `
-    + `Medido em ${fmtNum(band.n)} carros do OLX Portugal seguidos do primeiro anúncio ao último.${tail}`,
+    + `Medido em ${fmtNum(band.n)} carros do OLX Portugal e do Standvirtual seguidos do primeiro anúncio ao último.${tail}`,
   ]]);
 }
 
