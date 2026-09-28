@@ -12,7 +12,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import worker from "../../flipper-club/src/index.js";
-import { yearPageYears, liquidityOk, depreciationSlugs, comparePairs, isoWeek, isoWeekStart, missingWeeks, DUELS, isoWeekMonth, monthlyCuts, importSlugs, venderOk, publishedYearPages } from "../../flipper-club/src/seo-pages.js";
+import { yearPageYears, liquidityOk, depreciationSlugs, comparePairs, isoWeek, isoWeekStart, missingWeeks, DUELS, isoWeekMonth, monthlyCuts, importSlugs, venderOk, publishedYearPages, yearCarsShard } from "../../flipper-club/src/seo-pages.js";
 import { GUIDES } from "../../flipper-club/src/guides.js";
 
 const HOST = "carsbuyer.org";
@@ -65,9 +65,17 @@ const env = {
 // getModels/getDeals go through global fetch; serve the blob from memory and
 // give the deals feed an empty-but-valid answer so the bridges are exercised.
 let valuationsDoc = {};
+const fetched = [];
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
   const u = typeof input === "string" ? input : input.url;
+  fetched.push(u);
+  const shard = /\/yearcars_(\d{2})\.json$/.exec(u);
+  if (shard) {
+    const cars = Object.fromEntries(Object.entries(valuationsDoc.cars || {})
+      .filter(([, r]) => r.ms && yearCarsShard(r.ms) === Number(shard[1])));
+    return new Response(JSON.stringify({ v: valuationsDoc.v, cars }), { status: 200 });
+  }
   if (u.includes("import.json")) return new Response(JSON.stringify(idoc), { status: 200 });
   if (u.includes("models.json")) return new Response(JSON.stringify(mdoc), { status: 200 });
   if (u.includes("hot_deals_")) return new Response(JSON.stringify({ deals: [] }), { status: 200 });
@@ -791,8 +799,9 @@ await check("facet pages appear when the blob carries the cells", async () => {
     for (const d of Object.values(DUELS)) {
       const noDuel = slugs.find(s2 => s2 !== deep && !augmented.models[s2][d.key]);
       if (!noDuel) continue;
-      assert((await get(`/pt/${d.path}/${noDuel}`)).status === 404,
-        `${d.path}: a page exists for a model with no fit`);
+      const r = await get(`/pt/${d.path}/${noDuel}`);
+      assert(r.status === 301 && new URL(r.headers.get("location")).pathname === `/pt/preco/${noDuel}`,
+        `${d.path}: a page exists for a model with no fit, or its address is not sent to the model page`);
     }
     assert((await get("/pt/precos/nao-existe")).status === 404, "served a district we have no data for");
 
@@ -831,8 +840,9 @@ await check("a wave gates the router, the sitemap and the on-page links together
   // The model page itself stays live — only the second layer is staged.
   assert((await g(`/pt/preco/${outside}`)).status === 200, "wave hid a model page");
   const yr = yearPageYears(models[outside])[0];
-  assert((await g(`/pt/preco/${outside}/${yr}`)).status === 404,
-    "a year page outside the wave is still reachable");
+  const outsideYear = await g(`/pt/preco/${outside}/${yr}`);
+  assert(outsideYear.status === 301 && new URL(outsideYear.headers.get("location")).pathname === `/pt/preco/${outside}`,
+    "a year page outside the wave is served, or its old address is not sent to the model page");
   const insideYear = yearPageYears(models[inWave[0]])[0];
   assert((await g(`/pt/preco/${inWave[0]}/${insideYear}`)).status === 200,
     "a year page inside the wave is not reachable");
@@ -1503,6 +1513,37 @@ await check("the server funnel tells people from crawlers and says why", async (
   } finally { delete env.FUNNEL; }
 });
 
+await check("the year-car shard hash agrees with the Python build", async () => {
+  const expected = { "volkswagen-golf": 21, "audi-a3": 31, "dacia-sandero": 2, "citroen-c1": 22,
+                     "peugeot-508-sw": 5, "mercedes-benz-c-220": 20, "a": 12 };
+  for (const [slug, shard] of Object.entries(expected)) {
+    assert(yearCarsShard(slug) === shard, `${slug} → shard ${yearCarsShard(slug)}, the build writes it to ${shard}`);
+  }
+});
+
+await check("an old address with impressions never lands on a 404 while its model exists", async () => {
+  const slug = slugs.find(s => yearPageYears(models[s]).length);
+  const unpublished = (models[slug].yr || []).map(c => Number(String(c.y).slice(0, 4)))
+    .find(y => Number.isFinite(y) && !publishedYearPages(models, slug, models[slug], mdoc.built_at).includes(y)) || 2001;
+  const hop1 = await get(`/preco/${slug}/${unpublished}`);
+  assert(hop1.status === 301, `old year address → ${hop1.status}`);
+  const hop2 = await get(new URL(hop1.headers.get("location")).pathname);
+  assert(hop2.status === 301 && new URL(hop2.headers.get("location")).pathname === `/pt/preco/${slug}`,
+    `an unpublished year of a live model → ${hop2.status} ${hop2.headers.get("location")}`);
+  assert((await get(`/pt/preco/${slug}`)).status === 200, "the model page the redirects land on is not live");
+  assert((await get(`/pt/preco/${slug}/1850`)).status === 404, "an impossible year is redirected instead of 404");
+  assert((await get("/pt/preco/modelo-que-nao-existe/2015")).status === 404, "an unknown model's year is redirected");
+  const [a, b] = slugs.slice(0, 2).sort();
+  const pairs = new Set(comparePairs(models).map(([x, y]) => (x < y ? `${x}-vs-${y}` : `${y}-vs-${x}`)));
+  const unpublishedPair = slugs.flatMap(x => slugs.map(y => [x, y])).find(([x, y]) => x < y && !pairs.has(`${x}-vs-${y}`));
+  if (unpublishedPair) {
+    const r = await get(`/pt/comparar/${unpublishedPair[0]}-vs-${unpublishedPair[1]}`);
+    assert(r.status === 301 && new URL(r.headers.get("location")).pathname === "/pt/comparar",
+      `an unpublished comparison of two live models → ${r.status}`);
+  }
+  assert(a && b, "fixture has fewer than two models");
+});
+
 await check("a year page lists the cars of that year with a verdict and a working link", async () => {
   const slug = "audi-a3", year = publishedYearPages(models, slug, models[slug], mdoc.built_at)[0];
   const cars = {
@@ -1521,7 +1562,12 @@ await check("a year page lists the cars of that year with a verdict and a workin
   };
   valuationsDoc = { v: 2, cars };
   try {
+    fetched.length = 0;
     const page = await (await get(`/pt/preco/${slug}/${year}`)).text();
+    assert(!fetched.some(u => u.includes("valuations.json")),
+      "a year page still downloads the whole valuations blob and runs out of CPU");
+    assert(fetched.some(u => u.endsWith(`/yearcars_${String(yearCarsShard(slug)).padStart(2, "0")}.json`)),
+      "a year page does not read its own model's shard");
     assert(page.includes("À VENDA AGORA"), "the live-cars block is missing");
     assert(page.includes("https://www.olx.pt/d/anuncio/audi-a3-1-6-tdi-IDJAaHl.html"),
       "the OLX link is not rebuilt from the id");

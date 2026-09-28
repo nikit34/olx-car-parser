@@ -175,7 +175,7 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
     from src.analytics.text_signals import TEXT_SIGNAL_COLUMNS, add_text_signals
     from src.analytics.turnover import compute_turnover_stats
     from src.analytics.liquidity import build_liquidity, page_records, sell_speed_frame
-    from src.analytics.valuations import build_valuations
+    from src.analytics.valuations import build_valuations, year_car_shards
     from src.analytics.import_deal import build_import_pages
     from src.analytics.model_pages import build_model_pages
     from src.analytics.price_model import load_model, value_configs
@@ -375,6 +375,13 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
         sizes["valuations.json"] = val_path.stat().st_size
         print(f"[build]   valuations: {len(valuations.get('cars', {})):>6} cars  "
               f"({sizes['valuations.json']/1e6:.2f} MB)", flush=True)
+        shards = year_car_shards(valuations)
+        for i, shard in enumerate(shards):
+            shard_path = out_dir / f"yearcars_{i:02d}.json"
+            shard_path.write_text(json.dumps(shard, ensure_ascii=False, separators=(",", ":"), allow_nan=False))
+            sizes[shard_path.name] = shard_path.stat().st_size
+        print(f"[build]   yearcars: {len(shards)} shards, largest "
+              f"{max(sizes[f'yearcars_{i:02d}.json'] for i in range(len(shards)))/1e3:.0f} KB", flush=True)
     except ValueError as e:
         print(f"[build]   valuations.json SKIPPED — non-finite value leaked: {e}", flush=True)
 

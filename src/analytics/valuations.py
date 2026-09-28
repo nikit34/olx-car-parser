@@ -278,3 +278,27 @@ def build_valuations(listings: pd.DataFrame, predictions: pd.DataFrame,
         cars[str(oid)] = {k: v for k, v in rec.items() if v is not None}
 
     return blob
+
+
+YEAR_CAR_SHARDS = 32
+
+
+def year_car_shard(slug: str, shards: int = YEAR_CAR_SHARDS) -> int:
+    h = 0x811C9DC5
+    for ch in slug:
+        h ^= ord(ch)
+        h = (h * 0x01000193) & 0xFFFFFFFF
+    return h % shards
+
+
+YEAR_CAR_FIELDS = ("t", "y", "ms", "p", "fl", "fm", "fh", "km", "fu", "ct", "dom", "hb", "mf", "sv")
+
+
+def year_car_shards(valuations: dict, shards: int = YEAR_CAR_SHARDS) -> list[dict]:
+    out = [{"v": valuations.get("v"), "cars": {}} for _ in range(shards)]
+    for olx_id, rec in (valuations.get("cars") or {}).items():
+        slug = rec.get("ms")
+        if slug:
+            out[year_car_shard(slug, shards)]["cars"][olx_id] = {
+                k: rec[k] for k in YEAR_CAR_FIELDS if k in rec}
+    return out

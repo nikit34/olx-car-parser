@@ -192,3 +192,30 @@ class TestCarHistoryAndNorms:
         car = build_valuations(self._two_ads(), _predictions())["cars"]["AAA"]
         assert "dc" not in car
 
+
+
+SHARD_PARITY = {"volkswagen-golf": 21, "audi-a3": 31, "dacia-sandero": 2, "citroen-c1": 22,
+                "peugeot-508-sw": 5, "mercedes-benz-c-220": 20, "a": 12}
+
+
+def test_year_car_shard_matches_the_worker():
+    from src.analytics.valuations import year_car_shard
+    assert {s: year_car_shard(s) for s in SHARD_PARITY} == SHARD_PARITY
+
+
+def test_year_car_shards_split_every_car_into_its_models_shard():
+    from src.analytics.valuations import YEAR_CAR_SHARDS, year_car_shard, year_car_shards
+    blob = {"v": 3, "cars": {
+        "A1": {"ms": "volkswagen-golf", "y": 2015, "p": 9000, "fm": 10000, "ph": [[1, 9500]], "sd": 30},
+        "A2": {"ms": "volkswagen-golf", "y": 2016, "p": 9500, "fm": 11000},
+        "B1": {"ms": "audi-a3", "y": 2015, "p": 12000, "fm": 12500},
+        "C1": {"y": 2015, "p": 5000, "fm": 6000},
+    }}
+    shards = year_car_shards(blob)
+    assert len(shards) == YEAR_CAR_SHARDS
+    assert all(s["v"] == 3 for s in shards)
+    assert set(shards[year_car_shard("volkswagen-golf")]["cars"]) == {"A1", "A2"}
+    assert set(shards[year_car_shard("audi-a3")]["cars"]) == {"B1"}
+    assert sum(len(s["cars"]) for s in shards) == 3
+    assert shards[year_car_shard("volkswagen-golf")]["cars"]["A1"] == {
+        "ms": "volkswagen-golf", "y": 2015, "p": 9000, "fm": 10000}

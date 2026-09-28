@@ -32,6 +32,7 @@ if str(ROOT) not in sys.path:
 from scripts.build_stlite_bundle import WITNESS_FILES  # noqa: E402
 from scripts.release_chunks import REPO, TAG, manifest_name, publish  # noqa: E402
 from scripts.release_chunks import _get, BASE_URL  # noqa: E402
+from src.analytics.valuations import YEAR_CAR_SHARDS  # noqa: E402
 
 WORKER_ASSETS = (
     "hot_deals_all.json",
@@ -41,7 +42,7 @@ WORKER_ASSETS = (
     "valuations.json",
     "models.json",
     "brands_models.json",
-)
+) + tuple(f"yearcars_{i:02d}.json" for i in range(YEAR_CAR_SHARDS))
 MODEL_ARTIFACTS = (
     "price_metrics.json",
     "price_importance.json",

@@ -2065,6 +2065,18 @@ export function monthLabel(month) {
 
 export const IDX_MIN_MONTH_WEEKS = 2;
 
+export const YEAR_CAR_SHARDS = 32;
+
+export function yearCarsShard(slug) {
+  let h = 0x811c9dc5;
+  const s = String(slug || "");
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h % YEAR_CAR_SHARDS;
+}
+
 const IDX_NOTE_COVERAGE_2026_09 = "Entre 28 de agosto e 2 de setembro, passámos a reconhecer mais marcas, modelos e anos nos anúncios e deixámos de retirar um modelo do índice quando a amostra fica ligeiramente abaixo do mínimo. Por isso, nas semanas de setembro, o crescimento do número de anúncios e de modelos reflete sobretudo o alargamento da cobertura, e não um aumento da oferta. A variação semanal do preço mediano também é afetada pela entrada destes modelos no cálculo.";
 const IDX_NOTE_RELIST_2026_09 = "Desde 19 de setembro, quando um carro sai do ar e volta mais tarde num anúncio novo, essa saída deixou de contar. Por isso, os dias até sair calculados depois dessa data não são diretamente comparáveis com os das semanas anteriores.";
 export const INDEX_NOTES = {

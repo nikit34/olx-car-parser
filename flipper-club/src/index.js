@@ -59,7 +59,7 @@ import {
   setWave, waveSlugs, publishedYearPages, publishedDepreciation, publishedPairs, publishedFacets,
   setSnippetTest, snippetArm,
   DUELS, duel, duelByPath, duelJson, duelSlugs, duelsFor, publishedDuel,
-  renderDuelPage, renderDuelHub,
+  renderDuelPage, renderDuelHub, yearCarsShard,
 } from "./seo-pages.js";
 import { GUIDES, GUIDES_UPDATED, guideBySlug, guideBlock, renderGuide, renderGuidesHub } from "./guides.js";
 import {
@@ -741,16 +741,18 @@ async function handleModelPage(request, env, url) {
 }
 
 // /pt/preco/{slug}/{ano} — one model year.
+function toModelPage(url, slug, wantsJson = false) {
+  return new Response(null, {
+    status: 301,
+    headers: { location: `https://${url.host}/pt/preco/${encodeURIComponent(slug)}${wantsJson ? ".json" : ""}` },
+  });
+}
+
 async function renderYear({ request, env, url, models, rec, slug, year, builtAt, wantsJson }) {
   const published = publishedYearPages(models, slug, rec, builtAt);
   const cell = published.includes(year) ? yearCell(rec, year) : null;
   if (!cell) {
-    if (published.length && (rec.yr || []).some(c => c.y === year)) {
-      return new Response(null, {
-        status: 301,
-        headers: { location: `https://${url.host}/pt/preco/${encodeURIComponent(slug)}${wantsJson ? ".json" : ""}` },
-      });
-    }
+    if (year >= 1950 && year <= new Date().getUTCFullYear() + 1) return toModelPage(url, slug, wantsJson);
     return notFoundPage(request, env, url);
   }
   if (wantsJson) return jsonResponse(yearJson(rec, slug, year, cell, { host: url.host, builtAt }));
@@ -787,7 +789,7 @@ async function renderYear({ request, env, url, models, rec, slug, year, builtAt,
   let yearCars = [], yearCarsTotal = 0;
   try {
     const shown = new Set(liveDeals.map(d => String(d.olx_id)));
-    const all = yearCarsFrom(await getValuations(env), slug, year, shown);
+    const all = yearCarsFrom(await getYearCars(env, slug), slug, year, shown);
     yearCarsTotal = all.length;
     yearCars = all.slice(0, YEAR_CARS_MAX);
   } catch (_) { /* best-effort */ }
@@ -913,7 +915,8 @@ async function handleDepreciation(request, env, url) {
   if (wantsJson) slug = slug.slice(0, -".json".length);
   return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, stats }) => {
     const rec = models[slug];
-    if (!rec || !publishedDepreciation(models, slug, rec, builtAt)) return notFoundPage(request, env, url, setCookie);
+    if (!rec) return notFoundPage(request, env, url, setCookie);
+    if (!publishedDepreciation(models, slug, rec, builtAt)) return toModelPage(url, slug, wantsJson);
     const fit = depreciationFit(rec);
     if (wantsJson) {
       return jsonResponse(depreciationJson(rec, slug, fit, depreciationAge(rec, fit, builtAt),
@@ -951,9 +954,9 @@ async function handleDuel(request, env, url, spec) {
   if (wantsJson) slug = slug.slice(0, -".json".length);
   return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, stats }) => {
     const rec = models[slug];
-    if (!rec || !publishedDuel(models, slug, rec, builtAt, spec.kind)) return notFoundPage(request, env, url, setCookie);
-    const av = duel(rec, spec.kind, builtAt);
-    if (!av) return notFoundPage(request, env, url, setCookie);
+    if (!rec) return notFoundPage(request, env, url, setCookie);
+    const av = publishedDuel(models, slug, rec, builtAt, spec.kind) ? duel(rec, spec.kind, builtAt) : null;
+    if (!av) return toModelPage(url, slug, wantsJson);
     if (wantsJson) return jsonResponse(duelJson(rec, slug, av, { host: url.host, builtAt }));
     return publicHtml(renderDuelPage({
       rec, slug, av, stats, host: url.host, depositCount, builtAt,
@@ -984,7 +987,13 @@ async function handleCompare(request, env, url) {
   return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, stats }) => {
     const pairSet = new Set(publishedPairs(models).map(([a, b]) => comparePairKey(a, b)));
     const pair = parseComparePath(rest, models, pairSet);
-    if (!pair) return notFoundPage(request, env, url, setCookie);
+    if (!pair) {
+      const known = parseComparePath(rest, models, null);
+      if (known && known.a !== known.b) {
+        return new Response(null, { status: 301, headers: { location: `https://${url.host}/pt/comparar` } });
+      }
+      return notFoundPage(request, env, url, setCookie);
+    }
     return publicHtml(renderComparePage({
       a: pair.a, b: pair.b, ra: models[pair.a], rb: models[pair.b],
       stats, host: url.host, depositCount, builtAt,
@@ -2517,6 +2526,24 @@ async function getValuations(env, country = null) {
   return null;
 }
 
+async function getYearCars(env, slug) {
+  const url = `${HOT_DEALS_BASE}/yearcars_${String(yearCarsShard(slug)).padStart(2, "0")}.json`;
+  try {
+    const r = await fetch(url, {
+      cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": 300, "300-399": 0, "400-499": 0, "500-599": 0 } },
+    });
+    if (!r.ok) {
+      console.warn(`year cars fetch ${url} → ${r.status}`);
+      return null;
+    }
+    const data = await r.json();
+    return data && data.cars ? data : null;
+  } catch (err) {
+    console.warn("year cars fetch error", url, err && err.message);
+    return null;
+  }
+}
+
 // models.json — the per-model SEO blob (Tier-3) for /pt/preco/*, /pt/precos, /sitemap.
 // Same edge-cache (success-only) pattern as getValuations; ~50 KB gzipped.
 // Returns the full doc { models: {slug: rec}, built_at }, or null (handlers
@@ -2691,7 +2718,8 @@ async function handleVenderPage(request, env, url) {
   if (wantsJson) slug = slug.slice(0, -".json".length);
   return withModels(request, env, url, ({ models, builtAt, depositCount, setCookie, market }) => {
     const rec = models[slug];
-    if (!rec || !publishedVender(models, slug, rec, builtAt)) return notFoundPage(request, env, url, setCookie);
+    if (!rec) return notFoundPage(request, env, url, setCookie);
+    if (!publishedVender(models, slug, rec, builtAt)) return toModelPage(url, slug, wantsJson);
     if (wantsJson) return jsonResponse(venderJson(rec, slug, { host: url.host, builtAt }));
     return publicHtml(renderVenderPage({
       guides: guideBlock("vender"),
