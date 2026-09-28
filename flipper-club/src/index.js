@@ -2779,11 +2779,8 @@ async function aiJson(env) {
     if (page.list_complete || !page.cursor) break;
     cursor = page.cursor;
   }
-  const hits = [];
-  for (const name of names.slice(-HIT_SAMPLE_MAX).reverse()) {
-    const v = await env.KV.get(name, "json").catch(() => null);
-    if (v) hits.push(v);
-  }
+  const hits = (await Promise.all(names.slice(-HIT_SAMPLE_MAX).reverse()
+    .map(name => env.KV.get(name, "json").catch(() => null)))).filter(Boolean);
   return new Response(JSON.stringify({ days, hits }, null, 2), {
     status: 200,
     headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
@@ -2860,12 +2857,13 @@ async function kvCountsByDay(env, prefix) {
   let cursor;
   for (let i = 0; i < 5; i++) {
     const page = await env.KV.list({ prefix, limit: 500, cursor });
-    for (const k of page.keys || []) {
+    const keys = page.keys || [];
+    const values = await Promise.all(keys.map(k => env.KV.get(k.name).catch(() => null)));
+    keys.forEach((k, j) => {
       const parts = k.name.split(":");
       const day = parts[2], bucket = parts[3] || "outro";
-      const v = parseInt((await env.KV.get(k.name)) || "0", 10) || 0;
-      (out[day] = out[day] || {})[bucket] = v;
-    }
+      (out[day] = out[day] || {})[bucket] = parseInt(values[j] || "0", 10) || 0;
+    });
     if (page.list_complete || !page.cursor) break;
     cursor = page.cursor;
   }
@@ -2883,11 +2881,8 @@ async function clicksJson(env) {
     if (page.list_complete || !page.cursor) break;
     cursor = page.cursor;
   }
-  const hits = [];
-  for (const name of names.slice(-HIT_SAMPLE_MAX).reverse()) {
-    const v = await env.KV.get(name, "json").catch(() => null);
-    if (v) hits.push(v);
-  }
+  const hits = (await Promise.all(names.slice(-HIT_SAMPLE_MAX).reverse()
+    .map(name => env.KV.get(name, "json").catch(() => null)))).filter(Boolean);
   return new Response(JSON.stringify({ days, drops, hits }, null, 2), {
     status: 200,
     headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },

@@ -1395,6 +1395,39 @@ await check("AI fetches are counted by agent, and only a live answer leaves a sa
   assert(guard.status === 401, `ai.json without auth → ${guard.status}`);
 });
 
+await check("the admin counters read every key they list", async () => {
+  const store = new Map([
+    ["ai:hit:2026-09-20:chatgpt-user", "5"],
+    ["ai:hit:2026-09-21:gptbot", "2"],
+    ["click:hist:2026-09-21:ano", "4"],
+    ["click:drop:2026-09-21:nav", "3"],
+  ]);
+  for (let i = 0; i < 40; i++) {
+    store.set(`aihit:2026-09-21T10:00:${String(i).padStart(2, "0")}Z:x`, JSON.stringify({ agent: "chatgpt-user", path: `/pt/p${i}` }));
+    store.set(`histhit:2026-09-21T10:00:${String(i).padStart(2, "0")}Z:x`, JSON.stringify({ from: "ano", drop: null }));
+  }
+  const kvEnv = {
+    ...env, ANALYTICS_USER: "u", ANALYTICS_PASS: "p",
+    KV: {
+      async get(k, type) { const v = store.get(k); return v === undefined ? null : (type === "json" ? JSON.parse(v) : v); },
+      async put(k, v) { store.set(k, v); },
+      async list({ prefix = "" } = {}) {
+        return { keys: [...store.keys()].filter(k => k.startsWith(prefix)).sort().map(name => ({ name })), list_complete: true };
+      },
+      async delete(k) { store.delete(k); },
+    },
+  };
+  const auth = { authorization: "Basic " + Buffer.from("u:p").toString("base64") };
+  const ai = await worker.fetch(new Request(`https://${HOST}/analytics/ai.json`, { headers: auth }), kvEnv);
+  assert(ai.status === 200, `ai.json with auth → ${ai.status}`);
+  const aj = await ai.json();
+  assert(aj.days["2026-09-20"]["chatgpt-user"] === 5 && aj.days["2026-09-21"].gptbot === 2, "ai.json lost a daily count");
+  assert(aj.hits.length === 40 && aj.hits[0].path === "/pt/p39", "ai.json lost samples or their newest-first order");
+  const cl = await (await worker.fetch(new Request(`https://${HOST}/analytics/clicks.json`, { headers: auth }), kvEnv)).json();
+  assert(cl.days["2026-09-21"].ano === 4 && cl.drops["2026-09-21"].nav === 3, "clicks.json lost a daily count");
+  assert(cl.hits.length === 40, `clicks.json returned ${cl.hits.length} samples`);
+});
+
 await check("the history link is a counted redirect to the partner url", async () => {
   const miss = await get("/pt/ir/historico?from=ano");
   assert(miss.status === 404, `redirect without a partner url → ${miss.status}`);
