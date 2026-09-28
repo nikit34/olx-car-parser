@@ -391,13 +391,18 @@ def gsc_summary(post, adc_json, today):
     ], []
 
 
-PRESS_WINDOW = (dt.date(2026, 9, 28), dt.date(2026, 10, 5))
+REMINDERS = (
+    (dt.date(2026, 10, 5), dt.date(2026, 10, 8),
+     "📰 Пресс-рассылка индекса ушла 28.09 в 9 редакций: проверить ответы в ящике carsbuyer, напомнить только тем, кто не ответил."),
+    (dt.date(2026, 10, 19), dt.date(2026, 10, 22),
+     "🔎 Перемерить /comparar в Search Console: те же 10 адресов плюс контроль из /pt/preco и /pt/depreciacao. Расширять пул, только если /comparar индексируется лучше контроля."),
+    (dt.date(2026, 10, 26), dt.date(2026, 10, 29),
+     "🔎 Конец заморозки SEO после обвала 15.09: замер Search Console и решение про noindex тонких страниц лет."),
+)
 
 
-def press_reminder(today):
-    if PRESS_WINDOW[0] <= today < PRESS_WINDOW[1]:
-        return ["📰 Índice de setembro fechado em /mercado/indice/2026-09: enviar o comunicado à imprensa (Razão Automóvel, Observador, ECO)."]
-    return []
+def dated_reminders(today):
+    return [text for start, end, text in REMINDERS if start <= today < end]
 
 
 def build_digest(now, sections, warnings):
@@ -430,8 +435,8 @@ def main(argv=None):
     mail_lines, mail_new = mail_summary(lambda: imaplib.IMAP4_SSL("imap.yandex.com", 993),
                                         env("MAIL_IMAP_USER"), env("MAIL_IMAP_PASSWORD"), now - dt.timedelta(days=1))
     weekly = args.force or now.weekday() == 0
-    press = press_reminder(now.date())
-    sections = [site_lines, rel_lines, lead_lines, click_lines, ai_lines, mail_lines, press]
+    reminders = dated_reminders(now.date())
+    sections = [site_lines, rel_lines, lead_lines, click_lines, ai_lines, mail_lines, reminders]
     gsc_warn = []
     if weekly:
         gsc_lines, gsc_warn = gsc_summary(http_post_json, env("GSC_ADC_JSON"), now.date())
@@ -439,7 +444,7 @@ def main(argv=None):
     warnings = site_warn + rel_warn + lead_warn + gsc_warn
     text = build_digest(now, sections, warnings)
     print(text)
-    quiet = not warnings and not fresh_leads and not fresh_clicks and not mail_new and not weekly and not press
+    quiet = not warnings and not fresh_leads and not fresh_clicks and not mail_new and not weekly and not reminders
     if quiet:
         print("\nnothing new, digest not sent")
         return 0

@@ -92,11 +92,14 @@ def test_digest_puts_warnings_first_and_stays_under_telegram_limit():
     assert len(text) <= 4000
 
 
-def test_press_reminder_only_inside_its_window():
-    assert md.press_reminder(dt.date(2026, 9, 27)) == []
-    assert md.press_reminder(dt.date(2026, 9, 28))
-    assert md.press_reminder(dt.date(2026, 10, 4))
-    assert md.press_reminder(dt.date(2026, 10, 5)) == []
+def test_dated_reminders_only_inside_their_windows():
+    assert md.dated_reminders(dt.date(2026, 9, 28)) == []
+    assert md.dated_reminders(dt.date(2026, 10, 4)) == []
+    assert "ответы" in md.dated_reminders(dt.date(2026, 10, 5))[0]
+    assert md.dated_reminders(dt.date(2026, 10, 8)) == []
+    assert "/comparar" in md.dated_reminders(dt.date(2026, 10, 19))[0]
+    assert "заморозки" in md.dated_reminders(dt.date(2026, 10, 28))[0]
+    assert md.dated_reminders(dt.date(2026, 10, 29)) == []
 
 
 def test_clicks_summary_reports_yesterday_and_the_week():
