@@ -352,7 +352,7 @@ def test_rank_deal_olx_ids_missing_column(monkeypatch):
 def test_enrich_cloud_cli_e2e(tmp_path, monkeypatch, fresh_schema):
     """Two runs: the first enriches and spends, the second finds nothing to do."""
     from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.orm import close_all_sessions, sessionmaker
     from typer.testing import CliRunner
     from src.cli import app
     from src.models.listing import Listing
@@ -412,7 +412,7 @@ def test_enrich_cloud_cli_e2e(tmp_path, monkeypatch, fresh_schema):
 
     # The CLI does not close the session it is handed, and an
     # idle-in-transaction backend would block the schema teardown.
-    TS.close_all()
+    close_all_sessions()
     engine.dispose()
 
 

@@ -88,16 +88,17 @@ class TestZoneFunnelIsCounted:
 
     def _frame(self):
         import pandas as pd
+        recent = (pd.Timestamp.now() - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
         return pd.DataFrame([
-            dict(olx_id="a", is_active=True, first_seen_at="2026-08-29",
+            dict(olx_id="a", is_active=True, first_seen_at=recent,
                  district="Porto", verdict="BUY", decision_score=1),
             dict(olx_id="b", is_active=True, first_seen_at="2020-01-01",
                  district="Porto", verdict="BUY", decision_score=2),
-            dict(olx_id="c", is_active=False, first_seen_at="2026-08-29",
+            dict(olx_id="c", is_active=False, first_seen_at=recent,
                  district="Porto", verdict="BUY", decision_score=3),
-            dict(olx_id="d", is_active=True, first_seen_at="2026-08-29",
+            dict(olx_id="d", is_active=True, first_seen_at=recent,
                  district="Porto", verdict="SKIP", decision_score=4),
-            dict(olx_id="e", is_active=True, first_seen_at="2026-08-29",
+            dict(olx_id="e", is_active=True, first_seen_at=recent,
                  district="Faro", verdict="BUY", decision_score=5),
         ])
 
