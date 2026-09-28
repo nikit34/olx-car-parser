@@ -454,7 +454,7 @@ export function renderGuidesHub({ market, stats, host, depositCount, builtAt }) 
       <p class="fc-p">O que é preciso saber dos dois lados do negócio: o que verificar antes de comprar, quanto pedir e em quantos dias vende, vender a um stand ou por conta própria, documentos, registo de propriedade, crédito e reserva, carros importados, burlas e o que fazer depois da venda. Escritos a partir das páginas oficiais do IRN, do gov.pt, da Autoridade Tributária e do Diário da República, com os números do nosso acompanhamento do mercado.</p>
       ${market && market.s30 != null ? `<p class="fc-p">${marketLine(market)}</p>` : ""}
       <ul class="fc-ul">${items}</ul>
-      ${stats && stats.listings ? provenance({ n: stats.listings, builtAt, measure: "Preço pedido em anúncios ativos (mediana e P25-P75); dias até sair do OLX" }) : ""}
+      ${stats && stats.listings ? provenance({ n: stats.listings, builtAt, measure: "Preço pedido em anúncios ativos (mediana e P25-P75); dias até sair do anúncio" }) : ""}
       <p class="fc-p" style="margin-top:18px;"><a href="/pt/vender">Quanto pedir por modelo</a> · <a href="/pt/avaliar">Avaliar o meu carro</a> · <a href="/pt/liquidez">Tempo de venda</a></p>
     </section>
     <div style="height:60px;"></div>`;

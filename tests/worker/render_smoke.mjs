@@ -1281,6 +1281,41 @@ check("analytics stays off unless a measurement id is set", () => {
   setAnalyticsId("");
 });
 
+check("the index pages say what they measure, where it comes from and whether it changes", () => {
+  const wk = (week, date, builtAt, listings, models, priceMed, sellMed) =>
+    ({ week, date, builtAt, listings, models, priceMed, sellMed, kmMed: 186000, depMed: 0.09 });
+  const hist = [
+    wk("2026-W36", "2026-08-31", "2026-08-31T20:00:00Z", 19916, 276, 7850, 29),
+    wk("2026-W37", "2026-09-07", "2026-09-06T20:00:00Z", 22490, 324, 8000, 30),
+    wk("2026-W38", "2026-09-14", "2026-09-13T20:00:00Z", 23646, 346, 8000, 30),
+    wk("2026-W39", "2026-09-21", "2026-09-20T20:00:00Z", 24187, 359, 8500, 31),
+  ];
+  const cut = monthlyCuts(hist, "2026-W40").find(c => c.month === "2026-09");
+  assert(cut, "four September weeks did not close September");
+  const month = renderMarketMonth({ cut, months: [cut], host: HOST, depositCount: 0 });
+  assert(month.includes('data-source="OLX Portugal e Standvirtual"'), "the month page still names only OLX as its source");
+  assert(month.includes("particulares"), "the month page does not say whose listings it counts");
+  assert(!month.includes("Este número muda") && month.includes("Registo permanente"),
+    "the frozen month page still says its number changes");
+  assert(!/DIAS ATÉ VENDER|Dias até vender|até vender/.test(month), "the month page still calls days on OLX time to sale");
+  assert(month.includes("recolhidos a 31/08, 06/09, 13/09 e 20/09"), "the month page does not say when its cuts were taken");
+  assert(month.includes("<th>Recolhido</th>") && month.includes("<th>Modelos</th>"),
+    "the month's week table hides the collection date or the model count");
+  assert(month.includes("mediana das medianas") && month.includes("cada modelo conta uma vez"),
+    "the month page does not define its price");
+  assert(month.includes("passámos a reconhecer mais marcas") && month.includes("19 de setembro"),
+    "the September page does not warn that coverage and the exit rule changed inside the month");
+
+  const week = renderMarketIndex({ snapshot: hist[3], history: hist, host: HOST, depositCount: 0,
+                                   isArchive: true, currentWeek: "2026-W40" });
+  assert(!week.includes("Este número muda") && week.includes("passámos a reconhecer mais marcas"),
+    "an archived September week still says it changes or hides the coverage note");
+  const hub = renderMarketIndex({ snapshot: { ...hist[3], week: "2026-W40", date: "2026-09-28" },
+                                  history: hist, host: HOST, depositCount: 0, isArchive: false });
+  assert(hub.includes("Este número muda"), "the live hub stopped saying its number changes");
+  assert(!hub.includes("passámos a reconhecer mais marcas"), "a week without a coverage change shows the note");
+});
+
 check("no GA4 event sends a parameter GA4 reads as a traffic source", () => {
   setAnalyticsId("G-TESTONLY");
   const slug = deep;

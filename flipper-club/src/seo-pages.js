@@ -694,11 +694,13 @@ export function modelInsights(rec, stats) {
  */
 export function provenance({ n, builtAt, measure = "Preço pedido em anúncios ativos (mediana e P25-P75)",
                              unit = "anúncios ativos", measureId = "asking-price-median",
-                             source = "OLX Portugal", extra = "" }) {
+                             source = "OLX Portugal e Standvirtual", extra = "", frozen = false }) {
   const day = (builtAt || "").slice(0, 10);
   return `<p class="mono fc-prov" data-sample="${n != null ? n : ""}" data-updated="${escapeHtml(day)}" data-measure="${escapeHtml(measureId)}" data-source="${escapeHtml(source)}">`
     + `Amostra: ${n != null ? fmtNum(n) + " " + escapeHtml(unit) : "n/d"} · Recolhido até: ${day || "n/d"} · Medida: ${escapeHtml(measure)} · Fonte: ${escapeHtml(source)}${extra ? " · " + extra : ""}`
-    + ` · Este número muda: para o citar com data, usa o <a href="/pt/historico" style="color:inherit;text-decoration:underline;">arquivo semanal</a>`
+    + (frozen
+      ? ` · Registo permanente: este número não volta a mudar`
+      : ` · Este número muda: para o citar com data, usa o <a href="/pt/historico" style="color:inherit;text-decoration:underline;">arquivo semanal</a>`)
     + `</p>`;
 }
 
@@ -2063,6 +2065,27 @@ export function monthLabel(month) {
 
 export const IDX_MIN_MONTH_WEEKS = 2;
 
+const IDX_NOTE_COVERAGE_2026_09 = "Entre 28 de agosto e 2 de setembro passámos a reconhecer mais marcas, modelos e anos nos anúncios, e deixámos de retirar um modelo do índice quando a amostra desce pouco abaixo do mínimo. Por isso, nestas semanas, o crescimento do número de anúncios e de modelos mede sobretudo essa cobertura e não a oferta, e a variação semanal do preço mediano reflete também a entrada desses modelos no cálculo.";
+const IDX_NOTE_RELIST_2026_09 = "A partir de 19 de setembro, um carro que volta a ser anunciado deixa de contar como saída, por isso os dias até sair desde essa data não se comparam diretamente com os das semanas anteriores.";
+export const INDEX_NOTES = {
+  "2026-W36": [IDX_NOTE_COVERAGE_2026_09],
+  "2026-W37": [IDX_NOTE_COVERAGE_2026_09],
+  "2026-W38": [IDX_NOTE_COVERAGE_2026_09],
+  "2026-W39": [IDX_NOTE_COVERAGE_2026_09, IDX_NOTE_RELIST_2026_09],
+  "2026-09": [IDX_NOTE_COVERAGE_2026_09, IDX_NOTE_RELIST_2026_09],
+};
+
+function indexNotes(key) {
+  return (INDEX_NOTES[key] || []).map(t => `<p class="fc-p" style="color:#8A5A00;">${escapeHtml(t)}</p>`).join("");
+}
+
+function collectedOn(rows) {
+  const days = rows.map(r => String(r.builtAt || r.date || "").slice(0, 10)).filter(Boolean)
+    .map(d => `${d.slice(8, 10)}/${d.slice(5, 7)}`);
+  if (!days.length) return "";
+  return days.length === 1 ? days[0] : `${days.slice(0, -1).join(", ")} e ${days[days.length - 1]}`;
+}
+
 function medianOf(values) {
   const v = (values || []).filter(x => x != null && Number.isFinite(x)).sort((a, b) => a - b);
   if (!v.length) return null;
@@ -2158,21 +2181,22 @@ export function renderMarketIndex({ snapshot, history, host, depositCount, isArc
     <section class="section fc-wrap" style="padding-top:16px;">
       <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">SEMANA ${escapeHtml(wk)} · ${escapeHtml(snapshot.date || "")}</span></div>
       <h1 class="fc-h1">Índice do mercado de usados em Portugal${isArchive ? ` — ${escapeHtml(wk)}` : ""}</h1>
-      <p class="fc-p">Retrato semanal do que está à venda no OLX Portugal: quanto se pede, quanto há e quanto demora a sair.${isArchive ? " Este é o registo permanente desta semana — os números desta página não voltam a mudar." : " Cada semana e cada mês fechado ficam guardados num endereço próprio, para poderes citar um número com data."}</p>
+      <p class="fc-p">Retrato semanal do que está à venda nos anúncios de particulares do OLX Portugal e do Standvirtual: quanto se pede, quanto há e quanto demora a sair. O preço é a mediana das medianas por modelo: cada modelo conta uma vez, tenha muitos ou poucos anúncios.${isArchive ? " Este é o registo permanente desta semana — os números desta página não voltam a mudar." : " Cada semana e cada mês fechado ficam guardados num endereço próprio, para poderes citar um número com data."}</p>
       <div class="fc-stat-row" style="margin:20px 0 8px;">
         <div class="fc-stat"><div class="k">PREÇO MEDIANO</div><div class="v">${fmtEur(snapshot.priceMed)}</div>${delta(snapshot.priceMed, prev && prev.priceMed)}</div>
         <div class="fc-stat"><div class="k">ANÚNCIOS ATIVOS</div><div class="v">${fmtNum(snapshot.listings)}</div>${delta(snapshot.listings, prev && prev.listings)}</div>
         <div class="fc-stat"><div class="k">MODELOS COBERTOS</div><div class="v">${snapshot.models}</div><div class="s">com amostra suficiente</div></div>
-        <div class="fc-stat"><div class="k">DIAS ATÉ VENDER</div><div class="v">${snapshot.sellMed != null ? snapshot.sellMed : "—"}</div><div class="s">mediana do mercado</div></div>
+        <div class="fc-stat"><div class="k">DIAS ATÉ SAIR</div><div class="v">${snapshot.sellMed != null ? snapshot.sellMed : "—"}</div><div class="s">mediana; não é tempo de venda</div></div>
         <div class="fc-stat"><div class="k">KM MEDIANO</div><div class="v">${snapshot.kmMed != null ? fmtNum(snapshot.kmMed) : "—"}</div><div class="s">à venda</div></div>
         <div class="fc-stat"><div class="k">DESVALORIZAÇÃO</div><div class="v">${snapshot.depMed != null ? Math.round(snapshot.depMed * 100) + "%" : "—"}</div><div class="s">por ano de idade</div></div>
       </div>
-      ${provenance({ n: snapshot.listings, builtAt: snapshot.builtAt, measure: "Mediana das medianas de preço pedido por modelo" })}
+      ${provenance({ n: snapshot.listings, builtAt: snapshot.builtAt, measure: "Mediana das medianas de preço pedido por modelo", frozen: isArchive })}
+      ${indexNotes(wk)}
     </section>
     ${rows ? `<section class="section fc-wrap">
       <h2 class="fc-h2">Histórico semanal</h2>
       <div class="fc-scroll"><table class="fc-tbl">
-        <thead><tr><th>Semana</th><th>Data</th><th>Preço mediano</th><th>Anúncios</th><th>Modelos</th><th>Dias até vender</th></tr></thead>
+        <thead><tr><th>Semana</th><th>Data</th><th>Preço mediano</th><th>Anúncios</th><th>Modelos</th><th>Dias até sair</th></tr></thead>
         <tbody>${rows}</tbody></table></div>
       <p class="fc-p" style="margin-top:12px;">O histórico começa na semana em que passámos a guardar os cortes. Cresce uma linha por semana, e nenhuma linha antiga é reescrita.</p>
       ${gaps.length ? `<p class="fc-p" style="color:#B4551F;">Faltam ${gaps.length} semana${gaps.length === 1 ? "" : "s"} no histórico: ${gaps.map(escapeHtml).join(", ")}. Não as preenchemos, e é de propósito: os números dessas semanas já não existem, e escrever os de hoje com a data de então seria inventá-los.</p>` : ""}
@@ -2181,7 +2205,7 @@ export function renderMarketIndex({ snapshot, history, host, depositCount, isArc
       <h2 class="fc-h2">Arquivo mensal</h2>
       ${monthRows ? `<p class="fc-p">Cada mês fechado tem o seu próprio endereço permanente, com a mediana dos cortes semanais desse mês. É o corte a citar quando a frase é sobre um mês e não sobre uma semana.</p>
       <div class="fc-scroll"><table class="fc-tbl">
-        <thead><tr><th>Mês</th><th>Período</th><th>Preço mediano</th><th>Anúncios</th><th>Dias até vender</th><th>Semanas</th></tr></thead>
+        <thead><tr><th>Mês</th><th>Período</th><th>Preço mediano</th><th>Anúncios</th><th>Dias até sair</th><th>Semanas</th></tr></thead>
         <tbody>${monthRows}</tbody></table></div>
       <p class="fc-p" style="margin-top:12px;">O período é o das semanas ISO que fecham dentro do mês, por isso não coincide com o dia 1 nem com o último dia. A última coluna diz quantas semanas do mês entraram no cálculo.</p>`
         : `<p class="fc-p">Ainda não há nenhum mês fechado com pelo menos ${IDX_MIN_MONTH_WEEKS} cortes semanais guardados. O primeiro abre assim que houver, no endereço <span class="mono">/pt/mercado/indice/{AAAA}-{MM}</span>, e também não volta a mudar.</p>`}
@@ -2196,7 +2220,7 @@ export function renderMarketIndex({ snapshot, history, host, depositCount, isArc
     title: isArchive
       ? `Índice do mercado de usados em Portugal — ${wk}`
       : "Índice do mercado de carros usados em Portugal",
-    description: `Semana ${wk}: preço mediano ${fmtEur(snapshot.priceMed)} em ${fmtNum(snapshot.listings)} anúncios ativos de ${snapshot.models} modelos no OLX Portugal${snapshot.sellMed != null ? `, ${snapshot.sellMed} dias medianos até vender` : ""}.`,
+    description: `Semana ${wk}: preço mediano ${fmtEur(snapshot.priceMed)} em ${fmtNum(snapshot.listings)} anúncios ativos de ${snapshot.models} modelos no OLX Portugal e Standvirtual${snapshot.sellMed != null ? `, ${snapshot.sellMed} dias medianos até sair do anúncio` : ""}.`,
     canonical, body, zone: "all", nav: "feed", depositCount, index: true, host,
     jsonLd: {
       "@context": "https://schema.org",
@@ -2204,12 +2228,12 @@ export function renderMarketIndex({ snapshot, history, host, depositCount, isArc
         {
           "@type": "Dataset", "license": licenseUrl(host), "url": canonical, "inLanguage": "pt-PT",
           "name": `Índice do mercado de carros usados em Portugal — ${wk}`,
-          "description": "Preço pedido mediano, número de anúncios ativos, quilometragem mediana e dias medianos até vender no mercado português de carros usados.",
+          "description": "Preço pedido mediano, número de anúncios ativos, quilometragem mediana e dias medianos até sair do anúncio no mercado português de carros usados.",
           "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true,
           "temporalCoverage": snapshot.date || undefined,
           "dateModified": snapshot.builtAt || undefined,
-          "variableMeasured": ["Preço pedido mediano (EUR)", "Anúncios ativos", "Dias até vender (mediana)"],
+          "variableMeasured": ["Preço pedido mediano por modelo (EUR)", "Anúncios ativos", "Dias até sair do anúncio (mediana)"],
         },
         breadcrumbLd(host, isArchive
           ? [{ name: "Início", href: "/pt" }, { name: "Índice de mercado", href: "/pt/mercado/indice" }, { name: wk }]
@@ -2236,9 +2260,12 @@ export function renderMarketMonth({ cut, months = [], host, depositCount }) {
   const weekRows = cut.rows.slice().sort((a, b) => a.week < b.week ? 1 : -1).map(h => `<tr>
       <td><a href="/pt/mercado/indice/${escapeHtml(h.week.toLowerCase())}" style="color:#177A47;font-weight:600;">${escapeHtml(h.week)}</a></td>
       <td class="mut">${escapeHtml(h.date || "")}</td>
+      <td class="mut">${escapeHtml(String(h.builtAt || "").slice(0, 10))}</td>
       <td>${fmtEur(h.priceMed)}</td>
       <td class="mut">${fmtNum(h.listings)}</td>
+      <td class="mut">${h.models != null ? h.models : "—"}</td>
       <td class="mut">${h.sellMed != null ? h.sellMed + " dias" : "—"}</td></tr>`).join("");
+  const collected = collectedOn(cut.rows.slice().sort((a, b) => a.week < b.week ? -1 : 1));
 
   const crumbItems = [
     { name: "Início", href: "/pt" },
@@ -2250,21 +2277,22 @@ export function renderMarketMonth({ cut, months = [], host, depositCount }) {
     <section class="section fc-wrap" style="padding-top:16px;">
       <div class="eyebrow" style="margin-bottom:14px;"><span class="e-dot"></span><span class="mono">MÊS ${escapeHtml(cut.month)} · ${escapeHtml(cut.from || "")} — ${escapeHtml(cut.to || "")}</span></div>
       <h1 class="fc-h1">Índice do mercado de usados em Portugal — ${escapeHtml(label)}</h1>
-      <p class="fc-p">Corte mensal do que estava à venda no OLX Portugal em ${escapeHtml(label)}: a mediana dos ${cut.n} cortes semanais desse mês. Este é o registo permanente do mês — os números desta página não voltam a mudar.</p>
+      <p class="fc-p">Corte mensal do que estava à venda nos anúncios de particulares do OLX Portugal e do Standvirtual em ${escapeHtml(label)}: a mediana dos ${cut.n} cortes semanais desse mês${collected ? `, recolhidos a ${escapeHtml(collected)}` : ""}. O preço é a mediana das medianas por modelo: cada modelo conta uma vez, tenha muitos ou poucos anúncios. Este é o registo permanente do mês — os números desta página não voltam a mudar.</p>
       <div class="fc-stat-row" style="margin:20px 0 8px;">
-        <div class="fc-stat"><div class="k">PREÇO MEDIANO</div><div class="v">${fmtEur(cut.priceMed)}</div>${delta(cut.priceMed, prev && prev.priceMed)}</div>
-        <div class="fc-stat"><div class="k">ANÚNCIOS ATIVOS</div><div class="v">${fmtNum(cut.listings)}</div>${delta(cut.listings, prev && prev.listings)}</div>
+        <div class="fc-stat"><div class="k">PREÇO MEDIANO</div><div class="v">${fmtEur(cut.priceMed)}</div>${delta(cut.priceMed, prev && prev.priceMed) || `<div class="s">mediana por modelo</div>`}</div>
+        <div class="fc-stat"><div class="k">ANÚNCIOS ATIVOS</div><div class="v">${fmtNum(cut.listings)}</div>${delta(cut.listings, prev && prev.listings) || `<div class="s">mediana das semanas</div>`}</div>
         <div class="fc-stat"><div class="k">MODELOS COBERTOS</div><div class="v">${cut.models != null ? cut.models : "—"}</div><div class="s">com amostra suficiente</div></div>
-        <div class="fc-stat"><div class="k">DIAS ATÉ VENDER</div><div class="v">${cut.sellMed != null ? cut.sellMed : "—"}</div><div class="s">mediana do mercado</div></div>
+        <div class="fc-stat"><div class="k">DIAS ATÉ SAIR</div><div class="v">${cut.sellMed != null ? cut.sellMed : "—"}</div><div class="s">mediana; não é tempo de venda</div></div>
         <div class="fc-stat"><div class="k">KM MEDIANO</div><div class="v">${cut.kmMed != null ? fmtNum(cut.kmMed) : "—"}</div><div class="s">à venda</div></div>
         <div class="fc-stat"><div class="k">DESVALORIZAÇÃO</div><div class="v">${cut.depMed != null ? Math.round(cut.depMed * 100) + "%" : "—"}</div><div class="s">por ano de idade</div></div>
       </div>
-      ${provenance({ n: cut.listings, builtAt: cut.builtAt, measure: `Mediana dos ${cut.n} cortes semanais de ${label}` })}
+      ${provenance({ n: cut.listings, builtAt: cut.builtAt, unit: "anúncios ativos (mediana das semanas)", measure: `Mediana dos ${cut.n} cortes semanais de ${label}; em cada corte, mediana das medianas de preço pedido por modelo`, frozen: true })}
+      ${indexNotes(cut.month)}
     </section>
     <section class="section fc-wrap">
       <h2 class="fc-h2">As semanas deste mês</h2>
       <div class="fc-scroll"><table class="fc-tbl">
-        <thead><tr><th>Semana</th><th>Data</th><th>Preço mediano</th><th>Anúncios</th><th>Dias até vender</th></tr></thead>
+        <thead><tr><th>Semana</th><th>Data</th><th>Recolhido</th><th>Preço mediano</th><th>Anúncios</th><th>Modelos</th><th>Dias até sair</th></tr></thead>
         <tbody>${weekRows}</tbody></table></div>
       <p class="fc-p" style="margin-top:12px;">Entram as semanas ISO que fecham dentro do mês, por isso o período vai de ${escapeHtml(cut.from || "")} a ${escapeHtml(cut.to || "")} e não do dia 1 ao último dia.${cut.missing.length ? ` Falta${cut.missing.length === 1 ? "" : "m"} ${cut.missing.length} das ${cut.monthWeeks} semanas (${cut.missing.map(escapeHtml).join(", ")}): não ${cut.missing.length === 1 ? "a guardámos" : "as guardámos"} na altura e não ${cut.missing.length === 1 ? "a inventamos" : "as inventamos"} agora, por isso a mediana deste mês é a de ${cut.n} semanas.` : ` Estão cá as ${cut.monthWeeks} semanas do mês.`}</p>
     </section>
@@ -2277,7 +2305,7 @@ export function renderMarketMonth({ cut, months = [], host, depositCount }) {
 
   return layout({
     title: `Índice do mercado de usados em Portugal — ${label}`,
-    description: `${label}: preço mediano ${fmtEur(cut.priceMed)} em ${fmtNum(cut.listings)} anúncios ativos no OLX Portugal${cut.sellMed != null ? `, ${cut.sellMed} dias medianos até vender` : ""} — mediana de ${cut.n} cortes semanais.`,
+    description: `${label}: preço mediano ${fmtEur(cut.priceMed)} em ${fmtNum(cut.listings)} anúncios ativos no OLX Portugal e Standvirtual${cut.sellMed != null ? `, ${cut.sellMed} dias medianos até sair do anúncio` : ""} — mediana de ${cut.n} cortes semanais.`,
     canonical: permalink, body, zone: "all", nav: "feed", depositCount, index: true, host,
     jsonLd: {
       "@context": "https://schema.org",
@@ -2285,12 +2313,12 @@ export function renderMarketMonth({ cut, months = [], host, depositCount }) {
         {
           "@type": "Dataset", "license": licenseUrl(host), "url": permalink, "inLanguage": "pt-PT",
           "name": `Índice do mercado de carros usados em Portugal — ${label}`,
-          "description": "Preço pedido mediano, número de anúncios ativos, quilometragem mediana e dias medianos até vender no mercado português de carros usados, agregados por mês a partir dos cortes semanais.",
+          "description": "Preço pedido mediano, número de anúncios ativos, quilometragem mediana e dias medianos até sair do anúncio no mercado português de carros usados, agregados por mês a partir dos cortes semanais.",
           "creator": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "isAccessibleForFree": true,
           "temporalCoverage": cut.from && cut.to ? `${cut.from}/${cut.to}` : undefined,
           "dateModified": cut.builtAt || undefined,
-          "variableMeasured": ["Preço pedido mediano (EUR)", "Anúncios ativos", "Dias até vender (mediana)"],
+          "variableMeasured": ["Preço pedido mediano por modelo (EUR)", "Anúncios ativos", "Dias até sair do anúncio (mediana)"],
         },
         breadcrumbLd(host, crumbItems),
       ],
@@ -2444,7 +2472,7 @@ function importEffectBlock(imf) {
       : `<li class="fc-li"><b>No preço não encontrámos diferença.</b> Medida contra o que a ficha técnica sozinha prevê, a diferença é de ${pp(price.v)}, com um intervalo de ${pp(price.lo)} a ${pp(price.hi)} — ou seja, indistinguível de zero (${fmtNum(price.n)} carros em ${price.cells} células).</li>`);
   }
   if (s30) {
-    lines.push(`<li class="fc-li"><b>No tempo encontrámos.</b> Um importado tem <b>${pp(s30.v)}</b> de vendas nos primeiros ${imf.window || 30} dias (intervalo de ${pp(s30.lo)} a ${pp(s30.hi)}), sobre ${fmtNum(s30.n)} carros em ${s30.cells} células comparáveis.</li>`);
+    lines.push(`<li class="fc-li"><b>No tempo encontrámos.</b> Um importado tem <b>${pp(s30.v)}</b> de saídas nos primeiros ${imf.window || 30} dias (intervalo de ${pp(s30.lo)} a ${pp(s30.hi)}), sobre ${fmtNum(s30.n)} carros em ${s30.cells} células comparáveis.</li>`);
   }
   return `
       <h3 class="fc-h3">O que vale a etiqueta «importado»</h3>
@@ -2464,7 +2492,8 @@ export function renderMethodology({ stats, mq, acc = null, imf = null, host, dep
       <p class="fc-p">Sem caixa preta: aqui está de onde vêm os números, o que cada um mede, e em que casos preferimos não mostrar nada a mostrar um valor fraco.</p>
 
       <h2 class="fc-h2">1. De onde vêm os dados</h2>
-      <p class="fc-p">Recolhemos diariamente os anúncios de automóveis do <b>OLX Portugal</b> e guardamos o histórico de cada um: preço, alterações de preço, e o dia em que o anúncio desaparece. Usamos apenas anúncios <b>ativos</b> no momento do cálculo${stats.listings ? `; hoje são ${fmtNum(stats.listings)} anúncios em ${stats.models} modelos` : ""}. Não compramos nem vendemos carros, não somos stand e não recebemos de nenhum vendedor.</p>
+      <p class="fc-p">Recolhemos diariamente os anúncios de automóveis de <b>particulares</b> do <b>OLX Portugal</b> e do <b>Standvirtual</b> e guardamos o histórico de cada um: preço, alterações de preço, e o dia em que o anúncio desaparece. Usamos apenas anúncios <b>ativos</b> no momento do cálculo${stats.listings ? `; hoje são ${fmtNum(stats.listings)} anúncios em ${stats.models} modelos` : ""}. Não compramos nem vendemos carros, não somos stand e não recebemos de nenhum vendedor.</p>
+      <p class="fc-p">Um carro anunciado nos dois sites pode entrar duas vezes nas contagens: identificamos esses pares, mas as estatísticas ainda não os descontam.</p>
 
       <h2 class="fc-h2">2. O que é um "preço" aqui</h2>
       <p class="fc-p">É o <b>preço pedido</b> num anúncio ativo — não o preço a que o carro foi vendido. Ninguém em Portugal publica preços de transação, e inventá-los seria pior do que dizer o que temos. Preços pedidos e preços de venda não são a mesma coisa: a diferença costuma ser a margem de negociação, e é maior nos modelos que demoram a sair (ver <a href="/pt/liquidez">tempo de venda</a>).</p>
@@ -2519,7 +2548,7 @@ ${importEffectBlock(imf)}
       </ul>
       <p class="fc-p">Nesses casos a página mostra só os preços pedidos. Preferimos uma página com menos números a uma página com um número errado.</p>
 
-      <h2 class="fc-h2">6. Dias até vender</h2>
+      <h2 class="fc-h2">6. Dias até sair do mercado</h2>
       <p class="fc-p">Acompanhamos cada anúncio desde que aparece até ao último dia em que o vimos no ar, e daí sai o <a href="/pt/liquidez">tempo de venda</a>. Três coisas nesta conta não são óbvias e mudam o resultado:</p>
       <ul class="fc-ul">
         <li class="fc-li"><b>Os anúncios ainda à venda contam.</b> Se olhássemos só para os que já acabaram, ficávamos com os que tiveram pressa — num mercado que recebe anúncios novos todos os dias, isso encurta a conta em cerca de dez dias. Cada anúncio ainda no ar entra com os dias que já leva (é o método de Kaplan-Meier, o mesmo que se usa para não deitar fora quem ainda não teve o desfecho).</li>
@@ -2543,14 +2572,14 @@ ${importEffectBlock(imf)}
       <ul class="fc-ul">
         <li class="fc-li">Não avalia a <b>tua</b> viatura. A mediana de um modelo não sabe do teu histórico, dos teus extras nem do estado da tua embraiagem. Para o carro concreto, <a href="/pt/avaliar">avalia o anúncio</a>.</li>
         <li class="fc-li">Não distingue carros <b>importados por legalizar</b> na mediana do modelo. Um preço muito abaixo do normal costuma ter ISV por pagar — e o <a href="/pt/isv">ISV</a> pode valer milhares.</li>
-        <li class="fc-li">Não cobre carros vendidos fora do OLX (stands com stock próprio, particulares em grupos fechados, leilões).</li>
+        <li class="fc-li">Não cobre carros vendidos fora do OLX e do Standvirtual (stands com stock próprio, particulares em grupos fechados, leilões).</li>
         <li class="fc-li">Não é aconselhamento financeiro nem uma avaliação para efeitos legais ou de seguro.</li>
       </ul>
 
       <h2 class="fc-h2" id="licenca">10. Reutilização e atribuição</h2>
-      <p class="fc-p">Os números destas páginas são estatísticas nossas, calculadas a partir de anúncios públicos do OLX Portugal. <b>Podes citá-los e reutilizá-los</b>, desde que a fonte seja atribuída ao Carsbuyer e seja indicada a data de recolha: a mediana de um modelo muda ao longo do tempo, e uma citação sem data deixa de ser verificável. Se precisares dos valores sem a marcação da página, cada modelo publica o mesmo conteúdo em JSON, bastando acrescentar <b>.json</b> ao endereço, como em <a href="/pt/preco/opel-corsa.json">/pt/preco/opel-corsa.json</a>.</p>
+      <p class="fc-p">Os números destas páginas são estatísticas nossas, calculadas a partir de anúncios públicos do OLX Portugal e do Standvirtual. <b>Podes citá-los e reutilizá-los</b>, desde que a fonte seja atribuída ao Carsbuyer e seja indicada a data de recolha: a mediana de um modelo muda ao longo do tempo, e uma citação sem data deixa de ser verificável. Se precisares dos valores sem a marcação da página, cada modelo publica o mesmo conteúdo em JSON, bastando acrescentar <b>.json</b> ao endereço, como em <a href="/pt/preco/opel-corsa.json">/pt/preco/opel-corsa.json</a>.</p>
 
-      <h2 class="fc-h2">10. Correções</h2>
+      <h2 class="fc-h2">11. Correções</h2>
       <p class="fc-p">Se um número parece errado, provavelmente vale a pena olhar: a amostra pode estar contaminada por anúncios repetidos ou por uma versão mal classificada. Todas as páginas indicam o tamanho da amostra e a data de recolha, para que qualquer afirmação nossa seja verificável.</p>
       ${authorBlock()}
       ${provenance({ n: stats.listings, builtAt, measure: "Preço pedido em anúncios ativos (mediana e P25-P75)" })}
@@ -2594,7 +2623,7 @@ export function renderAbout({ stats, mq, host, depositCount, builtAt }) {
       <ul class="fc-ul">
         <li class="fc-li"><b>${stats.models}</b> modelos com amostra suficiente para publicar preços${stats.listings ? `, sobre ${fmtNum(stats.listings)} anúncios ativos` : ""}.</li>
         <li class="fc-li">Preço mediano por modelo e <b>por ano de fabrico</b>, sempre com o intervalo onde cabe metade dos anúncios.</li>
-        <li class="fc-li"><a href="/pt/liquidez">Tempo mediano até vender</a> — medido em anúncios reais, não estimado.</li>
+        <li class="fc-li"><a href="/pt/liquidez">Tempo até sair do anúncio</a> — medido em anúncios reais, não estimado.</li>
         <li class="fc-li"><a href="/pt/depreciacao">Curvas de desvalorização</a> para os modelos com histórico suficiente.</li>
         <li class="fc-li">Um <a href="/pt/mercado/indice">índice semanal do mercado</a>, com registo permanente de cada semana.</li>
       </ul>
@@ -2760,7 +2789,7 @@ export function renderIsv({ topModels, host, depositCount, builtAt, refYear }) {
       <p class="fc-p">O ISV sozinho não responde. O que responde é: <b>preço lá fora + ISV + transporte + legalização</b> contra <b>o que esse modelo custa em Portugal hoje</b>. A segunda metade dessa conta é o que medimos todos os dias:</p>
       <div class="mchips">${modelLinks}</div>
       <p class="fc-p" style="margin-top:14px;"><a href="/pt/precos">Ver preço de qualquer modelo em Portugal&nbsp;→</a></p>
-      ${provenance({ n: null, builtAt, measure: "Tabelas de ISV 2026 (Código do ISV, art.º 7.º e 11.º)", extra: "Estimativa, não vinculativa" })}
+      ${provenance({ n: null, builtAt, measure: "Tabelas de ISV 2026 (Código do ISV, art.º 7.º e 11.º)", source: "Código do ISV", extra: "Estimativa, não vinculativa" })}
       <p class="fc-p" style="margin-top:18px;">Estimativa indicativa a partir das tabelas em vigor. O valor liquidado pela Autoridade Tributária no processo de admissão é o que conta.</p>
     </section>
     <script>
@@ -3471,7 +3500,7 @@ export function renderImportPage({ guides = "", rec, slug, costs, stats, hasMode
           <div class="fc-stat"><div class="k">ISV MEDIANO</div><div class="v">${fmtEur(rec.isv_med != null ? rec.isv_med : cells[0].isv)}</div><div class="s">calculado por anúncio</div></div>
           ${lo != null ? `<div class="fc-stat"><div class="k">RESTO DA CONTA</div><div class="v">${fmtEur(lo)}+</div><div class="s">até ${fmtEur(hi)} sem o ISV</div></div>` : ""}
         </div>
-        ${provenance({ n: rec.nde, builtAt, unit: "anúncios alemães", measureId: "import-landed-cost",
+        ${provenance({ n: rec.nde, builtAt, unit: "anúncios alemães", source: "AutoScout24 (Alemanha); OLX Portugal e Standvirtual", measureId: "import-landed-cost",
                        source: "AutoScout24 (Alemanha) e OLX (Portugal)",
                        measure: "Preço pedido na Alemanha + ISV estimado + custos de legalização, contra o preço pedido em Portugal" })}
       </div>
@@ -3581,7 +3610,7 @@ export function renderImportHub({ rows, costs, host, depositCount, builtAt }) {
       <div class="fc-scroll"><table class="fc-tbl">
         <thead><tr><th>Modelo</th><th>Diferença mediana</th><th>Anos a favor</th><th>Anúncios DE</th><th>Anúncios PT</th></tr></thead>
         <tbody>${tr}</tbody></table></div>
-      ${provenance({ n: rows.reduce((s, r) => s + (r.nde || 0), 0), builtAt, unit: "anúncios alemães",
+      ${provenance({ n: rows.reduce((s, r) => s + (r.nde || 0), 0), builtAt, unit: "anúncios alemães", source: "AutoScout24 (Alemanha); OLX Portugal e Standvirtual",
                      measureId: "import-landed-cost",
                      source: "AutoScout24 (Alemanha) e OLX (Portugal)",
                      measure: "Preço pedido na Alemanha + ISV estimado + legalização, contra o preço pedido em Portugal" })}
@@ -4113,7 +4142,7 @@ export function renderVenderPage({ guides = "", rec, slug, market, pageYears = [
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">Vender um ${B} ${M}: quanto pedir e em quantos dias vende</h1>
       <p class="fc-p">Nos <b>${rec.n} anúncios ativos</b> de ${B} ${M} no OLX, metade pede entre <b>${FL}</b> e <b>${FH}</b>, com mediana de <b>${FM}</b>. ${speedLead}${speedMkt} Estes são os números contra os quais o teu anúncio vai ser lido.</p>
-      ${provenance({ n: rec.n, builtAt, measure: `Preço pedido, ${B} ${M} (mediana e P25-P75); dias até sair do OLX` })}
+      ${provenance({ n: rec.n, builtAt, measure: `Preço pedido, ${B} ${M} (mediana e P25-P75); dias até sair do anúncio` })}
 
       <h2 class="fc-h2">Quanto pedir</h2>
       <p class="fc-p">Acima de ${FH} ficas na quarta parte mais cara dos anúncios e competes com carros mais novos ou com menos quilómetros. Abaixo de ${FL} estás na quarta parte mais barata, onde o comprador desconfia antes de perguntar. O ponto de partida mais comum é a mediana do teu ano:</p>
@@ -4197,7 +4226,7 @@ export function renderVenderHub({ rows, market, host, depositCount, builtAt }) {
         <thead><tr><th>Modelo</th><th>Mediana pedida</th><th>Metade pede entre</th><th>Sai em 30 dias</th><th>Baixam o preço</th><th>Anúncios</th></tr></thead>
         <tbody>${tr}</tbody></table></div>
       <p class="fc-p" style="margin-top:18px;">O teu modelo não está na lista? <a href="/pt/avaliar#escolher">Escolhe-o na avaliação por modelo e ano</a>: mostra a mediana pedida e a faixa do mercado.</p>
-      ${provenance({ n: rows.reduce((s, r) => s + (r.n || 0), 0), builtAt, measure: "Preço pedido em anúncios ativos (mediana e P25-P75); dias até sair do OLX" })}
+      ${provenance({ n: rows.reduce((s, r) => s + (r.n || 0), 0), builtAt, measure: "Preço pedido em anúncios ativos (mediana e P25-P75); dias até sair do anúncio" })}
       <p class="fc-p" style="margin-top:18px;"><a href="/pt/precos">Preços por modelo</a> · <a href="/pt/liquidez">Tempo de venda</a> · <a href="/pt/depreciacao">Desvalorização</a> · <a href="/pt/metodologia">Como medimos</a></p>
     </section>
     <div style="height:60px;"></div>`;
