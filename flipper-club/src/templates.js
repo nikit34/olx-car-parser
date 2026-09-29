@@ -2741,7 +2741,7 @@ export function whatsappShare(text, url) {
   if (!url) return "";
   const msg = `${text} ${url}`.replace(/[\u202f\u00a0]/g, " ");
   const href = "https://wa.me/?text=" + encodeURIComponent(msg);
-  return `<a href="${href}" target="_blank" rel="noopener" onclick="if(window.gtag){gtag('event','share',{method:'whatsapp',content_type:'valuation'})}" style="display:block;text-align:center;margin-top:12px;padding:10px 14px;border:1px solid #CFE8D8;border-radius:11px;background:#F1FAF4;color:#1B5E3A;font-weight:600;font-size:13.5px;">Partilhar no WhatsApp&nbsp;&nbsp;↗</a>`;
+  return `<a href="${href}" target="_blank" rel="noopener" ${analyticsClick("share", { method: "whatsapp", content_type: "valuation" })} style="display:block;text-align:center;margin-top:12px;padding:10px 14px;border:1px solid #CFE8D8;border-radius:11px;background:#F1FAF4;color:#1B5E3A;font-weight:600;font-size:13.5px;">Partilhar no WhatsApp&nbsp;&nbsp;↗</a>`;
 }
 
 export function shareRow(text, url) {
@@ -2751,11 +2751,12 @@ export function shareRow(text, url) {
   const tg = "https://t.me/share/url?url=" + encodeURIComponent(url) + "&text=" + encodeURIComponent(text);
   const fb = "https://www.facebook.com/sharer/sharer.php?u=" + encodeURIComponent(url);
   const btn = "flex:1 1 0;padding:10px 6px;border:1px solid #E3E5E9;border-radius:11px;background:#fff;color:#16181D;font-weight:600;font-size:13px;text-align:center;text-decoration:none;display:block;";
+  const copied = GA4_MEASUREMENT_ID ? "if(window.gtag){gtag('event','share',{method:'copy',content_type:'valuation'})}" : "";
   return `<div style="display:flex;gap:8px;margin-top:12px;">`
-    + `<a href="${wa}" target="_blank" rel="noopener" onclick="if(window.gtag){gtag('event','share',{method:'whatsapp',content_type:'valuation'})}" style="${btn}">WhatsApp ↗</a>`
-    + `<a href="${tg}" target="_blank" rel="noopener" onclick="if(window.gtag){gtag('event','share',{method:'telegram',content_type:'valuation'})}" style="${btn}">Telegram ↗</a>`
-    + `<a href="${fb}" target="_blank" rel="noopener" onclick="if(window.gtag){gtag('event','share',{method:'facebook',content_type:'valuation'})}" style="${btn}">Facebook ↗</a>`
-    + `<button type="button" data-url="${escapeHtml(url)}" onclick="var u=this.getAttribute('data-url');if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(u);}if(window.gtag){gtag('event','share',{method:'copy',content_type:'valuation'})}this.textContent='Copiado ✓';var b=this;setTimeout(function(){b.textContent='Copiar';},1500);" style="${btn}cursor:pointer;">Copiar</button>`
+    + `<a href="${wa}" target="_blank" rel="noopener"${analyticsClick("share", { method: "whatsapp", content_type: "valuation" })} style="${btn}">WhatsApp ↗</a>`
+    + `<a href="${tg}" target="_blank" rel="noopener"${analyticsClick("share", { method: "telegram", content_type: "valuation" })} style="${btn}">Telegram ↗</a>`
+    + `<a href="${fb}" target="_blank" rel="noopener"${analyticsClick("share", { method: "facebook", content_type: "valuation" })} style="${btn}">Facebook ↗</a>`
+    + `<button type="button" data-url="${escapeHtml(url)}" onclick="var u=this.getAttribute('data-url');if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(u);}${copied}this.textContent='Copiado ✓';var b=this;setTimeout(function(){b.textContent='Copiar';},1500);" style="${btn}cursor:pointer;">Copiar</button>`
     + `</div>`;
 }
 
