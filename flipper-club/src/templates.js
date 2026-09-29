@@ -1520,7 +1520,8 @@ export function renderCarPage({ deal, zone, view, depositCount, modelHref, host,
           ${originNote}
         </div>
       </div>
-      ${historyCheckBlock({ url: historyUrl, from: "car", price: deal.price_eur != null ? deal.price_eur : null })}`;
+      ${historyCheckBlock({ url: historyUrl, from: "car", price: deal.price_eur != null ? deal.price_eur : null })}
+      ${host && deal.olx_id ? shareRow(p.name + ": pedido " + p.priceStr + ", justo " + p.fairStr + ". Avaliação independente:", "https://" + host + "/pt/car?olx_id=" + encodeURIComponent(deal.olx_id) + "&utm_source=share&utm_medium=social") : ""}`;
 
   const locBits = [p.loc, p.firstSeenDays != null ? `há ${p.firstSeenDays}d` : null, p.sellerType].filter(Boolean).join(" · ");
 
@@ -1818,7 +1819,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
         ${normBlock}
         ${hist}
         ${olxHref ? `<a class="olx-btn" style="display:block;margin-top:18px;" href="${escapeHtml(olxHref)}" target="_blank" rel="noopener nofollow"${analyticsClick("olx_open", { click_source: "avaliar", olx_id: String(olxId || ""), market: "pt" })}>Ver anúncio original&nbsp;&nbsp;↗</a>` : ""}
-        ${whatsappShare(`${rec.t || "Viatura"}: pedido ${fmtEur(price)}, justo ${fmtEur(fm)} (${fmtEur(fl)}–${fmtEur(fh)}). Avaliação independente:`, host ? `https://${host}/pt/avaliar?q=${encodeURIComponent(olxId || "")}` : "")}
+        ${shareRow(`${rec.t || "Viatura"}: pedido ${fmtEur(price)}, justo ${fmtEur(fm)} (${fmtEur(fl)}–${fmtEur(fh)}). Avaliação independente:`, host ? `https://${host}/pt/avaliar?q=${encodeURIComponent(olxId || "")}&utm_source=share&utm_medium=social` : "")}
         ${modelHref ? `<a href="${modelHref}" style="display:block;text-align:center;margin-top:12px;font-size:13.5px;color:#177A47;font-weight:600;">Ver preços deste modelo por ano&nbsp;→</a>` : ""}
         <a href="${sellHref}" style="display:block;text-align:center;margin-top:10px;font-size:13.5px;color:#5B606B;">É o teu carro? Vê por quanto anunciar&nbsp;→</a>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;">
@@ -1862,7 +1863,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
           <a class="btn-outline" style="padding:11px 16px;font-size:14px;" href="/pt/preco/${encodeURIComponent(spec.slug)}">Ver preço por ano&nbsp;→</a>
           <a class="btn-dark" style="padding:11px 16px;font-size:14px;" href="/pt/avaliar">Tens o anúncio? Cola o link</a>
         </div>
-        ${whatsappShare(`${mr.b} ${mr.m}${cell ? ` ${cell.y}` : ""}: mediana pedida ${fmtEur(sfm)} (${fmtEur(sfl)}–${fmtEur(sfh)}) no OLX. Avaliação independente:`, host ? `https://${host}/pt/avaliar?modelo=${encodeURIComponent(spec.slug)}${spec.year ? `&ano=${encodeURIComponent(spec.year)}` : ""}` : "")}
+        ${shareRow(`${mr.b} ${mr.m}${cell ? ` ${cell.y}` : ""}: mediana pedida ${fmtEur(sfm)} (${fmtEur(sfl)}–${fmtEur(sfh)}) no OLX. Avaliação independente:`, host ? `https://${host}/pt/avaliar?modelo=${encodeURIComponent(spec.slug)}${spec.year ? `&ano=${encodeURIComponent(spec.year)}` : ""}&utm_source=share&utm_medium=social` : "")}
         ${spec.vender ? `<a href="/pt/vender/${encodeURIComponent(spec.slug)}" style="display:block;text-align:center;margin-top:12px;font-size:13.5px;color:#177A47;font-weight:600;">Quanto pedir e em quantos dias vende&nbsp;→</a>` : ""}
       </div>
       <div class="side-foot">Preços PEDIDOS em anúncios ativos do OLX — estimativa indicativa, não o valor da tua viatura concreta.</div>
@@ -2290,7 +2291,7 @@ export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, h
   // internal links back to /pt and /pt/precos (reinforcing the crawl spine).
   const crumb = `<nav class="section" aria-label="Breadcrumb" style="max-width:680px;padding:22px 22px 0;font-size:12.5px;color:#8A8F98;">`
     + `<a href="/pt" style="color:#8A8F98;">Início</a> › <a href="/pt/precos" style="color:#8A8F98;">Preços</a> › <span style="color:#16181D;">${B} ${M}</span></nav>`;
-  const body = `${crumb}<div style="padding-top:14px;">${hero}</div>${fork}${gbmCard}${insightBlock}${bridge1}${table}${facetBlock}${duelLink}${depLink}${liqLink}${bridge2}${trust}${rivals}${sellerCta}${sib}${guides}`;
+  const body = `${crumb}<div style="padding-top:14px;">${hero}</div>${fork}${gbmCard}${insightBlock}${bridge1}${table}${facetBlock}${duelLink}${depLink}${liqLink}${bridge2}${trust}${host ? `<section class="section" style="padding:26px 22px 0;max-width:680px;"><div class="sec-label">PARTILHAR ESTE PREÇO</div>` + shareRow(`Quanto vale um ${rec.b} ${rec.m} usado? Mediana ${FM} (${FL}–${FH}) em ${rec.n} anúncios OLX. Avaliação independente:`, `https://${host}/pt/preco/${encodeURIComponent(slug)}?utm_source=share&utm_medium=social`) + `</section>` : ""}${host ? widgetEmbed(slug, host) : ""}${rivals}${sellerCta}${sib}${guides}`;
 
   const canonical = `https://${host}/pt/preco/${slug}`;
   const faq = (q, a) => ({
@@ -2741,4 +2742,33 @@ export function whatsappShare(text, url) {
   const msg = `${text} ${url}`.replace(/[\u202f\u00a0]/g, " ");
   const href = "https://wa.me/?text=" + encodeURIComponent(msg);
   return `<a href="${href}" target="_blank" rel="noopener" onclick="if(window.gtag){gtag('event','share',{method:'whatsapp',content_type:'valuation'})}" style="display:block;text-align:center;margin-top:12px;padding:10px 14px;border:1px solid #CFE8D8;border-radius:11px;background:#F1FAF4;color:#1B5E3A;font-weight:600;font-size:13.5px;">Partilhar no WhatsApp&nbsp;&nbsp;↗</a>`;
+}
+
+export function shareRow(text, url) {
+  if (!url) return "";
+  const clean = String(text + " " + url).replace(/\s+/g, " ");
+  const wa = "https://wa.me/?text=" + encodeURIComponent(clean);
+  const tg = "https://t.me/share/url?url=" + encodeURIComponent(url) + "&text=" + encodeURIComponent(text);
+  const fb = "https://www.facebook.com/sharer/sharer.php?u=" + encodeURIComponent(url);
+  const btn = "flex:1 1 0;padding:10px 6px;border:1px solid #E3E5E9;border-radius:11px;background:#fff;color:#16181D;font-weight:600;font-size:13px;text-align:center;text-decoration:none;display:block;";
+  return `<div style="display:flex;gap:8px;margin-top:12px;">`
+    + `<a href="${wa}" target="_blank" rel="noopener" onclick="if(window.gtag){gtag('event','share',{method:'whatsapp',content_type:'valuation'})}" style="${btn}">WhatsApp ↗</a>`
+    + `<a href="${tg}" target="_blank" rel="noopener" onclick="if(window.gtag){gtag('event','share',{method:'telegram',content_type:'valuation'})}" style="${btn}">Telegram ↗</a>`
+    + `<a href="${fb}" target="_blank" rel="noopener" onclick="if(window.gtag){gtag('event','share',{method:'facebook',content_type:'valuation'})}" style="${btn}">Facebook ↗</a>`
+    + `<button type="button" data-url="${escapeHtml(url)}" onclick="var u=this.getAttribute('data-url');if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(u);}if(window.gtag){gtag('event','share',{method:'copy',content_type:'valuation'})}this.textContent='Copiado ✓';var b=this;setTimeout(function(){b.textContent='Copiar';},1500);" style="${btn}cursor:pointer;">Copiar</button>`
+    + `</div>`;
+}
+
+export function widgetEmbed(slug, host) {
+  if (!slug || !host) return "";
+  const src = `https://${host}/pt/widget/preco/${encodeURIComponent(slug)}`;
+  const full = `https://${host}/pt/preco/${encodeURIComponent(slug)}`;
+  const snippet = `<iframe src="${src}" width="340" height="300" style="border:0" loading="lazy"></iframe>`;
+  return `<section class="section" style="padding:26px 22px 0;max-width:680px;">`
+    + `<div class="exclusive" style="background:#FAFAF8;border:1px solid #EFECE6;align-items:flex-start;">`
+    + `<span style="font-size:15px;">🔗</span>`
+    + `<span class="x" style="color:#5B606B;"><b style="color:#16181D;">Partilhar este preço noutro site.</b> Cola este código num artigo ou na página do stand: mostra a mediana e liga de volta à avaliação completa.`
+    + `<code style="display:block;margin-top:10px;padding:10px 12px;background:#fff;border:1px solid #E3E5E9;border-radius:8px;font-size:12px;word-break:break-all;">${escapeHtml(snippet)}</code>`
+    + `<span style="display:block;margin-top:8px;"><a href="${escapeHtml(full)}" style="color:#177A47;font-weight:600;">Ver a página completa&nbsp;→</a> · <a href="${escapeHtml(src)}" target="_blank" rel="noopener" style="color:#177A47;font-weight:600;">Pré-visualizar o widget&nbsp;↗</a></span>`
+    + `</span></div></section>`;
 }
