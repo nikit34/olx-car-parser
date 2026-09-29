@@ -2306,7 +2306,7 @@ export function renderModelPage({ guides = "", rec, slug, liveDeals, siblings, h
   // internal links back to /pt and /pt/precos (reinforcing the crawl spine).
   const crumb = `<nav class="section" aria-label="Breadcrumb" style="max-width:680px;padding:22px 22px 0;font-size:12.5px;color:#8A8F98;">`
     + `<a href="/pt" style="color:#8A8F98;">Início</a> › <a href="/pt/precos" style="color:#8A8F98;">Preços</a> › <span style="color:#16181D;">${B} ${M}</span></nav>`;
-  const body = `${crumb}<div style="padding-top:14px;">${hero}</div>${fork}${gbmCard}${insightBlock}${bridge1}${table}${facetBlock}${duelLink}${depLink}${liqLink}${bridge2}${trust}${host ? `<section class="section" style="padding:26px 22px 0;max-width:680px;"><div class="sec-label">PARTILHAR ESTE PREÇO</div>` + shareRow(`Quanto vale um ${rec.b} ${rec.m} usado? Mediana ${FM} (${FL}–${FH}) em ${rec.n} anúncios OLX. Avaliação independente:`, `https://${host}/pt/preco/${encodeURIComponent(slug)}?utm_source=share&utm_medium=social`) + `</section>` : ""}${host ? widgetEmbed(slug, host) : ""}${rivals}${sellerCta}${sib}${guides}`;
+  const body = `${crumb}<div style="padding-top:14px;">${hero}</div>${fork}${gbmCard}${insightBlock}${bridge1}${table}${facetBlock}${duelLink}${depLink}${liqLink}${bridge2}${trust}${rivals}${sellerCta}${sib}${guides}`;
 
   const canonical = `https://${host}/pt/preco/${slug}`;
   const faq = (q, a) => ({

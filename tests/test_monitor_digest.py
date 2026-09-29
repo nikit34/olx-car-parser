@@ -99,8 +99,10 @@ def test_dated_reminders_only_inside_their_windows():
     assert md.dated_reminders(dt.date(2026, 10, 8)) == []
     assert "/comparar" in md.dated_reminders(dt.date(2026, 10, 19))[0]
     assert "заморозки" in md.dated_reminders(dt.date(2026, 10, 28))[0]
-    assert "стенд" in md.dated_reminders(dt.date(2026, 10, 28))[1]
-    assert ["стенд" in r for r in md.dated_reminders(dt.date(2026, 10, 29))] == [True]
+    assert "PARTILHAR" in md.dated_reminders(dt.date(2026, 10, 28))[1]
+    assert "стенд" in md.dated_reminders(dt.date(2026, 10, 28))[2]
+    assert ["стенд" in r for r in md.dated_reminders(dt.date(2026, 10, 29))] == [False, True]
+    assert ["стенд" in r for r in md.dated_reminders(dt.date(2026, 10, 30))] == [True]
     assert md.dated_reminders(dt.date(2026, 10, 31)) == []
 
 

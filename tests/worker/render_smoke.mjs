@@ -1191,6 +1191,8 @@ check("the stand offer sits only on the noindex valuation results", () => {
     rec: models[deep], slug: deep, liveDeals: [], siblings: [], host: HOST, depositCount: 0, builtAt,
     yearPages: yearPageYears(models[deep]), competitors: [], comparisons: [], hasVender: true,
   });
+  assert(!mp.includes("PARTILHAR ESTE PREÇO") && !mp.includes("/pt/widget/preco/"),
+    "the share block and widget code are back on the indexable model page during the SEO freeze");
   for (const [name, page] of [["bare /avaliar", bare], ["model page", mp]]) {
     assert(!page.includes("/pt/ir/vender"), `the stand offer leaked onto the indexable ${name} during the SEO freeze`);
   }
