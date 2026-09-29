@@ -947,10 +947,15 @@ export function priceFork({ name, slug, year = null, n, fl, fh, lq = null,
     </section>`;
 }
 
-export function analyticsClick(name, params = {}) {
+function analyticsCall(name, params = {}) {
   if (!GA4_MEASUREMENT_ID) return "";
   const attr = v => JSON.stringify(v).replace(/</g, "\\u003c").replace(/"/g, "&quot;");
-  return ` onclick="if(window.gtag)gtag('event',${attr(name)},${attr(params)})"`;
+  return `if(window.gtag)gtag('event',${attr(name)},${attr(params)})`;
+}
+
+export function analyticsClick(name, params = {}) {
+  const call = analyticsCall(name, params);
+  return call ? ` onclick="${call}"` : "";
 }
 
 const MONTH_ABBR_PT = ["jan", "fev", "mar", "abr", "mai", "jun",
@@ -1618,8 +1623,15 @@ export function renderPrivacy({ depositCount, host, contact = null }) {
       partir do código do site, não de um modelo genérico.</p>
 
       <h2>O que guardamos sempre</h2>
-      <p>Nada. O site não põe cookies próprios, não tem contas nem registo, e navegar
+      <p>Nada que te identifique. O site não põe cookies próprios, não tem contas nem registo, e navegar
       aqui não deixa nenhum identificador teu do nosso lado.</p>
+
+      <h2>Cliques que contamos</h2>
+      <p>Contamos os cliques em dois botões: o do relatório de histórico e o de pedir
+      proposta a um stand. De cada clique fica a hora, o botão, a página do site de onde
+      vieste (sem o que escreveste nela), o país ou a região, o nome da rede e o navegador,
+      e no botão do stand também o modelo e o ano do carro; nunca o endereço IP. Estes
+      registos apagam-se ao fim de 30 dias, e os totais por dia ao fim de 180.</p>
 
       <h2>O que só guardamos com o teu consentimento</h2>
       <p>Estatísticas anónimas de utilização através do Google Analytics: que páginas
@@ -1822,6 +1834,9 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
         ${shareRow(`${rec.t || "Viatura"}: pedido ${fmtEur(price)}, justo ${fmtEur(fm)} (${fmtEur(fl)}–${fmtEur(fh)}). Avaliação independente:`, host ? `https://${host}/pt/avaliar?q=${encodeURIComponent(olxId || "")}&utm_source=share&utm_medium=social` : "")}
         ${modelHref ? `<a href="${modelHref}" style="display:block;text-align:center;margin-top:12px;font-size:13.5px;color:#177A47;font-weight:600;">Ver preços deste modelo por ano&nbsp;→</a>` : ""}
         <a href="${sellHref}" style="display:block;text-align:center;margin-top:10px;font-size:13.5px;color:#5B606B;">É o teu carro? Vê por quanto anunciar&nbsp;→</a>
+        ${standOfferLink({ from: "anuncio", slug: (rec.ms && models && models[rec.ms]) ? rec.ms : "", year: typeof rec.y === "number" ? rec.y : null,
+                           style: "display:block;text-align:center;margin-top:8px;font-size:13.5px;color:#5B606B;",
+                           label: "Preferes vendê-lo a um stand? Pede uma proposta" })}
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;">
           <a class="btn-outline" style="flex:1 1 auto;padding:11px 14px;font-size:13.5px;text-align:center;" href="/pt/avaliar">Avaliar outro carro</a>
           <a class="btn-dark" style="flex:1 1 auto;padding:11px 14px;font-size:13.5px;text-align:center;" href="/pt/mercado">Ver carros abaixo do preço&nbsp;→</a>
@@ -1870,7 +1885,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
       ${sellerHelpBlock({
         slug: spec.slug, name: `${mr.b} ${mr.m}`,
         year: spec.year || (cell && typeof cell.y === "number" ? cell.y : null),
-        median: sfm, vender: !!spec.vender,
+        median: sfm, vender: !!spec.vender, standFrom: "modelo",
       })}
     </div>`;
   }
@@ -2543,7 +2558,7 @@ export const PT_DISTRICTS = [
   "Viana do Castelo", "Vila Real", "Viseu", "Açores", "Madeira",
 ];
 
-export function sellerHelpBlock({ slug = "", name = "", year = null, median = null, vender = false, heading = null }) {
+export function sellerHelpBlock({ slug = "", name = "", year = null, median = null, vender = false, heading = null, standFrom = null }) {
   const q = slug ? `?modelo=${encodeURIComponent(slug)}${year ? `&ano=${encodeURIComponent(String(year))}` : ""}` : "";
   const href = (vender && slug) ? `/pt/vender/${encodeURIComponent(slug)}` : `/pt/avaliar${q}`;
   const cta = (vender && slug) ? "Quanto pedir e em quantos dias vende" : "Ver o que o mercado pede";
@@ -2553,7 +2568,43 @@ export function sellerHelpBlock({ slug = "", name = "", year = null, median = nu
         <div class="panel-title" style="font-size:16px;margin-bottom:6px;">${heading ? escapeHtml(heading) : `Vais vender${what}?`}</div>
         <p style="font-size:14px;color:#5B606B;margin:0 0 14px;line-height:1.5;">Não compramos carros. O que temos é o que o mercado pede por um carro como o teu${median != null ? `, a começar pela mediana de ${fmtEur(median)}` : ""}: a faixa onde fica metade dos anúncios e quantos dias costuma demorar a sair. Chega para decidires por quanto anunciar.</p>
         <a class="btn-dark" href="${href}" style="display:inline-block;padding:12px 20px;font-size:15px;">${cta}&nbsp;&nbsp;→</a>
+        ${standFrom ? `<p style="font-size:13.5px;color:#5B606B;margin:14px 0 0;line-height:1.5;">Não queres esperar pelo comprador? ${standOfferLink({ from: standFrom, slug, year, style: "color:#177A47;font-weight:600;", label: "Pede uma proposta a um stand" })}</p>` : ""}
       </section>`;
+}
+
+export function standOfferLink({ from, slug = "", year = null, style = "", label }) {
+  const qs = new URLSearchParams({ from });
+  if (slug) qs.set("m", slug);
+  if (year) qs.set("y", String(year));
+  const internal = "try{if(localStorage.getItem('fc_internal')==='1')this.href+='&amp;int=1'}catch(e){}";
+  return `<a href="/pt/ir/vender?${escapeHtml(qs.toString())}" rel="nofollow" style="${style}" onclick="${internal}${analyticsCall("sell_intent", { click_source: from, market: "pt" })}">${escapeHtml(label)}&nbsp;→</a>`;
+}
+
+export function renderSellIntent({ slug = null, name = "", year = null, vender = false, host = null }) {
+  const car = name ? `um ${escapeHtml(name)}${year ? ` de ${year}` : ""}` : "um carro como o teu";
+  const priceHref = slug
+    ? (vender ? `/pt/vender/${encodeURIComponent(slug)}` : `/pt/avaliar?modelo=${encodeURIComponent(slug)}${year ? `&amp;ano=${year}` : ""}`)
+    : "/pt/avaliar#escolher";
+  const body = `
+    <section class="section" style="padding:36px 22px 70px;max-width:640px;margin:0 auto;">
+      <div class="side-card">
+        <h1 style="font-size:23px;margin:0 0 10px;">Ainda não temos stands parceiros</h1>
+        <p style="font-size:15px;color:#16181D;line-height:1.55;margin:0 0 10px;">Obrigado por nos dizeres. Ainda não há nenhum stand a quem possamos pedir uma proposta por ti: antes de montar isto, estamos a contar quantas pessoas o querem.</p>
+        <p style="font-size:14px;color:#5B606B;line-height:1.55;margin:0 0 18px;">Só registámos o clique, sem nada que te identifique: não te pedimos nem guardámos o teu nome, o telefone ou o email. Quando o serviço existir, só passaremos o teu contacto a um stand se o pedires expressamente.</p>
+        <div class="panel-title" style="font-size:15px;margin-bottom:8px;">Entretanto, o que já podes fazer</div>
+        <ul style="margin:0;padding-left:18px;font-size:14.5px;line-height:1.7;">
+          <li><a href="${priceHref}" style="color:#177A47;font-weight:600;">Ver o que o mercado pede por ${car}</a></li>
+          <li><a href="/pt/guias/vender-carro-a-stand" style="color:#177A47;font-weight:600;">Como ler a proposta de um stand</a></li>
+          <li><a href="/pt/guias/burlas-e-pagamento-seguro" style="color:#177A47;font-weight:600;">Como receber o pagamento sem riscos</a></li>
+        </ul>
+        <a class="btn-outline" href="/pt/avaliar" style="display:inline-block;margin-top:18px;padding:11px 16px;font-size:14px;">Avaliar outro carro</a>
+      </div>
+    </section>`;
+  return layout({
+    title: "Ainda não temos stands parceiros",
+    description: "Ainda não temos stands parceiros. Estamos a medir quantas pessoas querem vender o carro a um stand através do Carsbuyer.",
+    body, zone: "all", nav: "avaliar", depositCount: null, host,
+  });
 }
 
 export function historyCheckBlock({ url, reasons = [], price = null, title = null, from = "outro" }) {
@@ -2751,12 +2802,12 @@ export function shareRow(text, url) {
   const tg = "https://t.me/share/url?url=" + encodeURIComponent(url) + "&text=" + encodeURIComponent(text);
   const fb = "https://www.facebook.com/sharer/sharer.php?u=" + encodeURIComponent(url);
   const btn = "flex:1 1 0;padding:10px 6px;border:1px solid #E3E5E9;border-radius:11px;background:#fff;color:#16181D;font-weight:600;font-size:13px;text-align:center;text-decoration:none;display:block;";
-  const copied = GA4_MEASUREMENT_ID ? "if(window.gtag){gtag('event','share',{method:'copy',content_type:'valuation'})}" : "";
+  const copied = analyticsCall("share", { method: "copy", content_type: "valuation" });
   return `<div style="display:flex;gap:8px;margin-top:12px;">`
     + `<a href="${wa}" target="_blank" rel="noopener"${analyticsClick("share", { method: "whatsapp", content_type: "valuation" })} style="${btn}">WhatsApp ↗</a>`
     + `<a href="${tg}" target="_blank" rel="noopener"${analyticsClick("share", { method: "telegram", content_type: "valuation" })} style="${btn}">Telegram ↗</a>`
     + `<a href="${fb}" target="_blank" rel="noopener"${analyticsClick("share", { method: "facebook", content_type: "valuation" })} style="${btn}">Facebook ↗</a>`
-    + `<button type="button" data-url="${escapeHtml(url)}" onclick="var u=this.getAttribute('data-url');if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(u);}${copied}this.textContent='Copiado ✓';var b=this;setTimeout(function(){b.textContent='Copiar';},1500);" style="${btn}cursor:pointer;">Copiar</button>`
+    + `<button type="button" data-url="${escapeHtml(url)}" onclick="var u=this.getAttribute('data-url');if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(u);}${copied ? copied + ";" : ""}this.textContent='Copiado ✓';var b=this;setTimeout(function(){b.textContent='Copiar';},1500);" style="${btn}cursor:pointer;">Copiar</button>`
     + `</div>`;
 }
 

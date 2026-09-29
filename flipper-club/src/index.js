@@ -40,7 +40,7 @@ import {
   renderLanding,
   renderAvaliar, renderModelPage, renderModelsHub, renderModelWidget, slugify, listingUrl,
   setAnalyticsId,
-  renderPrivacy,
+  renderPrivacy, renderSellIntent,
 } from "./templates.js";
 import {
   renderYearPage, renderNotFound, renderDepreciationPage, renderDepreciationHub,
@@ -87,7 +87,7 @@ const ICON_PATHS = new Set([
 ]);
 
 const PRODUCT_PATHS = new Set([
-  "/", "/mercado", "/car", "/avaliar", "/lead", "/ir/historico",
+  "/", "/mercado", "/car", "/avaliar", "/lead", "/ir/historico", "/ir/vender",
   "/precos", "/historico",
   // Приватность обязана быть здесь: гейт стоит ВЫШЕ её обработчика, и без
   // записи в этом списке Basic-Auth отдавал бы 401 и Googlebot, и человеку,
@@ -234,6 +234,7 @@ async function handlePt(request, env, url, pathname, method) {
   if (pathname === "/car" && method === "GET") return handleCar(request, env, u);
   if (pathname === "/lead") return redirect("/pt/avaliar#vender", 303);
   if (pathname === "/ir/historico" && method === "GET") return handleHistoryRedirect(request, env, u);
+  if (pathname === "/ir/vender" && method === "GET") return handleSellIntent(request, env, u);
   // Страница приватности публичная и индексируемая: на неё ссылается баннер
   // согласия, и за Basic-Auth она отдавала бы 401 и Googlebot, и человеку.
   if (pathname === "/privacidade" && method === "GET") {
@@ -351,7 +352,11 @@ const worker = {
       }
       if (pathname === "/analytics/clicks.json") {
         if (!checkBasicAuth(request, env)) return unauthorized();
-        return clicksJson(env);
+        return countedHitsJson(env, "click:hist:", "click:drop:", "histhit:");
+      }
+      if (pathname === "/analytics/sell.json") {
+        if (!checkBasicAuth(request, env)) return unauthorized();
+        return countedHitsJson(env, "sell:want:", "sell:drop:", "sellhit:");
       }
       if (pathname === "/analytics/ai.json") {
         if (!checkBasicAuth(request, env)) return unauthorized();
@@ -2798,17 +2803,7 @@ async function trackAiFetch(env, request, pathname) {
 }
 
 async function aiJson(env) {
-  const days = await kvCountsByDay(env, "ai:hit:");
-  const names = [];
-  let cursor;
-  for (let i = 0; i < 5; i++) {
-    const page = await env.KV.list({ prefix: "aihit:", limit: 500, cursor });
-    for (const k of page.keys || []) names.push(k.name);
-    if (page.list_complete || !page.cursor) break;
-    cursor = page.cursor;
-  }
-  const hits = (await Promise.all(names.slice(-HIT_SAMPLE_MAX).reverse()
-    .map(name => env.KV.get(name, "json").catch(() => null)))).filter(Boolean);
+  const [days, hits] = await Promise.all([kvCountsByDay(env, "ai:hit:"), kvSamples(env, "aihit:")]);
   return new Response(JSON.stringify({ days, hits }, null, 2), {
     status: 200,
     headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
@@ -2820,6 +2815,7 @@ const HIT_TTL_SEC = 30 * 24 * 3600;
 const HIT_SAMPLE_MAX = 150;
 const HIT_SAMPLE_PER_BUCKET = 20;
 const CLICK_SOURCES = new Set(["avaliar", "ano", "car", "importar", "vender", "modelo", "outro"]);
+const SELL_SOURCES = new Set(["anuncio", "modelo"]);
 const BOT_UA = /(?<!cu)bot|crawl|spider|slurp|fetch|monitor|headless|curl|wget|python|scrapy|httpx|aiohttp|okhttp|go-http-client|java\/|node-fetch|axios|libwww|phantomjs|puppeteer|playwright|selenium|lighthouse|pagespeed|facebookexternalhit|facebookcatalog|meta-externalagent|whatsapp|embedly|iframely|preview|-user\b/i;
 const PREFETCH_HINT = /prefetch|prerender|preview/i;
 const HOSTING_NET = /amazon|microsoft|azure|alibaba|tencent|aceville|collyer quay|huawei cloud|ovh|hetzner|digitalocean|linode|akamai connected cloud|oracle|contabo|scaleway|leaseweb|vultr|choopa|m247|datacamp|cdn77|g-core|gcore|psychz|quadranet|colocrossing|hostinger|ionos|kamatera|zenlayer|ucloud|byteplus|bytedance|hostkey|servers\.com|clouvider|worldstream|netcup|frantech|ponynet/i;
@@ -2853,30 +2849,75 @@ async function handleHistoryRedirect(request, env, url) {
   const drop = trafficVerdict(request);
   const day = new Date().toISOString().slice(0, 10);
   const key = drop ? `click:drop:${day}:${drop}` : `click:hist:${day}:${from}`;
+  await countHit(env, request, key, "histhit:", { from, drop: drop || null });
+  return new Response(null, { status: 302, headers: { Location: target, "Cache-Control": "no-store" } });
+}
+
+async function handleSellIntent(request, env, url) {
+  const raw = (url.searchParams.get("from") || "").toString().toLowerCase();
+  const from = SELL_SOURCES.has(raw) ? raw : "outro";
+  const mdoc = await getModels(env);
+  const models = (mdoc && mdoc.models) || {};
+  const m = (url.searchParams.get("m") || "").toString().toLowerCase();
+  const slug = Object.prototype.hasOwnProperty.call(models, m) ? m : null;
+  const yr = parseInt(url.searchParams.get("y") || "", 10);
+  const year = (yr >= 1950 && yr <= new Date().getUTCFullYear() + 1) ? yr : null;
+  if (url.searchParams.get("ok") !== "1") {
+    const drop = url.searchParams.get("int") === "1" ? "internal" : trafficVerdict(request);
+    const day = new Date().toISOString().slice(0, 10);
+    const key = drop ? `sell:drop:${day}:${drop}` : `sell:want:${day}:${from}`;
+    const region = String((request.cf && request.cf.region) || "").slice(0, 40) || null;
+    await countHit(env, request, key, "sellhit:", { from, m: slug, y: year, drop: drop || null, region });
+    trackFunnel(env, drop ? "sell_intent_bot" : "sell_intent", {
+      path: "/ir/vender",
+      why: drop,
+      detail: slug ? `model:${slug}${year ? "/" + year : ""}` : from,
+    });
+    const done = new URLSearchParams({ ok: "1" });
+    if (slug) done.set("m", slug);
+    if (year) done.set("y", String(year));
+    return new Response(null, { status: 303, headers: { Location: `/pt/ir/vender?${done}`, "Cache-Control": "no-store" } });
+  }
+  const rec = slug ? models[slug] : null;
+  return html(renderSellIntent({
+    slug, year, name: rec ? `${rec.b} ${rec.m}` : "",
+    vender: rec ? publishedVender(models, slug, rec, mdoc.built_at) : false,
+    host: url.host,
+  }), 200);
+}
+
+async function countHit(env, request, key, samplePrefix, fields) {
   let seen = HIT_SAMPLE_PER_BUCKET;
   try {
     seen = parseInt((await env.KV.get(key)) || "0", 10) || 0;
     await env.KV.put(key, String(seen + 1), { expirationTtl: CLICK_TTL_SEC });
   } catch (err) { console.warn("click count failed", err && err.message); }
-  if (seen < HIT_SAMPLE_PER_BUCKET) await recordHistoryHit(env, request, from, drop);
-  return new Response(null, { status: 302, headers: { Location: target, "Cache-Control": "no-store" } });
+  if (seen < HIT_SAMPLE_PER_BUCKET) await recordHit(env, request, samplePrefix, fields);
 }
 
-async function recordHistoryHit(env, request, from, drop) {
+function refererPage(request) {
+  const raw = request.headers.get("referer");
+  if (!raw) return null;
+  try {
+    const ref = new URL(raw);
+    return ref.origin === new URL(request.url).origin ? ref.pathname : ref.origin;
+  } catch (err) { return null; }
+}
+
+async function recordHit(env, request, prefix, fields) {
   const cf = request.cf || {};
   const trim = (v, n) => ((v == null ? "" : String(v)).slice(0, n) || null);
   const rec = {
     t: new Date().toISOString(),
-    from,
-    drop: drop || null,
+    ...fields,
     ua: trim(request.headers.get("user-agent"), 200),
-    ref: trim(request.headers.get("referer"), 200),
+    ref: trim(refererPage(request), 200),
     purpose: trim(hitPurpose(request), 60),
     country: trim(cf.country, 4),
     net: trim(cf.asOrganization, 80),
   };
   try {
-    await env.KV.put(`histhit:${rec.t}:${randomToken(3)}`, JSON.stringify(rec), { expirationTtl: HIT_TTL_SEC });
+    await env.KV.put(`${prefix}${rec.t}:${randomToken(3)}`, JSON.stringify(rec), { expirationTtl: HIT_TTL_SEC });
   } catch (err) { console.warn("click sample failed", err && err.message); }
 }
 
@@ -2898,19 +2939,23 @@ async function kvCountsByDay(env, prefix) {
   return out;
 }
 
-async function clicksJson(env) {
-  const days = await kvCountsByDay(env, "click:hist:");
-  const drops = await kvCountsByDay(env, "click:drop:");
+async function kvSamples(env, prefix) {
   const names = [];
   let cursor;
   for (let i = 0; i < 5; i++) {
-    const page = await env.KV.list({ prefix: "histhit:", limit: 500, cursor });
+    const page = await env.KV.list({ prefix, limit: 500, cursor });
     for (const k of page.keys || []) names.push(k.name);
     if (page.list_complete || !page.cursor) break;
     cursor = page.cursor;
   }
-  const hits = (await Promise.all(names.slice(-HIT_SAMPLE_MAX).reverse()
+  return (await Promise.all(names.slice(-HIT_SAMPLE_MAX).reverse()
     .map(name => env.KV.get(name, "json").catch(() => null)))).filter(Boolean);
+}
+
+async function countedHitsJson(env, countPrefix, dropPrefix, samplePrefix) {
+  const [days, drops, hits] = await Promise.all([
+    kvCountsByDay(env, countPrefix), kvCountsByDay(env, dropPrefix), kvSamples(env, samplePrefix),
+  ]);
   return new Response(JSON.stringify({ days, drops, hits }, null, 2), {
     status: 200,
     headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },

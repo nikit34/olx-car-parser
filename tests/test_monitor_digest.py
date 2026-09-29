@@ -99,7 +99,9 @@ def test_dated_reminders_only_inside_their_windows():
     assert md.dated_reminders(dt.date(2026, 10, 8)) == []
     assert "/comparar" in md.dated_reminders(dt.date(2026, 10, 19))[0]
     assert "заморозки" in md.dated_reminders(dt.date(2026, 10, 28))[0]
-    assert md.dated_reminders(dt.date(2026, 10, 29)) == []
+    assert "стенд" in md.dated_reminders(dt.date(2026, 10, 28))[1]
+    assert ["стенд" in r for r in md.dated_reminders(dt.date(2026, 10, 29))] == [True]
+    assert md.dated_reminders(dt.date(2026, 10, 31)) == []
 
 
 def test_clicks_summary_reports_yesterday_and_the_week():
@@ -129,6 +131,33 @@ def test_clicks_summary_separates_dropped_hits_from_live_ones():
     assert "отсеяно 12 (prefetch 9, bot 3)" in lines[0]
     assert "99" not in lines[0]
     assert lines[1] == "Откуда шли живые клики: Vodafone Portugal 2"
+
+
+def test_sell_summary_counts_live_clicks_and_says_whose_cars():
+    payload = {
+        "days": {"2026-09-02": {"modelo": 2, "anuncio": 1}, "2026-08-10": {"modelo": 4}},
+        "drops": {"2026-09-02": {"bot": 5}},
+        "hits": [
+            {"t": "2026-09-02T10:00:00Z", "drop": None, "m": "vw-golf", "y": 2015, "region": "Lisbon", "net": "MEO", "ua": "a"},
+            {"t": "2026-09-02T10:02:00Z", "drop": None, "m": "vw-golf", "y": 2015, "region": "Lisbon", "net": "MEO", "ua": "a"},
+            {"t": "2026-09-02T11:00:00Z", "drop": None, "m": None, "y": None, "region": None, "country": "PT", "net": "NOS", "ua": "b"},
+            {"t": "2026-09-02T12:00:00Z", "drop": "bot", "m": "bmw-320", "y": None, "region": "Porto", "net": "Google LLC", "ua": "g"},
+        ],
+    }
+    fetch = fake_fetch({"sell.json": (200, json.dumps(payload).encode())})
+    lines, fresh = md.sell_summary(fetch, "u", "p", dt.date(2026, 9, 3))
+    assert fresh == 3
+    assert lines[0] == "Хотят продать стенду: вчера 3 (modelo 2, anuncio 1), за 7 дней 3, всего 7; отсеяно 5 (bot 5)"
+    assert lines[1] == "Живые клики за 30 дней (3): ≈2 разных браузеров; машины: vw-golf/2015 2; откуда: Lisbon 2, PT 1"
+
+
+def test_sell_summary_is_one_quiet_line_before_the_first_click():
+    fetch = fake_fetch({"sell.json": (200, json.dumps({"days": {}, "drops": {}, "hits": []}).encode())})
+    lines, fresh = md.sell_summary(fetch, "u", "p", dt.date(2026, 9, 3))
+    assert fresh == 0 and lines == ["Хотят продать стенду: вчера 0, за 7 дней 0, всего 0"]
+    lines, fresh = md.sell_summary(fake_fetch({}), "u", "p", dt.date(2026, 9, 3))
+    assert fresh == 0 and lines == ["Хотят продать стенду: sell.json отвечает 404"]
+    assert md.sell_summary(fake_fetch({}), "", "", dt.date(2026, 9, 3)) == (["Хотят продать стенду: нет доступа"], 0)
 
 
 def test_gsc_failure_says_what_google_actually_answered():

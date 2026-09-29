@@ -138,17 +138,23 @@ def leads_summary(fetch, user, password, now, window_h=24):
     return [line], [], len(fresh)
 
 
+def admin_json(fetch, user, password, name):
+    auth = base64.b64encode(f"{user}:{password}".encode()).decode()
+    status, body = fetch(f"{SITE}/analytics/{name}", {"Authorization": f"Basic {auth}"})
+    if status != 200:
+        return None, f"{name} отвечает {status}"
+    try:
+        return json.loads(body), None
+    except Exception:
+        return None, f"{name} не читается"
+
+
 def clicks_summary(fetch, user, password, today):
     if not user or not password:
         return ["Клики на историю: нет доступа"], 0
-    auth = base64.b64encode(f"{user}:{password}".encode()).decode()
-    status, body = fetch(SITE + "/analytics/clicks.json", {"Authorization": f"Basic {auth}"})
-    if status != 200:
-        return [f"Клики на историю: clicks.json отвечает {status}"], 0
-    try:
-        data = json.loads(body)
-    except Exception:
-        return ["Клики на историю: clicks.json не читается"], 0
+    data, err = admin_json(fetch, user, password, "clicks.json")
+    if err:
+        return [f"Клики на историю: {err}"], 0
     days = data.get("days", {})
     drops = data.get("drops", {})
     hits = data.get("hits", [])
@@ -175,17 +181,46 @@ def clicks_summary(fetch, user, password, today):
     return lines, y_total
 
 
+def sell_summary(fetch, user, password, today):
+    if not user or not password:
+        return ["Хотят продать стенду: нет доступа"], 0
+    data, err = admin_json(fetch, user, password, "sell.json")
+    if err:
+        return [f"Хотят продать стенду: {err}"], 0
+    days = data.get("days", {})
+    drops = data.get("drops", {})
+    hits = data.get("hits", [])
+    yesterday = (today - dt.timedelta(days=1)).isoformat()
+    week = {(today - dt.timedelta(days=i)).isoformat() for i in range(1, 8)}
+    y = days.get(yesterday, {})
+    y_total = sum(y.values())
+    w_total = sum(sum(v.values()) for d, v in days.items() if d in week)
+    total = sum(sum(v.values()) for v in days.values())
+    detail = ", ".join(f"{k} {v}" for k, v in sorted(y.items(), key=lambda kv: -kv[1]) if v)
+    line = f"Хотят продать стенду: вчера {y_total}" + (f" ({detail})" if detail else "") + f", за 7 дней {w_total}, всего {total}"
+    dropped = tally((k, n) for d, v in drops.items() if d in week for k, n in v.items())
+    if dropped:
+        line += f"; отсеяно {sum(dropped.values())} ({fmt_tally(dropped)})"
+    lines = [line]
+    live = [h for h in hits if not h.get("drop")]
+    if live:
+        browsers = len({(h.get("net"), h.get("ua")) for h in live})
+        cars = tally((f"{h['m']}/{h['y']}" if h.get("y") else h["m"], 1) for h in live if h.get("m"))
+        places = tally((h.get("region") or h.get("country") or "?", 1) for h in live)
+        parts = [f"≈{browsers} разных браузеров"]
+        if cars:
+            parts.append(f"машины: {fmt_tally(cars, top=3)}")
+        parts.append(f"откуда: {fmt_tally(places, top=3)}")
+        lines.append(f"Живые клики за 30 дней ({len(live)}): " + "; ".join(parts))
+    return lines, y_total
+
+
 def ai_summary(fetch, user, password, today):
     if not user or not password:
         return ["ИИ-цитирование: нет доступа"]
-    auth = base64.b64encode(f"{user}:{password}".encode()).decode()
-    status, body = fetch(SITE + "/analytics/ai.json", {"Authorization": f"Basic {auth}"})
-    if status != 200:
-        return [f"ИИ-цитирование: ai.json отвечает {status}"]
-    try:
-        data = json.loads(body)
-    except Exception:
-        return ["ИИ-цитирование: ai.json не читается"]
+    data, err = admin_json(fetch, user, password, "ai.json")
+    if err:
+        return [f"ИИ-цитирование: {err}"]
     days = data.get("days", {})
     hits = data.get("hits", [])
     week = {(today - dt.timedelta(days=i)).isoformat() for i in range(1, 8)}
@@ -454,6 +489,8 @@ REMINDERS = (
      "🔎 Перемерить /comparar в Search Console: те же 10 адресов плюс контроль из /pt/preco и /pt/depreciacao. Расширять пул, только если /comparar индексируется лучше контроля."),
     (dt.date(2026, 10, 26), dt.date(2026, 10, 29),
      "🔎 Конец заморозки SEO после обвала 15.09: замер Search Console и решение про noindex тонких страниц лет."),
+    (dt.date(2026, 10, 27), dt.date(2026, 10, 31),
+     "🏷 Кнопка «Pede uma proposta a um stand» (/pt/ir/vender) висит с 29.09: 8-10 и больше живых кликов в строке «Хотят продать стенду» — звонить стендам, меньше — снять кнопку."),
 )
 
 
@@ -488,12 +525,13 @@ def main(argv=None):
     health_lines, health_warn = worker_health(http_post_json, env("CF_API_TOKEN"), now.date() - dt.timedelta(days=1))
     lead_lines, lead_warn, fresh_leads = leads_summary(http_get, env("ANALYTICS_USER"), env("ANALYTICS_PASS"), now)
     click_lines, fresh_clicks = clicks_summary(http_get, env("ANALYTICS_USER"), env("ANALYTICS_PASS"), now.date())
+    sell_lines, fresh_sell = sell_summary(http_get, env("ANALYTICS_USER"), env("ANALYTICS_PASS"), now.date())
     ai_lines = ai_summary(http_get, env("ANALYTICS_USER"), env("ANALYTICS_PASS"), now.date())
     mail_lines, mail_new = mail_summary(lambda: imaplib.IMAP4_SSL("imap.yandex.com", 993),
                                         env("MAIL_IMAP_USER"), env("MAIL_IMAP_PASSWORD"), now - dt.timedelta(days=1))
     weekly = args.force or now.weekday() == 0
     reminders = dated_reminders(now.date())
-    sections = [site_lines, health_lines, rel_lines, lead_lines, click_lines, ai_lines, mail_lines, reminders]
+    sections = [site_lines, health_lines, rel_lines, lead_lines, click_lines, sell_lines, ai_lines, mail_lines, reminders]
     gsc_warn = []
     if weekly:
         gsc_lines, gsc_warn = gsc_summary(http_post_json, env("GSC_ADC_JSON"), now.date())
@@ -501,7 +539,8 @@ def main(argv=None):
     warnings = site_warn + health_warn + rel_warn + lead_warn + gsc_warn
     text = build_digest(now, sections, warnings)
     print(text)
-    quiet = not warnings and not fresh_leads and not fresh_clicks and not mail_new and not weekly and not reminders
+    quiet = (not warnings and not fresh_leads and not fresh_clicks and not fresh_sell
+             and not mail_new and not weekly and not reminders)
     if quiet:
         print("\nnothing new, digest not sent")
         return 0

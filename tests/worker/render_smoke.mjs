@@ -1167,6 +1167,44 @@ check("the money clicks fire their own events", () => {
     "click events fired with no measurement id");
 });
 
+check("the stand offer sits only on the noindex valuation results", () => {
+  setAnalyticsId("G-TESTONLY");
+  const rec = { t: "VW Golf", y: 2015, km: 40000, fu: "Diesel", p: 9000, fl: 9500, fm: 11000, fh: 12500, ms: deep };
+  const pasted = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models, spec: null,
+                                 depositCount: 0, host: HOST, builtAt });
+  assert(pasted.includes(`href="/pt/ir/vender?from=anuncio&amp;m=${deep}&amp;y=2015"`),
+    "the pasted listing does not offer the stand, or the link lost the car");
+  assert(/href="\/pt\/ir\/vender[^"]*" rel="nofollow"[^>]*onclick="[^"]*sell_intent/.test(pasted),
+    "the stand click has no event of its own or is followable");
+  const orphan = renderAvaliar({ rec: { ...rec, ms: "nao-existe" }, olxId: "JqGTZ", sourceUrl: null, query: "", models,
+                                 spec: null, depositCount: 0, host: HOST, builtAt });
+  assert(orphan.includes(`href="/pt/ir/vender?from=anuncio&amp;y=2015"`), "an unknown model slug leaked into the stand link");
+  const spec = renderAvaliar({
+    rec: null, olxId: null, sourceUrl: null, query: "", models,
+    spec: { rec: models[deep], slug: deep, year: 2014, cell: null }, depositCount: 0, host: HOST, builtAt,
+  });
+  assert(spec.includes(`href="/pt/ir/vender?from=modelo&amp;m=${deep}&amp;y=2014"`), "the model valuation does not offer the stand");
+  assert(spec.includes("noindex") && pasted.includes("noindex"), "a page with the stand offer is indexable");
+  const bare = renderAvaliar({ rec: null, olxId: null, sourceUrl: null, query: "", models, spec: null,
+                               depositCount: 0, host: HOST, builtAt });
+  const mp = renderModelPage({
+    rec: models[deep], slug: deep, liveDeals: [], siblings: [], host: HOST, depositCount: 0, builtAt,
+    yearPages: yearPageYears(models[deep]), competitors: [], comparisons: [], hasVender: true,
+  });
+  for (const [name, page] of [["bare /avaliar", bare], ["model page", mp]]) {
+    assert(!page.includes("/pt/ir/vender"), `the stand offer leaked onto the indexable ${name} during the SEO freeze`);
+  }
+  setAnalyticsId("");
+  const quiet = renderAvaliar({ rec, olxId: "JqGTZ", sourceUrl: null, query: "", models, spec: null,
+                                depositCount: 0, host: HOST, builtAt });
+  assert(/href="\/pt\/ir\/vender[^"]*"[^>]*onclick="[^"]*fc_internal/.test(quiet),
+    "with analytics off the stand link no longer marks the owner's own clicks");
+  assert(!quiet.includes("sell_intent") && !quiet.includes("gtag"), "the stand link calls gtag with no measurement id");
+  const priv = renderPrivacy({ depositCount: 0, host: HOST, contact: "x@y.pt" });
+  assert(priv.includes("Cliques que contamos") && priv.includes("nunca o endereço IP"),
+    "the privacy page does not say which clicks are counted");
+});
+
 check("the negotiation facts show up on a pasted listing", () => {
   const rec = { t: "VW Golf 1.6 TDI", y: 2015, km: 150000, fu: "Diesel", p: 9000,
                 fl: 9500, fm: 11000, fh: 12500, ct: "Porto", sd: 29, dom: 68,

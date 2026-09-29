@@ -160,7 +160,7 @@ await check("every address the site used to answer at the root moves to /pt in o
     "/privacidade", "/historico", "/guias", "/vender", "/liquidez", "/depreciacao", "/comparar",
     "/sobrevalorizados", "/mercado/indice", `/preco/${deep}`, `/preco/${deep}/${deepYear}`,
     `/preco/${deep}.json`, `/depreciacao/${depSlug}`, `/comparar/${pa}-vs-${pb}`,
-    `/guias/${GUIDES[0].slug}`, "/ir/historico", "/widget/preco/" + deep];
+    `/guias/${GUIDES[0].slug}`, "/ir/historico", "/ir/vender", "/widget/preco/" + deep];
   for (const from of moved) {
     const r = await get(from);
     assert(r.status === 301, `${from} → ${r.status}, expected the move to /pt`);
@@ -424,6 +424,7 @@ await check("the hub links every published year page, so none sits three clicks 
 
 await check("year pages sit two clicks from the landing and nothing in the sitemap is orphaned", async () => {
   const seen = new Map([["/pt", 0]]);
+  const standLeaks = [];
   let frontier = ["/pt"];
   const skip = /\.(json|xml|txt|png|ico|woff2)$|^\/pt\/(car|lead|avaliar|ir)\b|\?/;
   while (frontier.length) {
@@ -433,6 +434,7 @@ await check("year pages sit two clicks from the landing and nothing in the sitem
       if (r.status !== 200) continue;
       if (!(r.headers.get("content-type") || "").includes("text/html")) continue;
       const body = await r.text();
+      if (body.includes("/pt/ir/vender")) standLeaks.push(p);
       for (const h of new Set([...body.matchAll(/href="(\/pt[^"#?]*)"/g)].map(m => m[1]))) {
         if (skip.test(h) || seen.has(h)) continue;
         seen.set(h, seen.get(p) + 1);
@@ -448,6 +450,7 @@ await check("year pages sit two clicks from the landing and nothing in the sitem
   const locs = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => new URL(m[1]).pathname);
   const orphans = locs.filter(p => !seen.has(p) && !skip.test(p));
   assert(orphans.length === 0, `${orphans.length} sitemap URLs are unreachable by link, e.g. ${orphans[0]}`);
+  assert(standLeaks.length === 0, `the stand offer leaked onto ${standLeaks.length} crawlable pages during the SEO freeze, e.g. ${standLeaks[0]}`);
   console.log(`       (${seen.size} pages reachable, deepest ${Math.max(...seen.values())} clicks)`);
 });
 
@@ -1411,6 +1414,9 @@ await check("the admin counters read every key they list", async () => {
     ["ai:hit:2026-09-21:gptbot", "2"],
     ["click:hist:2026-09-21:ano", "4"],
     ["click:drop:2026-09-21:nav", "3"],
+    ["sell:want:2026-09-21:modelo", "2"],
+    ["sell:drop:2026-09-21:bot", "7"],
+    ["sellhit:2026-09-21T10:00:00Z:x", JSON.stringify({ from: "modelo", m: "vw-golf", drop: null })],
   ]);
   for (let i = 0; i < 40; i++) {
     store.set(`aihit:2026-09-21T10:00:${String(i).padStart(2, "0")}Z:x`, JSON.stringify({ agent: "chatgpt-user", path: `/pt/p${i}` }));
@@ -1436,6 +1442,67 @@ await check("the admin counters read every key they list", async () => {
   const cl = await (await worker.fetch(new Request(`https://${HOST}/analytics/clicks.json`, { headers: auth }), kvEnv)).json();
   assert(cl.days["2026-09-21"].ano === 4 && cl.drops["2026-09-21"].nav === 3, "clicks.json lost a daily count");
   assert(cl.hits.length === 40, `clicks.json returned ${cl.hits.length} samples`);
+  const sj = await (await worker.fetch(new Request(`https://${HOST}/analytics/sell.json`, { headers: auth }), kvEnv)).json();
+  assert(sj.days["2026-09-21"].modelo === 2 && sj.drops["2026-09-21"].bot === 7, "sell.json lost a daily count");
+  assert(sj.hits.length === 1 && sj.hits[0].m === "vw-golf", "sell.json mixed in the history samples or lost its own");
+  assert(!("modelo" in (cl.days["2026-09-21"] || {})), "the history counter picked up the stand clicks");
+});
+
+await check("the stand offer is a counted page that asks for nothing", async () => {
+  const sellKeys = prefix => [...kv.keys()].filter(k => k.startsWith(prefix));
+  const wanted = () => sellKeys("sell:want:").reduce((n, k) => n + Number(kv.get(k)), 0);
+  const samples = () => sellKeys("sellhit:").map(k => JSON.parse(kv.get(k)));
+  const url = `https://${HOST}/pt/ir/vender?from=modelo&m=${deep}&y=${deepYear}`;
+  const wantBefore = wanted();
+  const samplesBefore = sellKeys("sellhit:").length;
+  const r = await worker.fetch(withCf(new Request(url, { headers: {
+    ...browser("Mozilla/5.0 (iPhone)"),
+    referer: `https://${HOST}/pt/avaliar?q=${encodeURIComponent("https://www.olx.pt/d/anuncio/bmw-320d-IDJx8YzAb.html")}`,
+    "cf-connecting-ip": "203.0.113.7", "x-forwarded-for": "203.0.113.7",
+  } }), { region: "Lisbon", country: "PT" }), env);
+  assert(r.status === 303, `stand click → ${r.status}, expected a redirect away from the counter`);
+  assert((r.headers.get("cache-control") || "").includes("no-store"), "the counted redirect is cacheable");
+  const landing = new URL(r.headers.get("location"), `https://${HOST}`);
+  assert(landing.pathname === "/pt/ir/vender" && landing.searchParams.get("ok") === "1"
+    && landing.searchParams.get("m") === deep && landing.searchParams.get("y") === String(deepYear),
+    `the redirect lost the car or the done flag: ${landing}`);
+  const want = sellKeys("sell:want:");
+  assert(want.some(k => k.endsWith(":modelo")), "a person's click was not counted under its source");
+  assert(wanted() === wantBefore + 1, "one click moved the counter by more than one");
+  const fresh = samples().filter(h => h.region === "Lisbon");
+  assert(sellKeys("sellhit:").length === samplesBefore + 1 && fresh.length === 1, "the click left no sample");
+  assert(fresh[0].m === deep && fresh[0].y === deepYear && fresh[0].drop === null, "the sample lost the car");
+  assert(!JSON.stringify(fresh[0]).includes("203.0.113.7"), "the sample stores the visitor's address");
+  assert(fresh[0].ref === "/pt/avaliar", `the sample keeps what the visitor pasted: ${fresh[0].ref}`);
+
+  const shown = await worker.fetch(new Request(landing, { headers: browser("Mozilla/5.0 (iPhone)") }), env);
+  assert(shown.status === 200, `stand offer page → ${shown.status}`);
+  const page = await shown.text();
+  assert(page.includes("Ainda não temos stands parceiros"), "the page after the click does not say there is no stand yet");
+  assert(page.includes("noindex"), "the stand offer page is indexable");
+  assert(!/<form|<input|<textarea/i.test(page), "the stand offer page collects something after all");
+  assert(page.includes(`/pt/guias/vender-carro-a-stand`), "the stand offer page does not point to the stand guide");
+  assert(page.includes(models[deep].m), "the stand offer page forgot which car it was about");
+  assert(wanted() === wantBefore + 1, "showing the page after the click counted it again, so every reload is a new seller");
+
+  const internal = await worker.fetch(new Request(`${url}&int=1`, { headers: browser("Mozilla/5.0 (Macintosh) Safari/605") }), env);
+  assert(internal.status === 303 && wanted() === wantBefore + 1, "the owner's own click was counted as a seller");
+  assert(sellKeys("sell:drop:").some(k => k.endsWith(":internal")), "the owner's click was dropped without a trace");
+
+  const bot = await worker.fetch(new Request(url, { headers: { "user-agent": "Googlebot/2.1" } }), env);
+  assert(bot.status === 303, `bot on the stand offer → ${bot.status}`);
+  assert(wanted() === wantBefore + 1, "a crawler was counted as a seller");
+  assert(sellKeys("sell:drop:").some(k => k.endsWith(":bot")), "the crawler was dropped without a trace");
+
+  const odd = await worker.fetch(new Request(`https://${HOST}/pt/ir/vender?from=<x>&m=__proto__&y=1066`, { headers: browser("Mozilla/5.0") }), env);
+  assert(odd.status === 303 && sellKeys("sell:want:").some(k => k.endsWith(":outro")), "an unknown source is not folded into outro");
+  const oddHit = samples().find(h => h.from === "outro");
+  assert(oddHit && oddHit.m === null && oddHit.y === null, "junk model or year made it into the sample");
+  const oddPage = await worker.fetch(new Request(new URL(odd.headers.get("location"), `https://${HOST}`), { headers: browser("Mozilla/5.0") }), env);
+  assert(oddPage.status === 200 && !(await oddPage.text()).includes("__proto__"), "junk from the query leaked into the page");
+
+  assert((await get("/pt/ir/vender", "POST")).status === 404, "the counter answers a POST");
+  assert((await get("/analytics/sell.json")).status === 401, "sell.json is readable without auth");
 });
 
 await check("the history link is a counted redirect to the partner url", async () => {
@@ -1452,7 +1519,7 @@ await check("the history link is a counted redirect to the partner url", async (
     assert(bot.status === 302, `bot redirect → ${bot.status}`);
     assert(kv.get(keys[0]) === "1", "a bot click was counted");
     const odd = await worker.fetch(new Request(`https://${HOST}/pt/ir/historico?from=<script>`, { headers: browser("Mozilla/5.0") }), env);
-    assert(odd.status === 302 && [...kv.keys()].some(k => k.endsWith(":outro")), "unknown source is not folded into outro");
+    assert(odd.status === 302 && [...kv.keys()].some(k => k.startsWith("click:hist:") && k.endsWith(":outro")), "unknown source is not folded into outro");
     const pre = await worker.fetch(new Request(`https://${HOST}/pt/ir/historico?from=ano`, {
       headers: { "user-agent": "Mozilla/5.0 (Macintosh) Safari/605", "sec-purpose": "prefetch;anonymous-client-ip" },
     }), env);
@@ -1460,7 +1527,7 @@ await check("the history link is a counted redirect to the partner url", async (
     assert(kv.get(keys[0]) === "1", "a prefetch was counted as a click");
     assert([...kv.keys()].some(k => k.startsWith("click:drop:") && k.endsWith(":prefetch")), "prefetch was dropped without leaving a trace");
     const blank = await worker.fetch(new Request(`https://${HOST}/pt/ir/historico?from=ano`), env);
-    assert(blank.status === 302 && [...kv.keys()].some(k => k.endsWith(":sem-ua")), "a request with no user-agent was counted as a click");
+    assert(blank.status === 302 && [...kv.keys()].some(k => k.startsWith("click:drop:") && k.endsWith(":sem-ua")), "a request with no user-agent was counted as a click");
     const samples = [...kv.keys()].filter(k => k.startsWith("histhit:"));
     assert(samples.length === 5, `every hit must leave one sample, got ${samples.length}`);
     const asBot = JSON.parse(kv.get(samples.find(k => JSON.parse(kv.get(k)).drop === "bot")));
@@ -1468,16 +1535,24 @@ await check("the history link is a counted redirect to the partner url", async (
     const disguised = await worker.fetch(new Request(`https://${HOST}/pt/ir/historico?from=ano`, {
       headers: { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0 Safari/537.36", "accept-language": "en" },
     }), env);
-    assert(disguised.status === 302 && [...kv.keys()].some(k => k.endsWith(":nav")),
+    assert(disguised.status === 302 && [...kv.keys()].some(k => k.startsWith("click:drop:") && k.endsWith(":nav")),
       "a browser user-agent with no navigation headers was counted as a click");
     const hosted = withCf(new Request(`https://${HOST}/pt/ir/historico?from=ano`, { headers: browser("Mozilla/5.0 (Macintosh) Safari/605") }),
       { asOrganization: "Alibaba Cloud LLC" });
-    assert((await worker.fetch(hosted, env)).status === 302 && [...kv.keys()].some(k => k.endsWith(":dc")),
+    assert((await worker.fetch(hosted, env)).status === 302 && [...kv.keys()].some(k => k.startsWith("click:drop:") && k.endsWith(":dc")),
       "a click from a hosting network was counted as a person");
     const verified = withCf(new Request(`https://${HOST}/pt/ir/historico?from=ano`, { headers: browser("Mozilla/5.0 (Macintosh) Safari/605") }),
       { verifiedBotCategory: "Search Engine Crawler" });
     await worker.fetch(verified, env);
     assert(kv.get(keys[0]) === "1", "a bot verified by Cloudflare was counted as a click");
+    const refOf = async (from, referer) => {
+      await worker.fetch(new Request(`https://${HOST}/pt/ir/historico?from=${from}`, { headers: { ...browser("Mozilla/5.0 (Android)"), referer } }), env);
+      const hit = [...kv.keys()].filter(k => k.startsWith("histhit:")).map(k => JSON.parse(kv.get(k))).find(h => h.from === from);
+      return hit && hit.ref;
+    };
+    assert(await refOf("car", `https://${HOST}/pt/car?olx_id=IDabc123`) === "/pt/car", "a history sample keeps the listing the visitor was on");
+    assert(await refOf("importar", "https://www.google.com/search?q=bmw+320d+porto") === "https://www.google.com",
+      "a history sample keeps another site's full address");
     const page = await (await get(`/pt/preco/${deep}/${yearPageYears(models[deep])[0]}`)).text();
     assert(page.includes('href="/pt/ir/historico?from=ano"'), "year page history link does not go through the counter");
     assert(!page.includes("partner.example"), "partner url leaks into the page instead of the redirect");
