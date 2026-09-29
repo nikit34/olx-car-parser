@@ -106,6 +106,15 @@ MODELS_RELEASE_URL = ("https://github.com/nikit34/olx-car-parser/releases/"
                       "download/latest-data/models.json")
 
 
+DEDUP_STATS_FROM = "2026-10-04"
+
+
+def _one_per_car(listings: pd.DataFrame) -> pd.DataFrame:
+    if time.strftime("%Y-%m-%d") < DEDUP_STATS_FROM or "duplicate_of" not in listings.columns:
+        return listings
+    return listings[listings["duplicate_of"].isna()]
+
+
 PRE_HYSTERESIS_PUBLISHED = ("ford-ka", "citroen-c-elysee")
 PRE_HYSTERESIS_UNTIL = "2026-10-15"
 
@@ -348,8 +357,9 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
     except Exception as e:
         print(f"[build]   relist events unavailable ({e}) — liquidity ships without them",
               flush=True)
-    liquidity = build_liquidity(listings, relisted=_relisted, pairs=_rel)
-    liq_pages = page_records(liquidity)
+    _published = _published_models(out_dir)
+    liquidity = build_liquidity(_one_per_car(listings), relisted=_relisted, pairs=_rel)
+    liq_pages = page_records(liquidity, published=_published)
     sell_speed = sell_speed_frame(liquidity)
     print(f"[build]   liquidity: {len(liquidity.get('models', {})):>6} models  "
           f"({len(liq_pages)} deep enough for a page)", flush=True)
@@ -404,7 +414,7 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
         print("[build]   model pages: no fresh price model — shipping asking-only", flush=True)
     model_pages = build_model_pages(listings, sell_speed, valuator=_valuator,
                                     liquidity=liq_pages,
-                                    published=_published_models(out_dir))
+                                    published=_published)
     if liquidity.get("market"):
         model_pages["lqm"] = liquidity["market"]
     if _norms:

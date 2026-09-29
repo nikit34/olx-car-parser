@@ -2078,6 +2078,7 @@ export function yearCarsShard(slug) {
 }
 
 const IDX_NOTE_COVERAGE_2026_09 = "Entre 28 de agosto e 2 de setembro, passámos a reconhecer mais marcas, modelos e anos nos anúncios e deixámos de retirar um modelo do índice quando a amostra fica ligeiramente abaixo do mínimo. Por isso, nas semanas de setembro, o crescimento do número de anúncios e de modelos reflete sobretudo o alargamento da cobertura, e não um aumento da oferta. A variação semanal do preço mediano também é afetada pela entrada destes modelos no cálculo.";
+const IDX_NOTE_DEDUP_2026_10 = "A partir da semana de 5 de outubro, um carro anunciado no OLX e no Standvirtual conta uma só vez nos dias até sair e na parte dos carros que saem em 30 dias. Antes contava duas vezes, e o anúncio que saía primeiro puxava a mediana para baixo: com a contagem nova, a mediana do mercado passa de cerca de 31 para cerca de 37 dias. Os números destas semanas não são diretamente comparáveis com os de setembro; o preço pedido e o número de anúncios não mudam de método.";
 const IDX_NOTE_RELIST_2026_09 = "Desde 19 de setembro, quando um carro sai do ar e volta mais tarde num anúncio novo, essa saída deixou de contar. Por isso, os dias até sair calculados depois dessa data não são diretamente comparáveis com os das semanas anteriores.";
 export const INDEX_NOTES = {
   "2026-W36": [IDX_NOTE_COVERAGE_2026_09],
@@ -2085,6 +2086,8 @@ export const INDEX_NOTES = {
   "2026-W38": [IDX_NOTE_COVERAGE_2026_09],
   "2026-W39": [IDX_NOTE_COVERAGE_2026_09, IDX_NOTE_RELIST_2026_09],
   "2026-09": [IDX_NOTE_COVERAGE_2026_09, IDX_NOTE_RELIST_2026_09],
+  "2026-W41": [IDX_NOTE_DEDUP_2026_10],
+  "2026-10": [IDX_NOTE_DEDUP_2026_10],
 };
 
 function indexNotes(key) {
@@ -2504,7 +2507,7 @@ export function renderMethodology({ stats, mq, acc = null, imf = null, host, dep
 
       <h2 class="fc-h2">1. De onde vêm os dados</h2>
       <p class="fc-p">Recolhemos diariamente os anúncios de automóveis publicados por <b>particulares</b> no <b>OLX Portugal</b> e no <b>Standvirtual</b>, e guardamos o histórico de cada um: preço, alterações de preço e o dia em que o anúncio desaparece. As medianas de preço pedido contam só os anúncios <b>ativos</b> no momento do cálculo${stats.listings ? `; hoje são ${fmtNum(stats.listings)} anúncios de ${stats.models} modelos` : ""}. O histórico dos anúncios que já saíram serve para os dias até sair, para as descidas de preço e para treinar o valor justo estimado. Não compramos nem vendemos carros, não somos stand e não recebemos dinheiro de nenhum vendedor.</p>
-      <p class="fc-p">Um carro anunciado nos dois sites pode entrar duas vezes nas contagens: identificamos esses pares, mas as estatísticas ainda não os descontam.</p>
+      <p class="fc-p">Muitos particulares anunciam o mesmo carro nos dois sites. Identificamos esses pares pela marca, modelo, ano, distrito, quilometragem e preço, e a partir de 4 de outubro de 2026 os dias até sair, a liquidez e as descidas de preço contam cada carro uma só vez. Contado duas vezes, o anúncio que saía primeiro puxava os dias até sair para baixo: a mediana do mercado passa de cerca de 31 para cerca de 37 dias. As contagens de anúncios e os preços pedidos ainda incluem os dois anúncios; a diferença nas medianas de preço é, em regra, de cerca de 1%.</p>
 
       <h2 class="fc-h2">2. O que é um "preço" aqui</h2>
       <p class="fc-p">É o <b>preço pedido</b> num anúncio ativo — não o preço a que o carro foi vendido. Ninguém em Portugal publica preços de transação, e inventá-los seria pior do que dizer o que temos. Preços pedidos e preços de venda não são a mesma coisa: a diferença costuma ser a margem de negociação, e é maior nos modelos que demoram a sair (ver <a href="/pt/liquidez">tempo de venda</a>).</p>

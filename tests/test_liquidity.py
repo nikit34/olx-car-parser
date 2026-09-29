@@ -20,6 +20,7 @@ import pytest
 from src.analytics.liquidity import (
     MIN_CELL_EVENTS,
     MIN_EVENTS,
+    RETIRE_EVENTS,
     WINDOW_DAYS,
     build_liquidity,
     chain_relists,
@@ -127,6 +128,18 @@ class TestGates:
         liq = build_liquidity(_df(_rows(MIN_EVENTS - 1, days=10), _watchers()), now=NOW)
         assert ("Volkswagen", "Golf") in liq["models"]
         assert page_records(liq) == {}
+
+    def test_a_published_page_holds_down_to_the_retirement_floor(self):
+        liq = build_liquidity(_df(_rows(RETIRE_EVENTS, days=10), _watchers()), now=NOW)
+        live = {"models": {"volkswagen-golf": {"lq": {"n": MIN_EVENTS, "s30": 0.5}}}}
+        assert ("Volkswagen", "Golf") in page_records(liq, published=live)
+        assert page_records(liq, published={"models": {"volkswagen-golf": {"n": 30}}}) == {}
+        assert page_records(liq) == {}
+
+    def test_below_the_retirement_floor_even_a_published_page_goes(self):
+        liq = build_liquidity(_df(_rows(RETIRE_EVENTS - 1, days=10), _watchers()), now=NOW)
+        live = {"models": {"volkswagen-golf": {"lq": {"n": MIN_EVENTS, "s30": 0.5}}}}
+        assert page_records(liq, published=live) == {}
 
     def test_a_thin_cut_is_absent_rather_than_estimated(self):
         deep = _rows(MIN_CELL_EVENTS + 10, days=10, price=3000)

@@ -57,6 +57,7 @@ import pandas as pd
 from src.analytics.model_pages import slugify
 
 MIN_EVENTS = 40
+RETIRE_EVENTS = 20
 MIN_CELL_EVENTS = 40
 MIN_SELL_EVENTS = 8
 RB_MIN_SCORE = 0.8
@@ -494,11 +495,22 @@ def dom_by_segment(
     return out
 
 
-def page_records(liquidity: dict) -> dict:
+def page_records(liquidity: dict, published: dict | None = None) -> dict:
     """The subset deep enough to carry a page of its own — the gate the Worker
     then reads as "this model has a /liquidez page" (an absent key is a 404)."""
-    return {key: rec for key, rec in (liquidity or {}).get("models", {}).items()
-            if rec.get("n", 0) >= MIN_EVENTS and "s30" in rec}
+    live = set()
+    models = published.get("models") if isinstance(published, dict) else None
+    if isinstance(models, dict):
+        live = {slug for slug, rec in models.items()
+                if isinstance(rec, dict) and isinstance(rec.get("lq"), dict)}
+    out = {}
+    for key, rec in (liquidity or {}).get("models", {}).items():
+        if "s30" not in rec:
+            continue
+        floor = RETIRE_EVENTS if slugify(f"{key[0]}-{key[1]}") in live else MIN_EVENTS
+        if rec.get("n", 0) >= floor:
+            out[key] = rec
+    return out
 
 
 def sell_speed_frame(liquidity: dict, min_events: int = MIN_SELL_EVENTS) -> pd.DataFrame:

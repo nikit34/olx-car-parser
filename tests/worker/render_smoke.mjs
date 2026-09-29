@@ -27,7 +27,7 @@ import {
   yearGap,
   depreciationAge, depreciationJson,
   estimateIsv, ISV_TABLES_FOR_TEST, renderDistrictPage,
-  renderFacetPage, renderDuelPage, renderDuelHub, duel, duelJson, DUELS, withPrep,
+  renderFacetPage, renderDuelPage, renderDuelHub, duel, duelJson, DUELS, withPrep, INDEX_NOTES,
   renderLiquidityPage, liquidityJson, liquidityOk, districtRanking,
   renderImportPage, renderImportHub, importJson, importOk, importSlugs,
   renderVenderPage, renderVenderHub, venderJson, venderOk,
@@ -1165,6 +1165,13 @@ check("the money clicks fire their own events", () => {
                               depositCount: 0, host: HOST, builtAt, historyUrl: "https://example.test/h" });
   assert(!off.includes("history_check") && !off.includes("olx_open"),
     "click events fired with no measurement id");
+});
+
+check("the index says when a car on both sites started to count once", () => {
+  assert((INDEX_NOTES["2026-W41"] || []).some(t => /conta uma só vez/.test(t) && /31/.test(t) && /37/.test(t)),
+    "week 41 of the index carries no note about the duplicate change");
+  assert((INDEX_NOTES["2026-10"] || []).some(t => /conta uma só vez/.test(t)), "October has no note about the duplicate change");
+  assert(!(INDEX_NOTES["2026-09"] || []).some(t => /conta uma só vez/.test(t)), "the published September cut got the October note");
 });
 
 check("the stand offer sits only on the noindex valuation results", () => {
