@@ -207,6 +207,15 @@ def _run_verify(session, monkeypatch, tmp_path, *,
                 return list(urls)
         return []
 
+    def fake_reachable(url):
+        # A listing present in the photo map is served normally; anything else
+        # stands in for an unreachable page (OLX 403s this host outright), so
+        # the empty-gallery shape must not be written for it.
+        for olx_id in photo_urls_by_listing:
+            if url.endswith(olx_id) or olx_id in url:
+                return True
+        return False
+
     def fake_download_photo(purl, dest):
         # purl encodes "<olx_id>#<idx>" so we can simulate per-photo failures.
         olx_id, idx_str = purl.rsplit("#", 1)
@@ -254,6 +263,9 @@ def _run_verify(session, monkeypatch, tmp_path, *,
     )
     monkeypatch.setattr(
         "src.parser.photo_fetch.download_photo", fake_download_photo,
+    )
+    monkeypatch.setattr(
+        "src.parser.photo_fetch.photo_gallery_reachable", fake_reachable,
     )
 
     # Single worker keeps test deterministic and side-steps thread/session
@@ -1164,3 +1176,62 @@ class TestBackfillFirstPhoto:
                 backfill_first_photo=True,
                 cache_dir=tmp_path / "cache", dry_run=True, limit=None,
             )
+
+
+class TestBlockedSourceWritesNothing:
+    """OLX 403s the scrape host's address outright, so ``fetch_photos``
+    returns an empty list that looks exactly like an empty gallery. A block
+    is not a verdict about the car: writing the empty-gallery shape would
+    stamp ``first_photo_exterior = False``, which the rating gate reads as
+    "proven no car photo" and drops the listing from the feed.
+
+    Such rows must be left completely untouched so they stay queued for the
+    next run."""
+
+    def test_unreadable_page_writes_nothing(self, db_session, monkeypatch, tmp_path):
+        olx_id = "olx-blocked-001"
+        _seed_listing(db_session, olx_id=olx_id,
+                      url=f"https://olx.pt/d/anuncio/x-{olx_id}.html",
+                      llm_extras={"damage_severity": 1})
+        # Not present in photo_urls_by_listing → fake_reachable returns False.
+        _run_verify(db_session, monkeypatch, tmp_path,
+                    photo_urls_by_listing={})
+        extras = json.loads(db_session.query(Listing).filter_by(olx_id=olx_id).one().llm_extras)
+        assert extras == {"damage_severity": 1}
+
+    def test_unreadable_page_does_not_poison_a_real_verdict(self, db_session, monkeypatch, tmp_path):
+        """A row already carrying damage scores from an earlier, working run
+        must keep them: the block adds no verdict and overwrites nothing."""
+        olx_id = "olx-blocked-002"
+        prior = {
+            "photo_damage_p": 0.12,
+            "photo_damage_n_photos": 6,
+            "photo_damage_n_exterior": 5,
+            "photo_damages": [{"idx": 1, "p": 0.12}, {"idx": 2, "p": 0.05}],
+            "photo_damage_flagged": False,
+        }
+        _seed_listing(db_session, olx_id=olx_id,
+                      url=f"https://olx.pt/d/anuncio/x-{olx_id}.html",
+                      llm_extras=dict(prior))
+        _run_verify(db_session, monkeypatch, tmp_path,
+                    photo_urls_by_listing={})
+        extras = json.loads(db_session.query(Listing).filter_by(olx_id=olx_id).one().llm_extras)
+        assert extras == prior
+        # Never written → the gate falls back to the idx set, which says the
+        # lead frame is exterior, so the listing keeps its place.
+        assert "first_photo_exterior" not in extras
+
+    def test_empty_gallery_on_a_readable_page_still_writes_false(
+        self, db_session, monkeypatch, tmp_path,
+    ):
+        """The distinction that makes the rule usable: a page we COULD read,
+        which genuinely has no photos, is a real verdict and is written."""
+        olx_id = "olx-empty-gallery"
+        _seed_listing(db_session, olx_id=olx_id,
+                      url=f"https://olx.pt/d/anuncio/x-{olx_id}.html")
+        # Listed (so reachable=True) with an empty gallery.
+        _run_verify(db_session, monkeypatch, tmp_path,
+                    photo_urls_by_listing={olx_id: []})
+        extras = json.loads(db_session.query(Listing).filter_by(olx_id=olx_id).one().llm_extras)
+        assert extras["first_photo_exterior"] is False
+        assert extras["photo_damage_n_photos"] == 0

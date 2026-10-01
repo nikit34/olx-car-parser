@@ -828,6 +828,16 @@ def verify_photos(
     Coverage: both OLX (``apollo.olxcdn.com`` URL scrape) and StandVirtual
     (``__NEXT_DATA__`` JSON). Listings from other sources are skipped.
 
+    Blocked source: OLX 403s the scrape host's address outright (every
+    request since 2026-08-25), so ``fetch_photos`` returns an empty list
+    that is indistinguishable from a genuinely empty gallery. An unreadable
+    page therefore writes NOTHING — not the empty-gallery shape, not a
+    ``first_photo_exterior = False`` — and the row stays queued for a later
+    run. That matters beyond this command: the rating gate reads False as
+    "proven no car photo", so writing it during a block would drop
+    thousands of photographed cars from the feed. StandVirtual is unaffected
+    (its photos come from a ``__NEXT_DATA__`` fetch that answers).
+
     Pipeline (issue #3): per-listing photos are first run through a CLIP
     zero-shot exterior / non-exterior filter; only exterior photos are scored
     by the damage classifier. The audit (#1) showed the v2 classifier was
@@ -872,7 +882,9 @@ def verify_photos(
     from src.parser.photo_damage import DamageClassifier
     from src.parser.photo_viewpoint import ExteriorFilter
     from src.parser.photo_plate import PlateReader
-    from src.parser.photo_fetch import fetch_photos, download_photo
+    from src.parser.photo_fetch import (
+        fetch_photos, download_photo, photo_gallery_reachable,
+    )
 
     init_db()
     session = get_session()
@@ -1013,13 +1025,13 @@ def verify_photos(
         olx_id: str, url: str
     ) -> tuple[
         str, float, int, int, list[dict], bool,
-        list[dict], str | None, str | None, bool | None,
+        list[dict], str | None, str | None, bool | None, bool,
     ]:
         """Returns the per-listing tuple consumed by the main loop.
 
         Tuple fields (in order):
           ``olx_id, max_p, n_photos, n_exterior, per_photo, flagged,
-           plate_per_photo, plate_primary, error_msg, first_exterior``
+           plate_per_photo, plate_primary, error_msg, first_exterior, blocked``
 
         ``n_photos`` is the count of photos that successfully downloaded —
         same as the legacy semantics so ``photo_damage_n_photos`` keeps
@@ -1052,12 +1064,18 @@ def verify_photos(
         empty"; None covers "lead frame never downloaded, so its content
         is unknowable" (transient fetch failure — must not permanently
         exclude the listing).
+
+        ``blocked`` is True when the listing page itself could not be read
+        (OLX 403s this host outright). That is not a verdict about the car
+        and not an empty gallery, so the caller must write nothing at all
+        and leave the row queued for a later run.
         """
         def _first_exterior(
             n_urls: int,
             downloaded: set[int],
             exterior: set[int],
         ) -> bool | None:
+            """See _verify_one's docstring for what each outcome means."""
             if n_urls == 0:
                 return False
             if 1 not in downloaded:
@@ -1065,7 +1083,14 @@ def verify_photos(
             return 1 in exterior
 
         try:
+            # Probe reachability BEFORE reading the gallery: under an OLX
+            # block every fetch returns an empty list, and an empty gallery
+            # writes ``first_photo_exterior = False`` — which the rating
+            # reads as "proven no car photo" and drops the listing. When we
+            # simply could not look, the verdict must be ``None``.
+            reachable = photo_gallery_reachable(url)
             photo_urls = fetch_photos(url)
+            blocked = reachable is False and not photo_urls
             listing_dir = cache_dir / olx_id
             # Track the (idx, path) pairs we successfully downloaded so we
             # can stitch per-photo scores back to their original position
@@ -1076,8 +1101,8 @@ def verify_photos(
                 if download_photo(purl, p):
                     indexed_paths.append((j, p))
             if not indexed_paths:
-                _fe = _first_exterior(len(photo_urls), set(), set())
-                return olx_id, 0.0, 0, 0, [], False, [], None, None, _fe
+                _fe = None if blocked else _first_exterior(len(photo_urls), set(), set())
+                return olx_id, 0.0, 0, 0, [], False, [], None, None, _fe, blocked
             # CLIP pre-filter: drop OOD viewpoints before damage scoring.
             # Single forward pass over all of the listing's photos — same
             # CLIP model instance is reused across listings.
@@ -1095,7 +1120,7 @@ def verify_photos(
                 # but ``n_photos`` keeps the original count so the listing
                 # records "we did look at N photos, none were exterior".
                 _fe = _first_exterior(len(photo_urls), _downloaded, _exterior)
-                return olx_id, 0.0, n_total, 0, [], False, [], None, None, _fe
+                return olx_id, 0.0, n_total, 0, [], False, [], None, None, _fe, False
             photo_paths = [p for _, p in exterior_indexed]
             if clf is None:
                 # Backfill-plates mode: skip damage inference. We still
@@ -1143,11 +1168,13 @@ def verify_photos(
                 per_photo, pred_is_damaged,
                 plate_per_photo, plate_primary, None,
                 _first_exterior(len(photo_urls), _downloaded, _exterior),
+                False,
             )
         except Exception as exc:  # noqa: BLE001
-            return olx_id, 0.0, 0, 0, [], False, [], None, str(exc), None
+            return olx_id, 0.0, 0, 0, [], False, [], None, str(exc), None, False
 
     flagged = downgraded = no_photos = errors = 0
+    blocked_count = 0
     processed = 0
     updated_count = 0
     t0 = time.monotonic()
@@ -1161,7 +1188,7 @@ def verify_photos(
             (olx_id, max_p, n_photos, n_exterior,
              per_photo, flagged_pred,
              plate_per_photo, plate_primary, err,
-             first_exterior) = fut.result()
+             first_exterior, blocked) = fut.result()
             processed += 1
             if err:
                 log.warning("Classifier failed on %s: %s", olx_id, err)
@@ -1169,6 +1196,21 @@ def verify_photos(
                 continue
             if n_photos == 0:
                 no_photos += 1
+            # Blocked source (OLX 403s this host outright): the listing page
+            # never loaded, so we have no opinion about its photos. Persisting
+            # the empty-gallery shape here would write a false "no car photo"
+            # verdict AND mark the row as verified, permanently keeping it out
+            # of the pending queue — the listing would lose its place in the
+            # rating for a reason that has nothing to do with the car. Leave
+            # llm_extras untouched so the next run retries it.
+            if blocked:
+                blocked_count += 1
+                if blocked_count <= 20:
+                    log.warning(
+                        "Source unreachable for %s — skipped (no verdict written, "
+                        "stays queued for the next run)", olx_id,
+                    )
+                continue
             listing = listing_by_id[olx_id]
             try:
                 extras = json.loads(listing.llm_extras) if listing.llm_extras else {}
@@ -1248,10 +1290,17 @@ def verify_photos(
     elapsed = time.monotonic() - t0
     log.info(
         "Done in %.1f min  flagged=%d  text_overcalls_downgrade_candidates=%d  "
-        "no_photos=%d  errors=%d  (%.1fs/listing)",
-        elapsed / 60, flagged, downgraded, no_photos, errors,
+        "no_photos=%d  errors=%d  blocked=%d  (%.1fs/listing)",
+        elapsed / 60, flagged, downgraded, no_photos, errors, blocked_count,
         elapsed / max(len(pending), 1),
     )
+    if blocked_count:
+        log.warning(
+            "%d of %d listings were unreadable (source 403s this host) — "
+            "nothing was written for them and they stay queued. The rating "
+            "gate never sees a false 'no photo' verdict from a block.",
+            blocked_count, len(pending),
+        )
     if dry_run:
         log.info("Dry-run — no DB writes. Re-run without --dry-run to persist.")
 

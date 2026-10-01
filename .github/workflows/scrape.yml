@@ -28,6 +28,14 @@ on:
         description: "Value-gated cloud LLM enrichment of top deals (Gemini → OpenRouter)"
         type: boolean
         default: true
+      backfill_first_photo:
+        description: "Backfill first_photo_exterior for every active listing missing it (one-shot, staged via --limit; needs the relay)"
+        type: boolean
+        default: false
+      backfill_limit:
+        description: "Rows per backfill pass (0 = all pending). 2000 ≈ 20-40 min on the runner."
+        type: string
+        default: "2000"
 
 permissions:
   contents: write
@@ -377,6 +385,45 @@ jobs:
           else
             echo "Skipping plate-OCR — weights missing and no background job ran"
           fi
+
+      - name: Backfill first-photo verdict (one-shot, opt-in)
+        # Fills first_photo_exterior for every active listing that lacks it —
+        # the ranking gate's "first photo must be a car exterior" input. Opt-in
+        # via workflow_dispatch because the cohort is large (~28k rows) and the
+        # pass re-runs CLIP + the damage classifier on each gallery; --limit
+        # keeps one pass inside the step, and re-dispatching drains the rest.
+        #
+        # Must run through the Worker relay: OLX 403s the runner's own address
+        # (see the Scrape step's OLX_RELAY_* comment), and an unreachable page
+        # would otherwise be persisted as an empty gallery — a false "no car
+        # photo" verdict that silently drops photographed cars from the feed.
+        # verify-photos now skips unreadable rows entirely rather than writing
+        # that shape, so a blocked run is a no-op, not damage.
+        #
+        # Deliberately placed after the plate-OCR wait (which holds the GPU on
+        # EasyOCR) and before the alerts/decision steps, so the gate sees fresh
+        # verdicts in the same run that builds the feed.
+        if: ${{ !cancelled() && inputs.backfill_first_photo == 'true' }}
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          OLX_RELAY_URL: ${{ secrets.OLX_RELAY_URL }}
+          OLX_RELAY_TOKEN: ${{ secrets.OLX_RELAY_TOKEN }}
+          BACKFILL_LIMIT: ${{ inputs.backfill_limit }}
+        timeout-minutes: 120
+        continue-on-error: true
+        run: |
+          if [ ! -f data/damage_classifier_v2.pt ]; then
+            echo "::warning::Skipping first-photo backfill — classifier weights missing"
+            exit 0
+          fi
+          LIMIT_ARG=""
+          if [ -n "$BACKFILL_LIMIT" ] && [ "$BACKFILL_LIMIT" != "0" ]; then
+            LIMIT_ARG="--limit $BACKFILL_LIMIT"
+          fi
+          echo "Backfilling first_photo_exterior ($LIMIT_ARG or full cohort)"
+          ulimit -n 4096
+          .venv/bin/python -m src.cli verify-photos \
+            --backfill-first-photo --workers 4 $LIMIT_ARG
 
       - name: Send Telegram alerts
         if: ${{ !cancelled() }}

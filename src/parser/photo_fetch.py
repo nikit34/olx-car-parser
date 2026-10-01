@@ -27,6 +27,7 @@ from pathlib import Path
 
 import httpx
 
+from src.parser.relay import relay_rewrite
 from src.parser.tls_fingerprint import build_ssl_context
 
 
@@ -115,9 +116,15 @@ def fetch_photos_olx(url: str) -> list[str]:
     by photo ID (preserving page order), filters out related-listing
     thumbnails (require at least one 1000-px+ size variant), and returns
     1000x700-sized URLs.
+
+    An unreachable page (403 block, timeout) yields ``[]`` — the same as a
+    genuinely empty gallery. Callers that must tell those apart read
+    :func:`photo_gallery_reachable` first; see its docstring for why that
+    distinction decides whether a listing may rank at all.
     """
     try:
-        r = _CLIENT.get(url)
+        request_url, relay_headers = relay_rewrite(url, _DEFAULT_HEADERS.get("User-Agent"))
+        r = _CLIENT.get(request_url, headers=relay_headers or None)
         r.raise_for_status()
     except httpx.HTTPError:
         return []
@@ -164,6 +171,35 @@ def fetch_photos(url: str) -> list[str]:
     if "standvirtual.com" in url:
         return fetch_photos_standvirtual(url)
     return []
+
+
+def photo_gallery_reachable(url: str) -> bool | None:
+    """Can we read this listing's page at all?
+
+    ``True`` — the page answered, so whatever photo list ``fetch_photos``
+    returns is the real gallery (possibly empty).
+    ``False`` — we were blocked or the page failed (403/timeout/DNS/5xx).
+    ``None`` — no probe needed (StandVirtual, whose gallery comes from a
+    ``__NEXT_DATA__`` fetch that already reports its own failures) or the
+    host is not one we know.
+
+    This exists because "gallery is empty" and "we could not look" are
+    opposite facts with the same return value, and only the first one may
+    remove a listing from the rating. OLX blocks the scrape host's address
+    outright (403 on every request since 2026-08-25): under that block a
+    naive empty-galleries-means-no-car rule stamps ``first_photo_exterior
+    = False`` onto thousands of perfectly photographed cars. The verdict
+    path reads this flag and writes ``None`` (unknowable) instead.
+    """
+    if "olx.pt" not in url:
+        return None
+    try:
+        request_url, relay_headers = relay_rewrite(
+            url, _DEFAULT_HEADERS.get("User-Agent"))
+        r = _CLIENT.get(request_url, headers=relay_headers or None)
+    except httpx.HTTPError:
+        return False
+    return r.status_code == 200
 
 
 def download_photo(url: str, dest: Path) -> bool:
