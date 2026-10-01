@@ -403,7 +403,10 @@ jobs:
         # Deliberately placed after the plate-OCR wait (which holds the GPU on
         # EasyOCR) and before the alerts/decision steps, so the gate sees fresh
         # verdicts in the same run that builds the feed.
-        if: ${{ !cancelled() && inputs.backfill_first_photo == 'true' }}
+        # Bare truthiness, not `== 'true'`: the `inputs` context types a
+        # `type: boolean` dispatch input as a real boolean, so the string
+        # comparison is always false and the step silently never runs.
+        if: ${{ !cancelled() && inputs.backfill_first_photo }}
         env:
           PYTHONPATH: ${{ github.workspace }}
           OLX_RELAY_URL: ${{ secrets.OLX_RELAY_URL }}
