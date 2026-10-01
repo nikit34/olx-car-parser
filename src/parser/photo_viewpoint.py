@@ -24,6 +24,8 @@ import torch
 from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
 
+from src.parser.gpu_lock import gpu_lock
+
 # Prompts mirror the audit's documented FPs (see issue #1):
 #  • interior dashboards (rank 080: rear AC vents)
 #  • engine bays (rank 060: Mini engine bay; rank 050 Nissan stripped is the
@@ -81,8 +83,11 @@ class ExteriorFilter:
         # overlapping forward passes crashed the runner with
         # ``Trace/BPT trap: 5`` (SIGTRAP, exit 133). Serialize inference
         # under a single lock; photo I/O still parallelises across threads.
-        import threading
-        self._inference_lock = threading.Lock()
+        #
+        # Shared with the damage classifier, not private to this model: the
+        # two run side by side and Metal aborts when independent pipelines
+        # overlap (see src/parser/gpu_lock).
+        self._inference_lock = gpu_lock()
 
     def is_exterior(self, image_path: Path) -> bool:
         """Scalar path: True iff the photo's exterior similarity wins."""

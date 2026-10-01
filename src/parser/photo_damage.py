@@ -19,6 +19,8 @@ import torch.nn as nn
 from PIL import Image
 from torchvision import models, transforms
 
+from src.parser.gpu_lock import gpu_lock
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # Production runners place weights in data/ (persistent symlink survives
 # across checkouts); local dev typically keeps them at the repo root.
@@ -113,8 +115,11 @@ class DamageClassifier:
         # the runner with ``Trace/BPT trap: 5`` (SIGTRAP, exit 133).
         # Photo I/O still parallelises across threads; only the inference
         # block is locked.
-        import threading
-        self._inference_lock = threading.Lock()
+        #
+        # Shared with the CLIP filter, not private to this model: the two run
+        # side by side and Metal aborts when independent pipelines overlap
+        # (see src/parser/gpu_lock).
+        self._inference_lock = gpu_lock()
 
     def predict_photo(self, path: Path | str) -> PhotoPrediction:
         path = Path(path)
