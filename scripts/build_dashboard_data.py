@@ -445,7 +445,7 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
         _valuator = lambda cfg: value_configs(cfg, bundle=_bundle)  # noqa: E731
     else:
         print("[build]   model pages: no fresh price model — shipping asking-only", flush=True)
-    model_pages = build_model_pages(listings, sell_speed, valuator=_valuator,
+    model_pages = build_model_pages(_one_per_car(listings), sell_speed, valuator=_valuator,
                                     liquidity=liq_pages,
                                     published=_published)
     if liquidity.get("market"):
