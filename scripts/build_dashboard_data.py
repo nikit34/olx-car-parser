@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 import time
 from pathlib import Path
@@ -107,6 +108,32 @@ MODELS_RELEASE_URL = ("https://github.com/nikit34/olx-car-parser/releases/"
 
 
 DEDUP_STATS_FROM = "2026-10-04"
+
+SEO_BLOB_CADENCE = os.environ.get("SEO_BLOB_CADENCE", "daily").strip().lower()
+
+
+def _seo_blob_already_built_today(published: dict | None) -> bool:
+    """True when models.json live was already rebuilt on the current UTC day.
+
+    models.json is the whole indexable surface: /pt/preco, /pt/vender,
+    /pt/liquidez, /pt/depreciacao, /pt/comparar, /pt/diesel-ou-gasolina and the
+    sitemap lastmod of every one of those URLs. It is rebuilt on every scrape
+    cron (11x/day), and ``_stamp_changes`` advances a model's ``u`` whenever the
+    model's own numbers move. OLX inventory turns over continuously, so medians
+    drift every few hours and 323 of 362 models carried today's date on
+    2026-09-30 — a site where no URL is stable for a single day.
+
+    Holding the public blob to one rebuild per UTC day makes ``u`` mean what
+    ``lastmod`` claims: the day the numbers last actually changed. It does NOT
+    falsify the stamp — on a skipped build the medians on the page are the ones
+    that were published, so they genuinely did not change.
+
+    ``hourly`` restores the old behaviour for a day of comparison.
+    """
+    if SEO_BLOB_CADENCE != "daily" or not isinstance(published, dict):
+        return False
+    stamp = str(published.get("built_at") or "")[:10]
+    return bool(stamp) and stamp == time.strftime("%Y-%m-%d", time.gmtime())
 
 
 def _one_per_car(listings: pd.DataFrame) -> pd.DataFrame:
@@ -358,6 +385,12 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
         print(f"[build]   relist events unavailable ({e}) — liquidity ships without them",
               flush=True)
     _published = _published_models(out_dir)
+    _skip_seo_blob = _seo_blob_already_built_today(_published)
+    if _skip_seo_blob:
+        print(f"[build]   models.json already published for "
+              f"{str((_published or {}).get('built_at'))[:10]} UTC — keeping it "
+              f"(SEO_BLOB_CADENCE={SEO_BLOB_CADENCE}); public prices carry "
+              f"yesterday's medians until the next UTC day", flush=True)
     liquidity = build_liquidity(_one_per_car(listings), relisted=_relisted, pairs=_rel)
     liq_pages = page_records(liquidity, published=_published)
     sell_speed = sell_speed_frame(liquidity)
@@ -442,10 +475,27 @@ def _build(db_url: str | None, out_dir: Path) -> dict:
                     for k in ("fx", "tx", "dt"))
     _n_duel = sum(1 for r in model_pages.get("models", {}).values() if "dg" in r)
     models_path = out_dir / "models.json"
+    if _skip_seo_blob:
+        print(f"[build]   models.json SKIPPED — SEO_BLOB_CADENCE={SEO_BLOB_CADENCE} "
+              f"and today's blob is already live; not overwriting a stable set",
+              flush=True)
+        # Drop the stale local copy so this run's upload glob does not re-clobber
+        # the Release asset with identical bytes. Re-uploading would bump the
+        # asset's updated_at every 4h while its content stands still, and
+        # audit_release.stale_assets would then never notice a pipeline that had
+        # actually stopped. The next build reads `published` from the Release
+        # instead — the fallback path _published_models already handles.
+        try:
+            models_path.unlink()
+            print("[build]   removed the stale local models.json so the upload "
+                  "leaves the asset's timestamp alone", flush=True)
+        except OSError as e:
+            print(f"[build]   could not remove the local models.json ({e}); the "
+                  f"upload may re-clobber an unchanged asset", flush=True)
     # Collapse guard: refuse to overwrite a healthy blob with a gutted one (a
     # data/query regression that halves the corpus would silently 404 hundreds of
     # SEO pages). <50 = catastrophic → skip the write, keep the live Release asset.
-    if _n_models < 50:
+    elif _n_models < 50:
         print(f"[build]   models.json SKIPPED — collapsed to {_n_models} models (<50); "
               f"keeping the previously published blob", flush=True)
     else:
