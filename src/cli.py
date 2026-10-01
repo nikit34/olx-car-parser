@@ -782,7 +782,7 @@ def verify_photos(
     """Run the v2 damage classifier on listings' photos and store ``photo_damage_p`` in llm_extras.
 
     Non-destructive: keeps the text-derived ``damage_severity`` column intact.
-    Adds four JSON keys:
+    Adds five JSON keys:
       • ``photo_damage_p`` — max P(damaged) across photos
       • ``photo_damage_n_photos`` — photos checked
       • ``photo_damages`` — per-photo ``[{"idx": int, "p": float}, ...]``;
@@ -793,6 +793,10 @@ def verify_photos(
         ``FLAG_MIN_PHOTOS`` photos exceed ``FLAG_PHOTO_THRESHOLD``. Decoupled
         from ``photo_damage_p`` so alerts/dashboard threshold logic on the
         max-score keeps working untouched (additive field).
+      • ``first_photo_exterior`` — True iff the gallery's first photo passed
+        the CLIP exterior filter, False iff it downloaded but was filtered
+        (or the gallery is empty), None iff the lead frame never downloaded.
+        The rating gate (``_blocking_deal_reason``) blocks only on False.
 
     Plus four plate-detection keys (PT license-plate OCR), written ONLY by
     the ``--backfill-plates`` pass — the steady-state damage pass no longer
@@ -966,13 +970,13 @@ def verify_photos(
         olx_id: str, url: str
     ) -> tuple[
         str, float, int, int, list[dict], bool,
-        list[dict], str | None, str | None,
+        list[dict], str | None, str | None, bool | None,
     ]:
         """Returns the per-listing tuple consumed by the main loop.
 
         Tuple fields (in order):
           ``olx_id, max_p, n_photos, n_exterior, per_photo, flagged,
-           plate_per_photo, plate_primary, error_msg``
+           plate_per_photo, plate_primary, error_msg, first_exterior``
 
         ``n_photos`` is the count of photos that successfully downloaded —
         same as the legacy semantics so ``photo_damage_n_photos`` keeps
@@ -998,7 +1002,25 @@ def verify_photos(
         as ``per_photo``; photos without a readable plate are absent).
         ``plate_primary`` is the single highest-confidence plate text across
         the listing, or ``None``.
+
+        ``first_exterior`` answers "is the gallery's first photo an exterior
+        car shot" — True / False / None (unknown). False covers both "lead
+        frame downloaded but CLIP-filtered as non-exterior" and "gallery
+        empty"; None covers "lead frame never downloaded, so its content
+        is unknowable" (transient fetch failure — must not permanently
+        exclude the listing).
         """
+        def _first_exterior(
+            n_urls: int,
+            downloaded: set[int],
+            exterior: set[int],
+        ) -> bool | None:
+            if n_urls == 0:
+                return False
+            if 1 not in downloaded:
+                return None
+            return 1 in exterior
+
         try:
             photo_urls = fetch_photos(url)
             listing_dir = cache_dir / olx_id
@@ -1011,7 +1033,8 @@ def verify_photos(
                 if download_photo(purl, p):
                     indexed_paths.append((j, p))
             if not indexed_paths:
-                return olx_id, 0.0, 0, 0, [], False, [], None, None
+                _fe = _first_exterior(len(photo_urls), set(), set())
+                return olx_id, 0.0, 0, 0, [], False, [], None, None, _fe
             # CLIP pre-filter: drop OOD viewpoints before damage scoring.
             # Single forward pass over all of the listing's photos — same
             # CLIP model instance is reused across listings.
@@ -1022,11 +1045,14 @@ def verify_photos(
             ]
             n_total = len(indexed_paths)
             n_exterior = len(exterior_indexed)
+            _downloaded = {idx for idx, _ in indexed_paths}
+            _exterior = {idx for idx, _ in exterior_indexed}
             if not exterior_indexed:
                 # Every photo was OOD — same persistence shape as no_photos
                 # but ``n_photos`` keeps the original count so the listing
                 # records "we did look at N photos, none were exterior".
-                return olx_id, 0.0, n_total, 0, [], False, [], None, None
+                _fe = _first_exterior(len(photo_urls), _downloaded, _exterior)
+                return olx_id, 0.0, n_total, 0, [], False, [], None, None, _fe
             photo_paths = [p for _, p in exterior_indexed]
             if clf is None:
                 # Backfill-plates mode: skip damage inference. We still
@@ -1073,9 +1099,10 @@ def verify_photos(
                 olx_id, pred_max_p, n_total, n_exterior,
                 per_photo, pred_is_damaged,
                 plate_per_photo, plate_primary, None,
+                _first_exterior(len(photo_urls), _downloaded, _exterior),
             )
         except Exception as exc:  # noqa: BLE001
-            return olx_id, 0.0, 0, 0, [], False, [], None, str(exc)
+            return olx_id, 0.0, 0, 0, [], False, [], None, str(exc), None
 
     flagged = downgraded = no_photos = errors = 0
     processed = 0
@@ -1090,7 +1117,8 @@ def verify_photos(
         for fut in as_completed(futures):
             (olx_id, max_p, n_photos, n_exterior,
              per_photo, flagged_pred,
-             plate_per_photo, plate_primary, err) = fut.result()
+             plate_per_photo, plate_primary, err,
+             first_exterior) = fut.result()
             processed += 1
             if err:
                 log.warning("Classifier failed on %s: %s", olx_id, err)
@@ -1124,6 +1152,14 @@ def verify_photos(
                 # ``photo_damage_p`` (max across photos) and keep working
                 # unchanged.
                 extras["photo_damage_flagged"] = bool(flagged_pred)
+                # Lead-frame exterior verdict — the rating gate in
+                # data_loader._blocking_deal_reason reads exactly this:
+                # True = first gallery photo is a car exterior, False =
+                # proven not (downloaded but CLIP-filtered, or gallery
+                # empty), None = first frame never downloaded (unknown,
+                # allowed through so a transient fetch failure can't
+                # permanently exclude the listing).
+                extras["first_photo_exterior"] = first_exterior
                 # Drop the 2026-05-02 backfill marker once a row gets real
                 # multi-photo inference — the boolean above is now authoritative.
                 extras.pop("photo_damage_flag_source", None)

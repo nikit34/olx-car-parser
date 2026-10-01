@@ -433,10 +433,83 @@ from src.analytics.text_signals import hard_block_phrase  # noqa: E402
 _VLM_VETO_MIN_SEVERITY = 2
 
 
+def _first_photo_exterior_status(extras: dict, photo_count=None) -> bool | None:
+    """Is the gallery's first photo an exterior car shot?
+
+    Returns True / False / None (unknown). The explicit
+    ``first_photo_exterior`` flag written by ``verify-photos`` wins; older
+    rows without it fall back to the ``photo_damages`` idx set (exterior
+    photos only, 1-based positions into ``fetch_photos(url)`` order), so a
+    missing idx 1 means the first frame was filtered as non-exterior (or
+    failed to download — either way it is not a proven car shot).
+    Aggregate counts cover the all-OOD / no-photos shapes; rows that were
+    never verified (or legacy rows with no per-photo array) report None
+    rather than guessing, so a verification lag can't empty the feed.
+    """
+    if isinstance(extras, dict) and "first_photo_exterior" in extras:
+        v = extras.get("first_photo_exterior")
+        if v is True:
+            return True
+        if v is False:
+            return False
+        # Explicit None (lead frame never downloaded) means "unknowable",
+        # not "proven non-exterior" — a transient fetch failure must not
+        # permanently exclude the listing. Return unknown without falling
+        # through to the idx inference below (an empty damages array would
+        # otherwise read as a confident False).
+        return None
+    damages = extras.get("photo_damages") if isinstance(extras, dict) else None
+    if isinstance(damages, list):
+        idxs = {d.get("idx") for d in damages if isinstance(d, dict)}
+        return 1 in idxs
+    if isinstance(extras, dict):
+        n_photos = extras.get("photo_damage_n_photos")
+        n_ext = extras.get("photo_damage_n_exterior")
+        if isinstance(n_photos, bool):
+            n_photos = None
+        if isinstance(n_ext, bool):
+            n_ext = None
+        if isinstance(n_photos, int):
+            if n_photos == 0:
+                return False
+            if isinstance(n_ext, int) and n_ext == 0:
+                return False
+            if "photo_damage_p" in extras:
+                return None
+    try:
+        if photo_count is not None and pd.notna(photo_count) and int(photo_count) == 0:
+            return False
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def _first_photo_block_reason(extras: dict, photo_count=None) -> str | None:
+    """Hard-stop reason when the first gallery photo is not a car exterior."""
+    status = _first_photo_exterior_status(extras or {}, photo_count)
+    if status is False:
+        damages = (extras or {}).get("photo_damages") if isinstance(extras, dict) else None
+        if isinstance(damages, list) and damages:
+            return "first photo is not an exterior car shot"
+        n_photos = (extras or {}).get("photo_damage_n_photos") if isinstance(extras, dict) else None
+        if n_photos == 0:
+            return "no photos reachable for verification"
+        n_ext = (extras or {}).get("photo_damage_n_exterior") if isinstance(extras, dict) else None
+        if isinstance(n_ext, int) and n_ext == 0:
+            return "no exterior car photos in the gallery"
+        try:
+            if photo_count is not None and pd.notna(photo_count) and int(photo_count) == 0:
+                return "listing has no photos"
+        except (TypeError, ValueError):
+            pass
+        return "first photo is not an exterior car shot"
+    return None
+
+
 def _blocking_deal_reason(listing: pd.Series) -> str | None:
     """Return a hard-stop reason for listings that should not be shown as deals.
 
-    Five signals, evaluated in decreasing order of certainty:
+    Six signals, evaluated in decreasing order of certainty:
 
     1. ``desc_mentions_accident`` (DB column).
     2. ``damage_severity >= 3`` (DB column, derived in
@@ -451,10 +524,22 @@ def _blocking_deal_reason(listing: pd.Series) -> str | None:
        enrichment hasn't run yet (``damage_severity`` and
        ``mechanical_condition`` are both NULL on freshly scraped rows).
     5. ``mechanical_condition == "poor"`` (from ``llm_extras``).
+    6. First gallery photo is not an exterior car shot (from
+       ``verify-photos`` CLIP data — ``first_photo_exterior`` flag, falling
+       back to the ``photo_damages`` idx set; scrape-time ``photo_count``.
 
     Note what is NOT here: the photo classifier. It vetoed until 2026-08-24 at
     precision 0.20, and now contributes a ranking weight in decide() instead.
     """
+
+    # Cheap scrape-time photo gate first: a confirmed zero-photo gallery
+    # never qualifies, even before any enrichment has run.
+    try:
+        _pc = listing.get("photo_count")
+        if _pc is not None and pd.notna(_pc) and int(_pc) == 0:
+            return "listing has no photos"
+    except (TypeError, ValueError):
+        pass
 
     desc_mentions_accident = listing.get("desc_mentions_accident")
     if pd.notna(desc_mentions_accident) and bool(desc_mentions_accident):
@@ -492,6 +577,20 @@ def _blocking_deal_reason(listing: pd.Series) -> str | None:
     if str(extras.get("mechanical_condition") or "").strip().lower() == "poor":
         return "poor mechanical condition"
 
+    # First gallery photo must show the car exterior. verify-photos records
+    # the CLIP exterior verdict per photo (photo_damages carries exterior
+    # shots only, 1-based idx into fetch_photos order), so a missing idx 1
+    # means the lead frame is an interior / detail / document shot — the
+    # buyer can't see the car at first glance and the deal must not rank.
+    # Unverified / legacy rows without per-photo positions report unknown
+    # and pass here; the scrape-time photo_count==0 gate above still drops
+    # confirmed photo-less galleries.
+    _first_reason = _first_photo_block_reason(
+        extras, listing.get("photo_count"),
+    )
+    if _first_reason:
+        return _first_reason
+
     # The vision verdict from `verify-deals` — this IS the photo veto now.
     # Written only for deals that actually surfaced, because the model behind
     # it is accurate but capped at ~20 requests/day/model: hopeless for 90k
@@ -500,6 +599,8 @@ def _blocking_deal_reason(listing: pd.Series) -> str | None:
     # would repeat the mistake below.
     vlm = extras.get("vlm_damage")
     if isinstance(vlm, dict):
+        if vlm.get("interior_only") is True:
+            return "photos show no exterior view of the car"
         try:
             sev = int(vlm.get("severity"))
         except (TypeError, ValueError):
@@ -1216,6 +1317,13 @@ def compute_signals(
             photo_damage_p = float(photo_damage_p) if photo_damage_p is not None else None
         except (TypeError, ValueError):
             photo_damage_p = None
+        # First-photo exterior status for decide()'s hard gate. compute_signals
+        # already dropped False rows via _blocking_deal_reason, so signals
+        # carry True (proven car lead) or None (unverified/legacy — allowed
+        # through so a verification lag can't empty the feed).
+        first_photo_exterior = _first_photo_exterior_status(
+            _load_llm_extras(listing.get("llm_extras")), listing.get("photo_count"),
+        )
 
         desc_mentions_accident = listing.get("desc_mentions_accident")
         desc_mentions_repair = listing.get("desc_mentions_repair")
@@ -1242,6 +1350,7 @@ def compute_signals(
             "undervaluation_pct": undervaluation_pct,
             "damage_severity": severity_int,
             "photo_damage_p": photo_damage_p,
+            "first_photo_exterior": first_photo_exterior,
             # 0 (not None) when no repair: pandas upcasts the column to
             # float64 once any row has a real cost and turns None → NaN,
             # which downstream `decide()` couldn't tell apart from a real

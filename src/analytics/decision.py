@@ -474,6 +474,16 @@ def decide(
         reasons.append("right-hand drive — PT market mismatch")
         return Decision(VERDICT_REJECT, 0.0, reasons, components)
 
+    # First gallery photo must show the car exterior. compute_signals already
+    # drops these via _blocking_deal_reason; this re-check keeps decide()
+    # safe for callers feeding raw rows (and pins the rule in unit tests).
+    # None/NaN = unverified/legacy (no per-photo positions) — allowed through
+    # so a verification lag can't empty the feed; only an explicit False blocks.
+    first_ext = g("first_photo_exterior")
+    if first_ext is not None and not (isinstance(first_ext, float) and pd.isna(first_ext)) and first_ext == False:
+        reasons.append("first photo is not an exterior car shot")
+        return Decision(VERDICT_REJECT, 0.0, reasons, components)
+
     # ---- Step 1b: feature-space anomaly gate (from src.analytics.anomaly).
     # Catches parser artefacts (engine_cc=10000, mileage 9_999_999) and
     # unflagged salvage that the explicit gates above miss. Only the
