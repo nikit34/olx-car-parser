@@ -135,7 +135,14 @@ LIQ_WAVE_MODELS = "60"
 SNIPPET_TEST = "on"
 
 INTL_LOCALES = "de,fr,it"
-INTL_WAVE_MODELS = "25"
+# 15, not 25. Measured against the live de/fr/it sitemaps on 2026-09-30:
+# the three locales carried 2655 URLs, of which 1463 were model pages that the
+# wave never gated at all — it only saw years and facets. With the gate fixed in
+# pages-intl.js, 25 kept 1267 URLs and 15 keeps 936. The Portuguese layer is
+# deliberately untouched: before the /pt move it ran at this same size and held
+# preco/ano at position 10, so cutting it would throw away pages that were
+# demonstrably working without proving anything.
+INTL_WAVE_MODELS = "15"
 INDEXNOW_KEY = "0b2d1d9109041a8e753860fe1b6efb6f"
 
 HISTORY_REPORT_URL = "https://www.carvertical.com/pt"

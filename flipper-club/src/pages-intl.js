@@ -1391,6 +1391,11 @@ export function intlSitemapPaths(loc, models, hasDeals = true, builtAt = null) {
     { path: href(loc, "privacidade"), freq: "yearly", prio: "0.2" },
   ];
   for (const [slug, rec] of Object.entries(models || {})) {
+    // The wave has to gate the model page itself, not only its years and
+    // facets. Without this the sitemap listed every model in the blob — 1463
+    // pages across de/fr/it on 2026-09-30 — while INTL_WAVE_MODELS looked like
+    // it was holding the layer back, because the gate only ever saw children.
+    if (!intlInWave(loc, models, slug, builtAt)) continue;
     out.push({ path: href(loc, "model", slug), freq: "daily", prio: "0.6" });
     for (const y of intlPublishedYears(loc, models, slug, rec, builtAt)) {
       out.push({ path: hrefYear(loc, slug, y), freq: "daily", prio: "0.5" });
