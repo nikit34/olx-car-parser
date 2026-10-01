@@ -129,8 +129,20 @@ SITE_CONTACT_EMAIL = "ola@carsbuyer.org"
 # The gate is read by the router, the sitemap AND the year links on the model
 # page, so a page outside the wave is unreachable and unlinked — never a link to
 # a 404. Widening is only this number: no code deploy, no data rebuild.
-SEO_WAVE_MODELS = "60"
-LIQ_WAVE_MODELS = "60"
+# 60 -> 20. The staged rollout above was written for a site growing layer by
+# layer; it never got the trigger to stop growing. Between 2026-09-13 and 09-16
+# the site went from ~2000 to 4864 URLs (de/fr/it, then PT under /pt) and on
+# 09-15 impressions fell 90% while average position went 14.1 -> 48.8. Per-locale
+# probing of 120 URLs on 2026-09-30 found the collapse is even across locales —
+# pt 0/42 indexed, de 0/29, fr 2/24, it 2/25 — so thickness is not the variable
+# and there is nothing to protect by keeping the deep tail.
+#
+# 20 keeps the 20 deepest-sampled models: 835 gated URLs against 1717 at 60.
+# Router, sitemap and the year links all read this one gate, so a page outside the
+# wave stays reachable but is no longer advertised. Widen it again by editing
+# this number only — no code deploy, no data rebuild.
+SEO_WAVE_MODELS = "20"
+LIQ_WAVE_MODELS = "20"
 
 SNIPPET_TEST = "on"
 
@@ -146,7 +158,11 @@ INTL_WAVE_MODELS = "15"
 INDEXNOW_KEY = "0b2d1d9109041a8e753860fe1b6efb6f"
 
 HISTORY_REPORT_URL = "https://www.carvertical.com/pt"
-VENDER_WAVE_MODELS = "80"
+# Down from 80 for the same reason as SEO_WAVE_MODELS: the site doubled its URL
+# count in three days in September and lost its index. The seller layer answers
+# "quanto pedir por um X", which is the same corpus the price pages already read,
+# so there is no reason to hold it open past the price layer it depends on.
+VENDER_WAVE_MODELS = "20"
 
 # Cron. Records the weekly market cut for /pt/mercado/indice.
 #
