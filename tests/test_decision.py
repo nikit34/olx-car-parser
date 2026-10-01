@@ -77,6 +77,22 @@ def test_reject_on_rhd():
     assert d.verdict == VERDICT_REJECT
 
 
+def test_reject_on_first_photo_not_exterior():
+    d = decide(_row(first_photo_exterior=False), _ctx())
+    assert d.verdict == VERDICT_REJECT
+    assert any("first photo" in r for r in d.reasons)
+
+
+def test_first_photo_unknown_passes_gate():
+    """True / None / column-absent must not trip the photo gate — only an
+    explicit False (proven non-exterior lead frame) blocks."""
+    for v in (True, None):
+        d = decide(_row(first_photo_exterior=v), _ctx())
+        assert not any("first photo" in r for r in d.reasons)
+    d = decide(_row(), _ctx())  # no column at all (raw rows)
+    assert not any("first photo" in r for r in d.reasons)
+
+
 # ---- Step 2 model trust ---------------------------------------------------
 
 

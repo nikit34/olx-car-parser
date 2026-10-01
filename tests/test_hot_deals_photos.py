@@ -81,6 +81,47 @@ class TestFetchPhotoUrls:
         assert calls == [], "second call must come from the cache"
 
 
+class TestPhotoPolicy:
+    """Every shipped card must carry a car photo. ``_resolve_photos`` is the
+    single decision point: photos found → ship; page fetched but no usable
+    photo → dead, drop; OLX not reached → no photo proven, drop.
+
+    The third outcome used to ship imageless cards ("a blocked scraper must
+    not look like an empty market") — that is the hole this policy closes.
+    """
+
+    def test_photos_found_ships(self, monkeypatch):
+        monkeypatch.setattr(bhd, "fetch_photo_urls",
+                            lambda url: ["https://cdn/one.jpg", "https://cdn/two.jpg"])
+        photos, dropped = bhd._resolve_photos("https://www.olx.pt/d/anuncio/x-1.html", True, 0.0)
+        assert photos == ["https://cdn/one.jpg", "https://cdn/two.jpg"]
+        assert dropped is None
+
+    def test_gone_listing_is_dropped_as_dead(self, monkeypatch):
+        monkeypatch.setattr(bhd, "fetch_photo_urls", lambda url: [])
+        photos, dropped = bhd._resolve_photos("https://www.olx.pt/d/anuncio/x-2.html", True, 0.0)
+        assert photos == []
+        assert dropped == "dead"
+
+    def test_blocked_is_dropped_not_shipped_imageless(self, monkeypatch):
+        """403/timeout proves nothing about the listing — but also no car
+        photo, so the card must not ship."""
+        monkeypatch.setattr(bhd, "fetch_photo_urls", lambda url: None)
+        photos, dropped = bhd._resolve_photos("https://www.olx.pt/d/anuncio/x-3.html", True, 0.0)
+        assert photos == []
+        assert dropped == "unreachable"
+
+    def test_no_fetch_flag_ships_imageless(self, monkeypatch):
+        """--no-fetch-photos is an explicit dev override: skip HTTP entirely
+        and let the JSON ship without photos."""
+        def _boom(url):
+            raise AssertionError("must not fetch when disabled")
+        monkeypatch.setattr(bhd, "fetch_photo_urls", _boom)
+        photos, dropped = bhd._resolve_photos("https://www.olx.pt/d/anuncio/x-4.html", False, 0.0)
+        assert photos == []
+        assert dropped is None
+
+
 class TestZoneFunnelIsCounted:
     """Same failure, one step earlier: a feed that collapses between the
     verdict counts and the final number used to leave no trace of which gate

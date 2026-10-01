@@ -772,6 +772,16 @@ def verify_photos(
              "scores untouched), and runs only photo download + CLIP "
              "filter + plate OCR. Use to retro-fit the four ``plate_*`` "
              "fields onto listings verified before plate detection landed."),
+    backfill_first_photo: bool = typer.Option(
+        False,
+        help="First-photo backfill over every rating-eligible row missing "
+             "the ``first_photo_exterior`` flag: legacy damage-verified rows "
+             "(no per-photo positions), old no-photo rows (possibly transient "
+             "fetch failures), and never-verified rows alike. Re-runs photo "
+             "download + CLIP filter + damage inference and persists fresh "
+             "damage scores together with ``first_photo_exterior``, so the "
+             "rating gate sees current galleries. Stage with --limit; the "
+             "text-flagged + newest-first order drains high-signal rows first."),
     cache_dir: Path = typer.Option(
         Path("/tmp/photo_verify/cache"), help="Local photo cache directory."),
     dry_run: bool = typer.Option(
@@ -837,6 +847,12 @@ def verify_photos(
     inference cost, existing damage scores preserved bit-for-bit), and
     writes only the four ``plate_*`` fields. Mutually exclusive with
     ``--upgrade-legacy``.
+
+    ``--backfill-first-photo``: one-shot retro-fit for the rating's
+    first-photo gate — every active row missing ``first_photo_exterior``
+    (legacy damage-verified rows, old no-photo rows, never-verified rows).
+    Re-runs the full damage path on current galleries and persists fresh
+    damage scores plus the flag. Mutually exclusive with both flags above.
     """
     # Flag validation happens before any heavy imports / DB init so an
     # operator typo aborts in milliseconds rather than after loading torch.
@@ -844,6 +860,12 @@ def verify_photos(
         raise typer.BadParameter(
             "--upgrade-legacy and --backfill-plates are mutually exclusive: "
             "the first re-runs damage inference, the second deliberately skips it."
+        )
+    if backfill_first_photo and (upgrade_legacy or backfill_plates):
+        raise typer.BadParameter(
+            "--backfill-first-photo is mutually exclusive with --upgrade-legacy "
+            "and --backfill-plates: it selects its own cohort (rows missing "
+            "first_photo_exterior) and always re-runs damage inference."
         )
 
     import time
@@ -908,6 +930,16 @@ def verify_photos(
             Listing.llm_extras, "plate_readable",
         ).is_(None)
         selection_filter = and_(has_damage, needs_plate)
+    elif backfill_first_photo:
+        # First-photo backfill cohort: every rating-eligible row whose extras
+        # lack the flag — legacy damage-verified rows (no per-photo idx set),
+        # old no-photo rows (gallery may have appeared since, or the fetch
+        # failed transiently), and never-verified rows alike. Re-runs the
+        # full damage path so the persisted damage scores match the current
+        # gallery rather than going stale under the new flag.
+        selection_filter = json_field(
+            Listing.llm_extras, "first_photo_exterior",
+        ).is_(None)
     else:
         needs_photo = json_field(
             Listing.llm_extras, "photo_damage_p",
@@ -932,7 +964,12 @@ def verify_photos(
                 Listing.url.like("%standvirtual%"),
                 Listing.url.like("%olx.pt%"),
             ),
-            Listing.llm_extras.isnot(None),
+            # The backfill pass covers never-verified rows too (llm_extras
+            # NULL) — json_extract on NULL yields NULL, so they match the
+            # IS NULL cohort filter above. Every other mode keeps the
+            # non-NULL requirement: enrichment writes extras before verify
+            # runs, and NULL rows there mean "not yet enrichable".
+            *([] if backfill_first_photo else [Listing.llm_extras.isnot(None)]),
             selection_filter,
         )
         .order_by(
@@ -952,7 +989,13 @@ def verify_photos(
     if not pending:
         log.info("Nothing to verify.")
         return
-    log.info("Pending: %d listings.", len(pending))
+    if backfill_first_photo:
+        log.info(
+            "Backfill-first-photo mode: %d rows missing the flag — "
+            "re-running damage inference with fresh galleries.", len(pending),
+        )
+    else:
+        log.info("Pending: %d listings.", len(pending))
 
     # Worker pool: each thread fetches photos + downloads + runs classifier
     # for one listing at a time, then returns the result. The main thread

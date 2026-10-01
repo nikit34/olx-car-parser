@@ -193,7 +193,8 @@ def _run_verify(session, monkeypatch, tmp_path, *,
                 threshold: float = 0.2,
                 classifier_cls=None,
                 dry_run: bool = False,
-                backfill_plates: bool = False):
+                backfill_plates: bool = False,
+                backfill_first_photo: bool = False):
     """Drive the typer command with stubbed photo IO + classifier + CLIP + plate OCR."""
     fail_indices = fail_indices or {}
     # Reset the class-level maps per call so tests don't leak state.
@@ -263,6 +264,7 @@ def _run_verify(session, monkeypatch, tmp_path, *,
         only_text_flagged=False,
         upgrade_legacy=False,
         backfill_plates=backfill_plates,
+        backfill_first_photo=backfill_first_photo,
         cache_dir=tmp_path / "cache",
         dry_run=dry_run,
         limit=None,
@@ -1045,4 +1047,120 @@ class TestVerifyPhotosBackfillPlates:
                 cache_dir=tmp_path / "cache",
                 dry_run=True,
                 limit=None,
+            )
+
+
+class TestFirstPhotoExteriorFlag:
+    """``verify-photos`` persists ``first_photo_exterior`` — True iff the
+    gallery's lead photo passed the CLIP exterior filter, False iff it
+    downloaded but was filtered (or the gallery is empty), None iff the
+    lead frame never downloaded (transient fetch failure, unknowable)."""
+
+    def test_lead_exterior_writes_true(self, db_session, monkeypatch, tmp_path):
+        olx_id = "olx-fe-001"
+        _seed_listing(db_session, olx_id=olx_id,
+                      url=f"https://standvirtual.com/test/{olx_id}")
+        _run_verify(db_session, monkeypatch, tmp_path,
+                    photo_urls_by_listing={olx_id: [f"{olx_id}#{i}" for i in range(1, 4)]})
+        extras = json.loads(db_session.query(Listing).filter_by(olx_id=olx_id).one().llm_extras)
+        assert extras["first_photo_exterior"] is True
+
+    def test_lead_ood_writes_false(self, db_session, monkeypatch, tmp_path):
+        olx_id = "olx-fe-002"
+        _seed_listing(db_session, olx_id=olx_id,
+                      url=f"https://standvirtual.com/test/{olx_id}")
+        _run_verify(db_session, monkeypatch, tmp_path,
+                    photo_urls_by_listing={olx_id: [f"{olx_id}#{i}" for i in range(1, 4)]},
+                    ood_indices={olx_id: {1}})
+        extras = json.loads(db_session.query(Listing).filter_by(olx_id=olx_id).one().llm_extras)
+        assert extras["first_photo_exterior"] is False
+
+    def test_lead_download_failed_writes_none(self, db_session, monkeypatch, tmp_path):
+        """Lead frame failed to download while the rest succeeded — content
+        unknowable, must not permanently exclude the listing."""
+        olx_id = "olx-fe-003"
+        _seed_listing(db_session, olx_id=olx_id,
+                      url=f"https://standvirtual.com/test/{olx_id}")
+        _run_verify(db_session, monkeypatch, tmp_path,
+                    photo_urls_by_listing={olx_id: [f"{olx_id}#{i}" for i in range(1, 4)]},
+                    fail_indices={olx_id: {1}})
+        extras = json.loads(db_session.query(Listing).filter_by(olx_id=olx_id).one().llm_extras)
+        assert "first_photo_exterior" in extras
+        assert extras["first_photo_exterior"] is None
+
+    def test_empty_gallery_writes_false(self, db_session, monkeypatch, tmp_path):
+        olx_id = "olx-fe-004"
+        _seed_listing(db_session, olx_id=olx_id,
+                      url=f"https://standvirtual.com/test/{olx_id}")
+        _run_verify(db_session, monkeypatch, tmp_path,
+                    photo_urls_by_listing={olx_id: []})
+        extras = json.loads(db_session.query(Listing).filter_by(olx_id=olx_id).one().llm_extras)
+        assert extras["first_photo_exterior"] is False
+        assert extras["photo_damage_n_photos"] == 0
+
+
+class TestBackfillFirstPhoto:
+    """``--backfill-first-photo`` re-runs inference over every active row
+    missing the flag — legacy verified rows, old no-photo rows and
+    never-verified rows — and persists fresh damage scores + the flag."""
+
+    def test_processes_only_rows_missing_flag(self, db_session, monkeypatch, tmp_path):
+        flagged_id = "olx-bf-flagged"
+        _seed_listing(db_session, olx_id=flagged_id,
+                      url=f"https://standvirtual.com/test/{flagged_id}",
+                      llm_extras={"photo_damage_p": 0.1,
+                                  "photo_damages": [{"idx": 1, "p": 0.1}],
+                                  "first_photo_exterior": True})
+        legacy_id = "olx-bf-legacy"
+        _seed_listing(db_session, olx_id=legacy_id,
+                      url=f"https://standvirtual.com/test/{legacy_id}",
+                      llm_extras={"photo_damage_p": 0.1,
+                                  "photo_damage_n_photos": 3})
+        fresh_id = "olx-bf-fresh"
+        _seed_listing(db_session, olx_id=fresh_id,
+                      url=f"https://standvirtual.com/test/{fresh_id}",
+                      llm_extras={"damage_severity": 0})
+        urls = {oid: [f"{oid}#{i}" for i in range(1, 4)]
+                for oid in (flagged_id, legacy_id, fresh_id)}
+        _run_verify(db_session, monkeypatch, tmp_path,
+                    photo_urls_by_listing=urls, backfill_first_photo=True)
+
+        flagged = json.loads(db_session.query(Listing).filter_by(olx_id=flagged_id).one().llm_extras)
+        assert flagged == {"photo_damage_p": 0.1,
+                           "photo_damages": [{"idx": 1, "p": 0.1}],
+                           "first_photo_exterior": True}
+        for oid in (legacy_id, fresh_id):
+            extras = json.loads(db_session.query(Listing).filter_by(olx_id=oid).one().llm_extras)
+            assert extras["first_photo_exterior"] is True
+            assert extras["photo_damage_n_photos"] == 3
+
+    def test_processes_null_extras_rows(self, db_session, monkeypatch, tmp_path):
+        """Rows that never went through enrichment (llm_extras NULL) are
+        part of the cohort too — the steady-state pass skips them."""
+        olx_id = "olx-bf-nullextras"
+        _seed_listing(db_session, olx_id=olx_id,
+                      url=f"https://standvirtual.com/test/{olx_id}")
+        row = db_session.query(Listing).filter_by(olx_id=olx_id).one()
+        row.llm_extras = None
+        db_session.commit()
+        _run_verify(db_session, monkeypatch, tmp_path,
+                    photo_urls_by_listing={olx_id: [f"{olx_id}#1"]},
+                    backfill_first_photo=True)
+        extras = json.loads(db_session.query(Listing).filter_by(olx_id=olx_id).one().llm_extras)
+        assert extras["first_photo_exterior"] is True
+
+    def test_mutually_exclusive_with_other_passes(self, db_session, monkeypatch, tmp_path):
+        with pytest.raises(typer.BadParameter):
+            cli_module.verify_photos(
+                threshold=0.2, workers=1, only_text_flagged=False,
+                upgrade_legacy=False, backfill_plates=True,
+                backfill_first_photo=True,
+                cache_dir=tmp_path / "cache", dry_run=True, limit=None,
+            )
+        with pytest.raises(typer.BadParameter):
+            cli_module.verify_photos(
+                threshold=0.2, workers=1, only_text_flagged=False,
+                upgrade_legacy=True, backfill_plates=False,
+                backfill_first_photo=True,
+                cache_dir=tmp_path / "cache", dry_run=True, limit=None,
             )

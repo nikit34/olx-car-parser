@@ -580,6 +580,114 @@ class TestBlockingDealReason:
         assert "needs-repair" in signals["olx_id"].values
 
 
+class TestFirstPhotoGate:
+    """Rating admits only listings whose first gallery photo is a car
+    exterior (CLIP verdict from verify-photos). Proven non-exterior lead
+    frames and confirmed photo-less galleries drop; unverified / legacy
+    rows without per-photo positions pass so a verification lag can't
+    empty the feed."""
+
+    def _frame(self, extra: dict) -> pd.DataFrame:
+        row = {"olx_id": "lead-photo", "url": "", "brand": "Volkswagen",
+               "model": "Golf", "year": 2015, "price_eur": 8000,
+               "mileage_km": 150000, "engine_cc": 1600,
+               "fuel_type": "Diesel", "is_active": True, "photo_count": 9}
+        row.update(extra)
+        return pd.DataFrame([row] + _golf_comparables())
+
+    def test_blocks_first_photo_not_exterior(
+        self, sample_history_df, generations_data, patched_gb_model,
+    ):
+        listings = self._frame({"llm_extras": json.dumps({
+            "photo_damage_p": 0.1, "photo_damage_n_photos": 4,
+            "photo_damage_n_exterior": 3,
+            "photo_damages": [{"idx": 2, "p": 0.2}, {"idx": 3, "p": 0.1}],
+            "first_photo_exterior": False,
+        })})
+        with patched_gb_model(), patch(
+            "src.models.generations.load_generations",
+            return_value=generations_data,
+        ):
+            signals, *_ = compute_signals(listings, sample_history_df)
+        assert signals.empty or "lead-photo" not in signals["olx_id"].values
+
+    def test_blocks_legacy_row_missing_idx_1(
+        self, sample_history_df, generations_data, patched_gb_model,
+    ):
+        """Pre-flag rows carry the exterior-only damages array without the
+        explicit flag — a missing idx 1 is still a proven non-exterior lead."""
+        listings = self._frame({"llm_extras": json.dumps({
+            "photo_damage_p": 0.1, "photo_damage_n_photos": 4,
+            "photo_damage_n_exterior": 3,
+            "photo_damages": [{"idx": 2, "p": 0.2}],
+        })})
+        with patched_gb_model(), patch(
+            "src.models.generations.load_generations",
+            return_value=generations_data,
+        ):
+            signals, *_ = compute_signals(listings, sample_history_df)
+        assert signals.empty or "lead-photo" not in signals["olx_id"].values
+
+    def test_keeps_first_photo_exterior(
+        self, sample_history_df, generations_data, patched_gb_model,
+    ):
+        listings = self._frame({"llm_extras": json.dumps({
+            "photo_damage_p": 0.1, "photo_damage_n_photos": 4,
+            "photo_damage_n_exterior": 4,
+            "photo_damages": [{"idx": 1, "p": 0.1}, {"idx": 2, "p": 0.2}],
+            "first_photo_exterior": True,
+        })})
+        with patched_gb_model(), patch(
+            "src.models.generations.load_generations",
+            return_value=generations_data,
+        ):
+            signals, *_ = compute_signals(listings, sample_history_df)
+        assert "lead-photo" in signals["olx_id"].values
+        row = signals[signals["olx_id"] == "lead-photo"].iloc[0]
+        assert bool(row["first_photo_exterior"]) is True
+
+    def test_keeps_unverified_rows(
+        self, sample_history_df, generations_data, patched_gb_model,
+    ):
+        """No photo verification yet (or legacy without positions) — unknown,
+        allowed through so the feed survives a verification lag."""
+        listings = self._frame({"llm_extras": json.dumps({"damage_severity": 1})})
+        with patched_gb_model(), patch(
+            "src.models.generations.load_generations",
+            return_value=generations_data,
+        ):
+            signals, *_ = compute_signals(listings, sample_history_df)
+        assert "lead-photo" in signals["olx_id"].values
+
+    def test_blocks_confirmed_zero_photos(
+        self, sample_history_df, generations_data, patched_gb_model,
+    ):
+        listings = self._frame({"photo_count": 0, "llm_extras": json.dumps({})})
+        with patched_gb_model(), patch(
+            "src.models.generations.load_generations",
+            return_value=generations_data,
+        ):
+            signals, *_ = compute_signals(listings, sample_history_df)
+        assert signals.empty or "lead-photo" not in signals["olx_id"].values
+
+    def test_blocks_vlm_interior_only(
+        self, sample_history_df, generations_data, patched_gb_model,
+    ):
+        listings = self._frame({"llm_extras": json.dumps({
+            "photo_damage_p": 0.0, "photo_damage_n_photos": 3,
+            "photo_damage_n_exterior": 3,
+            "photo_damages": [{"idx": 1, "p": 0.0}],
+            "first_photo_exterior": True,
+            "vlm_damage": {"severity": 0, "interior_only": True},
+        })})
+        with patched_gb_model(), patch(
+            "src.models.generations.load_generations",
+            return_value=generations_data,
+        ):
+            signals, *_ = compute_signals(listings, sample_history_df)
+        assert signals.empty or "lead-photo" not in signals["olx_id"].values
+
+
 class TestRepairCostAdjustment:
     """Severity-2 listings need a repair-cost haircut on their flip basis.
     A "junta queimada" Punto sitting at €1500 looks like a 50 % discount

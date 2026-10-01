@@ -100,15 +100,17 @@ def fetch_photo_urls(url: str, timeout: int = 10) -> list[str] | None:
 
     Three outcomes, and the caller must tell them apart:
 
-    * ``[...]`` — page fetched, photos found.
+    * ``[...]`` — page fetched, photos found. The deal ships with them.
     * ``[]``    — page fetched and it has no usable photos, i.e. the listing is
       dead (410/redirect) and its link would be broken anyway. Drop the deal.
     * ``None``  — we could not reach OLX at all (403 block, timeout, DNS).
-      That says nothing about the listing, so the deal must survive without an
-      image. Returning ``[]`` here is what emptied the whole feed on
-      2026-08-25: OLX started 403ing our address, every fetch raised, and all
-      21 BUY/WATCH deals were discarded as "dead" while the site showed
-      "Sem negócios".
+      That says nothing about the listing — and in particular no car photo
+      is proven — so the deal is dropped as well. The feed ships only cards
+      with a photo; a blocked scraper reads as an empty feed by design.
+      (Before 2026-10 the ``None`` case shipped imageless cards so a block
+      would not look like an empty market — that is exactly the hole this
+      policy closes: on 2026-08-25 OLX started 403ing our address and every
+      fetch raised.)
 
     Cached in-memory per process so the same listing-URL across zones triggers
     one HTTP request.
@@ -151,6 +153,26 @@ def fetch_photo_urls(url: str, timeout: int = 10) -> list[str] | None:
         photos = None
     _PHOTO_CACHE[url] = photos
     return photos
+
+
+def _resolve_photos(url: str | None, do_fetch: bool, sleep_sec: float) -> tuple[list[str], str | None]:
+    """Gallery URLs for one deal plus the drop reason.
+
+    Returns ``(photos, dropped)`` — ``dropped`` is None when the deal ships
+    (with photos, or imageless only when fetching is disabled via
+    ``--no-fetch-photos``), otherwise ``"dead"`` (page fetched, no usable
+    photo — link is broken anyway) or ``"unreachable"`` (OLX not reached,
+    no car photo proven — dropped so imageless cards never rank).
+    """
+    if not do_fetch or not url:
+        return [], None
+    fetched = fetch_photo_urls(url)
+    if fetched:
+        time.sleep(sleep_sec)
+        return fetched, None
+    if fetched is None:
+        return [], "unreachable"
+    return [], "dead"
 
 
 def _format_deal(row: dict, photo_urls: list[str]) -> dict:
@@ -476,22 +498,19 @@ def main() -> None:
         dead = 0
         deals: list[dict] = []
         for _, row in picked.iterrows():
-            photos: list[str] = []
-            if args.fetch_photos and row.get("url"):
-                fetched = fetch_photo_urls(row["url"])
-                if fetched:
-                    photos = fetched
-                    time.sleep(args.photo_sleep_sec)
-                elif fetched is None:
-                    # Couldn't reach OLX. Ship the deal without an image
-                    # rather than pretend it doesn't exist — a blocked
-                    # scraper must not look like an empty market.
-                    unreachable += 1
-                else:
-                    # Page fetched and carries no usable photo: the listing is
-                    # 410/redirected and its link would be dead anyway.
-                    dead += 1
-                    continue
+            photos, dropped = _resolve_photos(
+                row.get("url"), args.fetch_photos, args.photo_sleep_sec,
+            )
+            if dropped == "dead":
+                # Page fetched and carries no usable photo: the listing is
+                # 410/redirected and its link would be dead anyway.
+                dead += 1
+                continue
+            if dropped == "unreachable":
+                # OLX not reached — no car photo proven, the card would be
+                # imageless. Dropped so only photo-backed deals rank.
+                unreachable += 1
+                continue
             deals.append(_format_deal(row.to_dict(), photos))
 
         out_path = args.out_dir / f"hot_deals_{zone}.json"
@@ -512,10 +531,9 @@ def main() -> None:
               f" → {stages['fresh']} posted <={args.max_age_days}d ago"
               f" → {stages['in_zone']} in zone"
               f" → {stages['vetted']} BUY/WATCH"
-              + (f" → -{dead} dead links" if dead else ""), flush=True)
-        print(f"[hot_deals]   {zone:<6} {len(deals):>3} deals → {out_path.name}"
-              + (f"  ({unreachable} shipped without a photo — OLX unreachable)"
-                 if unreachable else ""), flush=True)
+              + (f" → -{dead} dead links" if dead else "")
+              + (f" → -{unreachable} OLX unreachable" if unreachable else ""), flush=True)
+        print(f"[hot_deals]   {zone:<6} {len(deals):>3} deals → {out_path.name}", flush=True)
 
     print(f"[hot_deals] DONE  built_at={built_at}  zones={overall_counts}", flush=True)
 
