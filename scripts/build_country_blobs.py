@@ -323,6 +323,10 @@ def _hot_deals(signals: pd.DataFrame, listings: pd.DataFrame, predictions: pd.Da
     listing to collect its photos; here the crawl already stored them, three
     off the search card and the whole set off the advert where robots leaves it
     open, so the gallery costs this build nothing.
+
+    And because nothing here opens the listing, the photo gate has to be this
+    function's own: a deal whose stored row carries no gallery is withheld
+    rather than shipped as an empty card.
     """
     from scripts.build_hot_deals import (
         MAX_LISTING_AGE_DAYS, _format_deal, _pick_zone_deals,
@@ -359,9 +363,26 @@ def _hot_deals(signals: pd.DataFrame, listings: pd.DataFrame, predictions: pd.Da
     _log(cc, f"funnel: {stages.get('signals', 0)} signals → {stages.get('active', 0)} active"
              f" → {stages.get('fresh', 0)} posted <={MAX_LISTING_AGE_DAYS}d ago"
              f" → {stages.get('vetted', 0)} BUY/WATCH")
+
+    # A card the reader cannot see is not a deal. The Portuguese feed makes the
+    # same call in _resolve_photos, and it has to be repeated here rather than
+    # inherited: this feed never opens the listing, so nothing upstream ever
+    # looked at whether a gallery exists. A foreign row carries its photos in
+    # extras.photo_urls (card) or image_url (one shot off the advert), and a
+    # foreign card whose images block never arrived leaves both empty — 6 349
+    # such rows sat in the German corpus on 2026-10-01. Without this check they
+    # reach the feed as `"photo_urls": []`.
     deals: list[dict] = []
+    photoless = 0
     for _, row in picked.iterrows():
-        deals.append(_format_deal(row.to_dict(), _row_photos(row)))
+        photos = _row_photos(row)
+        if not photos:
+            photoless += 1
+            continue
+        deals.append(_format_deal(row.to_dict(), photos))
+    if photoless:
+        _log(cc, f"{photoless} of {len(picked)} BUY/WATCH withheld — no car photo "
+                 f"on the stored listing")
     return deals
 
 

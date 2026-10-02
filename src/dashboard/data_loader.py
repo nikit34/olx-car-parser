@@ -481,6 +481,13 @@ def _first_photo_exterior_status(extras: dict, photo_count=None) -> bool | None:
             return False
     except (TypeError, ValueError):
         pass
+    # A foreign corpus (DE/FR/IT from the AutoScout crawl) never runs
+    # verify-photos, so the keys above are all absent and only ``photo_count``
+    # speaks. Zero there is the site's own answer — the card's images block
+    # arrived empty — so it is as real a "no photo" as the Portuguese shape.
+    # Null still means unknown: the aggregates crawler writes no photo_count
+    # at all when the block never arrived, and that is missing data, not a
+    # statement about the car.
     return None
 
 
