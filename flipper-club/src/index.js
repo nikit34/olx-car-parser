@@ -79,6 +79,7 @@ import { intlModelCutLinks } from "./intl-facets.js";
 import { intlModelCurveLinks } from "./intl-curves.js";
 import "./intl-compare.js";
 import "./intl-guides.js";
+import { handleReport, isReportPath } from "./reports.js";
 
 const ZONES = ["norte", "centro", "sul", "all"];
 
@@ -332,6 +333,8 @@ const worker = {
         const perm = (method === "GET" || method === "HEAD") ? 301 : 308;
         return Response.redirect(dest.toString(), perm);
       }
+
+      if (isReportPath(pathname)) return handleReport(request, env, url);
 
       // Identity for the trust pages (/pt/sobre, /pt/metodologia). Unset in [vars]
       // ⇒ those blocks render the brand-level version instead of inventing a
