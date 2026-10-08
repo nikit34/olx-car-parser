@@ -51,6 +51,10 @@ def to_utc(series):
     return pd.to_datetime(series, format="mixed", utc=True, errors="coerce")
 
 
+def read_table(path):
+    return pd.read_csv(path) if str(path).endswith(".csv") else pd.read_parquet(path)
+
+
 def sha256(path):
     digest = hashlib.sha256()
     with open(path, "rb") as fh:
@@ -306,7 +310,10 @@ def render(params, cars, gap_before, gap_after, steps, files, token, generator_c
     w("<p>Para cada anúncio são guardados o título, o endereço (URL), a marca, o modelo, a geração, o ano, a quilometragem, a potência, a cilindrada, o combustível, a caixa, a localidade, o distrito, o tipo de vendedor, a origem indicada no anúncio (nacional ou importado) e a data de publicação indicada pela plataforma.</p>")
     w(f"<p>O preço é guardado como registo com data e hora (UTC) quando o anúncio é encontrado pela primeira vez e sempre que o preço muda. Uma recolha em que o preço não muda não cria novo registo (<a href='{esc(code_url)}'>código-fonte da regra</a>). São ainda guardadas a data e hora da última recolha em que o anúncio foi encontrado e a data da recolha em que deixou de o ser. Por isso, o preço em vigor numa data é o último registo anterior a essa data, enquanto o anúncio continuar publicado.</p>")
     w(f"<p><strong>Intervalo sem recolhas.</strong> A última recolha concluída antes de {ref_txt} terminou em {ts_utc(gap_start)} (<a href='{esc(gap_before['url'])}'>execução</a>). Em todas as execuções agendadas entre essa hora e {ts_utc(gap_end)} o passo de recolha falhou e nenhum anúncio foi lido; a recolha seguinte começou em {ts_utc(gap_end)} (<a href='{esc(gap_after['url'])}'>execução</a>). O histórico de execuções é público em <a href='{esc(runs_url)}'>{esc(runs_url)}</a>.</p>")
-    w(f"<p><strong>Extração.</strong> Os dados deste relatório foram extraídos em {esc(params['data']['downloaded'])} da publicação «{esc(params['data']['release'])}» do repositório público <a href='{esc(repo)}'>{esc(repo)}</a>. Ficheiros usados e respetivas somas SHA-256:</p><ul>")
+    if params["data"].get("source_text"):
+        w(f"<p><strong>Extração.</strong> {esc(params['data']['source_text'])} Ficheiros de extração, conservados pelo autor, e respetivas somas SHA-256:</p><ul>")
+    else:
+        w(f"<p><strong>Extração.</strong> Os dados deste relatório foram extraídos em {esc(params['data']['downloaded'])} da publicação «{esc(params['data']['release'])}» do repositório público <a href='{esc(repo)}'>{esc(repo)}</a>. Ficheiros usados e respetivas somas SHA-256:</p><ul>")
     for name, digest in files.items():
         w(f"<li><code>{esc(name)}</code>: <code>{esc(digest)}</code></li>")
     w(f"</ul><p>O cálculo foi feito pelo programa <a href='{esc(gen_url)}'>scripts/market_report.py</a>, publicado no mesmo repositório.</p>")
@@ -426,10 +433,10 @@ def main():
     token = params["token"]
     generator_commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
                                       cwd=Path(__file__).parent).stdout.strip()
-    listings = pd.read_parquet(args.listings)
+    listings = read_table(args.listings)
     for col in ("first_seen_at", "last_seen_at", "last_scraped_at", "deactivated_at"):
         listings[col] = to_utc(listings[col])
-    snaps = pd.read_parquet(args.snapshots, columns=["olx_id", "price_eur", "scraped_at"])
+    snaps = read_table(args.snapshots)[["olx_id", "price_eur", "scraped_at"]].copy()
     snaps["scraped_at"] = to_utc(snaps["scraped_at"])
     steps = json.loads(Path(args.steps).read_text())
 
