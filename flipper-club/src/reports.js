@@ -48,6 +48,7 @@ function acceptSession(s, meta, token) {
 
 async function stripeGet(env, path) {
   const r = await fetch(`${STRIPE_API}${path}`, { headers: { authorization: `Bearer ${env.STRIPE_SECRET_KEY}` } });
+  if (!r.ok) console.warn("report stripe status", r.status, path.split("?")[0].replace(/cs_(live|test)_[A-Za-z0-9]+/, "cs_*"));
   return r.ok ? r.json() : null;
 }
 
