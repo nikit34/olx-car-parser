@@ -159,7 +159,54 @@ await check("garbage session id is not sent to Stripe", async () => {
   const { env } = makeEnv({ STRIPE_SECRET_KEY: "rk_test_x" });
   await withStripe({}, async calls => {
     await get(env, `${BASE}?session_id=../../v1/charges`);
-    assert(calls.length === 0, "called Stripe with an untrusted id");
+    assert(!calls.some(c => c.url.includes("charges") || c.url.includes("..")), "called Stripe with an untrusted id");
+  });
+});
+
+async function withStripeRoutes(routes, fn) {
+  const real = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    calls.push(u);
+    const hit = routes.find(([pre]) => u.includes(pre));
+    return new Response(JSON.stringify(hit ? hit[1] : {}), { status: hit ? 200 : 404, headers: { "content-type": "application/json" } });
+  };
+  try { return await fn(calls); } finally { globalThis.fetch = real; }
+}
+
+await check("payment found by link when the buyer closed the tab before returning", async () => {
+  const { env, kv } = makeEnv({ STRIPE_SECRET_KEY: "rk_test_x" });
+  kv.set(`report:${TOKEN}:html`, "<html>Descarregar PDF</html>");
+  const paidSession = { id: "cs_test_tab", status: "complete", payment_status: "paid", amount_total: 7500, currency: "eur", payment_link: "plink_test_1" };
+  await withStripeRoutes([["/checkout/sessions?payment_link=plink_test_1&status=complete", { data: [paidSession] }]], async calls => {
+    const r = await get(env, BASE);
+    assert(r.status === 200 && (await r.text()).includes("Descarregar PDF"), "not unlocked by lookup");
+    assert(calls.length === 1, `expected one lookup, got ${calls.length}`);
+  });
+  assert(JSON.parse(kv.get(`report:${TOKEN}:paid`)).session === "cs_test_tab", "paid flag not stored from lookup");
+});
+
+await check("lookup ignores sessions that are unpaid, foreign or wrong amount", async () => {
+  const { env, kv } = makeEnv({ STRIPE_SECRET_KEY: "rk_test_x" });
+  const bad = [
+    { id: "cs_x1", status: "complete", payment_status: "unpaid", amount_total: 7500, currency: "eur", payment_link: "plink_test_1" },
+    { id: "cs_x2", status: "complete", payment_status: "paid", amount_total: 7500, currency: "eur", payment_link: "plink_other" },
+    { id: "cs_x3", status: "complete", payment_status: "paid", amount_total: 500, currency: "eur", payment_link: "plink_test_1" },
+  ];
+  await withStripeRoutes([["/checkout/sessions?payment_link=", { data: bad }]], async () => {
+    const body = await (await get(env, BASE)).text();
+    assert(body.includes("Pagar 75,00 €") && !body.includes("Descarregar PDF"), "unlocked by a bad session");
+  });
+  assert(!kv.has(`report:${TOKEN}:paid`), "stored paid flag from a bad session");
+});
+
+await check("without a Stripe key the page never calls Stripe", async () => {
+  const { env } = makeEnv();
+  await withStripeRoutes([], async calls => {
+    await get(env, BASE);
+    await get(env, `${BASE}?session_id=cs_live_abc123`);
+    assert(calls.length === 0, "called Stripe without a key");
   });
 });
 

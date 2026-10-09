@@ -36,20 +36,41 @@ function payHref(meta, token) {
   return u.toString();
 }
 
+function acceptSession(s, meta, token) {
+  if (!s) return null;
+  const ours = meta.payment_link_id ? s.payment_link === meta.payment_link_id : s.client_reference_id === token;
+  if (ours && s.status === "complete" && s.payment_status === "paid"
+      && s.amount_total === meta.amount_cents && s.currency === meta.currency) {
+    return { session: s.id, amount: s.amount_total, at: new Date().toISOString(), via: "stripe" };
+  }
+  return null;
+}
+
+async function stripeGet(env, path) {
+  const r = await fetch(`${STRIPE_API}${path}`, { headers: { authorization: `Bearer ${env.STRIPE_SECRET_KEY}` } });
+  return r.ok ? r.json() : null;
+}
+
 async function verifySession(env, meta, token, sessionId) {
   try {
-    const r = await fetch(`${STRIPE_API}/checkout/sessions/${encodeURIComponent(sessionId)}`, {
-      headers: { authorization: `Bearer ${env.STRIPE_SECRET_KEY}` },
-    });
-    if (!r.ok) return null;
-    const s = await r.json();
-    const ours = meta.payment_link_id ? s.payment_link === meta.payment_link_id : s.client_reference_id === token;
-    if (ours && s.status === "complete" && s.payment_status === "paid"
-        && s.amount_total === meta.amount_cents && s.currency === meta.currency) {
-      return { session: s.id, amount: s.amount_total, at: new Date().toISOString(), via: "stripe" };
-    }
+    return acceptSession(await stripeGet(env, `/checkout/sessions/${encodeURIComponent(sessionId)}`), meta, token);
   } catch (err) {
     console.warn("report payment check failed", err && err.message);
+  }
+  return null;
+}
+
+async function findPaidSession(env, meta, token) {
+  if (!meta.payment_link_id) return null;
+  try {
+    const list = await stripeGet(env,
+      `/checkout/sessions?payment_link=${encodeURIComponent(meta.payment_link_id)}&status=complete&limit=10`);
+    for (const s of (list && Array.isArray(list.data)) ? list.data : []) {
+      const ok = acceptSession(s, meta, token);
+      if (ok) return ok;
+    }
+  } catch (err) {
+    console.warn("report payment lookup failed", err && err.message);
   }
   return null;
 }
@@ -128,8 +149,9 @@ export async function handleReport(request, env, url) {
   let paid = await env.KV.get(`report:${token}:paid`, "json");
   const sessionId = (url.searchParams.get("session_id") || "").trim();
   const auto = Boolean((env.STRIPE_SECRET_KEY || "").trim());
-  if (!paid && auto && SESSION_ID.test(sessionId)) {
-    paid = await verifySession(env, meta, token, sessionId);
+  if (!paid && auto) {
+    paid = (SESSION_ID.test(sessionId) ? await verifySession(env, meta, token, sessionId) : null)
+      || await findPaidSession(env, meta, token);
     if (paid) await env.KV.put(`report:${token}:paid`, JSON.stringify(paid));
   }
 
