@@ -416,6 +416,21 @@ def render(params, cars, gap_before, gap_after, steps, files, token, generator_c
         dd = datetime.strptime(d, "%Y-%m-%d").strftime("%d/%m/%Y")
         w(f"<tr><td>{dd}</td><td class=num>{per_day[d]['ok']}</td><td class=num>{per_day[d]['fail']}</td></tr>")
     w("</table></div>")
+    if params.get("letter", True) and confirmed:
+        offer = params.get("insurer_offer")
+        offer_txt = eur(offer) if offer else "[valor proposto]"
+        w("<h2>Anexo C. Modelo de carta à seguradora</h2>")
+        w("<p class=small>Modelo indicativo para quem quiser contestar a proposta de indemnização por perda total. Não é aconselhamento jurídico: adapte-o ao seu caso ou peça a um advogado que o reveja. Os campos entre parênteses retos são para preencher.</p>")
+        w("<div class=box>")
+        w("<p>[Nome]<br>[Morada]<br>[Local e data]</p>")
+        w("<p>À [Seguradora]<br>Assunto: Sinistro n.º [número], apólice n.º [número], viatura [matrícula]</p>")
+        w("<p>Exmos. Senhores,</p>")
+        w(f"<p>Recebi a vossa proposta de indemnização por perda total da viatura {esc(v['label'])} de {esc(v['year'])}, com {km(v['km'])}, no valor de {esc(offer_txt)}, que não aceito.</p>")
+        w(f"<p>A indemnização por perda total deve corresponder ao valor de substituição da viatura antes do sinistro, isto é, ao preço pelo qual seria possível adquirir no mercado uma viatura equivalente nessa data. Junto o relatório de dados de mercado {esc(params['report_id'])}, emitido a {issued}, que identifica {len(confirmed)} viaturas equivalentes ({esc(f['brand'])} {esc(f['model'])}, {f['year_min']}-{f['year_max']}, {f['hp_min']}-{f['hp_max']} cv) anunciadas para venda em Portugal a {ref_txt}, com preços pedidos entre {eur(sa['min'])} e {eur(sa['max'])} e mediana de {eur(sa['median'])}.</p>")
+        w("<p>Solicito por isso a revisão da proposta para um valor compatível com estes dados, bem como a indicação dos critérios e das fontes usados no vosso cálculo do valor venal.</p>")
+        w("<p>Não sendo possível chegar a acordo, reservo-me o direito de recorrer ao CIMPAS ou aos meios judiciais competentes.</p>")
+        w("<p>Com os melhores cumprimentos,<br>[Nome]</p>")
+        w("</div>")
     w("</main></body></html>")
     summary = {
         "records": n_records, "cars": len(cars), "confirmed": len(confirmed), "unconfirmed": len(unconfirmed),

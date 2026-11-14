@@ -123,6 +123,7 @@ export function renderReportOffer({ host, depositCount = null, today, values = {
         <li class="fc-li">Mediana e intervalo dos preços, e onde fica o teu carro face aos comparáveis em quilómetros, ano e motor.</li>
         <li class="fc-li">Método, critérios de escolha, data do relatório e responsável.</li>
         <li class="fc-li">As limitações dos dados, escritas no próprio relatório.</li>
+        <li class="fc-li">Um modelo de carta à seguradora com os números do relatório já preenchidos, para contestares a proposta de indemnização.</li>
       </ul>
 
       <h2 class="fc-h2">O que o relatório não é</h2>
