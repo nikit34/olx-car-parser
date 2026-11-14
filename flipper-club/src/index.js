@@ -565,6 +565,14 @@ async function handleAvaliar(request, env, url) {
     if (olxId) {
       const doc = await getValuations(env);
       rec = (doc && doc.cars) ? (doc.cars[olxId] || null) : null;
+      const twin = (!rec && doc && doc.alias) ? doc.alias[olxId] : null;
+      if (Array.isArray(twin) && doc.cars[twin[0]]) {
+        const base = doc.cars[twin[0]];
+        rec = { ...base, p: Number.isFinite(twin[1]) ? twin[1] : base.p };
+        if (twin[2]) rec.sv = 1; else delete rec.sv;
+        delete rec.ph;
+        delete rec.dom;
+      }
     }
   }
 

@@ -1715,5 +1715,22 @@ await check("the report order form stores a lead and the honeypot stores nothing
   assert(stored && stored.km === 150000 && stored.email === "x@y.pt" && stored.distrito === "Porto", "the stored lead lost its fields");
 });
 
+await check("a Standvirtual link to a car we priced under its OLX twin still gets a verdict", async () => {
+  valuationsDoc = { v: 3, cars: {
+    JC0om: { t: "Renault Clio 1.5 dCi", y: 2016, km: 92000, fu: "Diesel", ct: "Porto", dom: 43,
+             p: 8800, fl: 6971, fm: 9250, fh: 10347, ms: "renault-clio", ph: [[43, 8990], [5, 8800]] },
+  }, alias: { "8Q17BB": ["JC0om", 8700, 1] } };
+  try {
+    const url = "https://www.standvirtual.com/carros/anuncio/renault-clio-1-5-dci-ID8Q17BB.html";
+    const page = await (await get(`/pt/avaliar?q=${encodeURIComponent(url)}`)).text();
+    assert(!page.includes("Ainda não temos este anúncio"), "the twin alias was not used");
+    assert(page.includes("Renault Clio 1.5 dCi") && page.includes("9250"), "the twin's fair band is missing");
+    assert(page.includes("8700"), "the Standvirtual asking price was replaced by the OLX one");
+    assert(!page.includes("De €8990"), "the OLX twin's price track leaked onto the Standvirtual advert");
+    const miss = await (await get(`/pt/avaliar?q=${encodeURIComponent("https://www.standvirtual.com/carros/anuncio/x-ID8QNONE.html")}`)).text();
+    assert(miss.includes("Ainda não temos este anúncio"), "an unknown advert no longer says so");
+  } finally { valuationsDoc = {}; }
+});
+
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall route checks passed");
 process.exit(failures ? 1 : 0);

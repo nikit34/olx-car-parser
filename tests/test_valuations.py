@@ -219,3 +219,32 @@ def test_year_car_shards_split_every_car_into_its_models_shard():
     assert sum(len(s["cars"]) for s in shards) == 3
     assert shards[year_car_shard("volkswagen-golf")]["cars"]["A1"] == {
         "ms": "volkswagen-golf", "y": 2015, "p": 9000, "fm": 10000}
+
+
+class TestTwinAliases:
+    def _pair(self, sv_price=9000, district_b="Porto", km_b=150000):
+        rows = pd.concat([
+            _listings(olx_id="AAA", source="olx", district="Porto"),
+            _listings(olx_id="8QSV1", source="standvirtual", district=district_b,
+                      mileage_km=km_b, price_eur=sv_price),
+        ], ignore_index=True)
+        return build_valuations(rows, _predictions())
+
+    def test_a_standvirtual_twin_points_at_the_priced_olx_advert(self):
+        blob = self._pair(sv_price=8800)
+        assert "8QSV1" not in blob["cars"]
+        assert blob["alias"]["8QSV1"] == ["AAA", 8800, 1]
+
+    def test_a_different_car_gets_no_alias(self):
+        assert "alias" not in self._pair(km_b=151000)
+        assert "alias" not in self._pair(district_b="Lisboa")
+
+    def test_an_ambiguous_key_gets_no_alias(self):
+        rows = pd.concat([
+            _listings(olx_id="AAA", source="olx", district="Porto"),
+            _listings(olx_id="BBB", source="olx", district="Porto"),
+            _listings(olx_id="8QSV1", source="standvirtual", district="Porto"),
+        ], ignore_index=True)
+        preds = pd.concat([_predictions(), _predictions().assign(olx_id="BBB")], ignore_index=True)
+        assert "alias" not in build_valuations(rows, preds)
+

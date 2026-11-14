@@ -277,7 +277,38 @@ def build_valuations(listings: pd.DataFrame, predictions: pd.DataFrame,
         # Drop None values to keep the blob small.
         cars[str(oid)] = {k: v for k, v in rec.items() if v is not None}
 
+    alias = _twin_aliases(active, cars)
+    if alias:
+        blob["alias"] = alias
     return blob
+
+
+_TWIN_KEY = ("brand", "model", "year", "mileage_km", "district")
+
+
+def _twin_aliases(active: pd.DataFrame, cars: dict) -> dict:
+    if active.empty or any(c not in active.columns for c in ("olx_id",) + _TWIN_KEY):
+        return {}
+    df = active[["olx_id", "price_eur", "source", *_TWIN_KEY]].copy() if "source" in active.columns \
+        else active[["olx_id", "price_eur", *_TWIN_KEY]].assign(source="olx")
+    df = df[df["mileage_km"].notna() & df["year"].notna() & df["district"].notna()]
+    if df.empty:
+        return {}
+    df["olx_id"] = df["olx_id"].astype(str)
+    df["key"] = list(zip(df["brand"], df["model"], df["year"].astype(int),
+                         df["mileage_km"].astype(int), df["district"]))
+    priced = df[df["olx_id"].isin(cars)]
+    targets = priced.groupby("key")["olx_id"].agg(list)
+    targets = {k: v[0] for k, v in targets.items() if len(v) == 1}
+    alias = {}
+    for r in df[~df["olx_id"].isin(cars)].itertuples():
+        to = targets.get(r.key)
+        if to is None:
+            continue
+        price = _i(r.price_eur)
+        sv = 1 if (_s(r.source) or "olx").lower() == "standvirtual" else 0
+        alias[r.olx_id] = [to, price, sv]
+    return alias
 
 
 YEAR_CAR_SHARDS = 32
