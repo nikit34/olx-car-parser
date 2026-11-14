@@ -28,6 +28,20 @@ const SRC = {
   stj2018: ["Acórdão do Supremo Tribunal de Justiça de 05/07/2018, processo 176/13.7T2AVR.P1.S1 (dgsi.pt)", "https://www.dgsi.pt/jstj.nsf/-/900D05BF0595DFFD802582C200361434"],
   trg2017: ["Acórdão do Tribunal da Relação de Guimarães de 16/02/2017, processo 183/15.5T8CBT.G1 (dgsi.pt)", "https://www.dgsi.pt/jtrg.nsf/-/1B351F677570F1A3802580ED005A228F"],
   gepsa: ["Serviços de peritagem automóvel e preços (GEPSA)", "https://gepsa.pt/en/automotive-solutions"],
+  autoOnline: ["Automóvel Online (IRN)", "https://www.automovelonline.mj.pt/AutoOnlineProd/"],
+  autoOnlineFaq: ["Perguntas frequentes do Automóvel Online (IRN, PDF)", "https://www.automovelonline.mj.pt/AutoOnlineProd/FrontOfficeController?action=download&tipo=faq&idioma=pt_PT&tipoDoc=PDF"],
+  conservatoriaVirtual: ["Conservatória Virtual: veículos (IRN)", "https://conservatoria.justica.gov.pt/pt/veiculo"],
+  justicaRegistar: ["Registar automóvel (Justiça)", "https://justica.gov.pt/Servicos/Registar-automovel"],
+  imtProcEspecial: ["Registo de propriedade: procedimento especial do vendedor (IMT)", "https://www.imt-ip.pt/noticias/registo-de-propriedade-de-veiculos-procedimento-especial/"],
+  imtApreensao: ["Registo de propriedade e pedidos de apreensão (IMT)", "https://www.imt-ip.pt/veiculos/registo-de-propriedade-pedidos-apreensao/"],
+  decoReservaCancelar: ["Reserva de propriedade: para que serve e como cancelar (DECO PROteste)", "https://www.deco.proteste.pt/auto/financiamento-automovel/dicas/reserva-propriedade-automovel-serve-cancelar"],
+  govCertidao: ["Pedir a certidão permanente do registo automóvel (gov.pt)", "https://www.gov.pt/servicos/pedir-a-certidao-permanente-do-registo-automovel"],
+  govInspecoes: ["Obter relatório de resultados das inspeções técnicas (gov.pt)", "https://www.gov.pt/servicos/obter-relatorio-de-resultados-das-inspecoes-tecnicas-de-veiculo"],
+  govInspecao: ["Levar o carro à inspeção (gov.pt)", "https://www.gov.pt/servicos/levar-o-carro-a-inspecao"],
+  imtRecall: ["Tem um recall ativo? Regularize antes da inspeção (IMT)", "https://www.imt-ip.pt/noticias/tem-um-recall-ativo-regularize-sem-custos-antes-da-inspecao/"],
+  recall: ["Plataforma RECALL (ACAP e IMT)", "https://recall.motordata.pt/"],
+  fgaMatricula: ["Verificar matrícula: o carro tem seguro? (FGA)", "https://www.fga.asf.com.pt/pt/verificar-matr%c3%adcula"],
+  decoCarroUsado: ["Carro usado: cuidados na compra (DECO PROteste)", "https://www.deco.proteste.pt/auto/automoveis/dicas/carro-usado-cuidados-na-compra"],
 };
 
 function marketLine(mk) {
@@ -204,6 +218,114 @@ export const GUIDES = [
       ["Um carro importado vale menos do que um nacional?", "Pelo que medimos, não: comparando carros da mesma marca, modelo e escalão de idade no mesmo portal, o importado fecha ao mesmo preço que o nacional — a diferença que encontrámos é indistinguível de zero. O que muda é o tempo: demora um pouco mais a encontrar comprador. A conta diferente é a de importares tu: nas nossas páginas de importação comparamos o preço pedido em Portugal com o preço alemão mais ISV e legalização."],
     ],
     sources: ["atIsencao", "govMatricula", "anecraIsv"],
+  },
+  {
+    slug: "registo-automovel-online-passo-a-passo",
+    updated: "2026-11-14",
+    title: "Registo automóvel online: transferir a propriedade passo a passo",
+    h1: "Registo automóvel online: como transferir a propriedade passo a passo",
+    description: "Como fazer o registo de propriedade de um carro usado no Automóvel Online ou na Conservatória Virtual: o que comprador e vendedor fazem, quanto custa, prazos, o que fazer sem Cartão de Cidadão e com reserva de propriedade.",
+    body: () => `
+      <p class="fc-p">O registo de propriedade de um carro vendido entre particulares pode ser feito todo online, sem ir a uma conservatória. É o caminho mais barato e o mais rápido, mas exige que comprador e vendedor tenham Cartão de Cidadão com leitor e PIN. O prazo é de <b>60 dias</b> a contar da venda e quem tem de pedir e pagar o registo é o comprador.</p>
+      <h2 class="fc-h2">Onde se faz</h2>
+      <ul class="fc-ul">
+        <li class="fc-li"><b>Automóvel Online</b>, do IRN, em automovelonline.mj.pt, para a maioria das matrículas.</li>
+        <li class="fc-li"><b>Conservatória Virtual</b>, do IRN, em conservatoria.justica.gov.pt, para as matrículas antigas das séries AA-00-00 a ZZ-99-99 e 00-00-AA a 99-99-KZ. Desde setembro de 2026 os pedidos online destas matrículas passaram para esta plataforma.</li>
+      </ul>
+      <h2 class="fc-h2">Passo a passo no Automóvel Online</h2>
+      <ol class="fc-ul">
+        <li class="fc-li"><b>O comprador entra no portal</b> com o Cartão de Cidadão no leitor e escolhe o pedido de registo de propriedade por compra e venda, com aprovação pelo vendedor. Indica a matrícula, a marca, o número de quadro (VIN, está no Documento Único Automóvel), a data da venda e os dados dos dois.</li>
+        <li class="fc-li"><b>O vendedor recebe um email</b> e confirma os dados com o seu próprio Cartão de Cidadão. Sem esta confirmação o pedido não avança.</li>
+        <li class="fc-li"><b>O comprador recebe a referência de pagamento</b> por Multibanco ou homebanking e tem 5 dias para pagar. Se não pagar, o pedido é anulado.</li>
+        <li class="fc-li"><b>O registo fica feito</b>, normalmente em cerca de 2 dias úteis depois do pagamento, e o novo Documento Único Automóvel chega por correio à morada do novo proprietário.</li>
+      </ol>
+      <p class="fc-p">O mais seguro para os dois é fazer os passos 1 a 3 no próprio dia da venda, com os dois presentes e cada um com o seu cartão.</p>
+      <h2 class="fc-h2">Quanto custa</h2>
+      <p class="fc-p">Segundo o gov.pt, o registo online custa <b>55,30 €</b> dentro dos 60 dias e <b>120,30 €</b> depois disso. Corrigir um erro num pedido já submetido custa mais 10 €. Ao balcão é mais caro, entre 63,60 € e 65 € dentro do prazo conforme a fonte. Confirma o valor na tabela de custos do IRN antes de pagar.</p>
+      <h2 class="fc-h2">Sem Cartão de Cidadão</h2>
+      <p class="fc-p">O portal pede o certificado digital do Cartão de Cidadão, ou o certificado profissional de um advogado, solicitador ou notário. Não encontrámos nas páginas oficiais a Chave Móvel Digital como forma de entrar para registar um carro. Quem tem apenas autorização de residência faz normalmente o registo ao balcão de uma conservatória ou Loja do Cidadão, ou através de um destes profissionais.</p>
+      <h2 class="fc-h2">Carro com reserva de propriedade</h2>
+      <p class="fc-p">Se o carro ainda tem reserva a favor de um banco ou financeira, a reserva tem de ser extinta. É preciso a declaração do credor a confirmar que o crédito está pago. Online existe um pedido conjunto de extinção da reserva e compra e venda, mas o documento do credor só pode ser anexado por advogado, solicitador ou notário. Ao balcão, a extinção da reserva custa 32,50 € segundo a tabela do IRN.</p>
+      <h2 class="fc-h2">E se o comprador não pede o registo</h2>
+      <p class="fc-p">Passados os 60 dias, o vendedor pode pedir sozinho o registo em nome do comprador, pelo procedimento especial do vendedor, juntando a prova da venda. Também pode pedir a apreensão do carro ao IMT. Há mais detalhe no guia sobre o <a href="/pt/guias/registo-de-propriedade-automovel">registo de propriedade</a>.</p>`,
+    faq: [
+      ["Quanto custa o registo automóvel online?", "Segundo o gov.pt, 55,30 € dentro dos 60 dias após a venda e 120,30 € depois desse prazo. Corrigir um erro no pedido custa mais 10 €."],
+      ["O vendedor tem de fazer alguma coisa no registo online?", "Sim. O comprador submete o pedido e o vendedor recebe um email para confirmar os dados com o seu Cartão de Cidadão. Sem essa confirmação o pedido não avança."],
+      ["Quanto tempo demora o registo de propriedade online?", "Normalmente cerca de 2 dias úteis depois do pagamento. O comprador tem 5 dias para pagar a referência, senão o pedido é anulado. O novo Documento Único Automóvel chega por correio."],
+      ["Posso registar o carro online com a Chave Móvel Digital?", "As páginas oficiais que consultámos indicam o Cartão de Cidadão com leitor e PIN, ou o certificado de um advogado, solicitador ou notário. Sem Cartão de Cidadão, o caminho habitual é o balcão de uma conservatória ou de uma Loja do Cidadão."],
+    ],
+    sources: ["govRegisto", "irnCustos", "autoOnline", "autoOnlineFaq", "conservatoriaVirtual", "imtProcEspecial", "decoReservaCancelar"],
+  },
+  {
+    slug: "requerimento-registo-automovel",
+    updated: "2026-11-14",
+    title: "Requerimento de registo automóvel: como preencher e onde entregar",
+    h1: "Requerimento de registo automóvel: como preencher e onde entregar",
+    description: "O requerimento de registo automóvel em papel para transferir a propriedade de um carro: que quadros preenche o comprador e o vendedor, o que levar, onde entregar e quanto custa ao balcão.",
+    body: () => `
+      <p class="fc-p">Quando o registo não é feito online, a transferência de propriedade de um carro faz-se com o <b>Requerimento de Registo Automóvel</b>, o modelo único do IRN, que se descarrega na página de impressos do IRN ou se pede ao balcão. O prazo é o mesmo: 60 dias a contar da venda, e a obrigação de pedir o registo é do comprador.</p>
+      <h2 class="fc-h2">Quem preenche o quê</h2>
+      <ul class="fc-ul">
+        <li class="fc-li"><b>Quadro do sujeito ativo</b>: os dados do comprador, que é quem passa a ser proprietário.</li>
+        <li class="fc-li"><b>Quadro do sujeito passivo</b>: os dados do vendedor.</li>
+        <li class="fc-li"><b>Declaração do vendedor</b>: o vendedor indica a data em que vendeu o carro e assina. Numa venda sem contrato escrito, é esta declaração que prova a compra e venda.</li>
+      </ul>
+      <p class="fc-p">O formulário só exige reconhecimento de assinaturas quando alguém assina em representação de outra pessoa. Para pedidos enviados pelo correio não encontrámos uma regra clara, por isso confirma com a conservatória antes de enviar.</p>
+      <h2 class="fc-h2">O que levar</h2>
+      <ul class="fc-ul">
+        <li class="fc-li">O requerimento preenchido e assinado.</li>
+        <li class="fc-li">O Documento Único Automóvel do carro.</li>
+        <li class="fc-li">O contrato ou declaração de compra e venda assinado pelos dois, se existir.</li>
+        <li class="fc-li">Documento de identificação e NIF do comprador e do vendedor.</li>
+        <li class="fc-li">Se houver reserva de propriedade, a declaração do credor a confirmar que o crédito está pago.</li>
+      </ul>
+      <h2 class="fc-h2">Onde entregar</h2>
+      <p class="fc-p">Em qualquer conservatória com competência para o registo automóvel, independentemente de onde vives, numa Loja do Cidadão ou pelo correio. Para quem tem Cartão de Cidadão, o pedido online é mais barato: vê o <a href="/pt/guias/registo-automovel-online-passo-a-passo">registo automóvel online passo a passo</a>.</p>
+      <h2 class="fc-h2">Quanto custa ao balcão</h2>
+      <p class="fc-p">Dentro dos 60 dias, entre 63,60 € (gov.pt) e 65 € (tabela do IRN). Fora do prazo, a taxa é paga em dobro: cerca de 130 € pela tabela do IRN e 138,35 € segundo o gov.pt. O registo urgente custa mais uma taxa. Online, dentro do prazo, custa 55,30 €.</p>`,
+    faq: [
+      ["Onde se descarrega o requerimento de registo automóvel?", "Na página de impressos e modelos do IRN, ou pede-se ao balcão de uma conservatória ou Loja do Cidadão."],
+      ["O requerimento de registo automóvel tem de ser assinado pelos dois?", "O comprador assina como requerente e o vendedor assina a declaração em que indica a data da venda. O reconhecimento de assinaturas só é exigido no formulário quando alguém assina em representação de outra pessoa."],
+      ["Quanto custa entregar o requerimento ao balcão?", "Entre 63,60 € e 65 € dentro dos 60 dias, conforme a fonte, e cerca do dobro fora do prazo. Online, dentro do prazo, custa 55,30 €."],
+    ],
+    sources: ["irnImpressos", "irnCustos", "govRegisto", "justicaRegistar"],
+  },
+  {
+    slug: "verificar-historico-carro-gratis",
+    audience: "comprador",
+    updated: "2026-11-14",
+    title: "Como verificar o histórico de um carro usado, grátis e por poucos euros",
+    h1: "Como verificar o histórico de um carro usado antes de comprar",
+    description: "O que podes verificar de graça e por poucos euros antes de comprar um carro usado em Portugal: certidão permanente, inspeções com quilómetros, seguro, recalls e o histórico do anúncio.",
+    body: () => `
+      <p class="fc-p">Antes de entregar dinheiro por um carro usado, dá para confirmar muita coisa sem pagar nada ou pagando poucos euros, e quase tudo em fontes oficiais. Esta é a ordem que faz sentido.</p>
+      <h2 class="fc-h2">De graça</h2>
+      <ul class="fc-ul">
+        <li class="fc-li"><b>A última inspeção.</b> A ficha da última inspeção periódica deve andar no carro. Pede-a ao vendedor e compara os quilómetros com os do anúncio.</li>
+        <li class="fc-li"><b>Recalls por fazer.</b> Na plataforma RECALL, da ACAP com o IMT, pesquisas pela matrícula ou pelo VIN. Desde 1 de março de 2026, um recall ativo por fazer chumba o carro na inspeção.</li>
+        <li class="fc-li"><b>Se tem seguro.</b> O FGA tem uma consulta por matrícula, e a ASF tem a aplicação «Tem Seguro?».</li>
+        <li class="fc-li"><b>O próprio anúncio.</b> No <a href="/pt/avaliar">Carsbuyer</a> colas o link do anúncio do OLX ou do Standvirtual e vês há quanto tempo está à venda, quantas vezes baixou o preço, se o mesmo carro já foi anunciado antes e se o preço está acima ou abaixo do mercado.</li>
+      </ul>
+      <h2 class="fc-h2">Por 10 €: a certidão permanente do registo</h2>
+      <p class="fc-p">Pedida online no IRN, sem login, mostra quem é o proprietário registado e os ónus: penhoras, hipotecas e reserva de propriedade a favor de um banco. É válida 6 meses. Se o vendedor não é o proprietário registado, ou se há uma penhora, pára aí. A versão em papel custa 17 € e é a que mostra os proprietários anteriores.</p>
+      <h2 class="fc-h2">Por 27 €: as inspeções com os quilómetros</h2>
+      <p class="fc-p">O IMT emite online uma certidão das inspeções técnicas: em cada inspeção periódica feita em Portugal, se o carro passou e com quantos quilómetros. Qualquer pessoa a pode pedir, não é preciso ser o dono. Quilómetros que descem de uma inspeção para a seguinte são o sinal mais claro de conta-quilómetros adulterado. Ao balcão ou pelo correio custa 30 €.</p>
+      <h2 class="fc-h2">Relatórios pagos internacionais</h2>
+      <p class="fc-p">Serviços como a carVertical juntam dados de vários países: acidentes declarados, quilómetros registados fora de Portugal e fotos de anúncios antigos. Valem mais para carros importados, cujo passado não aparece nas fontes portuguesas.</p>
+      <h2 class="fc-h2">Resumo</h2>
+      <ol class="fc-ul">
+        <li class="fc-li">Anúncio e preço: grátis, no Carsbuyer.</li>
+        <li class="fc-li">Recalls e seguro: grátis.</li>
+        <li class="fc-li">Proprietário e penhoras: certidão permanente, 10 €.</li>
+        <li class="fc-li">Quilómetros nas inspeções: certidão do IMT, 27 €.</li>
+        <li class="fc-li">Passado fora de Portugal: relatório internacional, se o carro foi importado.</li>
+      </ol>`,
+    faq: [
+      ["Como saber se um carro usado tem penhoras ou reserva de propriedade?", "Com a certidão permanente do registo automóvel, que se pede online no IRN por 10 € sem login. Mostra o proprietário registado e os ónus, como penhoras e reserva de propriedade."],
+      ["Como verificar os quilómetros de um carro usado?", "O IMT emite online, por 27 €, uma certidão com o resultado e os quilómetros de cada inspeção periódica feita em Portugal. Qualquer pessoa a pode pedir. Quilómetros que descem entre inspeções indicam adulteração."],
+      ["Há forma de ver o histórico de um carro de graça?", "Sim, em parte: a ficha da última inspeção, os recalls na plataforma RECALL, o seguro na consulta do FGA e o histórico do anúncio no Carsbuyer. Proprietário, penhoras e quilómetros de todas as inspeções exigem certidões pagas, de 10 € e 27 €."],
+    ],
+    sources: ["govCertidao", "govInspecoes", "govInspecao", "imtRecall", "recall", "fgaMatricula", "decoCarroUsado"],
   },
   {
     slug: "burlas-e-pagamento-seguro",
@@ -392,6 +514,7 @@ const GUIDE_SETS = {
     ["vender-carro-a-stand", "vender a um stand ou por tua conta: o que cada opção custa"],
     ["documentos-para-vender-carro", "que documentos entregar e o contrato de compra e venda"],
     ["registo-de-propriedade-automovel", "como se faz o registo automóvel, em que prazo e quem paga"],
+    ["registo-automovel-online-passo-a-passo", "o registo online passo a passo, com o comprador ao lado"],
     ["burlas-e-pagamento-seguro", "receber o dinheiro sem levar uma burla"],
     ["depois-de-vender-seguro-iuc-via-verde", "o seguro, o IUC e a Via Verde depois da venda"],
   ]],
@@ -407,6 +530,7 @@ const GUIDE_SETS = {
   ]],
   comprar: ["Antes de entregar dinheiro", [
     ["verificar-antes-de-comprar-carro-usado", "o que verificar antes de comprar um carro usado"],
+    ["verificar-historico-carro-gratis", "verificar o histórico do carro de graça e por poucos euros"],
     ["burlas-e-pagamento-seguro", "receber e pagar sem levar uma burla"],
     ["registo-de-propriedade-automovel", "como se faz o registo automóvel, em que prazo e quem paga"],
   ]],
