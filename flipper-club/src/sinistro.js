@@ -112,7 +112,7 @@ export function renderReportOffer({ host, depositCount = null, today, values = {
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">Quanto valia o teu carro numa data passada? Relatório com anúncios dessa data</h1>
       <p class="fc-p">A seguradora declarou perda total e o valor venal proposto parece baixo? A indemnização parte do valor do carro <b>antes do sinistro</b>, e para discordar precisas de mostrar com dados quanto custava comprar um carro igual nessa altura. Os anúncios dessa data já desapareceram dos sites. Nós guardamos os anúncios de carros usados do OLX e do Standvirtual desde ${fmtDate(REPORT_DATA_SINCE)}, com as datas em que os vimos e os preços pedidos.</p>
-      <p class="fc-p">Com isso montamos um relatório datado com os anúncios comparáveis ao teu carro na data que indicares. <b>${REPORT_PRICE_EUR} €</b>, valor final, com fatura-recibo. Entrega em 2 dias úteis depois do pagamento, em PDF e numa página web.</p>
+      <p class="fc-p">Com isso montamos um relatório datado com os anúncios comparáveis ao teu carro na data que indicares: os que estavam à venda nesse dia, não os de hoje. Mostra o preço de substituição, isto é, quanto custava comprar um carro igual, e não o valor a que um comerciante o compraria. <b>${REPORT_PRICE_EUR} €</b>, valor final, com fatura-recibo. Entrega em 2 dias úteis depois do pagamento, em PDF e numa página web.</p>
       <p class="fc-p"><a href="/relatorio/${REPORT_SAMPLE_TOKEN}" rel="nofollow">Vê um relatório de exemplo</a>: Volkswagen Golf VII 1.6 TDI a 15/10/2026, 23 carros comparáveis, com todas as secções que recebes.</p>
       ${done}
 
