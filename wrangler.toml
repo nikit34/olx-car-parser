@@ -141,8 +141,8 @@ SITE_CONTACT_EMAIL = "ola@carsbuyer.org"
 # Router, sitemap and the year links all read this one gate, so a page outside the
 # wave stays reachable but is no longer advertised. Widen it again by editing
 # this number only — no code deploy, no data rebuild.
-SEO_WAVE_MODELS = "20"
-LIQ_WAVE_MODELS = "20"
+SEO_WAVE_MODELS = "60"
+LIQ_WAVE_MODELS = "60"
 
 SNIPPET_TEST = "on"
 
@@ -154,7 +154,7 @@ INTL_LOCALES = "de,fr,it"
 # deliberately untouched: before the /pt move it ran at this same size and held
 # preco/ano at position 10, so cutting it would throw away pages that were
 # demonstrably working without proving anything.
-INTL_WAVE_MODELS = "15"
+INTL_WAVE_MODELS = "25"
 INDEXNOW_KEY = "0b2d1d9109041a8e753860fe1b6efb6f"
 
 HISTORY_REPORT_URL = "https://www.carvertical.com/pt"
@@ -162,7 +162,7 @@ HISTORY_REPORT_URL = "https://www.carvertical.com/pt"
 # count in three days in September and lost its index. The seller layer answers
 # "quanto pedir por um X", which is the same corpus the price pages already read,
 # so there is no reason to hold it open past the price layer it depends on.
-VENDER_WAVE_MODELS = "20"
+VENDER_WAVE_MODELS = "80"
 
 # Cron. Records the weekly market cut for /pt/mercado/indice.
 #
