@@ -360,16 +360,18 @@ class TestPreHysteresisSeed:
     published rule keeps a published page down to the retirement floor. The seed
     closes that window; it must not do anything else."""
 
-    def test_the_seed_marks_the_named_slugs_as_published(self):
+    def test_the_seed_marks_the_named_slugs_as_published(self, monkeypatch):
         from scripts.build_dashboard_data import _seed_pre_hysteresis, PRE_HYSTERESIS_PUBLISHED
+        monkeypatch.setattr("scripts.build_dashboard_data.PRE_HYSTERESIS_UNTIL", "2999-12-31")
         out = _seed_pre_hysteresis({"models": {"volkswagen-golf": {"yr": [{"y": 2012}]}}})
         for slug in PRE_HYSTERESIS_PUBLISHED:
             assert slug in out["models"], f"{slug} was not seeded"
         assert out["models"]["volkswagen-golf"]["yr"] == [{"y": 2012}], \
             "the seed overwrote a record the previous build actually published"
 
-    def test_the_seed_survives_having_no_previous_blob(self):
+    def test_the_seed_survives_having_no_previous_blob(self, monkeypatch):
         from scripts.build_dashboard_data import _seed_pre_hysteresis, PRE_HYSTERESIS_PUBLISHED
+        monkeypatch.setattr("scripts.build_dashboard_data.PRE_HYSTERESIS_UNTIL", "2999-12-31")
         out = _seed_pre_hysteresis(None)
         assert set(PRE_HYSTERESIS_PUBLISHED) <= set(out["models"])
 

@@ -836,7 +836,7 @@ class TestDryRun:
              .update({Listing.last_seen_at: crawl._utcnow() - timedelta(days=30)},
                      synchronize_session="fetch"))
             session.commit()
-        state = _state(tmp_path, discovered=_golf_discovered(), inventory={
+        state = _state(tmp_path, discovered=_golf_discovered(at=crawl._utcnow()), inventory={
             "volkswagen/golf": {"results": 120, "at": crawl._iso(crawl._utcnow())}})
         state.save()
 

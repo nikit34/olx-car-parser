@@ -35,6 +35,8 @@ def _load():
 
 bcb = _load()
 
+_RECENT = pd.Timestamp.now("UTC").tz_localize(None) - pd.Timedelta(days=1)
+
 
 def _row(**over) -> dict:
     base = {
@@ -55,8 +57,8 @@ def _row(**over) -> dict:
         "verdict": "BUY",
         "decision_score": 30.0,
         "is_active": True,
-        "first_seen_at": pd.Timestamp("2026-10-01"),
-        "last_scraped_at": pd.Timestamp("2026-10-01"),
+        "first_seen_at": _RECENT,
+        "last_scraped_at": _RECENT,
         "district": "Bayern",
         "generation": "",
         "damage_severity": None,
@@ -80,7 +82,7 @@ def _deals(rows: list[dict]) -> list[dict]:
         filler = deals.iloc[index % len(deals)].to_dict()
         filler["olx_id"] = f"filler-{index}"
         filler["price_eur"] = float(filler["price_eur"]) + 100 * (index + 1)
-        filler["first_seen_at"] = pd.Timestamp("2026-10-01")
+        filler["first_seen_at"] = _RECENT
         filler["is_active"] = True
         corpus.append(filler)
     listings = pd.DataFrame(corpus).drop_duplicates("olx_id")
