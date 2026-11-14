@@ -30,7 +30,7 @@
 import {
   layout, escapeHtml, fmtEur, fmtKm, fmtNum, fmtBuilt, slugify,
   present, thumbBlock, gradeChip, historyCheckBlock, sellerHelpBlock, monthTag, priceFork,
-  analyticsClick,
+  analyticsClick, historyAffiliate,
 } from "./templates.js";
 
 // ── Publishing thresholds ────────────────────────────────────────────────────
@@ -2632,7 +2632,7 @@ export function renderAbout({ stats, mq, host, depositCount, builtAt }) {
       <p class="fc-p">Não somos stand e não representamos nenhum vendedor. Não temos carros para colocar, por isso não temos motivo para inflacionar nem para desvalorizar nenhum modelo. Os números que publicamos são os mesmos que usamos para as nossas próprias decisões — se estivessem enviesados, seríamos os primeiros prejudicados.</p>
 
       <h2 class="fc-h2">Como nos pagamos</h2>
-      <p class="fc-p">As avaliações e os preços por modelo são gratuitos e ficam gratuitos: ver um anúncio avaliado, o <a href="/pt/mercado">mercado</a> ou os preços por modelo não custa nada e não exige registo. Ninguém paga para mexer numa avaliação. Ainda não temos receitas; queremos financiar o projeto com contactos de quem quer vender: quando tivermos stands parceiros, se o pedires expressamente, passaremos o teu contacto a um deles, que nos pagará por isso; sem o teu consentimento, o teu contacto não sai daqui. Os números continuam a sair dos anúncios e do modelo, não de quem paga.</p>
+      <p class="fc-p">As avaliações e os preços por modelo são gratuitos e ficam gratuitos: ver um anúncio avaliado, o <a href="/pt/mercado">mercado</a> ou os preços por modelo não custa nada e não exige registo. Ninguém paga para mexer numa avaliação. Ganhamos dinheiro com um <a href="/pt/relatorio-valor-venal">relatório pago</a> do valor de mercado de um carro numa data passada, que serve, por exemplo, para contestar o valor venal de uma perda total.${historyAffiliate() ? " Também recebemos uma comissão da carVertical quando alguém compra um relatório de histórico por uma ligação nossa." : ""} Pensamos também em passar a stands parceiros o contacto de quem quer vender, só com consentimento expresso. Hoje não temos nenhum stand parceiro. Os números continuam a sair dos anúncios e do modelo, não de quem paga.</p>
 
       <h2 class="fc-h2">O que temos hoje</h2>
       <ul class="fc-ul">

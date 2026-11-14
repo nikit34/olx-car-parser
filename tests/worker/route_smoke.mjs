@@ -1693,5 +1693,27 @@ await check("the landing leads with the valuation and survives an empty deal fee
   assert(feed === -1 || idx < feed, "inside the hero the feed still comes before the valuation field");
 });
 
+await check("the report order form stores a lead and the honeypot stores nothing", async () => {
+  const page = await (await worker.fetch(new Request(`https://${HOST}/pt/relatorio-valor-venal`, { headers: browser("Mozilla/5.0 Chrome/130") }), env)).text();
+  assert(page.includes('name="modelo"') && page.includes("index,follow"), "the offer page lost its form or its index flag");
+  const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Lisbon" });
+  const post = (fields) => worker.fetch(new Request(`https://${HOST}/pt/relatorio-valor-venal`, {
+    method: "POST",
+    headers: { ...browser("Mozilla/5.0 Chrome/130"), "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(fields).toString(),
+  }), env);
+  const leads = () => [...kv.keys()].filter(k => k.startsWith("lead:relatorio:"));
+  const before = leads().length;
+  const bad = await post({ modelo: "Golf", ano: "2015", data: "2020-01-01", email: "x@y.pt", consentimento: "1" });
+  assert(bad.status === 400 && leads().length === before, "a date before the archive starts was accepted");
+  const trap = await post({ modelo: "Golf", ano: "2015", data: today, email: "x@y.pt", consentimento: "1", website: "spam" });
+  assert(trap.status === 303 && leads().length === before, "the honeypot stored a lead");
+  const ok = await post({ modelo: "VW Golf", ano: "2015", km: "150 000", data: today, distrito: "Porto",
+    finalidade: "perda-total", email: "X@Y.pt", consentimento: "1" });
+  assert(ok.status === 303 && ok.headers.get("location") === "/pt/relatorio-valor-venal?ok=1", `valid order → ${ok.status}`);
+  const stored = leads().map(k => JSON.parse(kv.get(k))).find(l => l.modelo === "VW Golf");
+  assert(stored && stored.km === 150000 && stored.email === "x@y.pt" && stored.distrito === "Porto", "the stored lead lost its fields");
+});
+
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall route checks passed");
 process.exit(failures ? 1 : 0);

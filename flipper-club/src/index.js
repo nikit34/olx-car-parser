@@ -41,6 +41,7 @@ import {
   renderAvaliar, renderModelPage, renderModelsHub, renderModelWidget, slugify, listingUrl,
   setAnalyticsId,
   renderPrivacy, renderSellIntent,
+  setHistoryAffiliate,
 } from "./templates.js";
 import {
   renderYearPage, renderNotFound, renderDepreciationPage, renderDepreciationHub,
@@ -80,6 +81,7 @@ import { intlModelCurveLinks } from "./intl-curves.js";
 import "./intl-compare.js";
 import "./intl-guides.js";
 import { handleReport, isReportPath } from "./reports.js";
+import { REPORT_PATH, REPORT_LEAD_TTL_SEC, renderReportOffer, parseReportOrder } from "./sinistro.js";
 
 const ZONES = ["norte", "centro", "sul", "all"];
 
@@ -99,7 +101,7 @@ const PRODUCT_PATHS = new Set([
   // children (/pt/depreciacao/{slug}, /pt/comparar/{a}-vs-{b}, /pt/mercado/indice/{week|month})
   // are prefix-routed above the asset gate.
   "/depreciacao", "/comparar", "/liquidez", "/sobrevalorizados", "/importar", "/vender", "/guias",
-  "/metodologia", "/sobre", "/isv",
+  "/metodologia", "/sobre", "/isv", REPORT_PATH,
   ...Object.values(DUELS).map(d => `/${d.path}`),
 ]);
 
@@ -236,6 +238,8 @@ async function handlePt(request, env, url, pathname, method) {
   if (pathname === "/lead") return redirect("/pt/avaliar#vender", 303);
   if (pathname === "/ir/historico" && method === "GET") return handleHistoryRedirect(request, env, u);
   if (pathname === "/ir/vender" && method === "GET") return handleSellIntent(request, env, u);
+  if (pathname === REPORT_PATH && method === "GET") return handleReportOffer(request, env, u);
+  if (pathname === REPORT_PATH && method === "POST") return handleReportOrder(request, env, u);
   // Страница приватности публичная и индексируемая: на неё ссылается баннер
   // согласия, и за Basic-Auth она отдавала бы 401 и Googlebot, и человеку.
   if (pathname === "/privacidade" && method === "GET") {
@@ -340,6 +344,7 @@ const worker = {
       // ⇒ those blocks render the brand-level version instead of inventing a
       // name and an address the site cannot honour.
       setSiteIdentity({ author: env.SITE_AUTHOR, contact: env.SITE_CONTACT_EMAIL });
+      setHistoryAffiliate(env.HISTORY_AFFILIATE === "1");
       // Staged rollout of the second SEO layer. Empty ⇒ everything is live.
       setWave(env.SEO_WAVE_MODELS);
       setSnippetTest(env.SNIPPET_TEST);
@@ -1877,6 +1882,7 @@ async function handleSitemap(request, env, url) {
   add("/pt/metodologia", "monthly", "0.6");
   add("/pt/sobre", "monthly", "0.6");
   add("/pt/isv", "monthly", "0.6");
+  add(`/pt${REPORT_PATH}`, "monthly", "0.7");
   // Consent banner links here, so it has to be crawlable and listed.
   add("/pt/privacidade", "yearly", "0.2", null);
 
@@ -2085,6 +2091,7 @@ async function handleLlmsTxt(request, env, url) {
     `- [Preço pedido vs. valor justo estimado](${base}/pt/sobrevalorizados)`,
     `- [Importar da Alemanha: em que modelos a conta fecha](${base}/pt/importar)`,
     `- [Simulador de ISV](${base}/pt/isv)`,
+    `- [Valor de mercado de um carro numa data passada (perda total, valor venal): relatório pago com anúncios comparáveis dessa data](${base}/pt/relatorio-valor-venal)`,
     `- [Metodologia](${base}/pt/metodologia)`,
     `- [Quem somos](${base}/pt/sobre)`,
     `- [Sitemap](${base}/pt/sitemap.xml)`,
@@ -2854,6 +2861,42 @@ async function handleHistoryRedirect(request, env, url) {
   const key = drop ? `click:drop:${day}:${drop}` : `click:hist:${day}:${from}`;
   await countHit(env, request, key, "histhit:", { from, drop: drop || null });
   return new Response(null, { status: 302, headers: { Location: target, "Cache-Control": "no-store" } });
+}
+
+function lisbonToday() {
+  return new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Lisbon" });
+}
+
+async function handleReportOffer(request, env, url) {
+  const sent = url.searchParams.get("ok") === "1";
+  const page = renderReportOffer({ host: url.host, today: lisbonToday(), sent });
+  return sent ? html(page) : publicHtml(page);
+}
+
+async function handleReportOrder(request, env, url) {
+  let form;
+  try { form = await request.formData(); } catch { form = new FormData(); }
+  const today = lisbonToday();
+  const { order, errors, trap } = parseReportOrder(form, today);
+  if (trap) {
+    trackFunnel(env, "report_order_bot", { path: REPORT_PATH, why: "trap" });
+    return redirect(`/pt${REPORT_PATH}?ok=1`, 303);
+  }
+  if (errors.length) {
+    return html(renderReportOffer({ host: url.host, today, values: order, errors }), 400);
+  }
+  const ts = new Date().toISOString();
+  const id = crypto.randomUUID().slice(0, 8);
+  const lead = { ts, tipo: "relatorio", ...order, v: trafficVerdict(request) };
+  try {
+    await env.KV.put(`lead:relatorio:${ts}:${id}`, JSON.stringify(lead), { expirationTtl: REPORT_LEAD_TTL_SEC });
+  } catch (err) {
+    console.error("report order not stored", err && err.message);
+    return html(renderReportOffer({ host: url.host, today, values: order,
+      errors: ["Não conseguimos guardar o pedido. Tenta de novo ou escreve para ola@carsbuyer.org."] }), 503);
+  }
+  trackFunnel(env, "report_order", { path: REPORT_PATH, detail: `${order.finalidade}:${order.ano || ""}` });
+  return redirect(`/pt${REPORT_PATH}?ok=1`, 303);
 }
 
 async function handleSellIntent(request, env, url) {

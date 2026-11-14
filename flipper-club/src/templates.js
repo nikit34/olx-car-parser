@@ -23,6 +23,10 @@ const ZONE_FULL = {
   all: "Portugal — todas as zonas",
 };
 
+let HISTORY_AFFILIATE = false;
+export function setHistoryAffiliate(on) { HISTORY_AFFILIATE = !!on; }
+export function historyAffiliate() { return HISTORY_AFFILIATE; }
+
 export function escapeHtml(s) {
   if (s == null) return "";
   return String(s)
@@ -1099,7 +1103,7 @@ export function layout({ title, body, zone, nav, depositCount, index = false, de
   <div class="footer-in">
     <span class="mono">AVALIAÇÃO INDEPENDENTE&nbsp;· dados de anúncios públicos do OLX e do Standvirtual&nbsp;· estimativas indicativas, não vinculativas&nbsp;· não somos stand</span>
     <span class="mono"><a href="/pt/precos" style="color:#5B606B;">Preços por modelo</a>&nbsp;· <a href="/pt/depreciacao" style="color:#5B606B;">Desvalorização</a>&nbsp;· <a href="/pt/comparar" style="color:#5B606B;">Comparar</a>&nbsp;· <a href="/pt/liquidez" style="color:#5B606B;">Tempo de venda</a>&nbsp;· <a href="/pt/mercado/indice" style="color:#5B606B;">Índice de mercado</a>&nbsp;· <a href="/pt/avaliar" style="color:#5B606B;">Quanto vale o meu carro</a>&nbsp;· <a href="/pt/vender" style="color:#5B606B;">Vender o meu carro</a>&nbsp;· <a href="/pt/guias" style="color:#5B606B;">Guias para vender</a></span>
-    <span class="mono"><a href="/pt/metodologia" style="color:#5B606B;">Metodologia</a>&nbsp;· <a href="/pt/sobre" style="color:#5B606B;">Quem somos</a>&nbsp;· <a href="/pt/isv" style="color:#5B606B;">Simulador ISV</a>&nbsp;· <a href="/pt/importar" style="color:#5B606B;">Importar da Alemanha</a>&nbsp;· <a href="/pt/privacidade" style="color:#5B606B;">Privacidade</a>&nbsp;· Portugal&nbsp;🇵🇹</span>${switcherLine}
+    <span class="mono"><a href="/pt/metodologia" style="color:#5B606B;">Metodologia</a>&nbsp;· <a href="/pt/sobre" style="color:#5B606B;">Quem somos</a>&nbsp;· <a href="/pt/isv" style="color:#5B606B;">Simulador ISV</a>&nbsp;· <a href="/pt/relatorio-valor-venal" style="color:#5B606B;">Relatório para perda total</a>&nbsp;· <a href="/pt/importar" style="color:#5B606B;">Importar da Alemanha</a>&nbsp;· <a href="/pt/privacidade" style="color:#5B606B;">Privacidade</a>&nbsp;· Portugal&nbsp;🇵🇹</span>${switcherLine}
   </div>
 </footer>`;
   return `<!doctype html>
@@ -1222,7 +1226,7 @@ export function renderLanding({ stats, featured, depositCount, host, corpus = nu
           <p>O OLX nunca te vai dizer que o anúncio está caro, nem que aquele preço baixo é de um carro ainda por legalizar. Nós dizemos — e mostramos o que o vendedor não escreve: quantas vezes já baixou o preço e há quanto tempo o carro está à venda.</p>
           <details class="indep-note">
             <summary>Quem nos paga — e porque é que isso não mexe na avaliação</summary>
-            <p>A avaliação é grátis e ninguém paga para aparecer melhor avaliado: o valor sai dos anúncios e do modelo, não de quem paga. É assim que queremos financiar o projeto: quando tivermos stands parceiros, quem quiser vender poderá pedir-nos que passemos o seu contacto a um deles, que nos pagará por isso — só com consentimento expresso e nunca sem o pedir. Hoje ainda não temos nenhum stand parceiro.</p>
+            <p>A avaliação é grátis e ninguém paga para aparecer melhor avaliado: o valor sai dos anúncios e do modelo, não de quem paga. Ganhamos dinheiro com um <a href="/pt/relatorio-valor-venal">relatório pago</a> do valor de mercado de um carro numa data passada, que serve, por exemplo, para contestar o valor venal de uma perda total.${HISTORY_AFFILIATE ? " Também recebemos uma comissão da carVertical quando alguém compra um relatório de histórico por uma ligação nossa." : ""} Pensamos também em passar a stands parceiros o contacto de quem quer vender, só com consentimento expresso. Hoje não temos nenhum stand parceiro. Nenhuma destas receitas depende de um carro parecer mais caro ou mais barato.</p>
           </details>
         </div>
         <a class="btn-bright" href="/pt/mercado">Ver os carros avaliados&nbsp;&nbsp;→</a>
@@ -1643,24 +1647,27 @@ export function renderPrivacy({ depositCount, host, contact = null }) {
       <p>Os anúncios mostrados são públicos e recolhidos de portais como o OLX e o
       StandVirtual. Não pertencem ao Carsbuyer e não contêm dados teus.</p>
 
-      <h2>Não te pedimos nada</h2>
-      <p>Não há registo, não há formulário e não recolhemos o teu contacto. Tudo o que o
-      site faz — avaliar um anúncio, ver preços por modelo, ler os guias — funciona sem
-      nos dares um único dado teu.</p>
+      <h2>Só te pedimos dados se pedires um relatório</h2>
+      <p>Não há registo. Avaliar um anúncio, ver preços por modelo e ler os guias funciona
+      sem nos dares um único dado teu. A exceção é o formulário do
+      <a href="/pt/relatorio-valor-venal">relatório de valor de mercado</a>: guarda o email,
+      o nome se o indicares e os dados do carro, só para responder ao pedido, preparar o
+      relatório e passar a fatura-recibo. Apagamos esses dados ao fim de 180 dias.</p>
 
       <h2>Ligações para fora</h2>
       <p>Há ligações para os anúncios originais e para um serviço de relatórios de
-      histórico de veículos. Não ganhamos nada com elas e não enviamos a esses sites
+      histórico de veículos. ${HISTORY_AFFILIATE ? "Se comprares um relatório de histórico por uma ligação nossa, a carVertical paga-nos uma comissão e usa os seus próprios cookies para o saber. Não ganhamos nada com as ligações para os anúncios." : "Não ganhamos nada com elas."} Não enviamos a esses sites
       nenhum dado teu — só a ligação que carregas.</p>
 
       <h2>Os teus direitos</h2>
-      <p>Não guardamos nada que te identifique, por isso não há nada para eliminares. Se
+      <p>Fora de um pedido de relatório não guardamos nada que te identifique. Se fizeste
+      um pedido, podes pedir que apaguemos os teus dados antes dos 180 dias. Se
       aceitaste as estatísticas anónimas, podes retirar o consentimento a qualquer momento
       no aviso em baixo. Para qualquer questão, escreve para ${contactHtml}.</p>
     </section>`;
   return layout({
     title: "Privacidade",
-    description: "O que o Carsbuyer guarda: nenhum cookie próprio, nenhum formulário e estatísticas anónimas só com consentimento.",
+    description: "O que o Carsbuyer guarda: nenhum cookie próprio, dados pessoais só num pedido de relatório e estatísticas anónimas só com consentimento.",
     body, zone: "all", nav: null, depositCount, index: true,
     host, canonical: origin ? `${origin}/pt/privacidade` : null,
   });
@@ -1834,6 +1841,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
         ${shareRow(`${rec.t || "Viatura"}: pedido ${fmtEur(price)}, justo ${fmtEur(fm)} (${fmtEur(fl)}–${fmtEur(fh)}). Avaliação independente:`, host ? `https://${host}/pt/avaliar?q=${encodeURIComponent(olxId || "")}&utm_source=share&utm_medium=social` : "")}
         ${modelHref ? `<a href="${modelHref}" style="display:block;text-align:center;margin-top:12px;font-size:13.5px;color:#177A47;font-weight:600;">Ver preços deste modelo por ano&nbsp;→</a>` : ""}
         <a href="${sellHref}" style="display:block;text-align:center;margin-top:10px;font-size:13.5px;color:#5B606B;">É o teu carro? Vê por quanto anunciar&nbsp;→</a>
+        <a href="/pt/relatorio-valor-venal" style="display:block;text-align:center;margin-top:8px;font-size:13.5px;color:#5B606B;">Precisas do valor numa data passada, para a seguradora? Relatório datado&nbsp;→</a>
         ${standOfferLink({ from: "anuncio", slug: (rec.ms && models && models[rec.ms]) ? rec.ms : "", year: typeof rec.y === "number" ? rec.y : null,
                            style: "display:block;text-align:center;margin-top:8px;font-size:13.5px;color:#5B606B;",
                            label: "Preferes vendê-lo a um stand? Pede uma proposta" })}
@@ -1880,6 +1888,7 @@ export function renderAvaliar({ rec, olxId, sourceUrl, query, models, spec, depo
         </div>
         ${shareRow(`${mr.b} ${mr.m}${cell ? ` ${cell.y}` : ""}: mediana pedida ${fmtEur(sfm)} (${fmtEur(sfl)}–${fmtEur(sfh)}) no OLX. Avaliação independente:`, host ? `https://${host}/pt/avaliar?modelo=${encodeURIComponent(spec.slug)}${spec.year ? `&ano=${encodeURIComponent(spec.year)}` : ""}&utm_source=share&utm_medium=social` : "")}
         ${spec.vender ? `<a href="/pt/vender/${encodeURIComponent(spec.slug)}" style="display:block;text-align:center;margin-top:12px;font-size:13.5px;color:#177A47;font-weight:600;">Quanto pedir e em quantos dias vende&nbsp;→</a>` : ""}
+        <a href="/pt/relatorio-valor-venal" style="display:block;text-align:center;margin-top:10px;font-size:13.5px;color:#5B606B;">Perda total? O valor deste carro na data do sinistro, em relatório&nbsp;→</a>
       </div>
       <div class="side-foot">Preços PEDIDOS em anúncios ativos do OLX — estimativa indicativa, não o valor da tua viatura concreta.</div>
       ${sellerHelpBlock({
@@ -2618,7 +2627,7 @@ export function historyCheckBlock({ url, reasons = [], price = null, title = nul
           <p style="font-size:13.5px;color:#5B606B;margin:6px 0 0;line-height:1.5;">Quilómetros reais, sinistros, número de donos e se veio do estrangeiro: o anúncio não diz, o relatório pela matrícula ou pelo VIN diz.${items ? " Neste caso há motivos concretos:" : ""}</p>
           ${items ? `<ul style="margin:8px 0 0;padding-left:18px;font-size:13.5px;color:#16181D;line-height:1.5;">${items}</ul>` : ""}
           <a href="${href}" target="_blank" rel="nofollow noopener"${analyticsClick("history_check", { from })} class="btn-outline" style="display:inline-block;margin-top:12px;padding:10px 16px;font-size:13.5px;">Verificar o histórico do carro&nbsp;&nbsp;↗</a>
-          <div class="mono" style="font-size:11px;color:#9A9FA8;margin-top:8px;line-height:1.5;">Relatório vendido pela carVertical. Não recebemos comissão nem qualquer pagamento por esta ligação; está aqui porque o anúncio não diz estas coisas e o relatório diz.</div>
+          <div class="mono" style="font-size:11px;color:#9A9FA8;margin-top:8px;line-height:1.5;">${HISTORY_AFFILIATE ? "Relatório vendido pela carVertical. Se o comprares por esta ligação, a carVertical paga-nos uma comissão e o preço para ti é o mesmo. Está aqui porque o anúncio não diz estas coisas e o relatório diz." : "Relatório vendido pela carVertical. Não recebemos comissão nem qualquer pagamento por esta ligação; está aqui porque o anúncio não diz estas coisas e o relatório diz."}</div>
         </div>`;
 }
 

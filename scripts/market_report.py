@@ -13,6 +13,9 @@ UTC = timezone.utc
 CODE_SNAPSHOT_LINES = "L137-L161"
 
 
+MONTHS_PT = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
+
+
 def esc(value):
     return html.escape("" if value is None else str(value))
 
@@ -309,7 +312,11 @@ def render(params, cars, gap_before, gap_after, steps, files, token, generator_c
     w("<p>O carsbuyer.org recolhe automaticamente anúncios de automóveis usados publicados no OLX.pt e no Standvirtual. As recolhas estão agendadas até 12 vezes por dia (de duas em duas horas, mais uma recolha alargada diária); o número de recolhas efetivamente concluídas em cada dia consta do anexo B.</p>")
     w("<p>Para cada anúncio são guardados o título, o endereço (URL), a marca, o modelo, a geração, o ano, a quilometragem, a potência, a cilindrada, o combustível, a caixa, a localidade, o distrito, o tipo de vendedor, a origem indicada no anúncio (nacional ou importado) e a data de publicação indicada pela plataforma.</p>")
     w(f"<p>O preço é guardado como registo com data e hora (UTC) quando o anúncio é encontrado pela primeira vez e sempre que o preço muda. Uma recolha em que o preço não muda não cria novo registo (<a href='{esc(code_url)}'>código-fonte da regra</a>). São ainda guardadas a data e hora da última recolha em que o anúncio foi encontrado e a data da recolha em que deixou de o ser. Por isso, o preço em vigor numa data é o último registo anterior a essa data, enquanto o anúncio continuar publicado.</p>")
-    w(f"<p><strong>Intervalo sem recolhas.</strong> A última recolha concluída antes de {ref_txt} terminou em {ts_utc(gap_start)} (<a href='{esc(gap_before['url'])}'>execução</a>). Em todas as execuções agendadas entre essa hora e {ts_utc(gap_end)} o passo de recolha falhou e nenhum anúncio foi lido; a recolha seguinte começou em {ts_utc(gap_end)} (<a href='{esc(gap_after['url'])}'>execução</a>). O histórico de execuções é público em <a href='{esc(runs_url)}'>{esc(runs_url)}</a>.</p>")
+    failed_between = [st for st in steps if st.get("scrape_step") != "success" and st.get("step_started")
+                      and gap_start < pd.Timestamp(st["step_started"]) < gap_end]
+    gap_txt = (f"Em todas as execuções agendadas entre essa hora e {ts_utc(gap_end)} o passo de recolha falhou e nenhum anúncio foi lido."
+               if failed_between else f"Entre essa hora e {ts_utc(gap_end)} não houve outra recolha, que é o intervalo normal entre duas execuções agendadas.")
+    w(f"<p><strong>Intervalo sem recolhas.</strong> A última recolha concluída antes de {ref_txt} terminou em {ts_utc(gap_start)} (<a href='{esc(gap_before['url'])}'>execução</a>). {gap_txt} A recolha seguinte começou em {ts_utc(gap_end)} (<a href='{esc(gap_after['url'])}'>execução</a>). O histórico de execuções é público em <a href='{esc(runs_url)}'>{esc(runs_url)}</a>.</p>")
     if params["data"].get("source_text"):
         w(f"<p><strong>Extração.</strong> {esc(params['data']['source_text'])} Ficheiros de extração, conservados pelo autor, e respetivas somas SHA-256:</p><ul>")
     else:
@@ -321,11 +328,11 @@ def render(params, cars, gap_before, gap_after, steps, files, token, generator_c
     f = params["filters"]
     w("<h2>4. Critérios de seleção</h2><ul>")
     w(f"<li>Marca e modelo: {esc(f['brand'])} {esc(f['model'])}, geração {esc(f['generation'])}.</li>")
-    w(f"<li>Motor: gasóleo, cilindrada entre {thousands(f['cc_min'])} e {thousands(f['cc_max'])} cm³ (2.0 TDI), potência entre {f['hp_min']} e {f['hp_max']} cv.</li>")
+    w(f"<li>Motor: gasóleo, cilindrada entre {thousands(f['cc_min'])} e {thousands(f['cc_max'])} cm³ ({esc(f.get('engine_label', '2.0 TDI'))}), potência entre {f['hp_min']} e {f['hp_max']} cv.</li>")
     w(f"<li>Ano: {f['year_min']} a {f['year_max']} (ano da viatura de referência ± 1).</li>")
     w("<li>Vendedor particular.</li>")
     w(f"<li>Anúncio publicado até {ref_txt}, segundo a data indicada pela plataforma.</li>")
-    w(f"<li>Anúncio ainda publicado na última recolha antes do intervalo sem recolhas ({day(gap_start)}) ou publicado depois dela, e encontrado pelo sistema em setembro de 2026.</li>")
+    w(f"<li>Anúncio ainda publicado na última recolha antes do intervalo sem recolhas ({day(gap_start)}) ou publicado depois dela, e encontrado pelo sistema em {MONTHS_PT[pd.Timestamp(f['seen_since']).month - 1]} de {pd.Timestamp(f['seen_since']).year}.</li>")
     w(f"<li>Disponibilidade a {ref_txt} considerada confirmada quando o anúncio continuava publicado em recolhas posteriores a {ts_utc(gap_end)}.</li>")
     w("<li>Não foram aplicados critérios de preço, caixa, estado, equipamento ou cor; a caixa de velocidades é indicada para cada viatura.</li></ul>")
 
@@ -370,7 +377,7 @@ def render(params, cars, gap_before, gap_after, steps, files, token, generator_c
     w("<li>Não existem capturas de ecrã nem cópias arquivadas das páginas dos anúncios. Os dados apresentados são os que o sistema registou em cada recolha. Vários anúncios já foram retirados e os respetivos endereços podem já não funcionar.</li>")
     w(f"<li>Não houve recolhas entre {ts_utc(gap_start)} e {ts_utc(gap_end)}. Por isso, o preço em vigor a {ref_txt} é desconhecido em {len(changed)} viaturas (dois cenários) e a disponibilidade nessa data não pode ser confirmada em {len(unconfirmed)} viaturas.</li>")
     w("<li>O sistema não guarda um registo de cada recolha por anúncio: guarda os registos de preço (primeira observação e cada alteração), a última recolha em que o anúncio foi encontrado e a recolha em que deixou de o ser. Assume-se, como o sistema foi desenhado, que cada recolha percorre todos os anúncios publicados; não é possível prová-lo anúncio a anúncio.</li>")
-    w("<li>Ano, quilometragem, potência, caixa e origem são os declarados nos anúncios e não foram verificados. Um anúncio não indica a quilometragem.</li>")
+    w("<li>Ano, quilometragem, potência, caixa e origem são os declarados nos anúncios e não foram verificados." + (f" {len(no_km)} anúncio(s) não indicam a quilometragem." if no_km else "") + "</li>")
     w("<li>A data de publicação é a indicada pela plataforma e pode refletir uma renovação do anúncio.</li>")
     w("<li>Alguns anúncios registam várias alterações de preço em poucos dias, incluindo subidas (ver anexo A). Os valores são apresentados tal como foram registados, sem correção.</li>")
     w("<li>A retirada de um anúncio não significa que a viatura tenha sido vendida.</li>")

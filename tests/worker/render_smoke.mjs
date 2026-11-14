@@ -12,7 +12,7 @@
 import { readFileSync } from "node:fs";
 import {
   renderLanding, renderGrid, renderCarPage, renderAvaliar, renderModelPage, renderModelsHub,
-  renderModelWidget, renderInfo, slugify, setAnalyticsId, renderPrivacy, ageTable, monthTag,
+  renderModelWidget, renderInfo, slugify, setAnalyticsId, renderPrivacy, ageTable, monthTag, setHistoryAffiliate, historyCheckBlock,
 } from "../../flipper-club/src/templates.js";
 import {
   renderYearPage, renderNotFound, renderDepreciationPage, renderDepreciationHub,
@@ -1465,6 +1465,17 @@ check("no public page sells a deposit, buyer offers, or a commission", () => {
       assert(!promise.test(html), `${label} promises something we do not do: ${promise}`);
     }
   }
+});
+
+check("the history link says it earns a commission exactly when the affiliate switch is on", () => {
+  try {
+    setHistoryAffiliate(false);
+    assert(/Não recebemos comissão/.test(historyCheckBlock({ url: "https://example.org" })), "the plain link stopped saying it earns nothing");
+    setHistoryAffiliate(true);
+    const block = historyCheckBlock({ url: "https://example.org" });
+    assert(/paga-nos uma comissão/.test(block) && !/Não recebemos comissão/.test(block), "the affiliate link hides the commission");
+    assert(/paga-nos uma comissão/.test(renderPrivacy({ depositCount: 0, host: HOST, contact: "x@y.pt" })), "the privacy page hides the commission");
+  } finally { setHistoryAffiliate(false); }
 });
 
 check("the snippet experiment splits the year pages without lying in either arm", () => {
