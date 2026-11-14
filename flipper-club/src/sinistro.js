@@ -141,7 +141,7 @@ export function renderReportOffer({ host, depositCount = null, today, values = {
         <li class="fc-li">Se quiseres avançar, pagas ${REPORT_PRICE_EUR} € por cartão ou MB WAY no Stripe.</li>
         <li class="fc-li">Em 2 dias úteis recebes o relatório em PDF e numa página só tua.</li>
       </ol>
-      <p class="fc-p" style="margin-top:18px;">Dúvidas antes de pedir: <a href="mailto:ola@carsbuyer.org">ola@carsbuyer.org</a> · <a href="/pt/metodologia">Metodologia</a> · <a href="/pt/sobre">Quem somos</a></p>
+      <p class="fc-p" style="margin-top:18px;">Dúvidas antes de pedir: <a href="mailto:ola@carsbuyer.org">ola@carsbuyer.org</a> · <a href="/pt/guias/perda-total-contestar-valor-venal">Como contestar o valor venal</a> · <a href="/pt/metodologia">Metodologia</a> · <a href="/pt/sobre">Quem somos</a></p>
     </section>
     <div style="height:60px;"></div>`;
   return layout({

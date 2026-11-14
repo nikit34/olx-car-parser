@@ -2092,6 +2092,7 @@ async function handleLlmsTxt(request, env, url) {
     `- [Importar da Alemanha: em que modelos a conta fecha](${base}/pt/importar)`,
     `- [Simulador de ISV](${base}/pt/isv)`,
     `- [Valor de mercado de um carro numa data passada (perda total, valor venal): relatório pago com anúncios comparáveis dessa data](${base}/pt/relatorio-valor-venal)`,
+    `- [Perda total: como contestar o valor venal proposto pela seguradora, com acórdãos e passos](${base}/pt/guias/perda-total-contestar-valor-venal)`,
     `- [Metodologia](${base}/pt/metodologia)`,
     `- [Quem somos](${base}/pt/sobre)`,
     `- [Sitemap](${base}/pt/sitemap.xml)`,

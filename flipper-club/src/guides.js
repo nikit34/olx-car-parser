@@ -23,6 +23,11 @@ const SRC = {
   olxAjuda: ["Anúncios de carros no OLX (Ajuda OLX)", "https://help.olx.pt/hc/pt/articles/206187279"],
   drGarantias: ["Decreto-Lei n.º 84/2021, garantia de conformidade (Diário da República)", "https://diariodarepublica.pt/dr/detalhe/decreto-lei/84-2021-172938301"],
   decoGarantia: ["Garantia de bens móveis: prazos e como acionar (DECO PROteste)", "https://www.deco.proteste.pt/familia-consumo/direitos-consumidor/dicas/garantia-bens-moveis-imoveis-prazos-como-acionar"],
+  decoPerdaTotal: ["Perda total no seguro automóvel: o que é e como se calcula (DECO PROteste)", "https://www.deco.proteste.pt/auto/seguro-automovel/dicas/perda-total-seguro-automovel-que-e-como-calcular"],
+  trp2024: ["Acórdão do Tribunal da Relação do Porto de 10/10/2024, processo 10599/22.5T8VNG.P1 (dgsi.pt)", "https://www.dgsi.pt/jtrp.nsf/56a6e7121657f91e80257cda00381fdf/dbbac4b348ccd6ac80258bc000509a21?OpenDocument"],
+  stj2018: ["Acórdão do Supremo Tribunal de Justiça de 05/07/2018, processo 176/13.7T2AVR.P1.S1 (dgsi.pt)", "https://www.dgsi.pt/jstj.nsf/-/900D05BF0595DFFD802582C200361434"],
+  trg2017: ["Acórdão do Tribunal da Relação de Guimarães de 16/02/2017, processo 183/15.5T8CBT.G1 (dgsi.pt)", "https://www.dgsi.pt/jtrg.nsf/-/1B351F677570F1A3802580ED005A228F"],
+  gepsa: ["Serviços de peritagem automóvel e preços (GEPSA)", "https://gepsa.pt/en/automotive-solutions"],
 };
 
 function marketLine(mk) {
@@ -57,6 +62,40 @@ function fastestTable(models) {
 }
 
 export const GUIDES = [
+  {
+    slug: "perda-total-contestar-valor-venal",
+    audience: "sinistro",
+    updated: "2026-11-14",
+    title: "Perda total: como contestar o valor venal proposto pela seguradora",
+    h1: "Perda total: como contestar o valor venal da seguradora",
+    description: "Como a seguradora calcula o valor venal numa perda total, o que tens de provar para pedir mais, como os tribunais trataram anúncios de carros semelhantes e os passos para contestar, com fontes.",
+    body: () => `
+      <p class="fc-p">Quando a reparação do carro, somada ao valor do salvado, ultrapassa uma parte do seu valor antes do acidente, a seguradora declara perda total e propõe pagar o valor venal, isto é, quanto valia o carro antes do sinistro. Segundo a DECO, o limite é 100% desse valor para carros com menos de 2 anos e 120% para os mais antigos. Se ficares com o salvado, o valor dele é descontado.</p>
+      <p class="fc-p">Se a proposta te parece baixa, podes contestá-la. Mas atenção: num acórdão de 2024, a Relação do Porto lembrou que é ao lesado que cabe provar que o valor de substituição é maior do que o indicado pela seguradora.</p>
+      <h2 class="fc-h2">Como a seguradora chega ao valor</h2>
+      <p class="fc-p">Normalmente a partir de tabelas de referência como a Eurotax ou a Audatex. A DECO lembra que a seguradora deve justificar e demonstrar por escrito os cálculos em que se baseia. É por aí que começa qualquer contestação.</p>
+      <h2 class="fc-h2">Passos para contestar</h2>
+      <ol class="fc-ul">
+        <li class="fc-li"><b>Pede por escrito o cálculo e as fontes</b> do valor venal: que tabela, que versão do carro, que quilometragem, que data.</li>
+        <li class="fc-li"><b>Não aceites a proposta por escrito</b> enquanto não tiveres decidido se a contestas.</li>
+        <li class="fc-li"><b>Reúne anúncios de carros iguais à venda na data do acidente</b>: mesmo modelo, motor, ano e quilometragem parecida. Anúncios de hoje valem menos, porque o mercado muda e o tribunal pode desvalorizá-los.</li>
+        <li class="fc-li"><b>Se o valor em causa for alto, pede uma peritagem independente.</b> A GEPSA, por exemplo, publica contra-peritagens a partir de 150 € mais IVA.</li>
+        <li class="fc-li"><b>Responde à seguradora por escrito</b>, com o valor que pedes e os documentos que o sustentam.</li>
+        <li class="fc-li"><b>Sem acordo</b>, a DECO aponta a reclamação à própria seguradora e à ASF, o CIMPAS, os julgados de paz e o tribunal.</li>
+      </ol>
+      <h2 class="fc-h2">Os anúncios contam como prova?</h2>
+      <p class="fc-p">Contam, mas com desconto. No acórdão do Supremo Tribunal de Justiça de 2018, um anúncio do Standvirtual entrou nos factos provados ao lado de uma peritagem e da tabela Eurotax, e o valor fixado foi o do anúncio. Na Relação do Porto, em 2024, o tribunal usou anúncios do Standvirtual e do Autouncle para fixar o valor, mas chamou aos preços pedidos «normalmente sobrevalorizados», e esses anúncios foram vistos um ano depois do acidente. Na Relação de Guimarães, em 2017, dois anúncios não chegaram para afastar a tabela Eurotax da seguradora sem uma peritagem.</p>
+      <p class="fc-p">Daí três regras práticas: anúncios da data do sinistro e não de hoje, muitos anúncios e não dois, e uma peritagem quando a diferença justifica o custo.</p>
+      <h2 class="fc-h2">O problema é que os anúncios dessa data já desapareceram</h2>
+      <p class="fc-p">Quando chega a proposta da seguradora, semanas depois do acidente, os anúncios desse dia já saíram do OLX e do Standvirtual. O Carsbuyer guarda os anúncios de carros usados destes dois sites desde março de 2026, com as datas em que os vimos e os preços pedidos. Com isso fazemos um <a href="/pt/relatorio-valor-venal">relatório datado com os anúncios comparáveis à data do teu sinistro</a>, com duplicados entre sites removidos, mediana, intervalo, limitações escritas e um modelo de carta à seguradora já preenchido. Não é uma peritagem nem aconselhamento jurídico: é o levantamento de mercado que podes juntar à tua contestação, sozinho ou com uma peritagem.</p>`,
+    faq: [
+      ["O que é o valor venal numa perda total?", "É o valor do carro imediatamente antes do acidente, isto é, quanto custaria comprar um carro equivalente nessa data. Se ficares com o salvado, o valor dele é descontado da indemnização."],
+      ["Quem tem de provar que o carro valia mais?", "O lesado. Num acórdão de 2024, a Relação do Porto lembrou que cabe ao lesado provar que o valor de substituição é maior do que o indicado pela seguradora."],
+      ["Anúncios do OLX e do Standvirtual servem de prova?", "Servem como elemento de prova e aparecem em vários acórdãos, mas os tribunais descontam-nos por serem preços pedidos e, sozinhos e em pequeno número, podem não chegar contra uma tabela como a Eurotax. Ajuda que sejam da data do acidente, que sejam muitos e que venham acompanhados de uma peritagem quando o valor em causa é alto."],
+      ["Quanto custa contestar?", "Pedir o cálculo à seguradora e responder por escrito não custa nada. Uma contra-peritagem independente custa, por exemplo, a partir de 150 € mais IVA na GEPSA. O relatório de anúncios da data do sinistro do Carsbuyer custa 75 € com fatura-recibo."],
+    ],
+    sources: ["decoPerdaTotal", "trp2024", "stj2018", "trg2017", "gepsa"],
+  },
   {
     slug: "documentos-para-vender-carro",
     title: "Documentos para vender um carro usado em Portugal",
@@ -395,6 +434,13 @@ function buyerHelpBlock() {
     </div>`;
 }
 
+function claimHelpBlock() {
+  return `
+    <div class="exclusive" style="background:#F4F5F7;border:1px solid #E3E5E9;align-items:flex-start;">
+      <span class="x" style="color:#5B606B;"><b style="color:#16181D;">Precisas dos anúncios da data do teu sinistro?</b> Diz-nos o carro e a data, e confirmamos de graça quantos anúncios comparáveis existem antes de pagares. <a href="/pt/relatorio-valor-venal" style="color:#177A47;font-weight:600;">Pedir o relatório&nbsp;→</a></span>
+    </div>`;
+}
+
 function guideNav(current) {
   return GUIDES.filter(g => g.slug !== current).map(g => `<li class="fc-li"><a href="/pt/guias/${g.slug}">${escapeHtml(g.title)}</a></li>`).join("");
 }
@@ -408,18 +454,19 @@ function sourcesBlock(keys) {
 export function renderGuide({ guide, models, market, stats, host, depositCount, builtAt }) {
   const canonical = `https://${host}/pt/guias/${guide.slug}`;
   const buyer = guide.audience === "comprador";
+  const claim = guide.audience === "sinistro";
   const faq = guide.faq.map(([q, a]) => [q, typeof a === "function" ? a(market) : a]);
   const body = crumbs([{ name: "Início", href: "/pt" }, { name: "Guias", href: "/pt/guias" }, { name: guide.title }]) + `
     <section class="section fc-wrap" style="padding-top:16px;">
       <h1 class="fc-h1">${escapeHtml(guide.h1)}</h1>
-      <div class="mono" style="font-size:11.5px;color:#9A9FA8;margin:-6px 0 18px;">Atualizado a ${UPDATED} · ${buyer ? "guia para quem compra a um particular" : "guia para vendedores particulares"} · não substitui aconselhamento jurídico</div>
+      <div class="mono" style="font-size:11.5px;color:#9A9FA8;margin:-6px 0 18px;">Atualizado a ${guide.updated || UPDATED} · ${claim ? "guia para quem teve um carro com perda total" : buyer ? "guia para quem compra a um particular" : "guia para vendedores particulares"} · não substitui aconselhamento jurídico</div>
       ${guide.body({ models, market, stats })}
       <h2 class="fc-h2">Perguntas frequentes</h2>
       ${faq.map(([q, a]) => `<details class="indep-note" style="margin:0 0 8px;"><summary>${escapeHtml(q)}</summary><p style="margin:8px 0 0;">${escapeHtml(a)}</p></details>`).join("")}
       ${sourcesBlock(guide.sources)}
     </section>
     <section class="section" style="padding:0 22px;max-width:680px;margin:0 auto;">
-      ${buyer ? buyerHelpBlock() : sellerHelpBlock({ slug: "", name: "", year: null, median: null, heading: "Vais vender o teu carro?" })}
+      ${claim ? claimHelpBlock() : buyer ? buyerHelpBlock() : sellerHelpBlock({ slug: "", name: "", year: null, median: null, heading: "Vais vender o teu carro?" })}
     </section>
     <section class="section fc-wrap" style="padding-bottom:70px;">
       <h2 class="fc-h2">Outros guias</h2>
@@ -436,7 +483,7 @@ export function renderGuide({ guide, models, market, stats, host, depositCount, 
         {
           "@type": "Article", "url": canonical, "inLanguage": "pt-PT",
           "headline": guide.title, "description": guide.description,
-          "datePublished": UPDATED, "dateModified": UPDATED,
+          "datePublished": guide.updated || UPDATED, "dateModified": guide.updated || UPDATED,
           "author": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "publisher": { "@type": "Organization", "name": "Carsbuyer", "url": `https://${host}/` },
           "mainEntityOfPage": canonical,
