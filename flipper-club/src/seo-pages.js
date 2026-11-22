@@ -145,6 +145,14 @@ export function snippetArm(slug, year) {
   return (h & 1) ? "b" : "a";
 }
 
+export function waveN(rec) {
+  return (rec && (rec.ns || rec.n)) || 0;
+}
+
+export function liqWaveN(rec) {
+  return (rec && (rec.lns || (rec.lq && rec.lq.n))) || 0;
+}
+
 let _waveKey = null, _waveVal = null;
 /** Slugs inside the current wave. Everything, when no cap is set. */
 export function waveSlugs(models, builtAt) {
@@ -152,7 +160,7 @@ export function waveSlugs(models, builtAt) {
   const key = `${builtAt || ""}:${Object.keys(models).length}:${WAVE_MODELS}`;
   if (_waveKey === key && _waveVal) return _waveVal;
   _waveVal = new Set(Object.entries(models)
-    .sort((a, b) => (b[1].n || 0) - (a[1].n || 0) || (a[0] < b[0] ? -1 : 1))
+    .sort((a, b) => waveN(b[1]) - waveN(a[1]) || (a[0] < b[0] ? -1 : 1))
     .slice(0, WAVE_MODELS)
     .map(([slug]) => slug));
   _waveKey = key;
@@ -207,8 +215,7 @@ export function liqWaveSlugs(models, builtAt) {
   if (_liqKey === key && _liqVal) return _liqVal;
   _liqVal = new Set(Object.entries(models)
     .filter(([, r]) => liquidityOk(r))
-    .sort((a, b) => ((b[1].lq && b[1].lq.n) || 0) - ((a[1].lq && a[1].lq.n) || 0)
-                 || (a[0] < b[0] ? -1 : 1))
+    .sort((a, b) => liqWaveN(b[1]) - liqWaveN(a[1]) || (a[0] < b[0] ? -1 : 1))
     .slice(0, LIQ_WAVE)
     .map(([slug]) => slug));
   _liqKey = key;
@@ -4040,7 +4047,7 @@ export function venderWaveSlugs(models, builtAt) {
   if (_venderKey === key && _venderVal) return _venderVal;
   _venderVal = new Set(Object.entries(models)
     .filter(([, r]) => venderOk(r))
-    .sort((a, b) => (b[1].n || 0) - (a[1].n || 0) || (a[0] < b[0] ? -1 : 1))
+    .sort((a, b) => waveN(b[1]) - waveN(a[1]) || (a[0] < b[0] ? -1 : 1))
     .slice(0, VENDER_WAVE)
     .map(([slug]) => slug));
   _venderKey = key;

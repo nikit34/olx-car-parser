@@ -393,3 +393,36 @@ class TestPreHysteresisSeed:
                 "the seed still fires after its expiry date"
         finally:
             b.PRE_HYSTERESIS_UNTIL = keep
+
+
+class TestStickyWaveCount:
+
+    def _golf(self, n):
+        return build_model_pages(_listings(_make(n=n, price=5000)), published=self.prev)["models"]["volkswagen-golf"]
+
+    prev = {"models": {"volkswagen-golf": {"b": "Volkswagen", "m": "Golf", "n": 70, "yr": []}}}
+
+    def test_a_daily_dip_keeps_the_ranking_count(self):
+        rec = self._golf(66)
+        assert rec["n"] == 66
+        assert rec["ns"] == 70, "a 6% dip moved the count the wave ranks on"
+
+    def test_a_real_move_updates_the_ranking_count(self):
+        assert self._golf(50)["ns"] == 50
+        assert self._golf(90)["ns"] == 90
+
+    def test_the_sticky_count_carries_over_from_the_previous_sticky_value(self):
+        self.prev = {"models": {"volkswagen-golf": {"n": 66, "ns": 70, "yr": []}}}
+        assert self._golf(64)["ns"] == 70
+
+    def test_a_new_model_ranks_on_its_own_count(self):
+        rec = build_model_pages(_listings(_make(n=33, price=5000)))["models"]["volkswagen-golf"]
+        assert rec["ns"] == 33
+
+    def test_the_liquidity_count_is_sticky_too(self):
+        liq = {("Volkswagen", "Golf"): {"n": 255, "s30": 0.4}}
+        prev = {"models": {"volkswagen-golf": {"n": 70, "lq": {"n": 270}, "yr": []}}}
+        rec = build_model_pages(_listings(_make(n=70, price=5000)), liquidity=liq,
+                                published=prev)["models"]["volkswagen-golf"]
+        assert rec["lq"]["n"] == 255 and rec["lns"] == 270
+        assert "lns" not in rec["lq"], "the shared liquidity record was mutated"

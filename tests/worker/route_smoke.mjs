@@ -12,7 +12,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import worker from "../../flipper-club/src/index.js";
-import { yearPageYears, liquidityOk, depreciationSlugs, comparePairs, isoWeek, isoWeekStart, missingWeeks, DUELS, isoWeekMonth, monthlyCuts, importSlugs, venderOk, publishedYearPages, yearCarsShard } from "../../flipper-club/src/seo-pages.js";
+import { yearPageYears, liquidityOk, depreciationSlugs, comparePairs, isoWeek, isoWeekStart, missingWeeks, DUELS, isoWeekMonth, monthlyCuts, importSlugs, venderOk, publishedYearPages, yearCarsShard, waveN, setWave, waveSlugs } from "../../flipper-club/src/seo-pages.js";
 import { GUIDES } from "../../flipper-club/src/guides.js";
 
 const HOST = "carsbuyer.org";
@@ -469,8 +469,34 @@ await check("the root sitemap is an index over the per-market files", async () =
   assert((await pt.text()).includes("<urlset"), "/pt/sitemap.xml is not a urlset");
   const robots = await (await get("/robots.txt")).text();
   const lines = robots.split("\n").filter(l => l.startsWith("Sitemap:"));
-  assert(lines.length === 1 && lines[0] === `Sitemap: https://${HOST}/sitemap.xml`,
-    `robots should point at the index alone: ${lines.join(" | ")}`);
+  assert(lines.length === 3 && lines[0] === `Sitemap: https://${HOST}/sitemap.xml`
+    && lines[1] === `Sitemap: https://${HOST}/pt/sitemap.xml`
+    && lines[2] === `Sitemap: https://${HOST}/sitemap-moved.xml`,
+    `robots should name the index, the Portuguese map and the moved-address map: ${lines.join(" | ")}`);
+});
+
+await check("the moved-address map lists old root URLs that each 301 to a page in the Portuguese map", async () => {
+  const r = await get("/sitemap-moved.xml");
+  assert(r.status === 200, `/sitemap-moved.xml → ${r.status}`);
+  assert((r.headers.get("content-type") || "").includes("xml"), "the moved map is not served as XML");
+  const xml = await r.text();
+  const old = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => new URL(m[1]).pathname);
+  const lastmods = [...xml.matchAll(/<lastmod>([^<]+)<\/lastmod>/g)].map(m => m[1]);
+  assert(old.length > 100, `the moved map lists only ${old.length} old URLs`);
+  assert(lastmods.length === old.length && lastmods.every(d => d === "2026-09-16"),
+    "every old URL must carry the move date as lastmod, so only addresses unseen since the move get recrawled");
+  assert(old.every(p => !p.startsWith("/pt/") && p !== "/pt"), "the moved map lists a /pt address");
+  const pt = await (await get("/pt/sitemap.xml")).text();
+  const current = new Set([...pt.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => new URL(m[1]).pathname));
+  assert(old.includes("/") && old.includes(`/preco/${deep}`), "the moved map dropped the landing or a model page");
+  assert(old.length <= current.size, "the moved map lists more old URLs than the Portuguese map has pages");
+  const sample = [old[0], old[old.length - 1], "/", `/preco/${deep}`,
+    ...old.filter(x => /\/\d{4}$/.test(x)).slice(0, 5)];
+  for (const p of sample) {
+    const res = await get(p);
+    const to = res.headers.get("location") && new URL(res.headers.get("location")).pathname;
+    assert(res.status === 301 && current.has(to), `${p} → ${res.status} ${to}, not a 301 into the Portuguese map`);
+  }
 });
 
 await check("sitemap lists the model-year pages", async () => {
@@ -536,7 +562,7 @@ await check("robots and llms.txt describe the new surface", async () => {
 await check("with no INTL_LOCALES the Portuguese robots and llms carry nothing extra", async () => {
   const robots = await (await get("/robots.txt")).text();
   const sitemaps = robots.split("\n").filter(l => l.startsWith("Sitemap:"));
-  assert(sitemaps.length === 1 && sitemaps[0] === `Sitemap: https://${HOST}/sitemap.xml`,
+  assert(sitemaps.length === 3 && sitemaps.every(l => !/\/(de|fr|it)\//.test(l)),
     `robots advertises ${sitemaps.length} sitemaps with no locale live: ${sitemaps.join(" | ")}`);
   const llms = await (await get("/llms.txt")).text();
   assert(!/Outros mercados/.test(llms), "llms.txt announces markets that are not live");
@@ -830,12 +856,30 @@ await check("facet pages appear when the blob carries the cells", async () => {
   }
 });
 
+await check("the wave ranks on the sticky count, so a daily dip at the edge does not swap models", async () => {
+  const synthetic = {
+    "a-edge": { n: 68, ns: 72 },
+    "b-rival": { n: 70, ns: 70 },
+    "c-top": { n: 120 },
+  };
+  try {
+    setWave("2");
+    const w = waveSlugs(synthetic, "2026-11-22T00:00:00Z");
+    assert(w.has("c-top") && w.has("a-edge") && !w.has("b-rival"),
+      `the wave followed today's raw count instead of the sticky one: ${[...w].join(", ")}`);
+    const raw = waveSlugs({ "a-edge": { n: 68 }, "b-rival": { n: 70 }, "c-top": { n: 120 } }, "2026-11-22T00:00:01Z");
+    assert(raw.has("b-rival") && !raw.has("a-edge"), "a blob without the sticky count no longer ranks on n");
+  } finally {
+    setWave("");
+  }
+});
+
 // ── staged rollout ──────────────────────────────────────────────────────────
 await check("a wave gates the router, the sitemap and the on-page links together", async () => {
   const wave = 5;
   const gated = { ...env, SEO_WAVE_MODELS: String(wave) };
   const g = (p) => worker.fetch(new Request(`https://${HOST}${p}`), gated);
-  const inWave = slugs.slice().sort((a, b) => (models[b].n || 0) - (models[a].n || 0)
+  const inWave = slugs.slice().sort((a, b) => waveN(models[b]) - waveN(models[a])
     || (a < b ? -1 : 1)).slice(0, wave);
   const outside = slugs.find(s => !inWave.includes(s) && yearPageYears(models[s]).length);
   assert(outside, "fixture has no model outside a 5-model wave");

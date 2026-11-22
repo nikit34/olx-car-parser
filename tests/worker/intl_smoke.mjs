@@ -659,7 +659,11 @@ await check("robots and llms.txt publish the live locales", async () => {
     assert(sitemaps.includes(`Sitemap: https://${HOST}/${cc}/sitemap.xml`),
       `robots leaves the ${cc} sitemap to be discovered through the index: ${sitemaps.join(" | ")}`);
   }
-  assert(sitemaps.length === 4, `robots advertises ${sitemaps.length} sitemaps, expected the index plus three`);
+  assert(sitemaps.includes(`Sitemap: https://${HOST}/pt/sitemap.xml`),
+    `robots leaves the Portuguese sitemap to be discovered through the index: ${sitemaps.join(" | ")}`);
+  assert(sitemaps.includes(`Sitemap: https://${HOST}/sitemap-moved.xml`),
+    `robots does not name the moved-address map: ${sitemaps.join(" | ")}`);
+  assert(sitemaps.length === 6, `robots advertises ${sitemaps.length} sitemaps, expected the index, four markets and the moved map`);
   const index = await body("/sitemap.xml");
   const children = [...index.matchAll(/<sitemap><loc>([^<]+)<\/loc>/g)].map(m => new URL(m[1]).pathname);
   assert(children[0] === "/pt/sitemap.xml", `the index does not lead with Portuguese: ${children[0]}`);
@@ -705,8 +709,10 @@ await check("with INTL_LOCALES unset the locale prefixes do not exist", async ()
   }
   const robots = await body("/robots.txt", envOff);
   const sitemaps = robots.split("\n").filter(l => l.startsWith("Sitemap:"));
-  assert(sitemaps.length === 1 && sitemaps[0] === `Sitemap: https://${HOST}/sitemap.xml`,
-    `robots has ${sitemaps.length} Sitemap lines with no locales live`);
+  assert(sitemaps.length === 3 && sitemaps[0] === `Sitemap: https://${HOST}/sitemap.xml`
+    && sitemaps[1] === `Sitemap: https://${HOST}/pt/sitemap.xml`
+    && sitemaps[2] === `Sitemap: https://${HOST}/sitemap-moved.xml`,
+    `robots has ${sitemaps.length} Sitemap lines with no locales live: ${sitemaps.join(" | ")}`);
   const index = await body("/sitemap.xml", envOff);
   const children = [...index.matchAll(/<sitemap><loc>([^<]+)<\/loc>/g)].map(m => new URL(m[1]).pathname);
   assert(children.length === 1 && children[0] === "/pt/sitemap.xml",

@@ -3,7 +3,7 @@ import {
 } from "./templates.js";
 import {
   crumbs, breadcrumbLd, faqLd, yearCells, yearCell, yearPageYears,
-  depreciationFit,
+  depreciationFit, waveN,
 } from "./seo-pages.js";
 import {
   t, href, labelL, fmtEurL, fmtKmL, fmtNumL, fmtDateL, monthTagL,
@@ -361,7 +361,7 @@ function intlWaveSlugs(loc, models, builtAt) {
   const hit = INTL_WAVE_CACHE.get(key);
   if (hit) return hit;
   const set = new Set(Object.entries(models)
-    .sort((a, b) => (b[1].n || 0) - (a[1].n || 0) || (a[0] < b[0] ? -1 : 1))
+    .sort((a, b) => waveN(b[1]) - waveN(a[1]) || (a[0] < b[0] ? -1 : 1))
     .slice(0, INTL_WAVE)
     .map(([slug]) => slug));
   if (INTL_WAVE_CACHE.size > 8) INTL_WAVE_CACHE.clear();

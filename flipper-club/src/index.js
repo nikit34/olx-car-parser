@@ -464,6 +464,7 @@ const worker = {
         return out;
       }
       if (pathname === "/sitemap.xml" && method === "GET") return handleSitemapIndex(request, env, url);
+      if (pathname === "/sitemap-moved.xml" && method === "GET") return handleMovedSitemap(request, env, url);
       if (pathname === "/robots.txt" && method === "GET") return handleRobots(request, env, url);
       if (pathname === "/llms.txt" && method === "GET") return handleLlmsTxt(request, env, url);
 
@@ -1856,8 +1857,7 @@ async function handleSitemapIndex(request, env, url) {
   });
 }
 
-async function handleSitemap(request, env, url) {
-  const base = `https://${url.host}`;
+async function ptSitemapEntries(env, base) {
   const mdoc = await getModels(env);
   const models = mdoc && mdoc.models;
   // Real content-change stamp: the models.json build date, NOT the request date.
@@ -1878,7 +1878,7 @@ async function handleSitemap(request, env, url) {
   };
   const urls = [];
   const add = (path, freq, prio, when) =>
-    urls.push(`<url><loc>${base}${path}</loc>${when === undefined ? lm : stamp(when)}<changefreq>${freq}</changefreq><priority>${prio}</priority></url>`);
+    urls.push({ path, xml: `<url><loc>${base}${path}</loc>${when === undefined ? lm : stamp(when)}<changefreq>${freq}</changefreq><priority>${prio}</priority></url>` });
 
   add("/pt", "daily", "1.0");
   add("/pt/mercado", "daily", "0.9");
@@ -1963,12 +1963,35 @@ async function handleSitemap(request, env, url) {
     }
   } catch (_) { /* the import layer is optional */ }
 
+  return urls;
+}
+
+function urlsetResponse(rows) {
   const xml = `<?xml version="1.0" encoding="UTF-8"?>\n`
-    + `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>`;
+    + `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${rows.join("\n")}\n</urlset>`;
   return new Response(xml, {
     status: 200,
     headers: { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=3600" },
   });
+}
+
+async function handleSitemap(request, env, url) {
+  const entries = await ptSitemapEntries(env, `https://${url.host}`);
+  return urlsetResponse(entries.map(e => e.xml));
+}
+
+const PT_MOVED_ON = "2026-09-16";
+
+async function handleMovedSitemap(request, env, url) {
+  const base = `https://${url.host}`;
+  const entries = await ptSitemapEntries(env, base);
+  const rows = [];
+  for (const { path } of entries) {
+    const old = ptRest(path);
+    if (old === null || ptLegacyPath(old) !== path) continue;
+    rows.push(`<url><loc>${base}${old}</loc><lastmod>${PT_MOVED_ON}</lastmod></url>`);
+  }
+  return urlsetResponse(rows);
 }
 
 // /_olx — narrow egress relay for the scraper.
@@ -2243,7 +2266,9 @@ async function handleRobots(request, env, url) {
     "User-agent: CCBot", ...ROBOTS_RULES,
     "",
     `Sitemap: https://${url.host}/sitemap.xml`,
+    `Sitemap: https://${url.host}${PT_PREFIX}/sitemap.xml`,
     ...liveLocales().map(l => `Sitemap: https://${url.host}${l.prefix}/sitemap.xml`),
+    `Sitemap: https://${url.host}/sitemap-moved.xml`,
     // Not a search-ranking signal — no engine ranks on it. It is an
     // agent-readiness convenience: a single fetch that tells a tool-using
     // model what this site holds and how to reach it.

@@ -63,6 +63,18 @@ MAX_YEAR_ROWS = 25          # cap emitted year rows (most recent) to bound size
 WINDOW_DAYS = 180
 MIN_WINDOW_PAGE_N = 20
 RETIRE_WINDOW_PAGE_N = 14
+WAVE_RANK_DEADBAND = 0.15
+
+
+def _positive_int(v) -> int | None:
+    return v if isinstance(v, int) and not isinstance(v, bool) and v > 0 else None
+
+
+def _sticky_n(n: int, prev: int | None) -> int:
+    prev = _positive_int(prev)
+    if prev is not None and abs(n - prev) <= WAVE_RANK_DEADBAND * prev:
+        return prev
+    return n
 
 # ── Facet cells (fuel, district) ─────────────────────────────────────────────
 # Higher floor than a year row: a facet page is a page, and "quanto vale um Golf
@@ -572,7 +584,10 @@ def _published_page_set(published: dict | None) -> dict[str, dict]:
             served = c["pg"] if "pg" in c else (isinstance(n, int) and n >= MIN_YEAR_PAGE_N)
             if served:
                 pages.add(c["y"])
-        entry = {"pages": pages}
+        entry = {"pages": pages,
+                 "ns": _positive_int(rec.get("ns")) or _positive_int(rec.get("n"))}
+        lq = rec.get("lq") if isinstance(rec.get("lq"), dict) else {}
+        entry["lns"] = _positive_int(rec.get("lns")) or _positive_int(lq.get("n"))
         for kind in ("fx", "tx", "dt"):
             arr = rec.get(kind)
             entry[kind] = {str(c["k"]) for c in arr
@@ -706,6 +721,7 @@ def build_model_pages(
         years = pd.to_numeric(grp.get("year"), errors="coerce").dropna()
         rec: dict = {
             "b": str(brand), "m": str(model), "n": int(len(grp)),
+            "ns": _sticky_n(int(len(grp)), prev and prev.get("ns")),
             "fl": q[0], "fm": q[1], "fh": q[2],
         }
         kmv = pd.to_numeric(grp.get("mileage_km"), errors="coerce").dropna()
@@ -750,6 +766,9 @@ def build_model_pages(
         lq = liq_lookup.get((brand, model))
         if lq:
             rec["lq"] = lq
+            lq_n = _positive_int(lq.get("n"))
+            if lq_n is not None:
+                rec["lns"] = _sticky_n(lq_n, prev and prev.get("lns"))
         models[slug] = {k: v for k, v in rec.items() if v is not None}
         if valuator is not None:
             keep = [c for c in _GBM_COLS if c in grp.columns]
