@@ -1094,7 +1094,7 @@ async function getImports(env) {
       cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": 300, "300-399": 0, "400-499": 0, "500-599": 0 } },
     });
     if (!r.ok) return null;
-    const data = await r.json();
+    const data = await parsedBlob(url, r);
     return data && data.models ? data : null;
   } catch (err) {
     console.warn("import fetch error", err && err.message);
@@ -2486,6 +2486,19 @@ const DEALS_CACHE_TTL_SEC = 900;
 const DEALS_NEAR_YEARS = 2;
 const VALUATIONS_LINKABLE_V = 2;
 const YEAR_CARS_MAX = 12;
+const PARSED_BLOBS = new Map();
+const PARSED_BLOBS_MAX = 40;
+
+async function parsedBlob(url, r) {
+  const text = await r.text();
+  const hit = PARSED_BLOBS.get(url);
+  if (hit && hit.text === text) return hit.data;
+  const data = JSON.parse(text);
+  PARSED_BLOBS.delete(url);
+  if (PARSED_BLOBS.size >= PARSED_BLOBS_MAX) PARSED_BLOBS.delete(PARSED_BLOBS.keys().next().value);
+  PARSED_BLOBS.set(url, { text, data });
+  return data;
+}
 
 const COMPETITOR_MIN_YEARS = 4;
 const COMPETITOR_TOL = 0.6;
@@ -2585,7 +2598,7 @@ async function getYearCars(env, slug) {
       console.warn(`year cars fetch ${url} → ${r.status}`);
       return null;
     }
-    const data = await r.json();
+    const data = await parsedBlob(url, r);
     return data && data.cars ? data : null;
   } catch (err) {
     console.warn("year cars fetch error", url, err && err.message);
@@ -2640,7 +2653,7 @@ async function getModels(env, country = null) {
       console.warn(`models fetch ${url} → ${r.status}`);
       return null;
     }
-    const data = await r.json();
+    const data = await parsedBlob(url, r);
     return data && data.models ? data : null;
   } catch (err) {
     console.warn("models fetch error", err && err.message);
